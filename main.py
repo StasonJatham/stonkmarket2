@@ -11,7 +11,7 @@ from app.config import settings
 from app.db import init_db
 from app.auth import parse_session
 
-app = FastAPI(title="Stonkmarket UI", version="0.1.0")
+app = FastAPI(title="Stonkmarket UI", version="0.1.0", root_path=settings.root_path)
 app.mount("/api", api_app)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 app.state.templates = Jinja2Templates(directory="app/templates")

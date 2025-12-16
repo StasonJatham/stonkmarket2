@@ -37,6 +37,7 @@ class Settings:
     domain: str | None = os.getenv("DOMAIN")
     https_enabled: bool = _bool_env("HTTPS", False)
     scheduler_enabled: bool = _bool_env("SCHEDULER_ENABLED", True)
+    root_path: str = os.getenv("ROOT_PATH", "")
 
 
 settings = Settings()

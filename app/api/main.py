@@ -12,7 +12,7 @@ from ..scheduler import start_scheduler
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Stonkmarket", version="0.1.0")
+    app = FastAPI(title="Stonkmarket", version="0.1.0", root_path=settings.root_path)
 
     app.add_middleware(
         CORSMiddleware,
