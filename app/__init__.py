@@ -1,0 +1,1 @@
+"""Stonkmarket FastAPI application package."""

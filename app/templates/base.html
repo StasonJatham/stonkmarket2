@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Stonkmarket tracks stock drawdowns, visualizes dip history, and keeps your watchlist fresh with scheduled data refreshes.">
+    <meta name="robots" content="index, follow">
+    <meta name="theme-color" content="#0d6efd">
+    <meta property="og:title" content="Stonkmarket | Market dips, distilled">
+    <meta property="og:description" content="Track drawdowns, spot bargains, and tune your triggers in real time.">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://stonkmarket.local/">
+    <meta property="og:image" content="https://stonkmarket.local/static/preview.png">
+    <meta property="og:image:alt" content="Stonkmarket dashboard preview">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Stonkmarket | Market dips, distilled">
+    <meta name="twitter:description" content="Track drawdowns, spot bargains, and tune your triggers in real time.">
+    <meta name="twitter:image" content="https://stonkmarket.local/static/preview.png">
+    <meta name="twitter:image:alt" content="Stonkmarket dashboard preview">
+    <link rel="canonical" href="https://stonkmarket.local/">
+    <title>Stonkmarket</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="/static/apple-theme.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.js"></script>
+    <script id="ld-json" type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      "name": "Stonkmarket",
+      "url": "https://stonkmarket.local/",
+      "description": "Track drawdowns, spot bargains, and tune your triggers in real time."
+    }
+    </script>
+    <style>
+      .navbar-toggler { border: none !important; box-shadow: none !important; }
+      .burger-stack { position: relative; width: 1.9rem; height: 1.9rem; display: inline-block; }
+      .burger-icon {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: opacity 0.25s ease, transform 0.25s ease, color 0.25s ease;
+        color: var(--text);
+        font-size: 1.9rem;
+      }
+      .burger-list { opacity: 1; transform: rotate(0deg) scale(1); }
+      .burger-x { opacity: 0; transform: rotate(-45deg) scale(0.9); }
+      .burger-open .burger-list { opacity: 0; transform: rotate(45deg) scale(0.9); }
+      .burger-open .burger-x { opacity: 1; transform: rotate(0deg) scale(1.05); }
+      #logout-btn {
+        color: var(--text) !important;
+        border-color: var(--text) !important;
+      }
+      #logout-btn:hover {
+        background-color: var(--muted) !important;
+        color: var(--text) !important;
+      }
+    </style>
+  </head>
+  <body>
+    <nav class="navbar navbar-expand-lg navbar-dark glassy-nav anim-soft mx-2">
+      <div class="container-fluid px-0">
+        <a class="navbar-brand fw-bold" href="/">Stonkmarket</a>
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navContent" aria-label="Toggle navigation">
+          <span class="burger-stack">
+            <i class="bi bi-list burger-icon burger-list"></i>
+            <i class="bi bi-x burger-icon burger-x"></i>
+          </span>
+        </button>
+        <div class="collapse navbar-collapse" id="navContent">
+          <ul class="navbar-nav me-auto">
+            <li class="nav-item"><a class="nav-link" href="/">Dashboard</a></li>
+            <li class="nav-item auth-only" style="display:none;"><a class="nav-link" href="/symbols">Symbols</a></li>
+            <li class="nav-item auth-only admin-only" style="display:none;"><a class="nav-link" href="/cronjobs">Cronjobs</a></li>
+            <li class="nav-item auth-only" style="display:none;"><a class="nav-link" href="/settings">Settings</a></li>
+            <li class="nav-item auth-guest"><a class="nav-link" href="/login">Login</a></li>
+          </ul>
+          <div class="d-flex align-items-center gap-2">
+            <span class="badge-soft" id="user-badge">Guest</span>
+            <button class="btn btn-sm btn-outline-light" id="logout-btn" type="button" style="display:none;">Logout</button>
+            <button class="btn btn-sm btn-outline-light theme-toggle hit-target anim-soft" id="theme-toggle" type="button">
+              <i class="bi bi-sun" id="theme-icon"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+    </nav>
+    <main class="container py-4 content-shell">
+      {% block content %}{% endblock %}
+    </main>
+    <footer class="container py-3 text-muted small">
+      <div class="d-flex flex-column flex-md-row justify-content-between align-items-start gap-2">
+        <span>Stonkmarket · Market dips, distilled.</span>
+        <span>Data for education only; not investment advice.</span>
+      </div>
+    </footer>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+      (function enhanceSEO() {
+        const currentUrl = `${location.origin}${location.pathname}`;
+        const canonical = document.querySelector('link[rel="canonical"]') || (() => {
+          const link = document.createElement('link');
+          link.rel = 'canonical';
+          document.head.appendChild(link);
+          return link;
+        })();
+        canonical.href = currentUrl;
+        document.querySelectorAll('meta[property="og:url"]').forEach(meta => meta.content = currentUrl);
+        document.querySelectorAll('meta[property="og:image"], meta[name="twitter:image"]').forEach(meta => {
+          meta.content = `${location.origin}/static/preview.png`;
+        });
+        const ld = document.getElementById('ld-json');
+        if (ld) {
+          try {
+            const parsed = JSON.parse(ld.textContent || '{}');
+            parsed.url = currentUrl;
+            ld.textContent = JSON.stringify(parsed);
+          } catch (e) {
+            // noop
+          }
+        }
+      })();
+
+      const themeKey = 'stonkmarket-theme';
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      const savedTheme = localStorage.getItem(themeKey);
+      const initialTheme = savedTheme || (prefersDark ? 'dark' : 'light');
+      document.body.dataset.theme = initialTheme;
+
+      function setTheme(next) {
+        document.body.dataset.theme = next;
+        localStorage.setItem(themeKey, next);
+        const icon = document.getElementById('theme-icon');
+        if (icon) icon.className = next === 'dark' ? 'bi bi-moon-stars' : 'bi bi-sun';
+        document.dispatchEvent(new Event('theme-changed'));
+      }
+
+      setTheme(initialTheme);
+      const toggleBtn = document.getElementById('theme-toggle');
+      if (toggleBtn) {
+        toggleBtn.addEventListener('click', () => {
+          const next = document.body.dataset.theme === 'dark' ? 'light' : 'dark';
+          setTheme(next);
+        });
+      }
+
+      function setAuthVisibility(isAuthed, isAdmin) {
+        document.querySelectorAll('.auth-only').forEach(el => {
+          el.style.display = isAuthed ? '' : 'none';
+        });
+        document.querySelectorAll('.auth-guest').forEach(el => {
+          el.style.display = isAuthed ? 'none' : '';
+        });
+        document.querySelectorAll('.admin-only').forEach(el => {
+          el.style.display = isAuthed && isAdmin ? '' : 'none';
+        });
+      }
+
+      async function loadUserBadge() {
+        try {
+          const res = await fetch('/api/auth/me', {credentials: 'include'});
+          if (!res.ok) throw new Error('no session');
+          const data = await res.json();
+          document.getElementById('user-badge').textContent = data.username;
+          document.getElementById('logout-btn').style.display = 'inline-flex';
+          setAuthVisibility(true, data.is_admin === true);
+        } catch (e) {
+          document.getElementById('user-badge').textContent = 'Guest';
+          document.getElementById('logout-btn').style.display = 'none';
+          setAuthVisibility(false, false);
+        }
+      }
+
+      const logoutBtn = document.getElementById('logout-btn');
+      if (logoutBtn) {
+        logoutBtn.addEventListener('click', async () => {
+          await fetch('/api/auth/logout', {method: 'POST', credentials: 'include'});
+          window.location.href = '/login';
+        });
+      }
+
+      const navCollapse = document.getElementById('navContent');
+      const burgerToggler = document.querySelector('.navbar-toggler');
+      if (navCollapse && burgerToggler) {
+        navCollapse.addEventListener('shown.bs.collapse', () => {
+          burgerToggler.classList.add('burger-open');
+        });
+        navCollapse.addEventListener('hidden.bs.collapse', () => {
+          burgerToggler.classList.remove('burger-open');
+        });
+      }
+
+      loadUserBadge();
+    </script>
+  </body>
+</html>

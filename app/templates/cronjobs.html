@@ -1,0 +1,244 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-3">
+  <div>
+    <div class="badge-soft mb-2">Automation</div>
+    <h2 class="hero-title h3 mb-1">Schedule data + analysis</h2>
+    <p class="hero-subtitle mb-1">Keep quotes fresh and rankings current with simple cron specs.</p>
+    <div class="text-muted small">Hover the info icon in the table for human-readable timing.</div>
+  </div>
+</div>
+
+<div class="card glass anim-soft">
+  <div class="card-body">
+    <div class="table-responsive">
+      <table class="table table-sm align-middle stacked-table" id="cron-table">
+        <thead><tr><th>Name</th><th>Cron</th><th>Human</th><th class="text-end">Actions</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="card glass anim-soft mt-3">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-3">
+      <div>
+        <div class="badge-soft mb-2">Logs</div>
+        <h3 class="h5 mb-1">Recent executions</h3>
+        <p class="text-muted small mb-0">Latest entries per job (max 50).</p>
+      </div>
+      <div class="d-flex gap-2 flex-wrap">
+        <select class="form-select form-select-sm" id="log-cron-select" onchange="loadLogs()"></select>
+        <button class="btn btn-sm btn-outline-secondary" onclick="loadLogs()">Reload</button>
+      </div>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-sm align-middle stacked-table" id="log-table">
+        <thead><tr><th>When</th><th>Status</th><th>Message</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="cronModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Cron</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label">Name</label>
+          <input class="form-control" id="cron-name" disabled>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Cron</label>
+          <input class="form-control" id="cron-spec">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+        <button class="btn btn-primary" onclick="saveCron()">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let cronModal;
+let cronList = [];
+let selectedCron = null;
+
+async function requireAdmin() {
+  const res = await fetch('/api/auth/me', {credentials: 'include'});
+  if (!res.ok) {
+    window.location.href = '/login';
+    return false;
+  }
+  const data = await res.json();
+  if (!data.is_admin) {
+    window.location.href = '/';
+    return false;
+  }
+  return true;
+}
+
+function toHuman(cron) {
+  const parts = cron.trim().split(/\s+/);
+  if (parts.length !== 5) return cron;
+  const [m, h, dom, mon, dow] = parts;
+
+  const hh = h.padStart(2, '0');
+  const mm = m.padStart(2, '0');
+  const time = `${hh}:${mm}`;
+
+  const dowName = (code) => {
+    const map = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    const idx = parseInt(code, 10);
+    return Number.isNaN(idx) || idx < 0 || idx > 6 ? code : map[idx];
+  };
+
+  if (dom === '*' && mon === '*' && dow === '*') {
+    return `Every day at ${time}`;
+  }
+  if (dom === '*' && mon === '*' && dow === '1-5') {
+    return `Weekdays at ${time}`;
+  }
+  if (dom === '*' && mon === '*' && dow.match(/^[0-6](,[0-6])*$/)) {
+    const days = dow.split(',').map(dowName).join(', ');
+    return `${days} at ${time}`;
+  }
+  if (dom === '*' && mon === '*' && dow.length === 1 && dow.match(/[0-6]/)) {
+    return `${dowName(dow)}s at ${time}`;
+  }
+  if (dom === '*' && mon === '*' && dow.includes('-')) {
+    const [start, end] = dow.split('-');
+    return `${dowName(start)}–${dowName(end)} at ${time}`;
+  }
+  if (dow === '*' && dom === '*' && mon.match(/^[1-9]|1[0-2]$/)) {
+    return `Monthly (month ${mon}) daily at ${time}`;
+  }
+  if (dow === '*' && mon === '*' && dom.match(/^\d{1,2}$/)) {
+    return `Day ${dom} each month at ${time}`;
+  }
+
+  return cron; // fallback: raw string
+}
+
+async function loadCronjobs() {
+  const res = await fetch('/api/cronjobs', {credentials: 'include'});
+  if (res.status === 401) { window.location.href = '/login'; return; }
+  const data = await res.json();
+  cronList = data;
+  const tbody = document.querySelector('#cron-table tbody');
+  tbody.innerHTML = '';
+  if (!data.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="table-empty">No cronjobs yet. Defaults will seed on first run.</td></tr>';
+    const select = document.getElementById('log-cron-select');
+    if (select) {
+      select.innerHTML = '<option value="">No jobs</option>';
+    }
+    return;
+  }
+  const select = document.getElementById('log-cron-select');
+  if (select) {
+    select.innerHTML = '';
+    data.forEach(j => {
+      const opt = document.createElement('option');
+      opt.value = j.name;
+      opt.textContent = j.name;
+      select.appendChild(opt);
+    });
+    if (!selectedCron || !data.find(j => j.name === selectedCron)) {
+      selectedCron = data[0].name;
+    }
+    select.value = selectedCron;
+  }
+  data.forEach(j => {
+    const tr = document.createElement('tr');
+    const human = toHuman(j.cron);
+    tr.innerHTML = `<td data-label="Name">${j.name}</td><td data-label="Cron">${j.cron}</td><td data-label="Human"><span title="${j.cron}">${human}</span></td>`+
+      `<td class="text-end" data-label="Actions"><div class="d-flex justify-content-end gap-2 flex-wrap"><button class="btn btn-sm btn-outline-primary" onclick="editCron('${j.name}', '${j.cron}')">Edit</button><button class="btn btn-sm btn-primary" onclick="runCron('${j.name}')">Run now</button></div></td>`;
+    tbody.appendChild(tr);
+  });
+  await loadLogs();
+}
+
+function editCron(name, cron) {
+  document.getElementById('cron-name').value = name;
+  document.getElementById('cron-spec').value = cron;
+  cronModal = new bootstrap.Modal(document.getElementById('cronModal'));
+  cronModal.show();
+}
+
+async function saveCron() {
+  const name = document.getElementById('cron-name').value;
+  const cron = document.getElementById('cron-spec').value;
+  await fetch(`/api/cronjobs/${name}`, {method: 'PUT', headers: {'Content-Type': 'application/json'}, credentials: 'include', body: JSON.stringify({cron})});
+  cronModal.hide();
+  loadCronjobs();
+}
+
+async function runCron(name) {
+  selectedCron = name;
+  const tbody = document.querySelector('#log-table tbody');
+  tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted">Running…</td></tr>';
+  const res = await fetch(`/api/cronjobs/${encodeURIComponent(name)}/run`, {method: 'POST', credentials: 'include'});
+  if (res.status === 401 || res.status === 403) { window.location.href = '/login'; return; }
+  if (!res.ok) {
+    tbody.innerHTML = '<tr><td colspan="3" class="table-empty">Run failed.</td></tr>';
+    return;
+  }
+  await loadLogs();
+}
+
+function formatTimestamp(ts) {
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return ts;
+  return `${d.toLocaleDateString()} ${d.toLocaleTimeString()}`;
+}
+
+async function loadLogs() {
+  const select = document.getElementById('log-cron-select');
+  if (!select || !select.value) {
+    const tbody = document.querySelector('#log-table tbody');
+    tbody.innerHTML = '<tr><td colspan="3" class="table-empty">Select a job to view logs.</td></tr>';
+    return;
+  }
+  selectedCron = select.value;
+  const tbody = document.querySelector('#log-table tbody');
+  tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted">Loading…</td></tr>';
+  const res = await fetch(`/api/cronjobs/${encodeURIComponent(selectedCron)}/logs?limit=50`, {credentials: 'include'});
+  if (res.status === 401) { window.location.href = '/login'; return; }
+  if (!res.ok) {
+    tbody.innerHTML = '<tr><td colspan="3" class="table-empty">Failed to load logs.</td></tr>';
+    return;
+  }
+  const logs = await res.json();
+  tbody.innerHTML = '';
+  if (!logs.length) {
+    tbody.innerHTML = '<tr><td colspan="3" class="table-empty">No logs yet for this job.</td></tr>';
+    return;
+  }
+  logs.forEach(log => {
+    const tr = document.createElement('tr');
+    const statusBadge = log.status === 'ok'
+      ? '<span class="badge bg-success-subtle text-success">OK</span>'
+      : '<span class="badge bg-danger-subtle text-danger">Error</span>';
+    tr.innerHTML = `<td data-label="When">${formatTimestamp(log.created_at)}</td>`+
+      `<td data-label="Status">${statusBadge}</td>`+
+      `<td data-label="Message">${log.message || ''}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+  (async () => {
+    if (await requireAdmin()) {
+      loadCronjobs();
+    }
+  })();
+</script>
+{% endblock %}

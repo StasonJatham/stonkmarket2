@@ -1,0 +1,25 @@
+__pycache__/
+*.py[cod]
+*.sqlite
+*.db
+*.db-wal
+*.db-shm
+.dockerignore
+.env
+.env.*
+venv/
+.venv/
+.idea/
+.vscode/
+.DS_Store
+node_modules/
+.eggs/
+.python-version
+.mypy_cache/
+.pytest_cache/
+
+# Local data
+/data/
+
+# Build artifacts
+*.log
