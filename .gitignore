@@ -8,6 +8,7 @@ __pycache__/
 *.sqlite-shm
 dips.sqlite-wal
 dips.sqlite-shm
+*sqlite-wal*
 .dockerignore
 .env
 venv/
