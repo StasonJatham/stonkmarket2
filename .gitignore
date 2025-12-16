@@ -6,9 +6,10 @@ __pycache__/
 *.db-shm
 *.sqlite-wal
 *.sqlite-shm
+dips.sqlite-wal
+dips.sqlite-shm
 .dockerignore
 .env
-.env.*
 venv/
 .venv/
 .idea/
