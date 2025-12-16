@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import logging
+import threading
 from typing import Optional
 
 from croniter import croniter, CroniterBadCronError
@@ -60,7 +61,13 @@ def start_scheduler(app):
     if not settings.scheduler_enabled:
         logger.info("Scheduler disabled via SCHEDULER_ENABLED")
         return
-    loop = asyncio.get_event_loop()
-    task = loop.create_task(scheduler_loop())
-    app.state.scheduler_task = task
-    logger.info("Scheduler started")
+    def _thread_runner():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.create_task(scheduler_loop())
+        loop.run_forever()
+
+    thread = threading.Thread(target=_thread_runner, name="scheduler", daemon=True)
+    thread.start()
+    app.state.scheduler_thread = thread
+    logger.info("Scheduler started in background thread")
