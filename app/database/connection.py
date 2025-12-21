@@ -51,7 +51,21 @@ CREATE TABLE IF NOT EXISTS cronjob_logs (
 CREATE TABLE IF NOT EXISTS auth_user (
     username TEXT PRIMARY KEY,
     password_hash TEXT NOT NULL,
+    mfa_secret TEXT,
+    mfa_enabled INTEGER NOT NULL DEFAULT 0,
+    mfa_backup_codes TEXT,
     updated_at TEXT NOT NULL
+);
+
+-- Secure API keys (encrypted, admin-only with MFA)
+CREATE TABLE IF NOT EXISTS secure_api_keys (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    key_name TEXT NOT NULL UNIQUE,
+    encrypted_key TEXT NOT NULL,
+    key_hint TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    created_by TEXT NOT NULL
 );
 
 -- Stock suggestions from users
@@ -64,6 +78,7 @@ CREATE TABLE IF NOT EXISTS stock_suggestions (
     sector TEXT,
     industry TEXT,
     summary TEXT,
+    ai_bio TEXT,
     last_price REAL,
     price_90d_ago REAL,
     price_change_90d REAL,
@@ -74,14 +89,35 @@ CREATE TABLE IF NOT EXISTS stock_suggestions (
     removed_at TEXT
 );
 
--- Votes for suggestions (for deduplication)
+-- Votes for suggestions (tracks vote history for cooldown)
 CREATE TABLE IF NOT EXISTS suggestion_votes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     suggestion_id INTEGER NOT NULL,
     voter_hash TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    UNIQUE(suggestion_id, voter_hash),
     FOREIGN KEY(suggestion_id) REFERENCES stock_suggestions(id) ON DELETE CASCADE
+);
+
+-- Dip tinder votes (buy/sell/skip on current dips)
+CREATE TABLE IF NOT EXISTS dip_votes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol TEXT NOT NULL,
+    voter_hash TEXT NOT NULL,
+    vote_type TEXT NOT NULL,  -- 'buy', 'sell', 'skip'
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(symbol) REFERENCES symbols(symbol) ON DELETE CASCADE
+);
+
+-- AI analysis cache for dips
+CREATE TABLE IF NOT EXISTS dip_ai_analysis (
+    symbol TEXT PRIMARY KEY,
+    tinder_bio TEXT,
+    ai_rating TEXT,
+    ai_reasoning TEXT,
+    analysis_data TEXT,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    FOREIGN KEY(symbol) REFERENCES symbols(symbol) ON DELETE CASCADE
 );
 
 -- Indexes for common queries
@@ -92,6 +128,11 @@ CREATE INDEX IF NOT EXISTS idx_suggestions_status ON stock_suggestions(status);
 CREATE INDEX IF NOT EXISTS idx_suggestions_vote_count ON stock_suggestions(vote_count DESC);
 CREATE INDEX IF NOT EXISTS idx_suggestions_symbol ON stock_suggestions(symbol);
 CREATE INDEX IF NOT EXISTS idx_suggestion_votes_suggestion ON suggestion_votes(suggestion_id);
+CREATE INDEX IF NOT EXISTS idx_suggestion_votes_voter ON suggestion_votes(voter_hash);
+CREATE INDEX IF NOT EXISTS idx_suggestion_votes_cooldown ON suggestion_votes(suggestion_id, voter_hash, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_dip_votes_symbol ON dip_votes(symbol);
+CREATE INDEX IF NOT EXISTS idx_dip_votes_voter ON dip_votes(voter_hash);
+CREATE INDEX IF NOT EXISTS idx_dip_votes_cooldown ON dip_votes(symbol, voter_hash, created_at DESC);
 """
 
 

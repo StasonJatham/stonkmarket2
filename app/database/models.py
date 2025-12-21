@@ -95,21 +95,28 @@ class CronJobLog:
 
 @dataclass
 class AuthUser:
-    """Authentication user."""
+    """Authentication user with MFA support."""
 
     username: str
     password_hash: str
+    mfa_secret: Optional[str] = None
+    mfa_enabled: bool = False
+    mfa_backup_codes: Optional[str] = None  # JSON list of hashed backup codes
     updated_at: Optional[datetime] = None
 
     @classmethod
     def from_row(cls, row) -> "AuthUser":
         """Create from database row."""
+        keys = row.keys()
         updated = None
-        if "updated_at" in row.keys() and row["updated_at"]:
+        if "updated_at" in keys and row["updated_at"]:
             updated = datetime.fromisoformat(row["updated_at"])
         return cls(
             username=row["username"],
             password_hash=row["password_hash"],
+            mfa_secret=row["mfa_secret"] if "mfa_secret" in keys else None,
+            mfa_enabled=bool(row["mfa_enabled"]) if "mfa_enabled" in keys else False,
+            mfa_backup_codes=row["mfa_backup_codes"] if "mfa_backup_codes" in keys else None,
             updated_at=updated,
         )
 
@@ -190,3 +197,93 @@ class SuggestionVote:
             created_at=created,
         )
 
+
+@dataclass
+class SecureApiKey:
+    """Encrypted API key storage."""
+
+    id: int
+    key_name: str
+    encrypted_key: str
+    key_hint: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    created_by: str = ""
+
+    @classmethod
+    def from_row(cls, row) -> "SecureApiKey":
+        """Create from database row."""
+        keys = row.keys()
+        
+        def parse_dt(key: str) -> Optional[datetime]:
+            if key in keys and row[key]:
+                return datetime.fromisoformat(row[key])
+            return None
+        
+        return cls(
+            id=row["id"],
+            key_name=row["key_name"],
+            encrypted_key=row["encrypted_key"],
+            key_hint=row["key_hint"] if "key_hint" in keys else None,
+            created_at=parse_dt("created_at"),
+            updated_at=parse_dt("updated_at"),
+            created_by=row["created_by"] if "created_by" in keys else "",
+        )
+
+
+@dataclass
+class DipVote:
+    """User vote on a dip (buy/sell/skip)."""
+
+    id: int
+    symbol: str
+    voter_hash: str
+    vote_type: str  # 'buy', 'sell', 'skip'
+    created_at: Optional[datetime] = None
+
+    @classmethod
+    def from_row(cls, row) -> "DipVote":
+        """Create from database row."""
+        created = None
+        if "created_at" in row.keys() and row["created_at"]:
+            created = datetime.fromisoformat(row["created_at"])
+        return cls(
+            id=row["id"],
+            symbol=row["symbol"],
+            voter_hash=row["voter_hash"],
+            vote_type=row["vote_type"],
+            created_at=created,
+        )
+
+
+@dataclass
+class DipAIAnalysis:
+    """Cached AI analysis for a dip."""
+
+    symbol: str
+    tinder_bio: Optional[str] = None
+    ai_rating: Optional[str] = None  # 'strong_buy', 'buy', 'hold', 'sell', 'strong_sell'
+    ai_reasoning: Optional[str] = None
+    analysis_data: Optional[str] = None  # JSON blob of data used for analysis
+    created_at: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+
+    @classmethod
+    def from_row(cls, row) -> "DipAIAnalysis":
+        """Create from database row."""
+        keys = row.keys()
+        
+        def parse_dt(key: str) -> Optional[datetime]:
+            if key in keys and row[key]:
+                return datetime.fromisoformat(row[key])
+            return None
+        
+        return cls(
+            symbol=row["symbol"],
+            tinder_bio=row["tinder_bio"] if "tinder_bio" in keys else None,
+            ai_rating=row["ai_rating"] if "ai_rating" in keys else None,
+            ai_reasoning=row["ai_reasoning"] if "ai_reasoning" in keys else None,
+            analysis_data=row["analysis_data"] if "analysis_data" in keys else None,
+            created_at=parse_dt("created_at"),
+            expires_at=parse_dt("expires_at"),
+        )

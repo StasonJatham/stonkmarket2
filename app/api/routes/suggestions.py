@@ -1,4 +1,4 @@
-"""Stock suggestion API routes."""
+"""Stock suggestion API routes with REST conventions and fingerprint-based deduplication."""
 
 from __future__ import annotations
 
@@ -6,16 +6,21 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request
 
-from app.api.dependencies import get_db, require_admin, get_client_ip
+from app.api.dependencies import (
+    get_db,
+    require_admin,
+    get_request_fingerprint,
+    get_vote_identifier,
+)
 from app.core.exceptions import ValidationError, NotFoundError
 from app.core.logging import get_logger
 from app.repositories import suggestions as suggestions_repo
 from app.schemas.suggestions import (
     SuggestionCreate,
-    SuggestionVote,
     SuggestionResponse,
     SuggestionListResponse,
-    SuggestionAdminAction,
+    SuggestionApprove,
+    SuggestionReject,
     TopSuggestion,
     SuggestionStatus,
 )
@@ -27,7 +32,7 @@ router = APIRouter(prefix="/suggestions", tags=["suggestions"])
 
 
 # =============================================================================
-# Public endpoints
+# Public endpoints (fingerprint-based vote deduplication with 7-day cooldown)
 # =============================================================================
 
 @router.post("", response_model=dict, status_code=201)
@@ -46,13 +51,14 @@ async def suggest_stock(
     - Indices: ^GSPC (S&P 500)
     
     If the stock was already suggested, this adds a vote instead.
+    Vote cooldown: 7 days per stock per user (based on fingerprint).
     """
-    # Get voter identifier (IP address for deduplication)
-    voter_id = get_client_ip(request)
+    # Use fingerprint for vote deduplication
+    voter_fingerprint = get_request_fingerprint(request)
     
     success, error, result = suggestion_service.suggest_stock(
         symbol=data.symbol,
-        voter_identifier=voter_id,
+        voter_identifier=voter_fingerprint,
     )
     
     if not success:
@@ -66,7 +72,7 @@ async def suggest_stock(
     }
 
 
-@router.post("/{symbol}/vote", response_model=dict)
+@router.put("/{symbol}/vote", response_model=dict)
 async def vote_for_suggestion(
     request: Request,
     symbol: str,
@@ -74,17 +80,31 @@ async def vote_for_suggestion(
     """
     Vote for an existing stock suggestion.
     
-    Each user (identified by IP) can only vote once per suggestion.
-    """
-    voter_id = get_client_ip(request)
+    Uses PUT since voting is idempotent - voting twice has no additional effect.
     
-    success, error = suggestion_service.vote_for_suggestion(
+    Vote cooldown: Each user can only vote once per stock every 7 days.
+    Users are identified by a fingerprint combining IP + browser headers.
+    
+    If auto-approve is enabled and the suggestion meets all criteria
+    (vote count, unique voters, age), it will be automatically approved.
+    """
+    # Create a vote-specific identifier that includes the symbol
+    vote_id = get_vote_identifier(request, symbol)
+    
+    success, error, was_auto_approved = await suggestion_service.vote_for_suggestion(
         symbol=symbol.upper(),
-        voter_identifier=voter_id,
+        voter_identifier=vote_id,
     )
     
     if not success:
         raise ValidationError(error)
+    
+    if was_auto_approved:
+        return {
+            "message": "Vote recorded - suggestion auto-approved!",
+            "symbol": symbol.upper(),
+            "auto_approved": True,
+        }
     
     return {"message": "Vote recorded", "symbol": symbol.upper()}
 
@@ -97,6 +117,7 @@ async def get_top_suggestions(
     Get top voted pending suggestions.
     
     This shows what stocks the community wants tracked next.
+    No authentication or rate limiting required.
     """
     return suggestion_service.get_top_suggestions(limit=limit)
 
@@ -137,7 +158,7 @@ async def list_pending_suggestions(
 
 
 # =============================================================================
-# Admin endpoints
+# Admin endpoints (authenticated)
 # =============================================================================
 
 @router.get("", response_model=SuggestionListResponse)
@@ -211,23 +232,46 @@ async def get_suggestion(
     )
 
 
-@router.post("/{suggestion_id}/action", response_model=dict)
-async def admin_action(
+@router.put("/{suggestion_id}/approve", response_model=dict)
+async def approve_suggestion(
     suggestion_id: int,
-    data: SuggestionAdminAction,
+    data: SuggestionApprove = None,
     _admin=Depends(require_admin),
 ):
     """
-    Perform admin action on a suggestion.
+    Approve a suggestion and add it to tracked symbols.
     
-    Actions:
-    - approve: Add to tracked symbols
-    - reject: Reject with optional reason
-    - remove: Remove previously approved stock
+    Uses PUT since approving is idempotent.
     """
     success, error, result = await suggestion_service.admin_action(
         suggestion_id=suggestion_id,
-        action=data.action,
+        action="approve",
+        reason=None,
+    )
+    
+    if not success:
+        raise ValidationError(error)
+    
+    return {
+        "message": "Suggestion approved successfully",
+        **result,
+    }
+
+
+@router.put("/{suggestion_id}/reject", response_model=dict)
+async def reject_suggestion(
+    suggestion_id: int,
+    data: SuggestionReject,
+    _admin=Depends(require_admin),
+):
+    """
+    Reject a suggestion with a reason.
+    
+    Uses PUT since rejecting is idempotent.
+    """
+    success, error, result = await suggestion_service.admin_action(
+        suggestion_id=suggestion_id,
+        action="reject",
         reason=data.reason,
     )
     
@@ -235,7 +279,33 @@ async def admin_action(
         raise ValidationError(error)
     
     return {
-        "message": f"Suggestion {data.action}d successfully",
+        "message": "Suggestion rejected",
+        **result,
+    }
+
+
+@router.delete("/{suggestion_id}", response_model=dict)
+async def remove_suggestion(
+    suggestion_id: int,
+    _admin=Depends(require_admin),
+):
+    """
+    Remove a previously approved stock from tracking.
+    
+    The stock enters a 90-day cooldown before it can be suggested again.
+    Uses DELETE as this is a removal operation.
+    """
+    success, error, result = await suggestion_service.admin_action(
+        suggestion_id=suggestion_id,
+        action="remove",
+        reason=None,
+    )
+    
+    if not success:
+        raise ValidationError(error)
+    
+    return {
+        "message": "Stock removed from tracking",
         **result,
     }
 

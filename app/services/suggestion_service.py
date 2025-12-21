@@ -206,18 +206,34 @@ def suggest_stock(symbol: str, voter_identifier: str) -> tuple[bool, Optional[st
         }
 
 
-def vote_for_suggestion(symbol: str, voter_identifier: str) -> tuple[bool, Optional[str]]:
+async def vote_for_suggestion(symbol: str, voter_identifier: str) -> tuple[bool, Optional[str], bool]:
     """Vote for an existing suggestion.
     
     Args:
         symbol: Stock symbol
-        voter_identifier: IP or session ID for deduplication
+        voter_identifier: Fingerprint for deduplication
         
     Returns:
-        Tuple of (success, error_message)
+        Tuple of (success, error_message, was_auto_approved)
     """
     with get_db() as conn:
-        return suggestions_repo.add_vote(conn, symbol, voter_identifier)
+        success, error, should_auto_approve = suggestions_repo.add_vote(conn, symbol, voter_identifier)
+        
+        if success and should_auto_approve:
+            # Trigger auto-approval
+            suggestion = suggestions_repo.get_by_symbol(conn, symbol)
+            if suggestion:
+                approve_success, approve_error, _ = await admin_action(
+                    suggestion_id=suggestion.id,
+                    action="approve",
+                    reason=None,
+                    is_auto=True,
+                )
+                if approve_success:
+                    logger.info(f"Auto-approved suggestion {symbol} after meeting criteria")
+                    return True, None, True
+        
+        return success, error, False
 
 
 def get_top_suggestions(limit: int = 10) -> list[dict]:
@@ -246,6 +262,7 @@ async def admin_action(
     suggestion_id: int,
     action: str,
     reason: Optional[str] = None,
+    is_auto: bool = False,
 ) -> tuple[bool, Optional[str], Optional[dict]]:
     """Process admin action on a suggestion.
     
@@ -253,6 +270,7 @@ async def admin_action(
         suggestion_id: Suggestion ID
         action: 'approve', 'reject', or 'remove'
         reason: Optional reason for rejection/removal
+        is_auto: Whether this is an auto-approval (vs manual admin action)
         
     Returns:
         Tuple of (success, error_message, updated_suggestion)

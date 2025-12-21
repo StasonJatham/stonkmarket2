@@ -55,8 +55,15 @@ class Settings(BaseSettings):
     rate_limit_enabled: bool = Field(default=True, description="Enable rate limiting")
     rate_limit_auth: str = Field(default="5/minute", description="Rate limit for auth endpoints")
     rate_limit_api: str = Field(default="100/minute", description="Rate limit for API endpoints")
-    rate_limit_suggest: str = Field(default="10/hour", description="Rate limit for suggesting stocks")
-    rate_limit_vote: str = Field(default="30/hour", description="Rate limit for voting on stocks")
+
+    # Suggestion voting settings
+    vote_cooldown_days: int = Field(default=7, ge=1, le=90, description="Days before same user can vote for same stock again")
+    
+    # Auto-approve settings (all conditions must be met)
+    auto_approve_enabled: bool = Field(default=False, description="Enable auto-approval of suggestions")
+    auto_approve_votes: int = Field(default=50, ge=5, description="Minimum votes required for auto-approval")
+    auto_approve_unique_voters: int = Field(default=10, ge=3, description="Minimum unique voters (by fingerprint) required")
+    auto_approve_min_age_hours: int = Field(default=48, ge=1, description="Minimum hours since suggestion created")
 
     # Valkey (Redis-compatible)
     valkey_url: str = Field(default="redis://valkey:6379/0", description="Valkey connection URL")

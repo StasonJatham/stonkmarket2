@@ -7,6 +7,7 @@ import sqlite3
 from datetime import datetime, timedelta
 from typing import Optional
 
+from app.core.config import settings
 from app.core.logging import get_logger
 from app.database.models import StockSuggestion, SuggestionVote
 
@@ -165,38 +166,101 @@ def add_vote(
     Args:
         conn: Database connection
         symbol: Stock symbol
-        voter_identifier: IP address or session ID for deduplication
+        voter_identifier: Fingerprint hash for deduplication
         
     Returns:
-        Tuple of (success, error_message)
+        Tuple of (success, error_message, should_auto_approve)
     """
     symbol = symbol.upper()
     suggestion = get_by_symbol(conn, symbol)
     
     if not suggestion:
-        return False, "Suggestion not found"
+        return False, "Suggestion not found", False
     
     if suggestion.status != "pending":
-        return False, "Can only vote on pending suggestions"
+        return False, "Can only vote on pending suggestions", False
     
     # Hash the voter identifier for privacy
     voter_hash = hashlib.sha256(voter_identifier.encode()).hexdigest()[:32]
     
-    try:
-        conn.execute(
-            """INSERT INTO suggestion_votes (suggestion_id, voter_hash, created_at)
-               VALUES (?, ?, ?)""",
-            (suggestion.id, voter_hash, datetime.utcnow().isoformat())
-        )
-        # Increment vote count
-        conn.execute(
-            "UPDATE stock_suggestions SET vote_count = vote_count + 1 WHERE id = ?",
-            (suggestion.id,)
-        )
-        conn.commit()
-        return True, None
-    except sqlite3.IntegrityError:
-        return False, "You have already voted for this stock"
+    # Check if user has voted for this symbol within cooldown period
+    cooldown_days = settings.vote_cooldown_days
+    cooldown_start = (datetime.utcnow() - timedelta(days=cooldown_days)).isoformat()
+    existing_vote = conn.execute(
+        """SELECT id, created_at FROM suggestion_votes 
+           WHERE suggestion_id = ? AND voter_hash = ? AND created_at > ?
+           ORDER BY created_at DESC LIMIT 1""",
+        (suggestion.id, voter_hash, cooldown_start)
+    ).fetchone()
+    
+    if existing_vote:
+        # Calculate days remaining in cooldown
+        vote_date = datetime.fromisoformat(existing_vote["created_at"])
+        cooldown_end = vote_date + timedelta(days=cooldown_days)
+        days_left = (cooldown_end - datetime.utcnow()).days + 1
+        return False, f"You can vote for this stock again in {days_left} day{'s' if days_left != 1 else ''}", False
+    
+    # Record the vote
+    conn.execute(
+        """INSERT INTO suggestion_votes (suggestion_id, voter_hash, created_at)
+           VALUES (?, ?, ?)""",
+        (suggestion.id, voter_hash, datetime.utcnow().isoformat())
+    )
+    # Increment vote count
+    conn.execute(
+        "UPDATE stock_suggestions SET vote_count = vote_count + 1 WHERE id = ?",
+        (suggestion.id,)
+    )
+    conn.commit()
+    
+    # Check if should auto-approve
+    should_auto_approve = check_auto_approve_eligibility(conn, suggestion.id)
+    
+    return True, None, should_auto_approve
+
+
+def get_unique_voter_count(conn: sqlite3.Connection, suggestion_id: int) -> int:
+    """Get count of unique voters for a suggestion."""
+    result = conn.execute(
+        "SELECT COUNT(DISTINCT voter_hash) FROM suggestion_votes WHERE suggestion_id = ?",
+        (suggestion_id,)
+    ).fetchone()
+    return result[0] if result else 0
+
+
+def check_auto_approve_eligibility(conn: sqlite3.Connection, suggestion_id: int) -> bool:
+    """
+    Check if a suggestion meets auto-approval criteria.
+    
+    All conditions must be met:
+    1. Auto-approve is enabled in settings
+    2. Vote count >= configured threshold
+    3. Unique voters >= configured threshold
+    4. Suggestion age >= configured minimum hours
+    """
+    if not settings.auto_approve_enabled:
+        return False
+    
+    suggestion = get_by_id(conn, suggestion_id)
+    if not suggestion or suggestion.status != "pending":
+        return False
+    
+    # Check vote count
+    if suggestion.vote_count < settings.auto_approve_votes:
+        return False
+    
+    # Check unique voters
+    unique_voters = get_unique_voter_count(conn, suggestion_id)
+    if unique_voters < settings.auto_approve_unique_voters:
+        return False
+    
+    # Check age
+    if suggestion.created_at:
+        age_hours = (datetime.utcnow() - suggestion.created_at).total_seconds() / 3600
+        if age_hours < settings.auto_approve_min_age_hours:
+            return False
+    
+    return True
 
 
 def update_fetch_data(

@@ -166,18 +166,6 @@ def get_api_rate_limiter() -> RateLimiter:
     return RateLimiter("api", limit, window)
 
 
-def get_suggest_rate_limiter() -> RateLimiter:
-    """Get rate limiter for stock suggestion endpoint."""
-    limit, window = parse_rate_limit(settings.rate_limit_suggest)
-    return RateLimiter("suggest", limit, window)
-
-
-def get_vote_rate_limiter() -> RateLimiter:
-    """Get rate limiter for voting endpoint."""
-    limit, window = parse_rate_limit(settings.rate_limit_vote)
-    return RateLimiter("vote", limit, window)
-
-
 async def check_rate_limit(
     identifier: str,
     limiter: Optional[RateLimiter] = None,

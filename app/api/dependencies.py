@@ -17,11 +17,7 @@ from app.core.fingerprint import (
     get_suggestion_identifier,
 )
 from app.database import get_db_connection
-from app.cache.rate_limit import (
-    check_rate_limit,
-    get_suggest_rate_limiter,
-    get_vote_rate_limiter,
-)
+from app.cache.rate_limit import check_rate_limit
 
 
 def get_db():
@@ -49,8 +45,6 @@ __all__ = [
     "require_admin",
     "rate_limit_auth",
     "rate_limit_api",
-    "rate_limit_suggest",
-    "rate_limit_vote",
 ]
 
 
@@ -176,35 +170,3 @@ async def rate_limit_api(
     # Use user ID if authenticated, otherwise IP
     identifier = user.sub if user else get_client_ip(request)
     await check_rate_limit(identifier, key_prefix="api")
-
-
-async def rate_limit_suggest(request: Request) -> str:
-    """
-    Apply rate limiting for stock suggestion endpoint.
-    
-    Uses fingerprint-based identification to make abuse harder.
-    Returns the fingerprint identifier for vote deduplication.
-    """
-    if not settings.rate_limit_enabled:
-        return get_suggestion_identifier(request)
-    
-    identifier = get_suggestion_identifier(request)
-    limiter = get_suggest_rate_limiter()
-    await check_rate_limit(identifier, limiter=limiter)
-    return identifier
-
-
-async def rate_limit_vote(request: Request) -> str:
-    """
-    Apply rate limiting for voting endpoint.
-    
-    Uses fingerprint-based identification to prevent vote manipulation.
-    Returns the fingerprint identifier for vote deduplication.
-    """
-    if not settings.rate_limit_enabled:
-        return get_request_fingerprint(request)
-    
-    identifier = get_request_fingerprint(request)
-    limiter = get_vote_rate_limiter()
-    await check_rate_limit(identifier, limiter=limiter)
-    return identifier

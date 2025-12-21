@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
-from typing import Dict, Optional
+from concurrent.futures import ThreadPoolExecutor
+from typing import Dict, Optional, Any
 
 import yfinance as yf
 
@@ -15,6 +17,7 @@ logger = get_logger("services.stock_info")
 
 _INFO_CACHE: Dict[str, tuple[float, StockInfo]] = {}
 _CACHE_TTL = 300  # 5 minutes
+_executor = ThreadPoolExecutor(max_workers=4)
 
 
 def get_stock_info(symbol: str) -> Optional[StockInfo]:
@@ -48,6 +51,30 @@ def get_stock_info(symbol: str) -> Optional[StockInfo]:
     except Exception as e:
         logger.warning(f"Failed to get stock info for {symbol}: {e}")
         return None
+
+
+async def get_stock_info_async(symbol: str) -> Optional[Dict[str, Any]]:
+    """Async wrapper for get_stock_info that returns a dict."""
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(_executor, get_stock_info, symbol)
+    
+    if result:
+        return {
+            "symbol": result.symbol,
+            "name": result.name,
+            "sector": result.sector,
+            "industry": result.industry,
+            "market_cap": result.market_cap,
+            "pe_ratio": result.pe_ratio,
+            "forward_pe": result.forward_pe,
+            "dividend_yield": result.dividend_yield,
+            "beta": result.beta,
+            "avg_volume": result.avg_volume,
+            "summary": result.summary,
+            "website": result.website,
+            "recommendation": result.recommendation,
+        }
+    return None
 
 
 def clear_info_cache() -> None:

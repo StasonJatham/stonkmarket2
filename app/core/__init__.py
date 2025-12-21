@@ -17,6 +17,13 @@ from .security import (
     decode_access_token,
     TokenData,
 )
+from .fingerprint import (
+    get_client_ip,
+    get_browser_fingerprint,
+    get_request_fingerprint,
+    get_vote_identifier,
+    get_suggestion_identifier,
+)
 
 __all__ = [
     "settings",
@@ -32,4 +39,9 @@ __all__ = [
     "create_access_token",
     "decode_access_token",
     "TokenData",
+    "get_client_ip",
+    "get_browser_fingerprint",
+    "get_request_fingerprint",
+    "get_vote_identifier",
+    "get_suggestion_identifier",
 ]

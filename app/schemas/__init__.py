@@ -36,6 +36,8 @@ from .suggestions import (
     SuggestionResponse,
     SuggestionListResponse,
     SuggestionAdminAction,
+    SuggestionApprove,
+    SuggestionReject,
     TopSuggestion,
 )
 
@@ -67,6 +69,8 @@ __all__ = [
     "SuggestionResponse",
     "SuggestionListResponse",
     "SuggestionAdminAction",
+    "SuggestionApprove",
+    "SuggestionReject",
     "TopSuggestion",
     # Common
     "ErrorResponse",
