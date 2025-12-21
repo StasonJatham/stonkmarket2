@@ -391,3 +391,145 @@ ON CONFLICT (name) DO NOTHING;
 -- Create indexes for full-text search on stock names
 CREATE INDEX idx_symbols_name_trgm ON symbols USING gin (name gin_trgm_ops);
 CREATE INDEX idx_suggestions_name_trgm ON stock_suggestions USING gin (company_name gin_trgm_ops);
+
+-- ============================================================================
+-- DIP FINDER SIGNAL ENGINE
+-- ============================================================================
+
+-- Price history cache (cached yfinance price data)
+CREATE TABLE IF NOT EXISTS price_history (
+    id SERIAL PRIMARY KEY,
+    symbol VARCHAR(20) NOT NULL,
+    date DATE NOT NULL,
+    open DECIMAL(16, 6),
+    high DECIMAL(16, 6),
+    low DECIMAL(16, 6),
+    close DECIMAL(16, 6) NOT NULL,
+    adj_close DECIMAL(16, 6),
+    volume BIGINT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(symbol, date)
+);
+
+CREATE INDEX idx_price_history_symbol ON price_history(symbol);
+CREATE INDEX idx_price_history_date ON price_history(date DESC);
+CREATE INDEX idx_price_history_symbol_date ON price_history(symbol, date DESC);
+
+-- DipFinder computed signals
+CREATE TABLE IF NOT EXISTS dipfinder_signals (
+    id SERIAL PRIMARY KEY,
+    ticker VARCHAR(20) NOT NULL,
+    benchmark VARCHAR(20) NOT NULL,
+    window_days INTEGER NOT NULL,
+    as_of_date DATE NOT NULL,
+    
+    -- Dip metrics
+    dip_stock DECIMAL(8, 6),
+    peak_stock DECIMAL(16, 6),
+    dip_pctl DECIMAL(5, 2),
+    dip_vs_typical DECIMAL(8, 4),
+    persist_days INTEGER,
+    
+    -- Market context
+    dip_mkt DECIMAL(8, 6),
+    excess_dip DECIMAL(8, 6),
+    dip_class VARCHAR(20),
+    
+    -- Scores
+    quality_score DECIMAL(5, 2),
+    stability_score DECIMAL(5, 2),
+    dip_score DECIMAL(5, 2),
+    final_score DECIMAL(5, 2),
+    
+    -- Alert
+    alert_level VARCHAR(20),
+    should_alert BOOLEAN DEFAULT FALSE,
+    reason TEXT,
+    
+    -- Contributing factors (JSON)
+    quality_factors JSONB,
+    stability_factors JSONB,
+    
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    expires_at TIMESTAMPTZ,
+    
+    UNIQUE(ticker, benchmark, window_days, as_of_date)
+);
+
+CREATE INDEX idx_dipfinder_signals_ticker ON dipfinder_signals(ticker);
+CREATE INDEX idx_dipfinder_signals_date ON dipfinder_signals(as_of_date DESC);
+CREATE INDEX idx_dipfinder_signals_lookup ON dipfinder_signals(ticker, benchmark, window_days, as_of_date);
+CREATE INDEX idx_dipfinder_signals_alert ON dipfinder_signals(should_alert) WHERE should_alert = TRUE;
+CREATE INDEX idx_dipfinder_signals_final ON dipfinder_signals(final_score DESC);
+CREATE INDEX idx_dipfinder_signals_expires ON dipfinder_signals(expires_at);
+
+-- DipFinder configuration per symbol (optional overrides)
+CREATE TABLE IF NOT EXISTS dipfinder_config (
+    id SERIAL PRIMARY KEY,
+    symbol VARCHAR(20) UNIQUE NOT NULL,
+    min_dip_abs DECIMAL(5, 4) DEFAULT 0.10,
+    min_persist_days INTEGER DEFAULT 2,
+    dip_percentile_threshold DECIMAL(5, 4) DEFAULT 0.80,
+    dip_vs_typical_threshold DECIMAL(5, 4) DEFAULT 1.5,
+    quality_gate DECIMAL(5, 2) DEFAULT 60,
+    stability_gate DECIMAL(5, 2) DEFAULT 60,
+    is_enabled BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_dipfinder_config_symbol ON dipfinder_config(symbol);
+CREATE INDEX idx_dipfinder_config_enabled ON dipfinder_config(is_enabled) WHERE is_enabled = TRUE;
+
+CREATE TRIGGER tr_dipfinder_config_updated
+    BEFORE UPDATE ON dipfinder_config
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+-- Dip state history (extended) with DipFinder fields
+CREATE TABLE IF NOT EXISTS dipfinder_history (
+    id SERIAL PRIMARY KEY,
+    ticker VARCHAR(20) NOT NULL,
+    event_type VARCHAR(20) NOT NULL CHECK (event_type IN ('entered_dip', 'exited_dip', 'deepened', 'recovered', 'alert_triggered')),
+    window_days INTEGER NOT NULL,
+    dip_pct DECIMAL(8, 6),
+    final_score DECIMAL(5, 2),
+    dip_class VARCHAR(20),
+    recorded_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_dipfinder_history_ticker ON dipfinder_history(ticker);
+CREATE INDEX idx_dipfinder_history_event ON dipfinder_history(event_type);
+CREATE INDEX idx_dipfinder_history_recorded ON dipfinder_history(recorded_at DESC);
+CREATE INDEX idx_dipfinder_history_ticker_time ON dipfinder_history(ticker, recorded_at DESC);
+
+-- YFinance info cache
+CREATE TABLE IF NOT EXISTS yfinance_info_cache (
+    id SERIAL PRIMARY KEY,
+    symbol VARCHAR(20) UNIQUE NOT NULL,
+    info_data JSONB NOT NULL,
+    fetched_at TIMESTAMPTZ DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX idx_yfinance_cache_symbol ON yfinance_info_cache(symbol);
+CREATE INDEX idx_yfinance_cache_expires ON yfinance_info_cache(expires_at);
+
+-- View for latest signals per ticker
+CREATE OR REPLACE VIEW dipfinder_latest_signals AS
+SELECT DISTINCT ON (ticker, benchmark, window_days)
+    *
+FROM dipfinder_signals
+ORDER BY ticker, benchmark, window_days, as_of_date DESC;
+
+-- View for active alerts
+CREATE OR REPLACE VIEW dipfinder_active_alerts AS
+SELECT 
+    ds.*,
+    s.name as company_name,
+    s.sector,
+    s.market_cap
+FROM dipfinder_signals ds
+JOIN symbols s ON ds.ticker = s.symbol
+WHERE ds.should_alert = TRUE
+  AND ds.as_of_date >= CURRENT_DATE - INTERVAL '7 days'
+ORDER BY ds.final_score DESC;

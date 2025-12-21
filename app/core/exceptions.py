@@ -46,6 +46,14 @@ class NotFoundError(AppException):
     message = "Resource not found"
 
 
+class BadRequestError(AppException):
+    """Bad request."""
+
+    status_code = status.HTTP_400_BAD_REQUEST
+    error_code = "BAD_REQUEST"
+    message = "Bad request"
+
+
 class AuthenticationError(AppException):
     """Authentication failed."""
 
