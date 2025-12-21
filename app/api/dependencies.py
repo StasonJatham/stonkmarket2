@@ -9,7 +9,7 @@ from fastapi import Cookie, Depends, Header, Request
 
 from app.core.config import settings
 from app.core.exceptions import AuthenticationError, AuthorizationError
-from app.core.security import TokenData, decode_access_token
+from app.core.security import TokenData, decode_access_token, validate_token_not_revoked
 from app.core.fingerprint import (
     get_client_ip,
     get_request_fingerprint,
@@ -29,7 +29,7 @@ def get_db():
         async def get_items(conn = Depends(get_db)):
             ...
     """
-    for conn in get_db_connection():
+    with get_db_connection() as conn:
         yield conn
 
 
@@ -75,7 +75,7 @@ async def get_current_user(
     """
     Get current authenticated user (optional).
 
-    Returns None if not authenticated.
+    Returns None if not authenticated or token is revoked.
     """
     token = _extract_token(authorization, session)
     if not token:
@@ -83,6 +83,10 @@ async def get_current_user(
 
     try:
         token_data = decode_access_token(token)
+
+        # Check if token has been revoked
+        if not await validate_token_not_revoked(token_data):
+            return None
 
         # Verify user still exists in database
         from app.repositories.auth_user import get_user
@@ -105,7 +109,7 @@ async def require_user(
     """
     Require authenticated user.
 
-    Raises AuthenticationError if not authenticated.
+    Raises AuthenticationError if not authenticated or token is revoked.
     """
     token = _extract_token(authorization, session)
     if not token:
@@ -118,6 +122,13 @@ async def require_user(
         token_data = decode_access_token(token)
     except AuthenticationError:
         raise
+
+    # Check if token has been revoked
+    if not await validate_token_not_revoked(token_data):
+        raise AuthenticationError(
+            message="Token has been revoked",
+            error_code="TOKEN_REVOKED",
+        )
 
     # Verify user still exists in database
     from app.repositories.auth_user import get_user
@@ -163,10 +174,25 @@ async def rate_limit_api(
     request: Request,
     user: Optional[TokenData] = Depends(get_current_user),
 ) -> None:
-    """Apply rate limiting for API endpoints."""
+    """Apply rate limiting for API endpoints.
+    
+    Rate limits are designed to prevent abuse, not interfere with normal usage:
+    - Admin users: No rate limiting
+    - Authenticated users: 600 requests/minute (very generous)
+    - Anonymous users: 60 requests/minute
+    """
     if not settings.rate_limit_enabled:
+        return
+    
+    # Admins bypass rate limiting entirely
+    if user and user.is_admin:
         return
 
     # Use user ID if authenticated, otherwise IP
     identifier = user.sub if user else get_client_ip(request)
-    await check_rate_limit(identifier, key_prefix="api")
+    is_authenticated = user is not None
+    
+    # Import here to avoid circular imports
+    from app.cache.rate_limit import get_api_rate_limiter
+    limiter = get_api_rate_limiter(authenticated=is_authenticated)
+    await check_rate_limit(identifier, limiter=limiter)

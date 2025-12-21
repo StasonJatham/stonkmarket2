@@ -31,6 +31,10 @@ class Settings(BaseSettings):
         default="postgresql://stonkmarket:stonkmarket@localhost:5432/stonkmarket",
         description="PostgreSQL connection URL"
     )
+    sqlite_path: str = Field(
+        default="/data/dips.sqlite",
+        description="SQLite database path (for legacy sync operations)"
+    )
     db_pool_min_size: int = Field(default=5, ge=1, le=20, description="Minimum database pool connections")
     db_pool_max_size: int = Field(default=20, ge=5, le=100, description="Maximum database pool connections")
 
@@ -56,10 +60,12 @@ class Settings(BaseSettings):
         description="Allowed CORS origins (no wildcards with credentials)",
     )
 
-    # Rate limiting
+    # Rate limiting (designed to prevent abuse, not interfere with normal usage)
     rate_limit_enabled: bool = Field(default=True, description="Enable rate limiting")
-    rate_limit_auth: str = Field(default="5/minute", description="Rate limit for auth endpoints")
-    rate_limit_api: str = Field(default="100/minute", description="Rate limit for API endpoints")
+    rate_limit_auth: str = Field(default="20/minute", description="Rate limit for auth endpoints (unauthenticated)")
+    rate_limit_api_anonymous: str = Field(default="60/minute", description="Rate limit for anonymous API requests")
+    rate_limit_api_authenticated: str = Field(default="600/minute", description="Rate limit for authenticated API requests")
+    # Note: Admin users bypass rate limiting entirely
 
     # Suggestion voting settings
     vote_cooldown_days: int = Field(default=7, ge=1, le=90, description="Days before same user can vote for same stock again")

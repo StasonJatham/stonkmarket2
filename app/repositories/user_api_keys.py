@@ -9,7 +9,7 @@ from typing import Optional
 
 from asyncpg import Connection
 
-from app.database.connection import get_db, fetch_one, fetch_all, execute, fetch_val
+from app.database.connection import get_pg_connection, fetch_one, fetch_all, execute, fetch_val
 from app.core.logging import get_logger
 
 logger = get_logger("user_api_keys")
@@ -63,7 +63,7 @@ async def create_user_api_key(
     if expires_days:
         expires_at = now + timedelta(days=expires_days)
     
-    async with get_db() as conn:
+    async with get_pg_connection() as conn:
         row = await conn.fetchrow(
             """
             INSERT INTO user_api_keys (
@@ -93,7 +93,7 @@ async def validate_api_key(key: str) -> Optional[dict]:
     key_hash = hash_api_key(key)
     now = datetime.utcnow()
     
-    async with get_db() as conn:
+    async with get_pg_connection() as conn:
         row = await conn.fetchrow(
             """
             SELECT id, key_prefix, name, user_id, vote_weight, rate_limit_bypass,
@@ -255,7 +255,7 @@ async def update_api_key(
 
 async def get_key_stats() -> dict:
     """Get statistics about user API keys."""
-    async with get_db() as conn:
+    async with get_pg_connection() as conn:
         stats = await conn.fetchrow(
             """
             SELECT 

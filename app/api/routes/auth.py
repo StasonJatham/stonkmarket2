@@ -6,7 +6,7 @@ import sqlite3
 
 from fastapi import APIRouter, Depends, Request, Response
 
-from app.api.dependencies import get_db, get_client_ip, require_user, rate_limit_auth
+from app.api.dependencies import get_db, get_client_ip, require_user, require_admin, rate_limit_auth
 from app.cache.rate_limit import check_rate_limit
 from app.core.config import settings
 from app.core.exceptions import AuthenticationError
@@ -68,8 +68,8 @@ async def login(
             error_code="INVALID_CREDENTIALS",
         )
 
-    # Check if admin
-    is_admin = user.username == settings.default_admin_user
+    # Get admin status from database (not just username comparison)
+    is_admin = user.is_admin
 
     # Generate JWT token
     access_token = create_access_token(
@@ -100,10 +100,19 @@ async def login(
     "/logout",
     status_code=204,
     summary="Logout user",
-    description="Clear the session cookie.",
+    description="Revoke the current token and clear the session cookie.",
 )
-async def logout(response: Response) -> None:
-    """Clear session cookie to log out."""
+async def logout(
+    response: Response,
+    user: TokenData = Depends(require_user),
+) -> None:
+    """Revoke current token and clear session cookie."""
+    from app.cache.token_blacklist import blacklist_token
+    
+    # Blacklist the current token so it can't be reused
+    await blacklist_token(user.jti, user.exp)
+    
+    # Clear the session cookie
     response.delete_cookie(
         key="session",
         domain=settings.domain,
@@ -179,8 +188,9 @@ async def update_credentials(
         conn.execute("DELETE FROM auth_user WHERE username = ?", (user.sub,))
         conn.commit()
 
-    # Check if still admin
-    is_admin = new_username == settings.default_admin_user
+    # Get admin status from database
+    updated_user = auth_repo.get_user(conn, new_username)
+    is_admin = updated_user.is_admin if updated_user else False
 
     # Generate new token with updated info
     new_token = create_access_token(
@@ -203,3 +213,44 @@ async def update_credentials(
         username=new_username,
         is_admin=is_admin,
     )
+
+
+@router.post(
+    "/logout-all",
+    status_code=204,
+    summary="Logout from all devices",
+    description="Revoke all tokens for the current user across all devices.",
+)
+async def logout_all(
+    response: Response,
+    user: TokenData = Depends(require_user),
+) -> None:
+    """Revoke all tokens for this user (logout from all devices)."""
+    from app.cache.token_blacklist import blacklist_user_tokens
+    
+    # Invalidate all tokens issued before now
+    await blacklist_user_tokens(user.sub)
+    
+    # Clear the session cookie
+    response.delete_cookie(
+        key="session",
+        domain=settings.domain,
+        path="/",
+    )
+
+
+@router.post(
+    "/revoke-user/{username}",
+    status_code=204,
+    summary="Revoke user sessions (admin)",
+    description="Admin endpoint to revoke all sessions for a specific user.",
+    dependencies=[Depends(require_admin)],
+)
+async def revoke_user_sessions(
+    username: str,
+    admin: TokenData = Depends(require_admin),
+) -> None:
+    """Admin: Revoke all tokens for a specific user."""
+    from app.cache.token_blacklist import blacklist_user_tokens
+    
+    await blacklist_user_tokens(username.lower())

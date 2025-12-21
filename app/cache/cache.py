@@ -238,3 +238,7 @@ def cached(
         return wrapper
 
     return decorator
+
+
+# Global cache manager instance for general use
+cache_manager = Cache(prefix="general", default_ttl=3600)

@@ -71,9 +71,8 @@ class JobScheduler:
         from app.repositories.cronjobs import list_cronjobs
 
         # Get database connection
-        for conn in get_db_connection():
+        with get_db_connection() as conn:
             jobs = list_cronjobs(conn)
-            break
 
         for job_config in jobs:
             job_func = get_job(job_config.name)
@@ -120,20 +119,18 @@ class JobScheduler:
 
             try:
                 # Get fresh connection for job execution
-                for conn in get_db_connection():
+                with get_db_connection() as conn:
                     if asyncio.iscoroutinefunction(func):
                         result = await func(conn)
                     else:
                         result = func(conn)
-                    break
 
                 duration = (datetime.now(timezone.utc) - start_time).total_seconds()
                 message = str(result) if result else "Completed successfully"
 
                 # Log success
-                for conn in get_db_connection():
+                with get_db_connection() as conn:
                     insert_log(conn, name, "ok", f"{message} ({duration:.2f}s)")
-                    break
 
                 logger.info(f"Job {name} completed in {duration:.2f}s")
 
@@ -141,9 +138,8 @@ class JobScheduler:
                 duration = (datetime.now(timezone.utc) - start_time).total_seconds()
 
                 # Log error
-                for conn in get_db_connection():
+                with get_db_connection() as conn:
                     insert_log(conn, name, "error", str(e)[:1000])
-                    break
 
                 logger.exception(f"Job {name} failed after {duration:.2f}s")
 

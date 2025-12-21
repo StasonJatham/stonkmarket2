@@ -39,7 +39,7 @@ CREATE INDEX idx_secure_api_keys_service ON secure_api_keys(service_name);
 CREATE TABLE IF NOT EXISTS user_api_keys (
     id SERIAL PRIMARY KEY,
     key_hash VARCHAR(64) UNIQUE NOT NULL,  -- SHA-256 hash of the key
-    key_prefix VARCHAR(8) NOT NULL,  -- First 8 chars for identification
+    key_prefix VARCHAR(16) NOT NULL,  -- First chars for identification (e.g., sm_xxxxxxxx)
     name VARCHAR(100) NOT NULL,
     description TEXT,
     user_id INTEGER REFERENCES auth_user(id),
@@ -198,7 +198,7 @@ CREATE TABLE IF NOT EXISTS api_usage (
 
 CREATE INDEX idx_api_usage_service ON api_usage(service);
 CREATE INDEX idx_api_usage_recorded ON api_usage(recorded_at DESC);
-CREATE INDEX idx_api_usage_daily ON api_usage(DATE(recorded_at), service);
+-- Note: can't create immutable date index on TIMESTAMPTZ, use recorded_at directly
 
 -- Batch job tracking
 CREATE TABLE IF NOT EXISTS batch_jobs (

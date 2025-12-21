@@ -11,7 +11,6 @@ import {
 import type { CronJob, CronLogEntry } from '@/services/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Table,
@@ -25,7 +24,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Separator } from '@/components/ui/separator';
 import {
   Dialog,
   DialogContent,
@@ -57,20 +55,7 @@ import {
   ChevronRight,
   X
 } from 'lucide-react';
-
-// Cron presets
-const cronPresets = [
-  { label: 'Every minute', value: '* * * * *' },
-  { label: 'Every 5 minutes', value: '*/5 * * * *' },
-  { label: 'Every 15 minutes', value: '*/15 * * * *' },
-  { label: 'Every hour', value: '0 * * * *' },
-  { label: 'Every 6 hours', value: '0 */6 * * *' },
-  { label: 'Daily at midnight', value: '0 0 * * *' },
-  { label: 'Daily at 9 AM', value: '0 9 * * *' },
-  { label: 'Daily at 6 PM', value: '0 18 * * *' },
-  { label: 'Weekdays at 9 AM', value: '0 9 * * 1-5' },
-  { label: 'Weekly on Sunday', value: '0 0 * * 0' },
-];
+import { CronBuilder, validateCron, describeCron } from '@/components/CronBuilder';
 
 export function AdminPage() {
   const { user } = useAuth();
@@ -326,50 +311,23 @@ export function AdminPage() {
                                 Edit Schedule
                               </Button>
                             </DialogTrigger>
-                            <DialogContent className="sm:max-w-md">
+                            <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
                               <DialogHeader>
                                 <DialogTitle>Edit Schedule</DialogTitle>
                                 <DialogDescription>
                                   Configure the cron schedule for {editingJob?.name}
                                 </DialogDescription>
                               </DialogHeader>
-                              <div className="space-y-4 py-4">
-                                <div className="space-y-2">
-                                  <Label>Cron Expression</Label>
-                                  <Input
-                                    value={newCronValue}
-                                    onChange={(e) => setNewCronValue(e.target.value)}
-                                    placeholder="* * * * *"
-                                    className="font-mono"
-                                  />
-                                  <p className="text-xs text-muted-foreground">
-                                    Format: minute hour day month weekday
-                                  </p>
-                                </div>
-                                
-                                <Separator />
-                                
-                                <div className="space-y-2">
-                                  <Label>Quick Presets</Label>
-                                  <div className="grid grid-cols-2 gap-2">
-                                    {cronPresets.map((preset) => (
-                                      <Button
-                                        key={preset.value}
-                                        variant={newCronValue === preset.value ? 'default' : 'outline'}
-                                        size="sm"
-                                        className="justify-start text-xs"
-                                        onClick={() => setNewCronValue(preset.value)}
-                                      >
-                                        {preset.label}
-                                      </Button>
-                                    ))}
-                                  </div>
-                                </div>
+                              <div className="py-4">
+                                <CronBuilder
+                                  value={newCronValue}
+                                  onChange={setNewCronValue}
+                                />
                               </div>
                               <DialogFooter>
                                 <Button 
                                   onClick={handleSaveCron}
-                                  disabled={isSaving || !newCronValue}
+                                  disabled={isSaving || !newCronValue || !validateCron(newCronValue).valid}
                                 >
                                   {isSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                                   Save Changes
@@ -394,10 +352,13 @@ export function AdminPage() {
                       </div>
                     </CardHeader>
                     <CardContent className="pt-0">
-                      <div className="flex items-center gap-3 p-3 bg-muted/50 rounded-lg">
-                        <Badge variant="outline" className="font-mono text-sm">
+                      <div className="flex flex-col sm:flex-row sm:items-center gap-2 p-3 bg-muted/50 rounded-lg">
+                        <Badge variant="outline" className="font-mono text-sm w-fit">
                           {job.cron}
                         </Badge>
+                        <span className="text-sm text-muted-foreground">
+                          {describeCron(job.cron)}
+                        </span>
                       </div>
                     </CardContent>
                   </Card>

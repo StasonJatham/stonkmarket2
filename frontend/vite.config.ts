@@ -12,9 +12,21 @@ export default defineConfig({
     },
   },
   server: {
+    host: '0.0.0.0',
+    port: 5173,
+    // Watch for file changes in Docker
+    watch: {
+      usePolling: true,
+    },
+    // HMR configuration for Docker
+    hmr: {
+      host: 'localhost',
+      port: 5173,
+    },
     proxy: {
       '/api': {
-        target: 'http://localhost:8000',
+        // In Docker, use container name; locally use localhost
+        target: process.env.DOCKER_ENV ? 'http://api:8000' : 'http://localhost:8000',
         changeOrigin: true,
       },
     },

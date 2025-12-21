@@ -73,6 +73,38 @@ class YFinancePriceProvider:
         self.config = config or get_dipfinder_config()
         self._cache = Cache(prefix="prices", default_ttl=self.config.price_cache_ttl)
     
+    def _normalize_yf_dataframe(self, df: pd.DataFrame, ticker: str) -> pd.DataFrame:
+        """Normalize yfinance DataFrame to handle MultiIndex columns."""
+        if df.empty:
+            return df
+        
+        # Handle MultiIndex columns (newer yfinance versions)
+        if isinstance(df.columns, pd.MultiIndex):
+            # Get the ticker-specific columns
+            ticker_upper = ticker.upper()
+            try:
+                # For single ticker downloads, columns are like ('Close', 'AAPL')
+                if ticker_upper in df.columns.get_level_values(1):
+                    df = df.xs(ticker_upper, axis=1, level=1)
+                elif ticker_upper in df.columns.get_level_values(0):
+                    df = df[ticker_upper]
+            except Exception:
+                # Fallback: droplevel if we can
+                try:
+                    df.columns = df.columns.droplevel(1)
+                except Exception:
+                    pass
+        
+        # Ensure we have proper column names
+        expected_cols = {"Close", "Open", "High", "Low", "Volume"}
+        if not any(col in df.columns for col in expected_cols):
+            # Try to find columns with these names at any level
+            for col in list(df.columns):
+                if isinstance(col, tuple) and len(col) > 0:
+                    df = df.rename(columns={col: col[0]})
+        
+        return df
+    
     def _download_prices_sync(
         self,
         tickers: List[str],
@@ -184,10 +216,13 @@ class YFinancePriceProvider:
             for ticker in batch:
                 try:
                     if len(batch) == 1:
-                        ticker_df = df
+                        ticker_df = self._normalize_yf_dataframe(df, ticker)
                     elif isinstance(df.columns, pd.MultiIndex):
                         if ticker in df.columns.get_level_values(0):
                             ticker_df = df[ticker]
+                        elif ticker.upper() in df.columns.get_level_values(1):
+                            # New yfinance format: ('Price', 'TICKER')
+                            ticker_df = df.xs(ticker.upper(), axis=1, level=1)
                         else:
                             continue
                     else:

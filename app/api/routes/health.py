@@ -11,11 +11,11 @@ from app.core.config import settings
 from app.database import db_healthcheck
 from app.schemas.common import HealthResponse
 
-router = APIRouter()
+router = APIRouter(prefix="/health")
 
 
 @router.get(
-    "/health",
+    "",
     response_model=HealthResponse,
     summary="Health check",
     description="Check the health status of the API and its dependencies.",
@@ -27,7 +27,7 @@ async def health_check() -> HealthResponse:
     Returns overall health status and individual service checks.
     """
     checks = {
-        "database": db_healthcheck(),
+        "database": await db_healthcheck(),
         "cache": await valkey_healthcheck(),
     }
 

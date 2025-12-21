@@ -54,7 +54,7 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
-    """Log all requests."""
+    """Log all requests with sensitive data scrubbing."""
 
     async def dispatch(self, request: Request, call_next):
         import time
@@ -64,11 +64,16 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
 
         duration = time.monotonic() - start_time
+        
+        # Log path only (not query params which may contain tokens)
+        # This prevents WebSocket ?token=xxx from appearing in logs
+        path = request.url.path
+        
         logger.info(
-            f"{request.method} {request.url.path} -> {response.status_code} ({duration:.3f}s)",
+            f"{request.method} {path} -> {response.status_code} ({duration:.3f}s)",
             extra={
                 "method": request.method,
-                "path": request.url.path,
+                "path": path,
                 "status_code": response.status_code,
                 "duration_ms": int(duration * 1000),
             },

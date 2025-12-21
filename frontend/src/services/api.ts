@@ -343,3 +343,416 @@ export function aggregatePortfolioPerformance(
     };
   });
 }
+
+// =============================================================================
+// STOCK TINDER TYPES & API
+// =============================================================================
+
+export interface VoteCounts {
+  buy: number;
+  sell: number;
+  buy_weighted: number;
+  sell_weighted: number;
+  net_score: number;
+}
+
+export interface DipCard {
+  symbol: string;
+  name: string | null;
+  sector: string | null;
+  industry: string | null;
+  current_price: number;
+  ref_high: number;
+  dip_pct: number;
+  days_below: number;
+  min_dip_pct: number | null;
+  tinder_bio: string | null;
+  ai_rating: 'strong_buy' | 'buy' | 'hold' | 'sell' | 'strong_sell' | null;
+  ai_reasoning: string | null;
+  ai_confidence: number | null;
+  vote_counts: VoteCounts;
+}
+
+export interface DipCardList {
+  cards: DipCard[];
+  total: number;
+}
+
+export interface DipStats {
+  symbol: string;
+  vote_counts: VoteCounts;
+  total_votes: number;
+  weighted_total: number;
+  buy_pct: number;
+  sell_pct: number;
+  sentiment: 'very_bullish' | 'bullish' | 'neutral' | 'bearish' | 'very_bearish';
+}
+
+export type VoteType = 'buy' | 'sell';
+
+export async function getDipCards(includeAi: boolean = false): Promise<DipCardList> {
+  const cacheKey = `tinder:cards:${includeAi}`;
+  
+  return apiCache.fetch(
+    cacheKey,
+    () => fetchAPI<DipCardList>(`/tinder/cards?include_ai=${includeAi}`),
+    { ttl: CACHE_TTL.RANKING }
+  );
+}
+
+export async function getDipCard(symbol: string, refreshAi: boolean = false): Promise<DipCard> {
+  return fetchAPI<DipCard>(`/tinder/cards/${symbol}?refresh_ai=${refreshAi}`);
+}
+
+export async function voteDip(symbol: string, voteType: VoteType): Promise<{ symbol: string; vote_type: string; message: string }> {
+  return fetchAPI(`/tinder/cards/${symbol}/vote`, {
+    method: 'PUT',
+    body: JSON.stringify({ vote_type: voteType }),
+  });
+}
+
+export async function getDipStats(symbol: string): Promise<DipStats> {
+  return fetchAPI<DipStats>(`/tinder/cards/${symbol}/stats`);
+}
+
+export async function refreshAiAnalysis(symbol: string): Promise<DipCard> {
+  return fetchAPI<DipCard>(`/tinder/cards/${symbol}/refresh-ai`, {
+    method: 'POST',
+  });
+}
+
+// =============================================================================
+// DIPFINDER TYPES & API
+// =============================================================================
+
+export interface QualityFactors {
+  score: number;
+  pe_ratio: number | null;
+  forward_pe: number | null;
+  pb_ratio: number | null;
+  ps_ratio: number | null;
+  profit_margin: number | null;
+  roe: number | null;
+  debt_to_equity: number | null;
+  current_ratio: number | null;
+  factors_available: number;
+}
+
+export interface StabilityFactors {
+  score: number;
+  beta: number | null;
+  volatility_30d: number | null;
+  volatility_90d: number | null;
+  avg_volume: number | null;
+  market_cap: number | null;
+  factors_available: number;
+}
+
+export interface DipSignal {
+  ticker: string;
+  window: number;
+  benchmark: string;
+  as_of_date: string;
+  dip_stock: number;
+  peak_stock: number;
+  current_price: number;
+  dip_pctl: number;
+  dip_vs_typical: number;
+  persist_days: number;
+  dip_mkt: number;
+  excess_dip: number;
+  dip_class: 'UNIQUE' | 'RELATIVE' | 'MARKET_WIDE' | 'MICRO';
+  quality_score: number;
+  stability_score: number;
+  dip_score: number;
+  final_score: number;
+  alert_level: 'HIGH' | 'MEDIUM' | 'LOW' | 'NONE';
+  should_alert: boolean;
+  reason: string;
+  quality_factors?: QualityFactors;
+  stability_factors?: StabilityFactors;
+}
+
+export interface DipSignalListResponse {
+  signals: DipSignal[];
+  count: number;
+  benchmark: string;
+  window: number;
+  as_of_date: string;
+}
+
+export async function getDipFinderSignals(
+  tickers: string[],
+  options: { window?: number; benchmark?: string; includeFactors?: boolean } = {}
+): Promise<DipSignalListResponse> {
+  const params = new URLSearchParams();
+  params.append('tickers', tickers.join(','));
+  if (options.window) params.append('window', options.window.toString());
+  if (options.benchmark) params.append('benchmark', options.benchmark);
+  if (options.includeFactors) params.append('include_factors', 'true');
+  
+  return fetchAPI<DipSignalListResponse>(`/dipfinder/signals?${params.toString()}`);
+}
+
+export async function getDipFinderSignal(
+  ticker: string,
+  options: { window?: number; benchmark?: string; forceRefresh?: boolean } = {}
+): Promise<DipSignal> {
+  const params = new URLSearchParams();
+  if (options.window) params.append('window', options.window.toString());
+  if (options.benchmark) params.append('benchmark', options.benchmark);
+  if (options.forceRefresh) params.append('force_refresh', 'true');
+  
+  return fetchAPI<DipSignal>(`/dipfinder/signals/${ticker}?${params.toString()}`);
+}
+
+// =============================================================================
+// SYMBOLS CRUD
+// =============================================================================
+
+export interface Symbol {
+  symbol: string;
+  min_dip_pct: number;
+  min_days: number;
+}
+
+export async function getSymbols(): Promise<Symbol[]> {
+  return fetchAPI<Symbol[]>('/symbols');
+}
+
+export async function getSymbol(symbol: string): Promise<Symbol> {
+  return fetchAPI<Symbol>(`/symbols/${symbol}`);
+}
+
+export async function createSymbol(data: { symbol: string; min_dip_pct?: number; min_days?: number }): Promise<Symbol> {
+  return fetchAPI<Symbol>('/symbols', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateSymbol(symbol: string, data: { min_dip_pct?: number; min_days?: number }): Promise<Symbol> {
+  return fetchAPI<Symbol>(`/symbols/${symbol}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteSymbol(symbol: string): Promise<void> {
+  await fetchAPI(`/symbols/${symbol}`, {
+    method: 'DELETE',
+  });
+}
+
+// =============================================================================
+// SYMBOL VALIDATION (Yahoo Finance)
+// =============================================================================
+
+export async function validateSymbol(symbol: string): Promise<{ valid: boolean; name?: string; error?: string }> {
+  try {
+    const info = await fetchAPI<StockInfo>(`/dips/${symbol.toUpperCase()}/info`);
+    return { valid: true, name: info.name || symbol };
+  } catch {
+    return { valid: false, error: 'Symbol not found on Yahoo Finance' };
+  }
+}
+
+// =============================================================================
+// MFA TYPES & API
+// =============================================================================
+
+export interface MFAStatus {
+  enabled: boolean;
+  has_backup_codes: boolean;
+  backup_codes_remaining: number | null;
+}
+
+export interface MFASetupResponse {
+  secret: string;
+  provisioning_uri: string;
+  qr_code_base64: string;
+}
+
+export interface MFAVerifyResponse {
+  enabled: boolean;
+  backup_codes: string[];
+}
+
+export async function getMFAStatus(): Promise<MFAStatus> {
+  return fetchAPI<MFAStatus>('/auth/mfa/status');
+}
+
+export async function setupMFA(): Promise<MFASetupResponse> {
+  return fetchAPI<MFASetupResponse>('/auth/mfa/setup', { method: 'POST' });
+}
+
+export async function verifyMFA(code: string): Promise<MFAVerifyResponse> {
+  return fetchAPI<MFAVerifyResponse>('/auth/mfa/verify', {
+    method: 'POST',
+    body: JSON.stringify({ code }),
+  });
+}
+
+export async function disableMFA(code: string): Promise<void> {
+  await fetchAPI('/auth/mfa/disable', {
+    method: 'POST',
+    body: JSON.stringify({ code }),
+  });
+}
+
+export async function regenerateBackupCodes(code: string): Promise<{ backup_codes: string[] }> {
+  return fetchAPI<{ backup_codes: string[] }>('/auth/mfa/backup-codes/regenerate', {
+    method: 'POST',
+    body: JSON.stringify({ code }),
+  });
+}
+
+// =============================================================================
+// API KEYS TYPES & API (OpenAI, etc.)
+// =============================================================================
+
+export interface ApiKeyInfo {
+  id: number;
+  key_name: string;
+  key_hint: string;
+  created_at: string;
+  updated_at: string;
+  created_by: string;
+}
+
+export interface ApiKeyList {
+  keys: ApiKeyInfo[];
+}
+
+export async function listApiKeys(): Promise<ApiKeyList> {
+  return fetchAPI<ApiKeyList>('/api-keys');
+}
+
+export async function createApiKey(keyName: string, apiKey: string, mfaCode: string): Promise<ApiKeyInfo> {
+  return fetchAPI<ApiKeyInfo>('/api-keys', {
+    method: 'POST',
+    body: JSON.stringify({ key_name: keyName, api_key: apiKey, mfa_code: mfaCode }),
+  });
+}
+
+export async function revealApiKey(keyName: string, mfaCode: string): Promise<{ key_name: string; api_key: string }> {
+  return fetchAPI<{ key_name: string; api_key: string }>(`/api-keys/${keyName}/reveal`, {
+    method: 'POST',
+    body: JSON.stringify({ mfa_code: mfaCode }),
+  });
+}
+
+export async function deleteApiKey(keyName: string, mfaCode: string): Promise<void> {
+  await fetchAPI(`/api-keys/${keyName}`, {
+    method: 'DELETE',
+    body: JSON.stringify({ mfa_code: mfaCode }),
+  });
+}
+
+export async function checkApiKey(keyName: string): Promise<{ key_name: string; exists: boolean; key_hint: string | null }> {
+  return fetchAPI<{ key_name: string; exists: boolean; key_hint: string | null }>(`/api-keys/check/${keyName}`);
+}
+
+// =============================================================================
+// USER SETTINGS / CREDENTIALS
+// =============================================================================
+
+export interface UserCredentialsUpdate {
+  current_password: string;
+  new_password: string;
+  new_username?: string;
+}
+
+export async function updateCredentials(data: UserCredentialsUpdate): Promise<{ username: string; is_admin: boolean }> {
+  return fetchAPI<{ username: string; is_admin: boolean }>('/auth/credentials', {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+// =============================================================================
+// SUGGESTIONS TYPES & API
+// =============================================================================
+
+export type SuggestionStatus = 'pending' | 'approved' | 'rejected';
+
+export interface Suggestion {
+  id: number;
+  symbol: string;
+  status: SuggestionStatus;
+  vote_count: number;
+  name: string | null;
+  sector: string | null;
+  summary: string | null;
+  last_price: number | null;
+  price_change_90d: number | null;
+  created_at: string;
+  updated_at: string | null;
+  fetched_at: string | null;
+  rejection_reason?: string | null;
+}
+
+export interface SuggestionListResponse {
+  items: Suggestion[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface TopSuggestion {
+  symbol: string;
+  name: string | null;
+  vote_count: number;
+  sector: string | null;
+  summary: string | null;
+}
+
+// Public endpoints (no auth required)
+export async function suggestStock(symbol: string): Promise<{ message: string; symbol: string; vote_count: number; status: string }> {
+  return fetchAPI<{ message: string; symbol: string; vote_count: number; status: string }>('/suggestions', {
+    method: 'POST',
+    body: JSON.stringify({ symbol }),
+  });
+}
+
+export async function voteForSuggestion(symbol: string): Promise<{ message: string; symbol: string; auto_approved?: boolean }> {
+  return fetchAPI<{ message: string; symbol: string; auto_approved?: boolean }>(`/suggestions/${symbol}/vote`, {
+    method: 'PUT',
+  });
+}
+
+export async function getTopSuggestions(limit: number = 10): Promise<TopSuggestion[]> {
+  return fetchAPI<TopSuggestion[]>(`/suggestions/top?limit=${limit}`);
+}
+
+export async function getPendingSuggestions(page: number = 1, pageSize: number = 20): Promise<SuggestionListResponse> {
+  return fetchAPI<SuggestionListResponse>(`/suggestions/pending?page=${page}&page_size=${pageSize}`);
+}
+
+// Admin endpoints
+export async function getAllSuggestions(
+  status?: SuggestionStatus,
+  page: number = 1,
+  pageSize: number = 20
+): Promise<SuggestionListResponse> {
+  const params = new URLSearchParams();
+  if (status) params.append('status', status);
+  params.append('page', page.toString());
+  params.append('page_size', pageSize.toString());
+  return fetchAPI<SuggestionListResponse>(`/suggestions?${params.toString()}`);
+}
+
+export async function approveSuggestion(suggestionId: number): Promise<{ message: string; symbol: string }> {
+  return fetchAPI<{ message: string; symbol: string }>(`/suggestions/${suggestionId}/approve`, {
+    method: 'PUT',
+  });
+}
+
+export async function rejectSuggestion(suggestionId: number, reason: string): Promise<{ message: string }> {
+  return fetchAPI<{ message: string }>(`/suggestions/${suggestionId}/reject`, {
+    method: 'PUT',
+    body: JSON.stringify({ reason }),
+  });
+}
+
+

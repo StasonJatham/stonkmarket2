@@ -160,10 +160,18 @@ def get_auth_rate_limiter() -> RateLimiter:
     return RateLimiter("auth", limit, window)
 
 
-def get_api_rate_limiter() -> RateLimiter:
-    """Get rate limiter for general API endpoints."""
-    limit, window = parse_rate_limit(settings.rate_limit_api)
-    return RateLimiter("api", limit, window)
+def get_api_rate_limiter(authenticated: bool = False) -> RateLimiter:
+    """Get rate limiter for API endpoints.
+    
+    Args:
+        authenticated: If True, use higher limits for authenticated users
+    """
+    if authenticated:
+        limit, window = parse_rate_limit(settings.rate_limit_api_authenticated)
+        return RateLimiter("api_auth", limit, window)
+    else:
+        limit, window = parse_rate_limit(settings.rate_limit_api_anonymous)
+        return RateLimiter("api_anon", limit, window)
 
 
 async def check_rate_limit(

@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 from decimal import Decimal
 
-from app.database.connection import get_db, fetch_all, fetch_one, fetch_val
+from app.database.connection import get_pg_connection, fetch_all, fetch_one, fetch_val
 from app.core.logging import get_logger
 
 logger = get_logger("dip_history")
@@ -75,7 +75,7 @@ async def get_dip_changes_summary(hours: int = 24) -> dict:
     """
     since = datetime.utcnow() - timedelta(hours=hours)
     
-    async with get_db() as conn:
+    async with get_pg_connection() as conn:
         row = await conn.fetchrow(
             """
             SELECT 
@@ -172,7 +172,7 @@ async def manually_record_change(
     Manually record a dip change (used for migrations or manual adjustments).
     The trigger on dip_state handles this automatically for normal operations.
     """
-    async with get_db() as conn:
+    async with get_pg_connection() as conn:
         row = await conn.fetchrow(
             """
             INSERT INTO dip_history (symbol, action, current_price, ath_price, dip_percentage)
@@ -194,7 +194,7 @@ async def cleanup_old_history(days: int = 90) -> int:
     """
     cutoff = datetime.utcnow() - timedelta(days=days)
     
-    async with get_db() as conn:
+    async with get_pg_connection() as conn:
         result = await conn.execute(
             "DELETE FROM dip_history WHERE recorded_at < $1",
             cutoff

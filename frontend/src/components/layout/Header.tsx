@@ -5,11 +5,13 @@ import { Link, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '@/context/AuthContext';
 import { ThemeToggle } from '@/components/ThemeToggle';
-import { TrendingUp, Settings, LogOut } from 'lucide-react';
+import { TrendingUp, Settings, LogOut, Heart, BarChart3 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 const navLinks = [
   { href: '/', label: 'Dashboard' },
+  { href: '/swipe', label: 'DipSwipe', icon: Heart },
+  { href: '/signals', label: 'Signals', icon: BarChart3, auth: true },
 ];
 
 const adminLinks = [
@@ -38,17 +40,23 @@ export function Header() {
 
           {/* Desktop Navigation */}
           <nav className="hidden md:flex items-center gap-6">
-            {navLinks.map((link) => (
-              <Link
-                key={link.href}
-                to={link.href}
-                className={`text-sm font-medium transition-colors hover:text-foreground ${
-                  isActive(link.href) ? 'text-foreground' : 'text-muted-foreground'
-                }`}
-              >
-                {link.label}
-              </Link>
-            ))}
+            {navLinks.map((link) => {
+              // Skip auth-required links if not logged in
+              if (link.auth && !user) return null;
+              const Icon = link.icon;
+              return (
+                <Link
+                  key={link.href}
+                  to={link.href}
+                  className={`text-sm font-medium transition-colors hover:text-foreground flex items-center gap-1.5 ${
+                    isActive(link.href) ? 'text-foreground' : 'text-muted-foreground'
+                  }`}
+                >
+                  {Icon && <Icon className="h-4 w-4" />}
+                  {link.label}
+                </Link>
+              );
+            })}
             {user && adminLinks.map((link) => (
               <Link
                 key={link.href}

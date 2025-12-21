@@ -104,3 +104,27 @@ def generate_csrf_token() -> str:
 def validate_csrf_token(session_token: str, request_token: str) -> bool:
     """Validate CSRF token using constant-time comparison."""
     return secrets.compare_digest(session_token, request_token)
+
+
+async def validate_token_not_revoked(token_data: TokenData) -> bool:
+    """
+    Check if a token has been revoked.
+    
+    Args:
+        token_data: Decoded token data
+        
+    Returns:
+        True if token is valid (not revoked), False if revoked
+    """
+    from app.cache.token_blacklist import is_token_blacklisted, get_user_token_invalidation_time
+    
+    # Check if specific token is blacklisted
+    if await is_token_blacklisted(token_data.jti):
+        return False
+    
+    # Check if all user tokens before a certain time are invalidated
+    invalidation_time = await get_user_token_invalidation_time(token_data.sub)
+    if invalidation_time and token_data.iat < invalidation_time:
+        return False
+    
+    return True

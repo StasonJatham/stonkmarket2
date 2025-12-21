@@ -9,6 +9,8 @@ import { ProtectedRoute } from '@/components/ProtectedRoute';
 const Dashboard = lazy(() => import('@/pages/Dashboard').then(m => ({ default: m.Dashboard })));
 const LoginPage = lazy(() => import('@/pages/Login').then(m => ({ default: m.LoginPage })));
 const AdminPage = lazy(() => import('@/pages/Admin').then(m => ({ default: m.AdminPage })));
+const DipSwipePage = lazy(() => import('@/pages/DipSwipe').then(m => ({ default: m.DipSwipePage })));
+const DipFinderPage = lazy(() => import('@/pages/DipFinder').then(m => ({ default: m.DipFinderPage })));
 
 // Loading fallback component
 const PageLoader = memo(function PageLoader() {
@@ -32,6 +34,15 @@ function App() {
               <Route path="/login" element={<LoginPage />} />
               <Route element={<Layout />}>
                 <Route path="/" element={<Dashboard />} />
+                <Route path="/swipe" element={<DipSwipePage />} />
+                <Route
+                  path="/signals"
+                  element={
+                    <ProtectedRoute>
+                      <DipFinderPage />
+                    </ProtectedRoute>
+                  }
+                />
                 <Route
                   path="/admin"
                   element={

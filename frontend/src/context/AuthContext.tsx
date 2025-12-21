@@ -1,7 +1,8 @@
 import { createContext, useContext, useState, useCallback, useMemo, type ReactNode } from 'react';
 import { 
   login as authLogin, 
-  logout as authLogout, 
+  logout as authLogout,
+  logoutAll as authLogoutAll,
   getCurrentUser,
 } from '@/services/auth';
 import type { User } from '@/services/auth';
@@ -9,9 +10,11 @@ import type { User } from '@/services/auth';
 interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
+  isAdmin: boolean;
   isLoading: boolean;
-  login: (username: string, password: string) => Promise<void>;
-  logout: () => void;
+  login: (username: string, password: string, mfaCode?: string) => Promise<void>;
+  logout: () => Promise<void>;
+  logoutAll: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -21,10 +24,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(() => getCurrentUser());
   const [isLoading, setIsLoading] = useState(false);
 
-  const login = useCallback(async (username: string, password: string) => {
+  const login = useCallback(async (username: string, password: string, mfaCode?: string) => {
     setIsLoading(true);
     try {
-      await authLogin(username, password);
+      await authLogin(username, password, mfaCode);
       const currentUser = getCurrentUser();
       setUser(currentUser);
     } finally {
@@ -32,18 +35,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const logout = useCallback(() => {
-    authLogout();
-    setUser(null);
+  const logout = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      await authLogout();
+    } finally {
+      setUser(null);
+      setIsLoading(false);
+    }
+  }, []);
+
+  const logoutAll = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      await authLogoutAll();
+    } finally {
+      setUser(null);
+      setIsLoading(false);
+    }
   }, []);
 
   const value = useMemo(() => ({
     user,
     isAuthenticated: !!user,
+    isAdmin: user?.is_admin ?? false,
     isLoading,
     login,
     logout,
-  }), [user, isLoading, login, logout]);
+    logoutAll,
+  }), [user, isLoading, login, logout, logoutAll]);
 
   return (
     <AuthContext.Provider value={value}>

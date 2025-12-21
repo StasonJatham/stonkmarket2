@@ -13,7 +13,7 @@ def get_user(conn: sqlite3.Connection, username: str) -> Optional[AuthUser]:
     """Get a user by username."""
     cur = conn.execute(
         """
-        SELECT username, password_hash, mfa_secret, mfa_enabled, mfa_backup_codes, updated_at 
+        SELECT username, password_hash, is_admin, mfa_secret, mfa_enabled, mfa_backup_codes, updated_at 
         FROM auth_user WHERE username = ?
         """,
         (username.lower(),),

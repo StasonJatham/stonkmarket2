@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from app.core.config import settings
-from app.database.connection import get_db, fetch_one, fetch_all, execute, fetch_val
+from app.database.connection import get_pg_connection, fetch_one, fetch_all, execute, fetch_val
 from app.core.logging import get_logger
 
 logger = get_logger("dip_votes")
@@ -84,7 +84,7 @@ async def add_vote(
         return False, f"Symbol {symbol.upper()} is not currently in a dip"
     
     # Insert vote with weight
-    async with get_db() as conn:
+    async with get_pg_connection() as conn:
         await conn.execute(
             """
             INSERT INTO dip_votes (symbol, fingerprint, vote_type, vote_weight, api_key_id, created_at)
@@ -221,7 +221,7 @@ async def upsert_ai_analysis(
     """Create or update AI analysis for a symbol."""
     expires_at = datetime.utcnow() + timedelta(hours=expires_hours)
     
-    async with get_db() as conn:
+    async with get_pg_connection() as conn:
         row = await conn.fetchrow(
             """
             INSERT INTO dip_ai_analysis (

@@ -99,6 +99,7 @@ class AuthUser:
 
     username: str
     password_hash: str
+    is_admin: bool = False
     mfa_secret: Optional[str] = None
     mfa_enabled: bool = False
     mfa_backup_codes: Optional[str] = None  # JSON list of hashed backup codes
@@ -114,6 +115,7 @@ class AuthUser:
         return cls(
             username=row["username"],
             password_hash=row["password_hash"],
+            is_admin=bool(row["is_admin"]) if "is_admin" in keys else False,
             mfa_secret=row["mfa_secret"] if "mfa_secret" in keys else None,
             mfa_enabled=bool(row["mfa_enabled"]) if "mfa_enabled" in keys else False,
             mfa_backup_codes=row["mfa_backup_codes"] if "mfa_backup_codes" in keys else None,
