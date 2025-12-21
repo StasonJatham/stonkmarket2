@@ -1,17 +1,14 @@
-"""Stock Tinder service - combines dips with AI analysis and voting."""
+"""Stock Tinder service - combines dips with AI analysis and voting (PostgreSQL)."""
 
 from __future__ import annotations
 
 import json
 from typing import Optional, Any
 
-from app.core.fingerprint import get_vote_identifier
 from app.core.logging import get_logger
-from app.database.connection import get_db
-from app.repositories import dips as dips_repo
+from app.database.connection import get_db, fetch_all, fetch_one
 from app.repositories import dip_votes as dip_votes_repo
-from app.repositories import symbols as symbols_repo
-from app.services import openai_service
+from app.services.openai_batch import generate_dip_bio_realtime, rate_dip_realtime
 from app.services import stock_info
 
 logger = get_logger("stock_tinder")
@@ -22,46 +19,46 @@ async def get_dip_card(symbol: str) -> Optional[dict[str, Any]]:
     Get a complete dip card with AI analysis for a symbol.
     
     Returns dict with:
-        - symbol, name, sector, industry, summary
-        - current_price, ref_high, dip_pct, days_below
+        - symbol, current_price, ath_price, dip_pct
         - tinder_bio (AI generated)
         - ai_rating, ai_reasoning (if available)
-        - vote_counts (buy/sell/skip)
+        - vote_counts (buy/sell with weighted totals)
     """
-    with get_db() as conn:
-        # Get dip state
-        dip_state = dips_repo.get_dip_state(conn, symbol)
-        if not dip_state:
-            return None
-        
-        # Get symbol config
-        symbol_config = symbols_repo.get_symbol(conn, symbol)
-        
-        # Get cached AI analysis
-        ai_analysis = dip_votes_repo.get_ai_analysis(conn, symbol)
-        
-        # Get vote counts
-        vote_counts = dip_votes_repo.get_vote_counts(conn, symbol)
+    # Get dip state from PostgreSQL
+    dip_row = await fetch_one(
+        """
+        SELECT ds.symbol, ds.current_price, ds.ath_price, ds.dip_percentage,
+               ds.first_seen, ds.last_updated
+        FROM dip_state ds
+        WHERE ds.symbol = $1
+        """,
+        symbol.upper(),
+    )
     
-    # Calculate dip percentage
-    dip_pct = ((dip_state.ref_high - dip_state.last_price) / dip_state.ref_high) * 100 if dip_state.ref_high > 0 else 0
+    if not dip_row:
+        return None
+    
+    # Get cached AI analysis
+    ai_analysis = await dip_votes_repo.get_ai_analysis(symbol)
+    
+    # Get vote counts
+    vote_counts = await dip_votes_repo.get_vote_counts(symbol)
     
     # Build base card
     card = {
-        "symbol": symbol,
-        "current_price": dip_state.last_price,
-        "ref_high": dip_state.ref_high,
-        "dip_pct": round(dip_pct, 2),
-        "days_below": dip_state.days_below,
-        "min_dip_pct": symbol_config.min_dip_pct if symbol_config else 10,
+        "symbol": symbol.upper(),
+        "current_price": float(dip_row["current_price"]) if dip_row["current_price"] else 0,
+        "ref_high": float(dip_row["ath_price"]) if dip_row["ath_price"] else 0,
+        "dip_pct": float(dip_row["dip_percentage"]) if dip_row["dip_percentage"] else 0,
+        "days_below": 0,  # Not tracked in new schema, could add if needed
         "vote_counts": vote_counts,
     }
     
     # Add AI analysis if cached
     if ai_analysis:
-        card["tinder_bio"] = ai_analysis.tinder_bio
-        card["ai_rating"] = ai_analysis.ai_rating
-        card["ai_reasoning"] = ai_analysis.ai_reasoning
+        card["tinder_bio"] = ai_analysis.get("tinder_bio")
+        card["ai_rating"] = float(ai_analysis["ai_rating"]) if ai_analysis.get("ai_rating") else None
+        card["ai_reasoning"] = ai_analysis.get("ai_reasoning")
     
     return card
 
@@ -83,48 +80,37 @@ async def get_dip_card_with_fresh_ai(symbol: str) -> Optional[dict[str, Any]]:
     # Fetch stock info for AI generation
     info = await stock_info.get_stock_info_async(symbol)
     
-    dip_data = {
-        "name": info.get("name") if info else None,
-        "sector": info.get("sector") if info else None,
-        "industry": info.get("industry") if info else None,
-        "summary": info.get("summary") if info else None,
-        "current_price": card["current_price"],
-        "ref_high": card["ref_high"],
-        "dip_pct": card["dip_pct"],
-        "days_below": card["days_below"],
-    }
-    
-    # Add fundamentals if available
-    if info:
-        dip_data["fundamentals"] = {
-            "pe_ratio": info.get("pe_ratio"),
-            "market_cap": info.get("market_cap"),
-            "dividend_yield": info.get("dividend_yield"),
-            "52_week_change": info.get("52_week_change"),
-        }
-    
     # Generate AI content
-    bio = await openai_service.generate_tinder_bio_for_dip(symbol, dip_data)
-    rating_result = await openai_service.rate_dip(symbol, dip_data)
+    bio = await generate_dip_bio_realtime(
+        symbol=symbol,
+        current_price=card["current_price"],
+        ath_price=card["ref_high"],
+        dip_percentage=card["dip_pct"],
+    )
+    
+    rating_result = await rate_dip_realtime(
+        symbol=symbol,
+        current_price=card["current_price"],
+        ath_price=card["ref_high"],
+        dip_percentage=card["dip_pct"],
+    )
     
     # Cache the results
     if bio or rating_result:
-        with get_db() as conn:
-            dip_votes_repo.upsert_ai_analysis(
-                conn,
-                symbol,
-                tinder_bio=bio,
-                ai_rating=rating_result.get("rating") if rating_result else None,
-                ai_reasoning=rating_result.get("reasoning") if rating_result else None,
-                analysis_data=json.dumps(dip_data),
-                expires_hours=24,
-            )
+        await dip_votes_repo.upsert_ai_analysis(
+            symbol=symbol,
+            tinder_bio=bio,
+            ai_rating=rating_result.get("rating") if rating_result else None,
+            ai_reasoning=rating_result.get("reasoning") if rating_result else None,
+            is_batch=False,
+        )
     
     # Update card with fresh AI data
-    card["name"] = dip_data.get("name")
-    card["sector"] = dip_data.get("sector")
-    card["industry"] = dip_data.get("industry")
-    card["summary"] = dip_data.get("summary")
+    if info:
+        card["name"] = info.get("name")
+        card["sector"] = info.get("sector")
+        card["industry"] = info.get("industry")
+    
     card["tinder_bio"] = bio
     if rating_result:
         card["ai_rating"] = rating_result.get("rating")
@@ -141,79 +127,112 @@ async def get_all_dip_cards(include_ai: bool = False) -> list[dict[str, Any]]:
     Args:
         include_ai: If True, fetch fresh AI analysis for cards without it (slower)
     """
-    with get_db() as conn:
-        dip_states = dips_repo.get_all_dip_states(conn)
-        all_vote_counts = dip_votes_repo.get_all_vote_counts(conn)
+    # Get all dip states
+    dip_rows = await fetch_all(
+        """
+        SELECT symbol, current_price, ath_price, dip_percentage, first_seen, last_updated
+        FROM dip_state
+        ORDER BY dip_percentage DESC
+        """
+    )
+    
+    # Get all vote counts at once
+    all_vote_counts = await dip_votes_repo.get_all_vote_counts()
+    
+    # Get all AI analyses
+    ai_rows = await fetch_all(
+        """
+        SELECT symbol, tinder_bio, ai_rating, rating_reasoning
+        FROM dip_ai_analysis
+        WHERE expires_at IS NULL OR expires_at > NOW()
+        """
+    )
+    ai_by_symbol = {r["symbol"]: dict(r) for r in ai_rows}
     
     cards = []
-    for dip in dip_states:
-        dip_pct = ((dip.ref_high - dip.last_price) / dip.ref_high) * 100 if dip.ref_high > 0 else 0
+    for dip in dip_rows:
+        symbol = dip["symbol"]
         
         card = {
-            "symbol": dip.symbol,
-            "current_price": dip.last_price,
-            "ref_high": dip.ref_high,
-            "dip_pct": round(dip_pct, 2),
-            "days_below": dip.days_below,
-            "vote_counts": all_vote_counts.get(dip.symbol, {"buy": 0, "sell": 0, "skip": 0}),
+            "symbol": symbol,
+            "current_price": float(dip["current_price"]) if dip["current_price"] else 0,
+            "ref_high": float(dip["ath_price"]) if dip["ath_price"] else 0,
+            "dip_pct": float(dip["dip_percentage"]) if dip["dip_percentage"] else 0,
+            "days_below": 0,
+            "vote_counts": all_vote_counts.get(symbol, {
+                "buy": 0, "sell": 0, "buy_weighted": 0, "sell_weighted": 0, "net_score": 0
+            }),
         }
         
-        if include_ai:
+        # Add cached AI analysis
+        if symbol in ai_by_symbol:
+            ai = ai_by_symbol[symbol]
+            card["tinder_bio"] = ai.get("tinder_bio")
+            card["ai_rating"] = float(ai["ai_rating"]) if ai.get("ai_rating") else None
+            card["ai_reasoning"] = ai.get("rating_reasoning")
+        
+        if include_ai and not card.get("tinder_bio"):
             # Get cached AI or generate
-            full_card = await get_dip_card_with_fresh_ai(dip.symbol)
+            full_card = await get_dip_card_with_fresh_ai(symbol)
             if full_card:
                 card = full_card
         
         cards.append(card)
     
-    # Sort by dip percentage (biggest dips first)
-    cards.sort(key=lambda x: x["dip_pct"], reverse=True)
-    
     return cards
 
 
-def vote_on_dip(
+async def vote_on_dip(
     symbol: str,
     voter_identifier: str,
     vote_type: str,
+    vote_weight: int = 1,
+    api_key_id: Optional[int] = None,
 ) -> tuple[bool, Optional[str]]:
     """
     Record a vote on a dip.
     
     Args:
         symbol: Stock symbol
-        voter_identifier: Hashed voter ID
-        vote_type: 'buy', 'sell', or 'skip'
+        voter_identifier: Hashed voter ID (fingerprint)
+        vote_type: 'buy' or 'sell'
+        vote_weight: Vote weight multiplier (default 1, API key users get 10)
+        api_key_id: Optional API key ID if using authenticated voting
         
     Returns:
         Tuple of (success, error_message)
     """
-    with get_db() as conn:
-        return dip_votes_repo.add_vote(conn, symbol, voter_identifier, vote_type)
+    return await dip_votes_repo.add_vote(
+        symbol=symbol,
+        fingerprint=voter_identifier,
+        vote_type=vote_type,
+        vote_weight=vote_weight,
+        api_key_id=api_key_id,
+    )
 
 
-def get_vote_stats(symbol: str) -> dict[str, Any]:
+async def get_vote_stats(symbol: str) -> dict[str, Any]:
     """Get voting statistics for a symbol."""
-    with get_db() as conn:
-        counts = dip_votes_repo.get_vote_counts(conn, symbol)
+    counts = await dip_votes_repo.get_vote_counts(symbol)
     
-    total = counts["buy"] + counts["sell"] + counts["skip"]
+    total = counts["buy"] + counts["sell"]
+    weighted_total = counts["buy_weighted"] + counts["sell_weighted"]
     
     return {
         "symbol": symbol,
         "vote_counts": counts,
         "total_votes": total,
+        "weighted_total": weighted_total,
         "buy_pct": round(counts["buy"] / total * 100, 1) if total > 0 else 0,
         "sell_pct": round(counts["sell"] / total * 100, 1) if total > 0 else 0,
-        "skip_pct": round(counts["skip"] / total * 100, 1) if total > 0 else 0,
         "sentiment": _calculate_sentiment(counts),
     }
 
 
-def _calculate_sentiment(counts: dict[str, int]) -> str:
-    """Calculate overall sentiment from vote counts."""
-    buy = counts.get("buy", 0)
-    sell = counts.get("sell", 0)
+def _calculate_sentiment(counts: dict) -> str:
+    """Calculate overall sentiment from weighted vote counts."""
+    buy = counts.get("buy_weighted", counts.get("buy", 0))
+    sell = counts.get("sell_weighted", counts.get("sell", 0))
     
     if buy == 0 and sell == 0:
         return "neutral"

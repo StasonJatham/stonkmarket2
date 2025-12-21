@@ -27,7 +27,12 @@ class Settings(BaseSettings):
     environment: str = Field(default="production", description="Environment: development, staging, production")
 
     # Database
-    db_path: str = Field(default="/data/dips.sqlite", description="SQLite database path")
+    database_url: str = Field(
+        default="postgresql://stonkmarket:stonkmarket@localhost:5432/stonkmarket",
+        description="PostgreSQL connection URL"
+    )
+    db_pool_min_size: int = Field(default=5, ge=1, le=20, description="Minimum database pool connections")
+    db_pool_max_size: int = Field(default=20, ge=5, le=100, description="Maximum database pool connections")
 
     # Security
     auth_secret: str = Field(

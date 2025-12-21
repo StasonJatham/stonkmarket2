@@ -18,19 +18,19 @@ services:
     environment:
       - ENVIRONMENT=${ENVIRONMENT:-production}
       - DEBUG=${DEBUG:-false}
-      - DB_PATH=${DB_PATH:-/data/dips.sqlite}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://stonkmarket:stonkmarket@postgres:5432/stonkmarket}
       - VALKEY_URL=${VALKEY_URL:-redis://valkey:6379/0}
       - ADMIN_USER=${ADMIN_USER:-admin}
       - ADMIN_PASS=${ADMIN_PASS:-}
-      - JWT_SECRET=${JWT_SECRET:-}
+      - AUTH_SECRET=${AUTH_SECRET:-}
       - SCHEDULER_ENABLED=${SCHEDULER_ENABLED:-true}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-}
-    volumes:
-      - sqlite_data:/data
     ports:
       - "8000:8000"
     depends_on:
+      postgres:
+        condition: service_healthy
       valkey:
         condition: service_healthy
     healthcheck:
@@ -55,6 +55,48 @@ services:
     read_only: true
     tmpfs:
       - /tmp
+
+  postgres:
+    image: postgres:17-alpine
+    container_name: stonkmarket-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-stonkmarket}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-stonkmarket}
+      POSTGRES_DB: ${POSTGRES_DB:-stonkmarket}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-stonkmarket} -d ${POSTGRES_DB:-stonkmarket}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+    networks:
+      - stonkmarket
+    security_opt:
+      - no-new-privileges:true
+    command: >
+      postgres
+      -c shared_buffers=128MB
+      -c effective_cache_size=256MB
+      -c maintenance_work_mem=64MB
+      -c work_mem=16MB
+      -c max_connections=100
+      -c random_page_cost=1.1
+      -c effective_io_concurrency=200
+      -c min_wal_size=80MB
+      -c max_wal_size=1GB
+      -c checkpoint_completion_target=0.9
 
   valkey:
     image: valkey/valkey:8.1-alpine
@@ -88,7 +130,7 @@ services:
       - no-new-privileges:true
 
 volumes:
-  sqlite_data:
+  postgres_data:
     driver: local
   valkey_data:
     driver: local

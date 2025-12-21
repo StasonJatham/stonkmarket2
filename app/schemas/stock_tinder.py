@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 class DipVoteRequest(BaseModel):
     """Request to vote on a dip."""
     
-    vote_type: Literal["buy", "sell", "skip"] = Field(..., description="Vote type")
+    vote_type: Literal["buy", "sell"] = Field(..., description="Vote type: buy or sell")
     
     model_config = {"json_schema_extra": {"example": {"vote_type": "buy"}}}
 
@@ -24,11 +24,13 @@ class DipVoteResponse(BaseModel):
 
 
 class VoteCounts(BaseModel):
-    """Vote counts for a dip."""
+    """Vote counts for a dip with weighted totals."""
     
     buy: int = 0
     sell: int = 0
-    skip: int = 0
+    buy_weighted: int = Field(default=0, description="Weighted buy votes (API key holders get 10x)")
+    sell_weighted: int = Field(default=0, description="Weighted sell votes")
+    net_score: int = Field(default=0, description="Net score (buy_weighted - sell_weighted)")
 
 
 class DipCard(BaseModel):
@@ -86,7 +88,8 @@ class DipStats(BaseModel):
     symbol: str
     vote_counts: VoteCounts
     total_votes: int
+    weighted_total: int = Field(default=0, description="Total weighted votes")
     buy_pct: float
     sell_pct: float
-    skip_pct: float
+    sentiment: str = Field(default="neutral", description="Overall sentiment: very_bullish, bullish, neutral, bearish, very_bearish")
     sentiment: str = Field(..., description="Overall sentiment: very_bullish, bullish, neutral, bearish, very_bearish")

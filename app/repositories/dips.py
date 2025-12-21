@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import datetime
-from typing import Dict
+from typing import Dict, List, Optional
 
 from app.database.models import DipState
 
@@ -18,6 +18,19 @@ def load_states(conn: sqlite3.Connection) -> Dict[str, DipState]:
     for row in cur.fetchall():
         states[row["symbol"]] = DipState.from_row(row)
     return states
+
+
+def get_all_dip_states(conn: sqlite3.Connection) -> List[DipState]:
+    """Get all dip states as a list."""
+    cur = conn.execute(
+        "SELECT symbol, ref_high, days_below, last_price, updated_at FROM dip_state ORDER BY symbol"
+    )
+    return [DipState.from_row(row) for row in cur.fetchall()]
+
+
+def get_dip_state(conn: sqlite3.Connection, symbol: str) -> Optional[DipState]:
+    """Get dip state for a specific symbol (alias for get_state)."""
+    return get_state(conn, symbol)
 
 
 def get_state(conn: sqlite3.Connection, symbol: str) -> DipState | None:
