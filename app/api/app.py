@@ -12,7 +12,7 @@ from app.core.exceptions import register_exception_handlers
 from app.core.logging import get_logger, request_id_var
 from app.schemas.common import ErrorResponse
 
-from .routes import auth, cronjobs, dips, health, symbols
+from .routes import auth, cronjobs, dips, health, symbols, suggestions, ws
 
 logger = get_logger("api")
 
@@ -123,5 +123,7 @@ def create_api_app() -> FastAPI:
     app.include_router(symbols.router, prefix="/symbols", tags=["Symbols"])
     app.include_router(dips.router, prefix="/dips", tags=["Dips"])
     app.include_router(cronjobs.router, prefix="/cronjobs", tags=["CronJobs"])
+    app.include_router(suggestions.router, tags=["Suggestions"])
+    app.include_router(ws.router, tags=["WebSocket"])
 
     return app

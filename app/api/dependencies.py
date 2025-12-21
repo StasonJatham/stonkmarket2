@@ -10,8 +10,18 @@ from fastapi import Cookie, Depends, Header, Request
 from app.core.config import settings
 from app.core.exceptions import AuthenticationError, AuthorizationError
 from app.core.security import TokenData, decode_access_token
+from app.core.fingerprint import (
+    get_client_ip,
+    get_request_fingerprint,
+    get_vote_identifier,
+    get_suggestion_identifier,
+)
 from app.database import get_db_connection
-from app.cache.rate_limit import check_rate_limit
+from app.cache.rate_limit import (
+    check_rate_limit,
+    get_suggest_rate_limiter,
+    get_vote_rate_limiter,
+)
 
 
 def get_db():
@@ -27,24 +37,21 @@ def get_db():
         yield conn
 
 
-def get_client_ip(request: Request) -> str:
-    """Extract client IP from request, respecting X-Forwarded-For."""
-    # Check for forwarded header (from reverse proxy)
-    forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        # Take the first IP in the chain (original client)
-        return forwarded.split(",")[0].strip()
-
-    # Check X-Real-IP header
-    real_ip = request.headers.get("X-Real-IP")
-    if real_ip:
-        return real_ip.strip()
-
-    # Fall back to direct connection IP
-    if request.client:
-        return request.client.host
-
-    return "unknown"
+# Re-export fingerprint functions for backwards compatibility
+__all__ = [
+    "get_db",
+    "get_client_ip",
+    "get_request_fingerprint",
+    "get_vote_identifier",
+    "get_suggestion_identifier",
+    "get_current_user",
+    "require_user",
+    "require_admin",
+    "rate_limit_auth",
+    "rate_limit_api",
+    "rate_limit_suggest",
+    "rate_limit_vote",
+]
 
 
 def _extract_token(
@@ -169,3 +176,35 @@ async def rate_limit_api(
     # Use user ID if authenticated, otherwise IP
     identifier = user.sub if user else get_client_ip(request)
     await check_rate_limit(identifier, key_prefix="api")
+
+
+async def rate_limit_suggest(request: Request) -> str:
+    """
+    Apply rate limiting for stock suggestion endpoint.
+    
+    Uses fingerprint-based identification to make abuse harder.
+    Returns the fingerprint identifier for vote deduplication.
+    """
+    if not settings.rate_limit_enabled:
+        return get_suggestion_identifier(request)
+    
+    identifier = get_suggestion_identifier(request)
+    limiter = get_suggest_rate_limiter()
+    await check_rate_limit(identifier, limiter=limiter)
+    return identifier
+
+
+async def rate_limit_vote(request: Request) -> str:
+    """
+    Apply rate limiting for voting endpoint.
+    
+    Uses fingerprint-based identification to prevent vote manipulation.
+    Returns the fingerprint identifier for vote deduplication.
+    """
+    if not settings.rate_limit_enabled:
+        return get_request_fingerprint(request)
+    
+    identifier = get_request_fingerprint(request)
+    limiter = get_vote_rate_limiter()
+    await check_rate_limit(identifier, limiter=limiter)
+    return identifier

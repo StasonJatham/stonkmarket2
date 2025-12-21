@@ -1,7 +1,7 @@
 """API module with routers and dependencies."""
 
 from .app import create_api_app
-from .deps import (
+from .dependencies import (
     get_db,
     require_user,
     require_admin,

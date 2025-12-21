@@ -112,3 +112,81 @@ class AuthUser:
             password_hash=row["password_hash"],
             updated_at=updated,
         )
+
+
+@dataclass
+class StockSuggestion:
+    """User-submitted stock suggestion."""
+
+    id: int
+    symbol: str
+    status: str  # pending, approved, rejected, removed, fetching, fetch_failed
+    vote_count: int = 0
+    name: Optional[str] = None
+    sector: Optional[str] = None
+    industry: Optional[str] = None
+    summary: Optional[str] = None
+    last_price: Optional[float] = None
+    price_90d_ago: Optional[float] = None
+    price_change_90d: Optional[float] = None
+    rejection_reason: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    fetched_at: Optional[datetime] = None
+    removed_at: Optional[datetime] = None
+
+    @classmethod
+    def from_row(cls, row) -> "StockSuggestion":
+        """Create from database row."""
+        keys = row.keys()
+        
+        def get_val(key: str, default=None):
+            return row[key] if key in keys else default
+        
+        def parse_dt(key: str) -> Optional[datetime]:
+            if key in keys and row[key]:
+                return datetime.fromisoformat(row[key])
+            return None
+        
+        return cls(
+            id=row["id"],
+            symbol=row["symbol"],
+            status=row["status"],
+            vote_count=get_val("vote_count", 0),
+            name=get_val("name"),
+            sector=get_val("sector"),
+            industry=get_val("industry"),
+            summary=get_val("summary"),
+            last_price=get_val("last_price"),
+            price_90d_ago=get_val("price_90d_ago"),
+            price_change_90d=get_val("price_change_90d"),
+            rejection_reason=get_val("rejection_reason"),
+            created_at=parse_dt("created_at"),
+            updated_at=parse_dt("updated_at"),
+            fetched_at=parse_dt("fetched_at"),
+            removed_at=parse_dt("removed_at"),
+        )
+
+
+@dataclass
+class SuggestionVote:
+    """Vote for a stock suggestion (tracks unique voters)."""
+
+    id: int
+    suggestion_id: int
+    voter_hash: str  # Hashed IP or session for deduplication
+    created_at: Optional[datetime] = None
+
+    @classmethod
+    def from_row(cls, row) -> "SuggestionVote":
+        """Create from database row."""
+        created = None
+        if "created_at" in row.keys() and row["created_at"]:
+            created = datetime.fromisoformat(row["created_at"])
+        return cls(
+            id=row["id"],
+            suggestion_id=row["suggestion_id"],
+            voter_hash=row["voter_hash"],
+            created_at=created,
+        )
+

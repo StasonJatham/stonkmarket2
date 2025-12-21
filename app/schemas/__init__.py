@@ -29,6 +29,15 @@ from .common import (
     HealthResponse,
     PaginationParams,
 )
+from .suggestions import (
+    SuggestionStatus,
+    SuggestionCreate,
+    SuggestionVote,
+    SuggestionResponse,
+    SuggestionListResponse,
+    SuggestionAdminAction,
+    TopSuggestion,
+)
 
 __all__ = [
     # Auth
@@ -51,6 +60,14 @@ __all__ = [
     "CronJobLogCreate",
     "CronJobLogResponse",
     "CronJobLogListResponse",
+    # Suggestions
+    "SuggestionStatus",
+    "SuggestionCreate",
+    "SuggestionVote",
+    "SuggestionResponse",
+    "SuggestionListResponse",
+    "SuggestionAdminAction",
+    "TopSuggestion",
     # Common
     "ErrorResponse",
     "HealthResponse",

@@ -31,16 +31,15 @@ class Settings(BaseSettings):
 
     # Security
     auth_secret: str = Field(
-        default="change-me-secret-must-be-at-least-32-chars",
-        min_length=32,
-        description="Secret key for JWT signing (min 32 chars)",
+        default="dev-secret-please-change-in-production-min-32-chars",
+        description="Secret key for JWT signing (min 32 chars in production)",
     )
     access_token_expire_minutes: int = Field(default=60 * 24 * 7, ge=1, description="JWT expiration in minutes")
     password_min_length: int = Field(default=8, ge=6, description="Minimum password length")
 
     # Admin
     default_admin_user: str = Field(default="admin", min_length=3)
-    default_admin_password: str = Field(default="admin", min_length=6)
+    default_admin_password: str = Field(default="changeme", min_length=6)
 
     # Domain and HTTPS
     domain: Optional[str] = Field(default=None, description="Cookie domain")
@@ -56,6 +55,8 @@ class Settings(BaseSettings):
     rate_limit_enabled: bool = Field(default=True, description="Enable rate limiting")
     rate_limit_auth: str = Field(default="5/minute", description="Rate limit for auth endpoints")
     rate_limit_api: str = Field(default="100/minute", description="Rate limit for API endpoints")
+    rate_limit_suggest: str = Field(default="10/hour", description="Rate limit for suggesting stocks")
+    rate_limit_vote: str = Field(default="30/hour", description="Rate limit for voting on stocks")
 
     # Valkey (Redis-compatible)
     valkey_url: str = Field(default="redis://valkey:6379/0", description="Valkey connection URL")

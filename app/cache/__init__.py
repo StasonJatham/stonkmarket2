@@ -14,6 +14,8 @@ from .cache import (
 from .rate_limit import (
     RateLimiter,
     check_rate_limit,
+    get_suggest_rate_limiter,
+    get_vote_rate_limiter,
 )
 from .distributed_lock import (
     DistributedLock,
@@ -30,6 +32,8 @@ __all__ = [
     "invalidate_pattern",
     "RateLimiter",
     "check_rate_limit",
+    "get_suggest_rate_limiter",
+    "get_vote_rate_limiter",
     "DistributedLock",
     "acquire_lock",
 ]

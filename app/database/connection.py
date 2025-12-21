@@ -54,10 +54,44 @@ CREATE TABLE IF NOT EXISTS auth_user (
     updated_at TEXT NOT NULL
 );
 
+-- Stock suggestions from users
+CREATE TABLE IF NOT EXISTS stock_suggestions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL DEFAULT 'pending',
+    vote_count INTEGER NOT NULL DEFAULT 0,
+    name TEXT,
+    sector TEXT,
+    industry TEXT,
+    summary TEXT,
+    last_price REAL,
+    price_90d_ago REAL,
+    price_change_90d REAL,
+    rejection_reason TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT,
+    fetched_at TEXT,
+    removed_at TEXT
+);
+
+-- Votes for suggestions (for deduplication)
+CREATE TABLE IF NOT EXISTS suggestion_votes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    suggestion_id INTEGER NOT NULL,
+    voter_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(suggestion_id, voter_hash),
+    FOREIGN KEY(suggestion_id) REFERENCES stock_suggestions(id) ON DELETE CASCADE
+);
+
 -- Indexes for common queries
 CREATE INDEX IF NOT EXISTS idx_cronjob_logs_created_at ON cronjob_logs(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_cronjob_logs_name ON cronjob_logs(name);
 CREATE INDEX IF NOT EXISTS idx_dip_state_updated_at ON dip_state(updated_at);
+CREATE INDEX IF NOT EXISTS idx_suggestions_status ON stock_suggestions(status);
+CREATE INDEX IF NOT EXISTS idx_suggestions_vote_count ON stock_suggestions(vote_count DESC);
+CREATE INDEX IF NOT EXISTS idx_suggestions_symbol ON stock_suggestions(symbol);
+CREATE INDEX IF NOT EXISTS idx_suggestion_votes_suggestion ON suggestion_votes(suggestion_id);
 """
 
 
@@ -213,6 +247,26 @@ def get_db_connection() -> Iterator[sqlite3.Connection]:
         @router.get("/items")
         def get_items(conn: sqlite3.Connection = Depends(get_db_connection)):
             ...
+    """
+    global _pool
+    if _pool is None:
+        init_db()
+
+    conn = _pool.get_connection()
+    try:
+        yield conn
+    finally:
+        _pool.release_connection(conn)
+
+
+@contextmanager
+def get_db() -> Iterator[sqlite3.Connection]:
+    """
+    Context manager for getting a database connection.
+
+    Usage:
+        with get_db() as conn:
+            conn.execute("SELECT ...")
     """
     global _pool
     if _pool is None:
