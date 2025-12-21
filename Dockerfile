@@ -51,7 +51,7 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 
 # Copy application code
 COPY --chown=appuser:appgroup app/ ./app/
-COPY --chown=appuser:appgroup main.py ./
+COPY --chown=appuser:appgroup init.sql ./
 
 # Create data directory with correct permissions
 RUN mkdir -p /data && chown appuser:appgroup /data

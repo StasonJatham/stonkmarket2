@@ -10,17 +10,18 @@ This module provides:
 """
 
 from .config import DipFinderConfig, get_dipfinder_config
-from .dip import compute_dip_series, compute_dip_percentile, DipMetrics
+from .dip import compute_dip_series_windowed, compute_dip_percentile, compute_persistence, DipMetrics
 from .fundamentals import compute_quality_score, QualityMetrics
 from .stability import compute_stability_score, StabilityMetrics
-from .signal import compute_signal, DipSignal
-from .service import DipFinderService
+from .signal import compute_signal, DipSignal, DipClass, AlertLevel, MarketContext
+from .service import DipFinderService, get_dipfinder_service
 
 __all__ = [
     "DipFinderConfig",
     "get_dipfinder_config",
-    "compute_dip_series",
+    "compute_dip_series_windowed",
     "compute_dip_percentile",
+    "compute_persistence",
     "DipMetrics",
     "compute_quality_score",
     "QualityMetrics",
@@ -28,5 +29,9 @@ __all__ = [
     "StabilityMetrics",
     "compute_signal",
     "DipSignal",
+    "DipClass",
+    "AlertLevel",
+    "MarketContext",
     "DipFinderService",
+    "get_dipfinder_service",
 ]

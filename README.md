@@ -129,6 +129,82 @@ docker compose down
 | GET | `/api/health/ready` | Readiness probe |
 | GET | `/api/health/live` | Liveness probe |
 
+### DipFinder (Signal Engine)
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/dipfinder/signals` | Get signals for tickers |
+| GET | `/api/dipfinder/signals/{ticker}` | Get signal for one ticker |
+| POST | `/api/dipfinder/run` | Run signal computation |
+| GET | `/api/dipfinder/latest` | Get latest computed signals |
+| GET | `/api/dipfinder/alerts` | Get active alerts |
+| GET | `/api/dipfinder/history/{ticker}` | Get dip history |
+| GET | `/api/dipfinder/config` | Get current configuration |
+| POST | `/api/dipfinder/admin/refresh-all` | Admin: refresh all symbols |
+| POST | `/api/dipfinder/admin/cleanup` | Admin: cleanup expired data |
+
+## DipFinder Signal Engine
+
+The DipFinder module provides intelligent dip detection and scoring for stocks. It combines:
+
+1. **Dip Severity** - Peak-to-current drop in a selected window (7, 30, 100, 365 days)
+2. **Dip Significance** - Comparison vs the stock's historical dip behavior
+3. **Market Context** - Classification as market-wide, stock-specific, or mixed
+4. **Quality Metrics** - Fundamental quality from yfinance (profitability, balance sheet, cash)
+5. **Stability Metrics** - Beta, volatility, max drawdown, typical dip size
+
+### Response Schema
+
+```json
+{
+  "ticker": "AAPL",
+  "window": 30,
+  "benchmark": "SPY",
+  "as_of_date": "2025-12-21",
+  "dip_stock": 0.15,
+  "peak_stock": 200.0,
+  "current_price": 170.0,
+  "dip_pctl": 85.0,
+  "dip_vs_typical": 2.0,
+  "persist_days": 4,
+  "dip_mkt": 0.05,
+  "excess_dip": 0.10,
+  "dip_class": "STOCK_SPECIFIC",
+  "quality_score": 75.0,
+  "stability_score": 70.0,
+  "dip_score": 80.0,
+  "final_score": 76.0,
+  "alert_level": "GOOD",
+  "should_alert": true,
+  "reason": "AAPL is 15% off peak, stock-specific dip with strong fundamentals"
+}
+```
+
+### Configuration Knobs
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `min_dip_abs` | 0.10 | Minimum dip threshold (10%) |
+| `min_persist_days` | 2 | Days dip must persist |
+| `dip_percentile_threshold` | 0.80 | Top 20% severity threshold |
+| `dip_vs_typical_threshold` | 1.5 | Ratio vs typical dip |
+| `quality_gate` | 60 | Minimum quality score for alerts |
+| `stability_gate` | 60 | Minimum stability score for alerts |
+| `alert_good` | 70 | Threshold for GOOD alert |
+| `alert_strong` | 80 | Threshold for STRONG alert |
+
+### Caching Behavior
+
+- **Price data**: Cached in database (`price_history` table) + Valkey (1 hour TTL)
+- **yfinance info**: Cached in database (`yfinance_info_cache`) + Valkey (24 hour TTL)
+- **Computed signals**: Cached in database (`dipfinder_signals`) + Valkey (1 hour TTL)
+- Signals expire after 7 days and are cleaned up by `/admin/cleanup`
+
+### Dip Classification
+
+- **MARKET_DIP**: Market down ≥6%, stock not much worse (excess <3%)
+- **STOCK_SPECIFIC**: Stock down significantly more than market (excess ≥4%)
+- **MIXED**: Both market and stock down, moderate excess
+
 ## Configuration
 
 All configuration via environment variables (see `.env.example`):

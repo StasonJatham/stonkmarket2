@@ -1,0 +1,270 @@
+"""Tests for DipFinder signal module."""
+
+from __future__ import annotations
+
+import pytest
+
+from app.dipfinder.signal import (
+    DipClass,
+    AlertLevel,
+    MarketContext,
+    DipSignal,
+    classify_dip,
+    compute_dip_score,
+    compute_final_score,
+)
+from app.dipfinder.dip import DipMetrics
+from app.dipfinder.fundamentals import QualityMetrics
+from app.dipfinder.stability import StabilityMetrics
+from app.dipfinder.config import DipFinderConfig
+
+
+@pytest.fixture
+def config() -> DipFinderConfig:
+    """Default config for testing."""
+    return DipFinderConfig()
+
+
+class TestClassifyDip:
+    """Tests for classify_dip."""
+    
+    def test_market_dip(self, config):
+        """Market dip classification."""
+        # Both stock and market down significantly, stock not much more
+        dip_class = classify_dip(
+            dip_stock=0.12,  # 12%
+            dip_mkt=0.10,    # 10%
+            config=config,
+        )
+        assert dip_class == DipClass.MARKET_DIP
+    
+    def test_stock_specific(self, config):
+        """Stock-specific dip classification."""
+        # Stock down much more than market
+        dip_class = classify_dip(
+            dip_stock=0.15,  # 15%
+            dip_mkt=0.02,    # 2%
+            config=config,
+        )
+        assert dip_class == DipClass.STOCK_SPECIFIC
+    
+    def test_mixed_dip(self, config):
+        """Mixed dip classification."""
+        # Market down, but stock down moderately more
+        dip_class = classify_dip(
+            dip_stock=0.10,  # 10%
+            dip_mkt=0.05,    # 5%
+            config=config,
+        )
+        assert dip_class == DipClass.MIXED
+    
+    def test_no_market_dip_stock_down(self, config):
+        """No market dip but stock is down."""
+        dip_class = classify_dip(
+            dip_stock=0.10,
+            dip_mkt=0.01,
+            config=config,
+        )
+        assert dip_class == DipClass.STOCK_SPECIFIC
+
+
+class TestComputeDipScore:
+    """Tests for compute_dip_score."""
+    
+    def test_high_dip_score(self, config):
+        """High dip with persistence gets high score."""
+        dip_metrics = DipMetrics(
+            ticker="TEST",
+            window=30,
+            dip_pct=0.25,
+            peak_price=100.0,
+            current_price=75.0,
+            dip_percentile=95.0,
+            dip_vs_typical=3.0,
+            typical_dip=0.083,
+            persist_days=5,
+            is_meaningful=True,
+        )
+        market_context = MarketContext(
+            benchmark_ticker="SPY",
+            dip_mkt=0.03,
+            dip_stock=0.25,
+            excess_dip=0.22,
+            dip_class=DipClass.STOCK_SPECIFIC,
+        )
+        
+        score = compute_dip_score(dip_metrics, market_context, config)
+        assert score > 70
+    
+    def test_low_dip_score(self, config):
+        """Small dip gets low score."""
+        dip_metrics = DipMetrics(
+            ticker="TEST",
+            window=30,
+            dip_pct=0.05,
+            peak_price=100.0,
+            current_price=95.0,
+            dip_percentile=30.0,
+            dip_vs_typical=0.5,
+            typical_dip=0.10,
+            persist_days=1,
+            is_meaningful=False,
+        )
+        market_context = MarketContext(
+            benchmark_ticker="SPY",
+            dip_mkt=0.02,
+            dip_stock=0.05,
+            excess_dip=0.03,
+            dip_class=DipClass.MIXED,
+        )
+        
+        score = compute_dip_score(dip_metrics, market_context, config)
+        assert score < 40
+
+
+class TestComputeFinalScore:
+    """Tests for compute_final_score."""
+    
+    def test_weighted_average(self, config):
+        """Final score is weighted average of components."""
+        final = compute_final_score(
+            dip_score=80.0,
+            quality_score=70.0,
+            stability_score=60.0,
+            config=config,
+        )
+        
+        # Check it's between min and max of components
+        assert 60.0 <= final <= 80.0
+        
+        # Check approximate value based on default weights
+        # Default: 0.45*dip + 0.30*quality + 0.25*stability
+        expected = 0.45 * 80 + 0.30 * 70 + 0.25 * 60
+        assert abs(final - expected) < 1.0
+    
+    def test_all_high_scores(self, config):
+        """All high component scores give high final score."""
+        final = compute_final_score(90.0, 90.0, 90.0, config)
+        assert final == 90.0
+    
+    def test_all_low_scores(self, config):
+        """All low component scores give low final score."""
+        final = compute_final_score(20.0, 20.0, 20.0, config)
+        assert final == 20.0
+
+
+class TestDipSignal:
+    """Tests for DipSignal dataclass."""
+    
+    @pytest.fixture
+    def sample_signal(self) -> DipSignal:
+        """Create a sample signal for testing."""
+        return DipSignal(
+            ticker="AAPL",
+            window=30,
+            benchmark="SPY",
+            as_of_date="2025-12-21",
+            dip_metrics=DipMetrics(
+                ticker="AAPL",
+                window=30,
+                dip_pct=0.15,
+                peak_price=200.0,
+                current_price=170.0,
+                dip_percentile=85.0,
+                dip_vs_typical=2.0,
+                typical_dip=0.075,
+                persist_days=4,
+                is_meaningful=True,
+            ),
+            market_context=MarketContext(
+                benchmark_ticker="SPY",
+                dip_mkt=0.05,
+                dip_stock=0.15,
+                excess_dip=0.10,
+                dip_class=DipClass.STOCK_SPECIFIC,
+            ),
+            quality_metrics=QualityMetrics(ticker="AAPL", score=75.0),
+            stability_metrics=StabilityMetrics(ticker="AAPL", score=70.0),
+            dip_score=80.0,
+            final_score=76.0,
+            alert_level=AlertLevel.GOOD,
+            should_alert=True,
+            reason="AAPL is 15% off peak, stock-specific dip with strong fundamentals",
+        )
+    
+    def test_to_dict(self, sample_signal):
+        """Test to_dict method."""
+        d = sample_signal.to_dict()
+        
+        assert d["ticker"] == "AAPL"
+        assert d["window"] == 30
+        assert d["final_score"] == 76.0
+        assert d["should_alert"] is True
+        assert "dip_metrics" in d
+        assert "quality_metrics" in d
+    
+    def test_alert_levels(self):
+        """Test alert level enum values."""
+        assert AlertLevel.NONE.value == "NONE"
+        assert AlertLevel.GOOD.value == "GOOD"
+        assert AlertLevel.STRONG.value == "STRONG"
+    
+    def test_dip_class_values(self):
+        """Test dip class enum values."""
+        assert DipClass.MARKET_DIP.value == "MARKET_DIP"
+        assert DipClass.STOCK_SPECIFIC.value == "STOCK_SPECIFIC"
+        assert DipClass.MIXED.value == "MIXED"
+
+
+class TestAlertDecision:
+    """Tests for alert decision logic."""
+    
+    def test_alert_triggered(self, config):
+        """Alert triggered when all conditions met."""
+        # High scores, meaningful dip, gates passed
+        dip_score = 80.0
+        quality_score = 70.0
+        stability_score = 70.0
+        is_meaningful = True
+        
+        final_score = compute_final_score(dip_score, quality_score, stability_score, config)
+        
+        should_alert = (
+            final_score >= config.alert_good
+            and is_meaningful
+            and quality_score >= config.quality_gate
+            and stability_score >= config.stability_gate
+        )
+        
+        assert should_alert is True
+    
+    def test_no_alert_low_quality(self, config):
+        """No alert if quality gate not met."""
+        quality_score = 50.0  # Below gate
+        stability_score = 70.0
+        
+        should_alert = (
+            quality_score >= config.quality_gate
+            and stability_score >= config.stability_gate
+        )
+        
+        assert should_alert is False
+    
+    def test_no_alert_low_stability(self, config):
+        """No alert if stability gate not met."""
+        quality_score = 70.0
+        stability_score = 50.0  # Below gate
+        
+        should_alert = (
+            quality_score >= config.quality_gate
+            and stability_score >= config.stability_gate
+        )
+        
+        assert should_alert is False
+    
+    def test_strong_alert(self, config):
+        """Strong alert when final score high."""
+        final_score = 85.0
+        alert_level = AlertLevel.STRONG if final_score >= config.alert_strong else AlertLevel.GOOD
+        
+        assert alert_level == AlertLevel.STRONG
