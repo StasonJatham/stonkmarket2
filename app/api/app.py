@@ -1,0 +1,127 @@
+"""API application factory."""
+
+from __future__ import annotations
+
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+
+from app.core.config import settings
+from app.core.exceptions import register_exception_handlers
+from app.core.logging import get_logger, request_id_var
+from app.schemas.common import ErrorResponse
+
+from .routes import auth, cronjobs, dips, health, symbols
+
+logger = get_logger("api")
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Add security headers to all responses."""
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+
+        # Security headers
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+
+        # HSTS (only when HTTPS is enabled)
+        if settings.https_enabled:
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
+        return response
+
+
+class RequestIDMiddleware(BaseHTTPMiddleware):
+    """Add request ID to all requests for tracing."""
+
+    async def dispatch(self, request: Request, call_next):
+        import uuid
+
+        request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+        request.state.request_id = request_id
+        request_id_var.set(request_id)
+
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+
+        return response
+
+
+class RequestLoggingMiddleware(BaseHTTPMiddleware):
+    """Log all requests."""
+
+    async def dispatch(self, request: Request, call_next):
+        import time
+
+        start_time = time.monotonic()
+
+        response = await call_next(request)
+
+        duration = time.monotonic() - start_time
+        logger.info(
+            f"{request.method} {request.url.path} -> {response.status_code} ({duration:.3f}s)",
+            extra={
+                "method": request.method,
+                "path": request.url.path,
+                "status_code": response.status_code,
+                "duration_ms": int(duration * 1000),
+            },
+        )
+
+        return response
+
+
+def create_api_app() -> FastAPI:
+    """Create and configure the API application."""
+    app = FastAPI(
+        title=settings.app_name,
+        version=settings.app_version,
+        description="Stock dip tracking and analysis API",
+        root_path=settings.root_path,
+        docs_url="/docs" if settings.debug else None,
+        redoc_url="/redoc" if settings.debug else None,
+        openapi_url="/openapi.json" if settings.debug else None,
+        responses={
+            400: {"model": ErrorResponse, "description": "Bad Request"},
+            401: {"model": ErrorResponse, "description": "Unauthorized"},
+            403: {"model": ErrorResponse, "description": "Forbidden"},
+            404: {"model": ErrorResponse, "description": "Not Found"},
+            422: {"model": ErrorResponse, "description": "Validation Error"},
+            429: {"model": ErrorResponse, "description": "Rate Limit Exceeded"},
+            500: {"model": ErrorResponse, "description": "Internal Server Error"},
+        },
+    )
+
+    # Add middlewares (order matters - first added is outermost)
+    app.add_middleware(RequestLoggingMiddleware)
+    app.add_middleware(RequestIDMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware)
+
+    # CORS - strict configuration (no wildcards with credentials)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
+        allow_headers=["Authorization", "Content-Type", "X-Request-ID", "X-CSRF-Token"],
+        expose_headers=["X-Request-ID"],
+        max_age=600,
+    )
+
+    # Register exception handlers
+    register_exception_handlers(app)
+
+    # Include routers
+    app.include_router(health.router, tags=["Health"])
+    app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
+    app.include_router(symbols.router, prefix="/symbols", tags=["Symbols"])
+    app.include_router(dips.router, prefix="/dips", tags=["Dips"])
+    app.include_router(cronjobs.router, prefix="/cronjobs", tags=["CronJobs"])
+
+    return app

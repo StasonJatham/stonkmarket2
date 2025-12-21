@@ -1,24 +1,70 @@
-FROM python:3.14-slim
+# Build stage
+FROM python:3.12-slim AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# System deps for timezone data and certificates
-RUN apt-get update \ 
-    && apt-get install -y --no-install-recommends ca-certificates tzdata build-essential \ 
+WORKDIR /build
+
+# Install build dependencies
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        gcc \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Production stage
+FROM python:3.12-slim AS production
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app \
+    # Application config
+    ENVIRONMENT=production \
+    DEBUG=false \
+    LOG_LEVEL=INFO
+
+# Install runtime dependencies and curl for healthcheck
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        tzdata \
+        curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Create non-root user
+RUN groupadd --gid 1000 appgroup \
+    && useradd --uid 1000 --gid appgroup --shell /bin/bash --create-home appuser
 
 WORKDIR /app
 
-COPY requirements.txt ./
-RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -r requirements.txt \
-    && pip install --no-cache-dir gunicorn==22.0.0 uvicorn==0.38.0
+# Copy Python packages from builder
+COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
 
-COPY . .
+# Copy application code
+COPY --chown=appuser:appgroup app/ ./app/
+COPY --chown=appuser:appgroup main.py ./
 
-ENV DB_PATH=/data/dips.sqlite
-RUN mkdir -p /data
+# Create data directory with correct permissions
+RUN mkdir -p /data && chown appuser:appgroup /data
+
+# Switch to non-root user
+USER appuser
 
 EXPOSE 8000
-CMD ["gunicorn", "-k", "uvicorn.workers.UvicornWorker", "-w", "4", "main:app", "--bind", "0.0.0.0:8000", "--access-logfile", "-", "--forwarded-allow-ips", "*"]
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:8000/api/health/live || exit 1
+
+# Default command
+CMD ["gunicorn", "-k", "uvicorn.workers.UvicornWorker", "-w", "2", "app.main:app", "--bind", "0.0.0.0:8000", "--access-logfile", "-", "--forwarded-allow-ips", "*", "--timeout", "120", "--graceful-timeout", "30"]
+

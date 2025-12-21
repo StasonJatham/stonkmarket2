@@ -1,25 +1,99 @@
-version: "3.9"
-
 services:
   stonkmarket:
-    build: .
-    command: gunicorn -k uvicorn.workers.UvicornWorker -w ${GUNICORN_WORKERS:-1} main:app --bind 0.0.0.0:8000 --access-logfile - --forwarded-allow-ips="*"
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: stonkmarket-api
+    command: >
+      gunicorn -k uvicorn.workers.UvicornWorker
+      -w ${GUNICORN_WORKERS:-2}
+      app.main:app
+      --bind 0.0.0.0:8000
+      --access-logfile -
+      --forwarded-allow-ips="*"
+      --timeout 120
+      --graceful-timeout 30
     env_file:
       - .env
     environment:
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+      - DEBUG=${DEBUG:-false}
       - DB_PATH=${DB_PATH:-/data/dips.sqlite}
-      - HTTPS=${HTTPS:-false}
-      - DOMAIN=${DOMAIN:-}
+      - VALKEY_URL=${VALKEY_URL:-redis://valkey:6379/0}
       - ADMIN_USER=${ADMIN_USER:-admin}
-      - ADMIN_PASS=${ADMIN_PASS:-admin}
-      - AUTH_SECRET=${AUTH_SECRET:-change-me-secret}
+      - ADMIN_PASS=${ADMIN_PASS:-}
+      - JWT_SECRET=${JWT_SECRET:-}
       - SCHEDULER_ENABLED=${SCHEDULER_ENABLED:-true}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-}
     volumes:
-      - ./data:/data
+      - sqlite_data:/data
     ports:
       - "8000:8000"
+    depends_on:
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+    networks:
+      - stonkmarket
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    container_name: stonkmarket-valkey
+    command: >
+      valkey-server
+      --appendonly yes
+      --maxmemory 128mb
+      --maxmemory-policy allkeys-lru
+      --tcp-keepalive 300
+    volumes:
+      - valkey_data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+    networks:
+      - stonkmarket
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  sqlite_data:
+    driver: local
+  valkey_data:
+    driver: local
 
 networks:
-  default:
+  stonkmarket:
     name: stonkmarket_net
+    driver: bridge

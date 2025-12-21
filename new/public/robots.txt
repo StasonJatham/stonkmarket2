@@ -1,0 +1,10 @@
+# Robots.txt for StonkMarket
+User-agent: *
+Allow: /
+
+# Sitemap
+Sitemap: https://stonkmarket.app/sitemap.xml
+
+# Disallow admin routes
+Disallow: /admin
+Disallow: /api/
