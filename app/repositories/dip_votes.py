@@ -235,7 +235,7 @@ async def upsert_ai_analysis(
     tinder_bio: Optional[str] = None,
     ai_rating: Optional[str] = None,
     ai_reasoning: Optional[str] = None,
-    model_used: str = "gpt-4o-mini",
+    model_used: str = "gpt-5-mini",
     is_batch: bool = False,
     expires_hours: int = 168,  # 7 days
 ) -> dict:

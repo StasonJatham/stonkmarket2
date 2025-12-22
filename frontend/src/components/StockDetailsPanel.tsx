@@ -458,11 +458,11 @@ export function StockDetailsPanel({
                     </div>
                   )}
 
-                  {stockInfo.summary && (
+                  {(stockInfo.summary_ai || stockInfo.summary) && (
                     <div className="mt-2 p-3 bg-muted/30 rounded-lg">
                       <p className="text-xs font-medium text-muted-foreground mb-1">About the Company</p>
                       <p className="text-sm leading-relaxed">
-                        {stockInfo.summary}
+                        {stockInfo.summary_ai || stockInfo.summary}
                       </p>
                     </div>
                   )}

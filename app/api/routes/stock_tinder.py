@@ -46,34 +46,14 @@ async def get_dip_cards(
         # Compute vote_id for each symbol and check which have votes
         voted_symbols = set()
         for c in cards:
-            vote_id = get_vote_identifier(request, c["symbol"])
-            vote = await dip_votes_repo.get_user_vote_for_symbol(c["symbol"], vote_id)
+            vote_id = get_vote_identifier(request, c.symbol)
+            vote = await dip_votes_repo.get_user_vote_for_symbol(c.symbol, vote_id)
             if vote:
-                voted_symbols.add(c["symbol"])
-        cards = [c for c in cards if c["symbol"] not in voted_symbols]
+                voted_symbols.add(c.symbol)
+        cards = [c for c in cards if c.symbol not in voted_symbols]
 
     return DipCardList(
-        cards=[
-            DipCard(
-                symbol=c["symbol"],
-                name=c.get("name"),
-                sector=c.get("sector"),
-                industry=c.get("industry"),
-                website=c.get("website"),
-                ipo_year=c.get("ipo_year"),
-                current_price=c["current_price"],
-                ref_high=c["ref_high"],
-                dip_pct=c["dip_pct"],
-                days_below=c["days_below"],
-                min_dip_pct=c.get("min_dip_pct"),
-                tinder_bio=c.get("tinder_bio"),
-                ai_rating=c.get("ai_rating"),
-                ai_reasoning=c.get("ai_reasoning"),
-                ai_confidence=c.get("ai_confidence"),
-                vote_counts=VoteCounts(**c["vote_counts"]),
-            )
-            for c in cards
-        ],
+        cards=cards,
         total=len(cards),
     )
 

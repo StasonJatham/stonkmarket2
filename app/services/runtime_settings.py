@@ -29,7 +29,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "signal_threshold_hold": 40.0,
     "ai_enrichment_enabled": True,
     "ai_batch_size": 0,  # 0 = process all stocks
-    "ai_model": "gpt-4o-mini",
+    "ai_model": "gpt-5-mini",
     "suggestion_cleanup_days": 30,
     "auto_approve_votes": 10,
     "benchmarks": [

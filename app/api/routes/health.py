@@ -75,7 +75,7 @@ async def readiness_check() -> dict:
 
     Returns 200 if ready, useful for load balancer health checks.
     """
-    db_ok = db_healthcheck()
+    db_ok = await db_healthcheck()
     if not db_ok:
         from fastapi import HTTPException, status
 

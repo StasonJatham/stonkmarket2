@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS symbols (
     name VARCHAR(255),
     sector VARCHAR(100),
     market_cap BIGINT,
+    summary_ai VARCHAR(350),  -- AI-generated short company description (~300 chars)
     min_dip_pct DECIMAL(5, 4) DEFAULT 0.15,
     min_days INTEGER DEFAULT 5,
     is_active BOOLEAN DEFAULT TRUE,
@@ -263,7 +264,7 @@ INSERT INTO runtime_settings (key, value) VALUES
     ('signal_threshold_hold', '40.0'),
     ('ai_enrichment_enabled', 'true'),
     ('ai_batch_size', '0'),
-    ('ai_model', '"gpt-4o-mini"'),
+    ('ai_model', '"gpt-5-mini"'),
     ('suggestion_cleanup_days', '30'),
     ('auto_approve_votes', '10'),
     ('benchmarks', '[{"id": "SP500", "symbol": "^GSPC", "name": "S&P 500", "description": "US Large Cap Index"}, {"id": "MSCI_WORLD", "symbol": "URTH", "name": "MSCI World", "description": "Global Developed Markets"}]')

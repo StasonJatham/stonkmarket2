@@ -48,6 +48,11 @@ def get_stock_info(symbol: str) -> Optional[StockInfo]:
         ticker = yf.Ticker(symbol)
         info = ticker.info or {}
 
+        # yfinance dividendYield is in percentage format (e.g., 0.17 = 0.17%)
+        # We store as decimal (0.0017) so frontend can multiply by 100
+        raw_div_yield = info.get("dividendYield")
+        dividend_yield = raw_div_yield / 100 if raw_div_yield else None
+
         stock_info = StockInfo(
             symbol=symbol,
             name=info.get("shortName") or info.get("longName"),
@@ -57,7 +62,7 @@ def get_stock_info(symbol: str) -> Optional[StockInfo]:
             market_cap=info.get("totalAssets") if is_etf_or_index else info.get("marketCap"),
             pe_ratio=None if is_etf_or_index else info.get("trailingPE"),
             forward_pe=None if is_etf_or_index else info.get("forwardPE"),
-            dividend_yield=info.get("dividendYield"),  # ETFs can have dividend yield
+            dividend_yield=dividend_yield,  # ETFs can have dividend yield
             beta=info.get("beta"),
             avg_volume=info.get("averageVolume"),
             summary=info.get("longBusinessSummary"),

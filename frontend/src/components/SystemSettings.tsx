@@ -39,10 +39,10 @@ import {
 } from 'lucide-react';
 
 const AI_MODELS = [
-  { value: 'gpt-4o-mini', label: 'GPT-4o Mini (Fast & affordable)' },
-  { value: 'gpt-4.1-mini', label: 'GPT-4.1 Mini' },
-  { value: 'gpt-4o', label: 'GPT-4o (Best quality)' },
-  { value: 'gpt-4.1', label: 'GPT-4.1 (Latest)' },
+  { value: 'gpt-5-mini', label: 'GPT-5 Mini (Fast & affordable)' },
+  { value: 'gpt-5', label: 'GPT-5 (Best quality)' },
+  { value: 'gpt-4o-mini', label: 'GPT-4o Mini (Legacy)' },
+  { value: 'gpt-4o', label: 'GPT-4o (Legacy)' },
 ];
 
 export function SystemSettings() {
@@ -55,7 +55,7 @@ export function SystemSettings() {
 
   // Form state
   const [aiEnabled, setAiEnabled] = useState(false);
-  const [aiModel, setAiModel] = useState('gpt-4o-mini');
+  const [aiModel, setAiModel] = useState('gpt-5-mini');
   const [aiBatchSize, setAiBatchSize] = useState(5);
   const [cleanupDays, setCleanupDays] = useState(30);
   const [strongBuyThreshold, setStrongBuyThreshold] = useState(80);

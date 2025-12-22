@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import date, timedelta
-from typing import List
+from typing import List, Tuple
 
 from fastapi import APIRouter, Depends, Path, Query
 from pydantic import BaseModel
@@ -44,6 +44,81 @@ class BenchmarkInfo(BaseModel):
     description: str | None = None
 
 
+async def _build_ranking(
+    force_refresh: bool = False,
+) -> Tuple[List[RankingEntry], List[RankingEntry]]:
+    """
+    Build ranking data from dipfinder service and stock info.
+    
+    Returns:
+        Tuple of (all_entries, filtered_entries) where filtered_entries
+        only includes stocks meeting their individual dip thresholds.
+    """
+    # Get all symbols from database (includes per-symbol min_dip_pct thresholds)
+    symbols = await symbol_repo.list_symbols()
+    if not symbols:
+        return [], []
+
+    # Build a map of symbol -> min_dip_pct threshold
+    symbol_thresholds = {s.symbol: s.min_dip_pct for s in symbols}
+    tickers = [s.symbol for s in symbols]
+
+    # Get signals from dipfinder service
+    service = get_dipfinder_service()
+    signals = await service.get_signals(tickers, force_refresh=force_refresh)
+
+    # Fetch stock info for all symbols in parallel (for enrichment)
+    async def get_info(symbol: str):
+        return symbol, await get_stock_info_async(symbol)
+    
+    info_tasks = [get_info(t) for t in tickers]
+    info_results = await asyncio.gather(*info_tasks, return_exceptions=True)
+    stock_info_map = {}
+    for result in info_results:
+        if isinstance(result, tuple):
+            sym, info = result
+            if info:
+                stock_info_map[sym] = info
+
+    # Convert signals to ranking entries with enriched data
+    all_entries = []
+    filtered_entries = []
+    
+    for signal in signals:
+        if signal.dip_metrics:
+            # Get enriched info if available
+            info = stock_info_map.get(signal.ticker, {})
+            
+            entry = RankingEntry(
+                symbol=signal.ticker,
+                name=info.get("name") or signal.ticker,
+                depth=signal.dip_metrics.dip_pct,
+                days_since_dip=signal.dip_metrics.days_since_peak,
+                last_price=signal.dip_metrics.current_price,
+                previous_close=info.get("previous_close"),
+                change_percent=info.get("change_percent"),
+                high_52w=signal.dip_metrics.peak_price,
+                low_52w=info.get("fifty_two_week_low"),
+                market_cap=info.get("market_cap"),
+                pe_ratio=info.get("pe_ratio"),
+                volume=info.get("avg_volume"),
+                sector=info.get("sector"),
+                updated_at=signal.as_of_date if signal.as_of_date else None,
+            )
+            all_entries.append(entry)
+            
+            # Check if this stock meets its individual dip threshold
+            min_dip_threshold = symbol_thresholds.get(signal.ticker, 0.10)
+            if signal.dip_metrics.dip_pct >= min_dip_threshold:
+                filtered_entries.append(entry)
+
+    # Sort by depth (deepest dip first - higher value = deeper dip)
+    all_entries.sort(key=lambda x: x.depth, reverse=True)
+    filtered_entries.sort(key=lambda x: x.depth, reverse=True)
+
+    return all_entries, filtered_entries
+
+
 @router.get(
     "/benchmarks",
     response_model=List[BenchmarkInfo],
@@ -71,68 +146,11 @@ async def get_ranking(show_all: bool = False) -> List[RankingEntry]:
     if cached:
         return [RankingEntry(**item) for item in cached]
 
-    # Get all symbols from database (includes per-symbol min_dip_pct thresholds)
-    symbols = await symbol_repo.list_symbols()
-    if not symbols:
-        return []
-
-    # Build a map of symbol -> min_dip_pct threshold
-    symbol_thresholds = {s.symbol: s.min_dip_pct for s in symbols}
-    tickers = [s.symbol for s in symbols]
-
-    # Get signals from dipfinder service
-    service = get_dipfinder_service()
-    signals = await service.get_signals(tickers)
-
-    # Fetch stock info for all symbols in parallel (for enrichment)
-    async def get_info(symbol: str):
-        return symbol, await get_stock_info_async(symbol)
+    # Build ranking (use shared helper)
+    all_entries, filtered_entries = await _build_ranking(force_refresh=False)
     
-    info_tasks = [get_info(t) for t in tickers]
-    info_results = await asyncio.gather(*info_tasks, return_exceptions=True)
-    stock_info_map = {}
-    for result in info_results:
-        if isinstance(result, tuple):
-            symbol, info = result
-            if info:
-                stock_info_map[symbol] = info
-
-    # Convert signals to ranking entries with enriched data
-    # Filter by each stock's individual dip threshold unless show_all is True
-    ranking = []
-    for signal in signals:
-        if signal.dip_metrics:
-            # Get this stock's minimum dip threshold (default 10% if not set)
-            min_dip_threshold = symbol_thresholds.get(signal.ticker, 0.10)
-            dip_pct = signal.dip_metrics.dip_pct
-            
-            # Skip stocks not meeting their individual dip threshold unless show_all is True
-            if not show_all and dip_pct < min_dip_threshold:
-                continue
-                
-            # Get enriched info if available
-            info = stock_info_map.get(signal.ticker, {})
-            
-            entry = RankingEntry(
-                symbol=signal.ticker,
-                name=info.get("name") or signal.ticker,
-                depth=signal.dip_metrics.dip_pct,
-                days_since_dip=signal.dip_metrics.days_since_peak,
-                last_price=signal.dip_metrics.current_price,
-                previous_close=info.get("previous_close"),
-                change_percent=info.get("change_percent"),
-                high_52w=signal.dip_metrics.peak_price,
-                low_52w=info.get("fifty_two_week_low"),
-                market_cap=info.get("market_cap"),
-                pe_ratio=info.get("pe_ratio"),
-                volume=info.get("avg_volume"),
-                sector=info.get("sector"),
-                updated_at=signal.as_of_date if signal.as_of_date else None,
-            )
-            ranking.append(entry)
-
-    # Sort by depth (deepest dip first - higher value = deeper dip)
-    ranking.sort(key=lambda x: x.depth, reverse=True)
+    # Select appropriate result based on show_all
+    ranking = all_entries if show_all else filtered_entries
 
     # Cache the result
     await _ranking_cache.set(cache_key, [r.model_dump() for r in ranking])
@@ -157,73 +175,14 @@ async def refresh_ranking(
     await _ranking_cache.delete("all:True")
     await _ranking_cache.delete("all:False")
 
-    # Get all symbols from database (includes per-symbol min_dip_pct thresholds)
-    symbols = await symbol_repo.list_symbols()
-    if not symbols:
-        return []
-
-    # Build a map of symbol -> min_dip_pct threshold
-    symbol_thresholds = {s.symbol: s.min_dip_pct for s in symbols}
-    tickers = [s.symbol for s in symbols]
-
-    # Get signals with force refresh
-    service = get_dipfinder_service()
-    signals = await service.get_signals(tickers, force_refresh=True)
-
-    # Fetch stock info for all symbols in parallel (for enrichment)
-    async def get_info(symbol: str):
-        return symbol, await get_stock_info_async(symbol)
-    
-    info_tasks = [get_info(t) for t in tickers]
-    info_results = await asyncio.gather(*info_tasks, return_exceptions=True)
-    stock_info_map = {}
-    for result in info_results:
-        if isinstance(result, tuple):
-            symbol, info = result
-            if info:
-                stock_info_map[symbol] = info
-
-    # Convert signals to ranking entries with enriched data
-    # Include all stocks in refresh (show_all behavior)
-    ranking = []
-    filtered_ranking = []
-    for signal in signals:
-        if signal.dip_metrics:
-            # Get enriched info if available
-            info = stock_info_map.get(signal.ticker, {})
-            
-            entry = RankingEntry(
-                symbol=signal.ticker,
-                name=info.get("name") or signal.ticker,
-                depth=signal.dip_metrics.dip_pct,
-                days_since_dip=signal.dip_metrics.days_since_peak,
-                last_price=signal.dip_metrics.current_price,
-                previous_close=info.get("previous_close"),
-                change_percent=info.get("change_percent"),
-                high_52w=signal.dip_metrics.peak_price,
-                low_52w=info.get("fifty_two_week_low"),
-                market_cap=info.get("market_cap"),
-                pe_ratio=info.get("pe_ratio"),
-                volume=info.get("avg_volume"),
-                sector=info.get("sector"),
-                updated_at=signal.as_of_date if signal.as_of_date else None,
-            )
-            ranking.append(entry)
-            
-            # Check if this stock meets its individual dip threshold
-            min_dip_threshold = symbol_thresholds.get(signal.ticker, 0.10)
-            if signal.dip_metrics.dip_pct >= min_dip_threshold:
-                filtered_ranking.append(entry)
-
-    # Sort by depth (deepest dip first)
-    ranking.sort(key=lambda x: x.depth, reverse=True)
-    filtered_ranking.sort(key=lambda x: x.depth, reverse=True)
+    # Build ranking with force refresh (use shared helper)
+    all_entries, filtered_entries = await _build_ranking(force_refresh=True)
 
     # Cache both filtered and unfiltered results
-    await _ranking_cache.set("all:True", [r.model_dump() for r in ranking])
-    await _ranking_cache.set("all:False", [r.model_dump() for r in filtered_ranking])
+    await _ranking_cache.set("all:True", [r.model_dump() for r in all_entries])
+    await _ranking_cache.set("all:False", [r.model_dump() for r in filtered_entries])
 
-    return ranking
+    return all_entries
 
 
 @router.get(
@@ -406,7 +365,7 @@ async def get_chart(
 async def get_stock_info_endpoint(
     symbol: str = Depends(_validate_symbol_path),
 ) -> StockInfo:
-    """Get detailed stock information."""
+    """Get detailed stock information, including AI-generated summary if available."""
     # Try cache first
     cached = await _info_cache.get(symbol)
     if cached:
@@ -418,6 +377,14 @@ async def get_stock_info_endpoint(
             message="Could not fetch stock information",
             details={"symbol": symbol},
         )
+
+    # Check if we have an AI summary in the database
+    symbol_data = await fetch_one(
+        "SELECT summary_ai FROM symbols WHERE symbol = $1",
+        symbol.upper(),
+    )
+    if symbol_data and symbol_data.get("summary_ai"):
+        info.summary_ai = symbol_data["summary_ai"]
 
     # Cache the result
     await _info_cache.set(symbol, info.model_dump())

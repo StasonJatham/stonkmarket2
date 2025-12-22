@@ -61,7 +61,7 @@ class RuntimeSettingsResponse(BaseModel):
         default=5, ge=0, le=50, description="Batch size for AI processing (0 = all stocks)"
     )
     ai_model: str = Field(
-        default="gpt-4o-mini", description="AI model to use for enrichment"
+        default="gpt-5-mini", description="AI model to use for enrichment"
     )
     suggestion_cleanup_days: int = Field(
         default=30, ge=1, le=365, description="Days to keep rejected suggestions"

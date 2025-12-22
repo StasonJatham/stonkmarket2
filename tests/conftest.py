@@ -43,6 +43,32 @@ async def async_client() -> AsyncGenerator[AsyncClient, None]:
 
 
 @pytest.fixture
+def auth_token() -> str:
+    """Create a valid JWT token for testing."""
+    from app.core.security import create_access_token
+    return create_access_token(username="test_user", is_admin=False)
+
+
+@pytest.fixture
+def admin_token() -> str:
+    """Create an admin JWT token for testing."""
+    from app.core.security import create_access_token
+    return create_access_token(username="test_admin", is_admin=True)
+
+
+@pytest.fixture
+def auth_headers(auth_token: str) -> dict:
+    """Create authorization headers with a regular user token."""
+    return {"Authorization": f"Bearer {auth_token}"}
+
+
+@pytest.fixture
+def admin_headers(admin_token: str) -> dict:
+    """Create authorization headers with an admin token."""
+    return {"Authorization": f"Bearer {admin_token}"}
+
+
+@pytest.fixture
 def sample_prices() -> list[float]:
     """Sample price series for testing."""
     # 100 days of prices with a dip pattern

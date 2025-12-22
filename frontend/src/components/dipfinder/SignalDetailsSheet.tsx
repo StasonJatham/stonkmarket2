@@ -656,7 +656,7 @@ export function SignalDetailsSheet({
                 </div>
 
                 {/* Company Summary */}
-                {stockInfo.summary && (
+                {(stockInfo.summary_ai || stockInfo.summary) && (
                   <div className="bg-muted/20 rounded-xl p-4">
                     <div className="flex items-start gap-2 mb-2">
                       <Info className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
@@ -664,7 +664,7 @@ export function SignalDetailsSheet({
                     </div>
                     <div className="max-h-32 overflow-y-auto scrollbar-thin">
                       <p className="text-sm text-muted-foreground leading-relaxed pr-2">
-                        {stockInfo.summary}
+                        {stockInfo.summary_ai || stockInfo.summary}
                       </p>
                     </div>
                   </div>

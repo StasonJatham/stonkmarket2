@@ -4,16 +4,19 @@ from __future__ import annotations
 
 from typing import List
 
-from fastapi import APIRouter, Depends, Path, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Path, status
 from pydantic import BaseModel
 
 from app.api.dependencies import require_user
 from app.cache.cache import Cache
 from app.core.exceptions import ConflictError, NotFoundError
+from app.core.logging import get_logger
 from app.core.security import TokenData
 from app.repositories import symbols as symbol_repo
 from app.schemas.symbols import SymbolCreate, SymbolResponse, SymbolUpdate
 from app.services.stock_info import get_stock_info
+
+logger = get_logger("api.routes.symbols")
 
 router = APIRouter()
 
@@ -149,12 +152,13 @@ async def get_symbol(
 )
 async def create_symbol(
     payload: SymbolCreate,
+    background_tasks: BackgroundTasks,
     user: TokenData = Depends(require_user),
 ) -> SymbolResponse:
     """
     Create a new tracked symbol.
 
-    After creation, fetches initial dip state data.
+    After creation, fetches initial data and generates AI summary in background.
     """
     # Check if already exists
     existing = await symbol_repo.get_symbol(payload.symbol)
@@ -170,6 +174,9 @@ async def create_symbol(
         payload.min_dip_pct,
         payload.min_days,
     )
+
+    # Process symbol in background (fetch data, generate AI summary)
+    background_tasks.add_task(_process_new_symbol, payload.symbol)
 
     return SymbolResponse(
         symbol=created.symbol,
@@ -241,3 +248,56 @@ async def delete_symbol(
 
     # Delete symbol (cascade will delete dip_state)
     await symbol_repo.delete_symbol(symbol)
+
+
+async def _process_new_symbol(symbol: str) -> None:
+    """Background task to process newly added symbol.
+    
+    Fetches Yahoo Finance data and generates AI summary for company description.
+    """
+    from app.database.connection import execute, fetch_one
+    from app.services.stock_info import get_stock_info_async
+    from app.services.openai_client import summarize_company
+    
+    logger.info(f"Processing newly added symbol: {symbol}")
+    
+    try:
+        # Fetch Yahoo Finance info
+        info = await get_stock_info_async(symbol)
+        if not info:
+            logger.warning(f"Could not fetch Yahoo data for {symbol}")
+            return
+        
+        name = info.get("name") or info.get("short_name")
+        sector = info.get("sector")
+        full_summary = info.get("summary")  # longBusinessSummary from yfinance
+        
+        # Generate AI summary from the long description
+        ai_summary = None
+        if full_summary and len(full_summary) > 100:
+            ai_summary = await summarize_company(
+                symbol=symbol,
+                name=name,
+                description=full_summary,
+            )
+            if ai_summary:
+                logger.info(f"Generated AI summary for {symbol}: {len(ai_summary)} chars")
+        
+        # Update symbols with name, sector, and AI summary
+        if name or sector or ai_summary:
+            await execute(
+                """UPDATE symbols SET 
+                       name = COALESCE($2, name),
+                       sector = COALESCE($3, sector),
+                       summary_ai = COALESCE($4, summary_ai),
+                       updated_at = NOW()
+                   WHERE symbol = $1""",
+                symbol.upper(),
+                name,
+                sector,
+                ai_summary,
+            )
+            logger.info(f"Updated symbol info for {symbol}: name='{name}', sector='{sector}', summary_ai={'yes' if ai_summary else 'no'}")
+            
+    except Exception as e:
+        logger.error(f"Error processing new symbol {symbol}: {e}")

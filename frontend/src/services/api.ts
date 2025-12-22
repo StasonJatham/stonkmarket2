@@ -59,6 +59,7 @@ export interface StockInfo {
   beta: number | null;
   avg_volume: number | null;
   summary: string | null;
+  summary_ai: string | null;  // AI-generated short summary (~300 chars)
   website: string | null;
   recommendation: string | null;
 }

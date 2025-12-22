@@ -10,12 +10,24 @@ from app.api.app import create_api_app
 from app.cache.client import close_valkey_client, get_valkey_client
 from app.core.config import settings
 from app.core.logging import get_logger, setup_logging
-from app.database.connection import init_pg_pool, close_pg_pool
+from app.database.connection import init_pg_pool, close_pg_pool, execute
 from app.jobs import start_scheduler, stop_scheduler
 from app.services.runtime_settings import init_runtime_settings
 import app.jobs.definitions  # noqa: F401 - register jobs
 
 logger = get_logger("main")
+
+
+async def run_migrations() -> None:
+    """Run any pending database migrations."""
+    # Add summary_ai column to symbols table if it doesn't exist
+    try:
+        await execute("""
+            ALTER TABLE symbols ADD COLUMN IF NOT EXISTS summary_ai VARCHAR(350);
+        """)
+        logger.info("Database migrations completed")
+    except Exception as e:
+        logger.warning(f"Migration check failed (may already be applied): {e}")
 
 
 @asynccontextmanager
@@ -29,6 +41,9 @@ async def lifespan(app: FastAPI):
     # Initialize database
     await init_pg_pool()
     logger.info("PostgreSQL pool initialized")
+
+    # Run any pending migrations
+    await run_migrations()
 
     # Initialize runtime settings from database
     await init_runtime_settings()

@@ -4,12 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import re
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from typing import List, Optional
 
-import yfinance as yf
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
 
 from app.api.dependencies import require_admin
@@ -26,6 +23,15 @@ from app.core.anon_session import (
 )
 from app.database.connection import fetch_all, fetch_one, execute
 from app.services.runtime_settings import get_runtime_setting
+from app.services.suggestion_stock_info import (
+    validate_symbol_format as _validate_symbol_format,
+    get_stock_info_full as _get_stock_info_full,
+    get_stock_info_basic as _get_stock_info,
+    get_ipo_year as _get_ipo_year,
+    get_stock_info_full_async,
+    RATE_LIMIT_INDICATORS,
+    _executor,
+)
 
 logger = get_logger("api.routes.suggestions")
 
@@ -33,143 +39,6 @@ router = APIRouter(prefix="/suggestions", tags=["suggestions"])
 
 # Vote cooldown in days (now managed in anon_session.py)
 VOTE_COOLDOWN_DAYS = 7
-
-# Symbol validation pattern: 1-10 chars, alphanumeric + dot only
-SYMBOL_PATTERN = re.compile(r'^[A-Z0-9.]{1,10}$')
-
-# Thread pool for blocking yfinance calls
-_executor = ThreadPoolExecutor(max_workers=2)
-
-# Rate limit error messages to detect
-RATE_LIMIT_INDICATORS = ["rate limit", "too many requests", "429"]
-
-
-def _get_ipo_year(symbol: str) -> Optional[int]:
-    """Get IPO/first trade year for a symbol from Yahoo Finance."""
-    try:
-        ticker = yf.Ticker(symbol)
-        info = ticker.info or {}
-        first_trade_ms = info.get("firstTradeDateMilliseconds")
-        if first_trade_ms:
-            first_trade_date = datetime.utcfromtimestamp(first_trade_ms / 1000)
-            return first_trade_date.year
-    except Exception as e:
-        logger.debug(f"Failed to get IPO year for {symbol}: {e}")
-    return None
-
-
-def _get_stock_info_full(symbol: str) -> dict:
-    """
-    Get comprehensive stock info from Yahoo Finance for suggestions.
-    
-    Returns:
-        dict with keys:
-        - valid: bool - whether symbol is valid
-        - name: str | None
-        - sector: str | None
-        - summary: str | None
-        - website: str | None
-        - ipo_year: int | None
-        - current_price: float | None
-        - ath_price: float | None (52-week high as proxy)
-        - fetch_status: 'fetched' | 'rate_limited' | 'error' | 'invalid'
-        - fetch_error: str | None
-    """
-    result = {
-        "valid": False,
-        "name": None,
-        "sector": None,
-        "summary": None,
-        "website": None,
-        "ipo_year": None,
-        "current_price": None,
-        "ath_price": None,
-        "fetch_status": "error",
-        "fetch_error": None,
-    }
-    
-    try:
-        ticker = yf.Ticker(symbol)
-        info = ticker.info or {}
-        
-        # Check if valid symbol (must have at least a name or price)
-        name = info.get("shortName") or info.get("longName")
-        current_price = info.get("currentPrice") or info.get("regularMarketPrice")
-        
-        if not name and not current_price:
-            result["fetch_status"] = "invalid"
-            result["fetch_error"] = "Symbol not found on Yahoo Finance"
-            return result
-        
-        result["valid"] = True
-        result["fetch_status"] = "fetched"
-        result["name"] = name
-        result["sector"] = info.get("sector")
-        result["summary"] = info.get("longBusinessSummary")
-        result["website"] = info.get("website")
-        result["current_price"] = current_price
-        result["ath_price"] = info.get("fiftyTwoWeekHigh")
-        
-        # Get IPO year
-        first_trade_ms = info.get("firstTradeDateMilliseconds")
-        if first_trade_ms:
-            first_trade_date = datetime.utcfromtimestamp(first_trade_ms / 1000)
-            result["ipo_year"] = first_trade_date.year
-            
-    except Exception as e:
-        error_str = str(e).lower()
-        # Check if rate limited
-        if any(indicator in error_str for indicator in RATE_LIMIT_INDICATORS):
-            result["fetch_status"] = "rate_limited"
-            result["fetch_error"] = "Yahoo Finance rate limit reached. Will retry automatically."
-            logger.warning(f"Rate limited fetching {symbol}: {e}")
-        else:
-            result["fetch_status"] = "error"
-            result["fetch_error"] = str(e) if str(e) else "Failed to fetch stock info"
-            logger.debug(f"Failed to get stock info for {symbol}: {e}")
-    
-    return result
-
-
-def _get_stock_info(symbol: str) -> dict:
-    """Get IPO year and website for a symbol from Yahoo Finance."""
-    result = {"ipo_year": None, "website": None}
-    try:
-        ticker = yf.Ticker(symbol)
-        info = ticker.info or {}
-        
-        # Get IPO year
-        first_trade_ms = info.get("firstTradeDateMilliseconds")
-        if first_trade_ms:
-            first_trade_date = datetime.utcfromtimestamp(first_trade_ms / 1000)
-            result["ipo_year"] = first_trade_date.year
-        
-        # Get website
-        result["website"] = info.get("website")
-    except Exception as e:
-        logger.debug(f"Failed to get stock info for {symbol}: {e}")
-    return result
-
-
-def _validate_symbol_format(symbol: str) -> str:
-    """Validate and normalize symbol format."""
-    normalized = symbol.strip().upper()
-    if not normalized:
-        raise ValidationError(
-            message="Symbol cannot be empty",
-            details={"symbol": symbol}
-        )
-    if len(normalized) > 10:
-        raise ValidationError(
-            message="Symbol must be 10 characters or less",
-            details={"symbol": symbol, "max_length": 10}
-        )
-    if not SYMBOL_PATTERN.match(normalized):
-        raise ValidationError(
-            message="Symbol can only contain letters, numbers, and dots",
-            details={"symbol": symbol}
-        )
-    return normalized
 
 
 # =============================================================================
@@ -934,10 +803,11 @@ async def _process_approved_symbol(symbol: str) -> None:
     """Background task to process newly approved symbol.
     
     Fetches Yahoo Finance data, 365 days of price history, and generates AI content.
+    Also generates AI summary of company description on first import.
     """
     from datetime import date, timedelta
     from app.services.stock_info import get_stock_info_async
-    from app.services.openai_batch import generate_dip_bio_realtime, rate_dip_realtime
+    from app.services.openai_client import generate_bio, rate_dip, summarize_company
     from app.repositories import dip_votes as dip_votes_repo
     from app.dipfinder.service import get_dipfinder_service
     
@@ -956,21 +826,43 @@ async def _process_approved_symbol(symbol: str) -> None:
         
         logger.info(f"Fetched data for {symbol}: price=${current_price}, ATH=${ath_price}, dip={dip_pct:.1f}%")
         
-        # Step 1.5: Update symbols table with name and sector
+        # Step 1.5: Update symbols table with name, sector and generate AI summary
         name = info.get("name") or info.get("short_name")
         sector = info.get("sector")
-        if name or sector:
+        full_summary = info.get("summary")  # longBusinessSummary from yfinance
+        
+        # Generate AI summary from the long description (only on first import)
+        ai_summary = None
+        if full_summary and len(full_summary) > 100:
+            # Check if we already have an AI summary
+            existing = await fetch_one(
+                "SELECT summary_ai FROM symbols WHERE symbol = $1",
+                symbol.upper(),
+            )
+            if not existing or not existing.get("summary_ai"):
+                ai_summary = await summarize_company(
+                    symbol=symbol,
+                    name=name,
+                    description=full_summary,
+                )
+                if ai_summary:
+                    logger.info(f"Generated AI summary for {symbol}: {len(ai_summary)} chars")
+        
+        # Update symbols with name, sector, and AI summary
+        if name or sector or ai_summary:
             await execute(
                 """UPDATE symbols SET 
                        name = COALESCE($2, name),
                        sector = COALESCE($3, sector),
+                       summary_ai = COALESCE($4, summary_ai),
                        updated_at = NOW()
                    WHERE symbol = $1""",
                 symbol.upper(),
                 name,
                 sector,
+                ai_summary,
             )
-            logger.info(f"Updated symbol info for {symbol}: name='{name}', sector='{sector}'")
+            logger.info(f"Updated symbol info for {symbol}: name='{name}', sector='{sector}', summary_ai={'yes' if ai_summary else 'no'}")
         
         # Step 1.6: Fetch 365 days of price history
         try:
@@ -1003,19 +895,17 @@ async def _process_approved_symbol(symbol: str) -> None:
         )
         
         # Step 3: Generate AI bio
-        bio = await generate_dip_bio_realtime(
+        bio = await generate_bio(
             symbol=symbol,
-            current_price=current_price,
-            ath_price=ath_price,
-            dip_percentage=dip_pct,
+            dip_pct=dip_pct,
         )
         
         # Step 4: Generate AI rating
-        rating_data = await rate_dip_realtime(
+        rating_data = await rate_dip(
             symbol=symbol,
             current_price=current_price,
-            ath_price=ath_price,
-            dip_percentage=dip_pct,
+            ref_high=ath_price,
+            dip_pct=dip_pct,
         )
         
         # Step 5: Store AI analysis

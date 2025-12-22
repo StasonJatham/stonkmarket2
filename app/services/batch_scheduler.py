@@ -6,13 +6,13 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from app.database.connection import fetch_all, execute
-from app.services.openai_batch import (
-    create_batch_job,
-    check_batch_status,
-    retrieve_batch_results,
-    generate_dip_bio_realtime,
-    rate_dip_realtime,
-    BatchJobType,
+from app.services.openai_client import (
+    submit_batch,
+    check_batch,
+    collect_batch,
+    generate_bio,
+    rate_dip,
+    TaskType,
 )
 from app.repositories import api_usage
 from app.core.logging import get_logger
@@ -68,36 +68,34 @@ async def schedule_batch_dip_analysis() -> Optional[str]:
 
     logger.info(f"Scheduling batch AI analysis for {len(dips)} dips")
 
-    # Prepare requests for batch
-    requests = []
+    # Prepare items for batch - use context keys expected by _build_prompt
+    items = []
     for dip in dips:
-        # Create analysis request
-        requests.append(
+        items.append(
             {
-                "custom_id": f"dip_analysis_{dip['symbol']}",
                 "symbol": dip["symbol"],
                 "current_price": float(dip["current_price"])
                 if dip["current_price"]
                 else None,
-                "ath_price": float(dip["ath_price"]) if dip["ath_price"] else None,
-                "dip_percentage": float(dip["dip_percentage"])
+                "ref_high": float(dip["ath_price"]) if dip["ath_price"] else None,
+                "dip_pct": float(dip["dip_percentage"])
                 if dip["dip_percentage"]
                 else None,
             }
         )
 
-    # Create batch job
-    batch_id = await create_batch_job(
-        job_type=BatchJobType.DIP_ANALYSIS,
-        requests=requests,
+    # Submit batch job
+    batch_id = await submit_batch(
+        task=TaskType.DIP_BIO,
+        items=items,
     )
 
     if batch_id:
         # Record batch job
         await api_usage.record_batch_job(
             batch_id=batch_id,
-            job_type=BatchJobType.DIP_ANALYSIS.value,
-            total_requests=len(requests),
+            job_type=TaskType.DIP_BIO.value,
+            total_requests=len(items),
         )
 
         logger.info(f"Created batch job {batch_id} for {len(dips)} dips")
@@ -120,30 +118,28 @@ async def schedule_batch_suggestion_bios() -> Optional[str]:
 
     logger.info(f"Scheduling batch AI bios for {len(suggestions)} suggestions")
 
-    # Prepare requests for batch
-    requests = []
+    # Prepare items for batch
+    items = []
     for suggestion in suggestions:
-        requests.append(
+        items.append(
             {
-                "custom_id": f"suggestion_bio_{suggestion['symbol']}",
                 "symbol": suggestion["symbol"],
-                "company_name": suggestion.get("company_name"),
-                "reason": suggestion.get("reason"),
+                "name": suggestion.get("company_name"),
             }
         )
 
-    # Create batch job
-    batch_id = await create_batch_job(
-        job_type=BatchJobType.SUGGESTION_BIO,
-        requests=requests,
+    # Submit batch job
+    batch_id = await submit_batch(
+        task=TaskType.BIO,
+        items=items,
     )
 
     if batch_id:
         # Record batch job
         await api_usage.record_batch_job(
             batch_id=batch_id,
-            job_type=BatchJobType.SUGGESTION_BIO.value,
-            total_requests=len(requests),
+            job_type=TaskType.BIO.value,
+            total_requests=len(items),
         )
 
         logger.info(f"Created batch job {batch_id} for {len(suggestions)} suggestions")
@@ -178,7 +174,7 @@ async def process_completed_batch_jobs() -> int:
         job_type = row["job_type"]
 
         # Check status
-        status_info = await check_batch_status(batch_id)
+        status_info = await check_batch(batch_id)
 
         if not status_info:
             continue
@@ -206,7 +202,7 @@ async def process_completed_batch_jobs() -> int:
 
         # If completed, retrieve and process results
         if new_status == "completed":
-            results = await retrieve_batch_results(batch_id)
+            results = await collect_batch(batch_id)
 
             if results:
                 await _process_batch_results(batch_id, job_type, results)
@@ -237,35 +233,20 @@ async def _process_batch_results(
 
     for result in results:
         custom_id = result.get("custom_id", "")
-        response = result.get("response", {})
+        # Results from new collect_batch have "result" directly
+        content = result.get("result", "")
 
         try:
-            if job_type == BatchJobType.DIP_ANALYSIS.value:
-                # Extract symbol from custom_id (dip_analysis_SYMBOL)
-                symbol = custom_id.replace("dip_analysis_", "")
-
-                # Parse the AI response
-                content = (
-                    response.get("body", {})
-                    .get("choices", [{}])[0]
-                    .get("message", {})
-                    .get("content", "")
-                )
+            if job_type == TaskType.DIP_BIO.value:
+                # Extract symbol from custom_id (dip_bio_SYMBOL)
+                symbol = custom_id.replace("dip_bio_", "")
 
                 # Store the analysis
                 await _store_dip_analysis(symbol, content, batch_id)
 
-            elif job_type == BatchJobType.SUGGESTION_BIO.value:
-                # Extract symbol from custom_id (suggestion_bio_SYMBOL)
-                symbol = custom_id.replace("suggestion_bio_", "")
-
-                # Parse the AI response
-                content = (
-                    response.get("body", {})
-                    .get("choices", [{}])[0]
-                    .get("message", {})
-                    .get("content", "")
-                )
+            elif job_type == TaskType.BIO.value:
+                # Extract symbol from custom_id (bio_SYMBOL)
+                symbol = custom_id.replace("bio_", "")
 
                 # Store the bio
                 await _store_suggestion_bio(symbol, content)
@@ -349,19 +330,17 @@ async def run_realtime_analysis_for_new_stock(
 
     try:
         # Generate bio
-        bio = await generate_dip_bio_realtime(
+        bio = await generate_bio(
             symbol=symbol,
-            current_price=current_price,
-            ath_price=ath_price,
-            dip_percentage=dip_percentage,
+            dip_pct=dip_percentage,
         )
 
         # Get rating
-        rating_data = await rate_dip_realtime(
+        rating_data = await rate_dip(
             symbol=symbol,
             current_price=current_price,
-            ath_price=ath_price,
-            dip_percentage=dip_percentage,
+            ref_high=ath_price,
+            dip_pct=dip_percentage,
         )
 
         # Store the analysis
@@ -373,7 +352,7 @@ async def run_realtime_analysis_for_new_stock(
                 symbol, tinder_bio, ai_rating, rating_reasoning,
                 model_used, is_batch_generated, generated_at, expires_at
             )
-            VALUES ($1, $2, $3, $4, 'gpt-4o-mini', FALSE, NOW(), $5)
+            VALUES ($1, $2, $3, $4, 'gpt-5-mini', FALSE, NOW(), $5)
             ON CONFLICT (symbol) DO UPDATE SET
                 tinder_bio = EXCLUDED.tinder_bio,
                 ai_rating = EXCLUDED.ai_rating,

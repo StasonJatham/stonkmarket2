@@ -71,6 +71,7 @@ class StockInfo(BaseModel):
     beta: Optional[float] = Field(None, description="Beta")
     avg_volume: Optional[int] = Field(None, description="Average volume")
     summary: Optional[str] = Field(None, description="Business summary")
+    summary_ai: Optional[str] = Field(None, description="AI-generated short summary (~300 chars)")
     website: Optional[str] = Field(None, description="Company website")
     recommendation: Optional[str] = Field(None, description="Analyst recommendation")
 

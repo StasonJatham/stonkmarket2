@@ -155,7 +155,7 @@ class JobScheduler:
                 duration_ms = int(
                     (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
                 )
-                str(result) if result else "Completed successfully"
+                result_msg = str(result) if result else "Completed successfully"
 
                 # Update job stats in database
                 await cron_repo.update_job_stats(name, "ok", duration_ms)
