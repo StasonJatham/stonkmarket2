@@ -60,6 +60,23 @@
   --chart-5: oklch(0.645 0.246 16.439);
 }
 
+/* Colorblind-safe mode: use blue/orange instead of green/red */
+.colorblind {
+  --success: oklch(0.65 0.2 250); /* Blue */
+  --danger: oklch(0.7 0.2 60); /* Orange */
+}
+
+.colorblind.dark {
+  --success: oklch(0.7 0.18 250); /* Lighter blue for dark mode */
+  --danger: oklch(0.75 0.18 60); /* Lighter orange for dark mode */
+}
+
+/* Custom colors override - applied via JS when user picks colors */
+:root {
+  --color-success-custom: #22c55e;
+  --color-danger-custom: #ef4444;
+}
+
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);

@@ -2,6 +2,7 @@ import { lazy, Suspense, memo } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { AuthProvider } from '@/context/AuthContext';
 import { ThemeProvider } from '@/context/ThemeContext';
+import { DipProvider } from '@/context/DipContext';
 import { Layout } from '@/components/layout/Layout';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { UmamiAnalytics } from '@/lib/analytics';
@@ -28,8 +29,9 @@ function App() {
   return (
     <ThemeProvider>
       <AuthProvider>
-        <BrowserRouter>
-          <UmamiAnalytics />
+        <DipProvider>
+          <BrowserRouter>
+            <UmamiAnalytics />
           <Suspense fallback={<PageLoader />}>
             <Routes>
               <Route path="/login" element={<LoginPage />} />
@@ -56,10 +58,11 @@ function App() {
                     </ProtectedRoute>
                   }
                 />
-              </Route>
-            </Routes>
-          </Suspense>
-        </BrowserRouter>
+                </Route>
+              </Routes>
+            </Suspense>
+          </BrowserRouter>
+        </DipProvider>
       </AuthProvider>
     </ThemeProvider>
   );

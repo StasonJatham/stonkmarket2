@@ -1,7 +1,6 @@
 import { useMemo } from 'react';
 import { motion } from 'framer-motion';
 import {
-  AreaChart,
   Area,
   XAxis,
   YAxis,
@@ -9,6 +8,8 @@ import {
   ResponsiveContainer,
   ReferenceLine,
   ReferenceDot,
+  Line,
+  ComposedChart,
 } from 'recharts';
 import type { DipStock, ChartDataPoint, StockInfo, BenchmarkType, ComparisonChartData } from '@/services/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -85,13 +86,11 @@ export function StockDetailsPanel({
     }));
   }, [chartData]);
 
-  // Find dip start point index for marker
-  const dipStartIndex = useMemo(() => {
-    if (chartData.length === 0) return -1;
-    const dipDate = chartData[0]?.dip_start_date;
-    if (!dipDate) return -1;
-    return formattedChartData.findIndex(p => p.date === dipDate);
-  }, [chartData, formattedChartData]);
+  // Find current/last point index for the red marker (showing current dip position)
+  const currentPointIndex = useMemo(() => {
+    if (formattedChartData.length === 0) return -1;
+    return formattedChartData.length - 1; // Last point = current price
+  }, [formattedChartData]);
 
   // Find ref high point index for marker
   const refHighIndex = useMemo(() => {
@@ -100,6 +99,28 @@ export function StockDetailsPanel({
     if (!refDate) return -1;
     return formattedChartData.findIndex(p => p.date === refDate);
   }, [chartData, formattedChartData]);
+
+  // Create chart data with trendline connecting peak to current
+  const chartDataWithTrendline = useMemo(() => {
+    if (formattedChartData.length === 0) return [];
+    
+    return formattedChartData.map((point, index) => {
+      // Only add trendline values at peak and current points
+      let trendline: number | null = null;
+      if (index === refHighIndex && refHighIndex >= 0) {
+        trendline = point.close;
+      } else if (index === formattedChartData.length - 1) {
+        trendline = point.close;
+      }
+      return { ...point, trendline };
+    });
+  }, [formattedChartData, refHighIndex]);
+
+  // Get the current price for the reference line
+  const currentPrice = useMemo(() => {
+    if (formattedChartData.length === 0) return null;
+    return formattedChartData[formattedChartData.length - 1]?.close;
+  }, [formattedChartData]);
 
   const priceChange = useMemo(() => {
     if (chartData.length < 2) return 0;
@@ -183,7 +204,7 @@ export function StockDetailsPanel({
         </CardHeader>
 
         {/* Chart Section - Fixed */}
-        <div className="shrink-0 px-4 md:px-6 py-3 border-b border-border/50">
+        <div className="shrink-0 px-4 md:px-6 py-1 border-b border-border/50">
           {/* Dip Summary Banner */}
           {stock && (
             <div className="flex items-center gap-3 py-1.5 px-2.5 rounded-md border border-border/50 bg-muted/30 mb-3 text-xs">
@@ -212,13 +233,23 @@ export function StockDetailsPanel({
 
           {/* Chart */}
           <div className="h-52 lg:h-60">
-            {isLoadingChart ? (
+            {/* Show comparison chart when benchmark is selected, otherwise show main chart */}
+            {benchmark ? (
+              <ComparisonChart
+                data={comparisonData}
+                stockSymbol={stock.symbol}
+                benchmark={benchmark}
+                isLoading={isLoadingBenchmark}
+                height={208}
+                compact
+              />
+            ) : isLoadingChart ? (
               <Skeleton className="h-full w-full" />
             ) : formattedChartData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart 
+                <ComposedChart 
                   key={`${stock.symbol}-${chartPeriod}`}
-                  data={formattedChartData}
+                  data={chartDataWithTrendline}
                 >
                   <defs>
                     <linearGradient id={`gradient-${stock.symbol}-${chartPeriod}`} x1="0" y1="0" x2="0" y2="1">
@@ -247,23 +278,16 @@ export function StockDetailsPanel({
                     tickFormatter={(value) => `$${value.toFixed(0)}`}
                     width={45}
                   />
-                  {/* Dip threshold line */}
-                  {chartData[0]?.threshold && (
+                  {/* Current price reference line (aligns with red dot) */}
+                  {currentPrice && (
                     <ReferenceLine
-                      y={chartData[0].threshold}
+                      y={currentPrice}
                       stroke="var(--danger)"
                       strokeDasharray="5 5"
                       strokeOpacity={0.7}
-                      label={{ 
-                        value: 'Dip Threshold', 
-                        position: 'right', 
-                        fontSize: 10, 
-                        fill: 'var(--danger)',
-                        opacity: 0.7
-                      }}
                     />
                   )}
-                  {/* 52-week high reference line */}
+                  {/* Peak price reference line (aligns with green dot) */}
                   {chartData[0]?.ref_high && (
                     <ReferenceLine
                       y={chartData[0].ref_high}
@@ -272,12 +296,24 @@ export function StockDetailsPanel({
                       strokeOpacity={0.5}
                     />
                   )}
-                  {/* Mark the dip start point */}
-                  {dipStartIndex >= 0 && formattedChartData[dipStartIndex] && (
+                  {/* Trendline connecting peak to current */}
+                  <Line
+                    type="linear"
+                    dataKey="trendline"
+                    stroke="var(--muted-foreground)"
+                    strokeWidth={1}
+                    strokeDasharray="3 3"
+                    strokeOpacity={0.4}
+                    dot={false}
+                    connectNulls={true}
+                    isAnimationActive={false}
+                  />
+                  {/* Mark the current price point (red - shows where we are now in the dip) */}
+                  {currentPointIndex >= 0 && formattedChartData[currentPointIndex] && (
                     <ReferenceDot
-                      x={formattedChartData[dipStartIndex].displayDate}
-                      y={formattedChartData[dipStartIndex].close}
-                      r={6}
+                      x={formattedChartData[currentPointIndex].displayDate}
+                      y={formattedChartData[currentPointIndex].close}
+                      r={4}
                       fill="var(--danger)"
                       stroke="var(--background)"
                       strokeWidth={2}
@@ -288,7 +324,7 @@ export function StockDetailsPanel({
                     <ReferenceDot
                       x={formattedChartData[refHighIndex].displayDate}
                       y={formattedChartData[refHighIndex].close}
-                      r={5}
+                      r={4}
                       fill="var(--success)"
                       stroke="var(--background)"
                       strokeWidth={2}
@@ -302,7 +338,8 @@ export function StockDetailsPanel({
                       fontSize: '12px',
                       padding: '8px 12px',
                     }}
-                    formatter={(value: number, _name: string, props) => {
+                    formatter={(value: number, name: string, props) => {
+                      if (name === 'trendline') return null; // Hide trendline from tooltip
                       const point = props.payload;
                       const items: [string, string][] = [
                         [`$${value.toFixed(2)}`, 'Price']
@@ -318,7 +355,7 @@ export function StockDetailsPanel({
                     labelFormatter={(label) => label}
                   />
                   <Area
-                    type="monotone"
+                    type="linear"
                     dataKey="close"
                     stroke={chartColor}
                     strokeWidth={2}
@@ -327,7 +364,7 @@ export function StockDetailsPanel({
                     animationDuration={800}
                     animationEasing="ease-out"
                   />
-                </AreaChart>
+                </ComposedChart>
               </ResponsiveContainer>
             ) : (
               <div className="h-full flex items-center justify-center text-muted-foreground">
@@ -335,18 +372,6 @@ export function StockDetailsPanel({
               </div>
             )}
           </div>
-
-          {/* Comparison Chart (when benchmark is selected) */}
-          {benchmark && (
-            <div className="mt-4">
-              <ComparisonChart
-                data={comparisonData}
-                stockSymbol={stock.symbol}
-                benchmark={benchmark}
-                isLoading={isLoadingBenchmark}
-              />
-            </div>
-          )}
         </div>
 
         {/* Data Section - Scrollable */}

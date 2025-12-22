@@ -4,6 +4,7 @@ import {
   getAllSuggestions,
   approveSuggestion,
   rejectSuggestion,
+  updateSuggestion,
   type Suggestion,
   type SuggestionStatus,
 } from '@/services/api';
@@ -35,6 +36,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
   Check,
@@ -47,6 +49,7 @@ import {
   RefreshCw,
   Loader2,
   AlertCircle,
+  Pencil,
 } from 'lucide-react';
 
 function getStatusBadge(status: SuggestionStatus) {
@@ -89,6 +92,12 @@ export function SuggestionManager() {
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
   const [rejectingId, setRejectingId] = useState<number | null>(null);
   const [rejectReason, setRejectReason] = useState('');
+  
+  // Edit dialog states
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editingSymbol, setEditingSymbol] = useState('');
+  const [newSymbol, setNewSymbol] = useState('');
 
   const pageSize = 15;
 
@@ -149,6 +158,31 @@ export function SuggestionManager() {
       setActionLoading(null);
       setRejectingId(null);
       setRejectReason('');
+    }
+  }
+
+  function openEditDialog(id: number, symbol: string) {
+    setEditingId(id);
+    setEditingSymbol(symbol);
+    setNewSymbol(symbol);
+    setEditDialogOpen(true);
+  }
+
+  async function handleEdit() {
+    if (!editingId || !newSymbol.trim()) return;
+    
+    setActionLoading(editingId);
+    setEditDialogOpen(false);
+    try {
+      await updateSuggestion(editingId, newSymbol.trim());
+      await loadSuggestions();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update suggestion');
+    } finally {
+      setActionLoading(null);
+      setEditingId(null);
+      setEditingSymbol('');
+      setNewSymbol('');
     }
   }
 
@@ -274,6 +308,16 @@ export function SuggestionManager() {
                           <div className="flex items-center justify-end gap-2">
                             <Button
                               size="sm"
+                              variant="ghost"
+                              className="h-8"
+                              onClick={() => openEditDialog(suggestion.id, suggestion.symbol)}
+                              disabled={actionLoading === suggestion.id}
+                              title="Edit symbol"
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              size="sm"
                               variant="outline"
                               className="h-8 text-success hover:bg-success/10"
                               onClick={() => handleApprove(suggestion.id)}
@@ -366,6 +410,51 @@ export function SuggestionManager() {
             </Button>
             <Button variant="destructive" onClick={handleReject}>
               Reject
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Symbol Dialog */}
+      <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Symbol</DialogTitle>
+            <DialogDescription>
+              Change the stock symbol for this suggestion. Useful for German stocks (.F vs .DE) or typos.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4 space-y-4">
+            <div>
+              <Label htmlFor="current-symbol" className="text-sm text-muted-foreground">
+                Current Symbol
+              </Label>
+              <p className="font-semibold">{editingSymbol}</p>
+            </div>
+            <div>
+              <Label htmlFor="new-symbol">New Symbol</Label>
+              <Input
+                id="new-symbol"
+                placeholder="Enter new symbol"
+                value={newSymbol}
+                onChange={(e) => setNewSymbol(e.target.value.toUpperCase())}
+                className="mt-1.5 font-mono"
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Examples: AAPL, BMW.DE, VOW3.DE
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button 
+              onClick={handleEdit}
+              disabled={!newSymbol.trim() || newSymbol === editingSymbol}
+            >
+              <Pencil className="h-4 w-4 mr-1" />
+              Update Symbol
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -28,6 +28,7 @@ class SymbolValidationResponse(BaseModel):
     symbol: str
     name: str | None = None
     sector: str | None = None
+    summary: str | None = None
     error: str | None = None
 
 
@@ -66,6 +67,7 @@ async def validate_symbol(
                 symbol=symbol_upper,
                 name=info.name,
                 sector=info.sector,
+                summary=info.summary,
             )
         else:
             result = SymbolValidationResponse(

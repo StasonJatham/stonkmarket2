@@ -1,4 +1,5 @@
-import type { BenchmarkType } from '@/services/api';
+import { useMemo } from 'react';
+import type { BenchmarkType, BenchmarkConfig } from '@/services/api';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -13,16 +14,46 @@ import { LineChart, X, Check } from 'lucide-react';
 interface BenchmarkSelectorProps {
   value: BenchmarkType;
   onChange: (benchmark: BenchmarkType) => void;
+  /** Custom benchmarks from runtime settings */
+  customBenchmarks?: BenchmarkConfig[];
   isLoading?: boolean;
   className?: string;
 }
 
-const benchmarks: { value: Exclude<BenchmarkType, null>; label: string; description: string }[] = [
+// Default benchmarks if none provided
+const DEFAULT_BENCHMARKS: { value: Exclude<BenchmarkType, null>; label: string; description: string }[] = [
   { value: 'SP500', label: 'S&P 500', description: 'US Large Cap Index' },
   { value: 'MSCI_WORLD', label: 'MSCI World', description: 'Global Developed Markets' },
 ];
 
-export function BenchmarkSelector({ value, onChange, isLoading, className }: BenchmarkSelectorProps) {
+export function BenchmarkSelector({ 
+  value, 
+  onChange, 
+  customBenchmarks,
+  isLoading, 
+  className 
+}: BenchmarkSelectorProps) {
+  // Merge custom benchmarks with defaults
+  const benchmarks = useMemo(() => {
+    const defaults = [...DEFAULT_BENCHMARKS];
+    
+    if (customBenchmarks && customBenchmarks.length > 0) {
+      // Add custom benchmarks that aren't already in defaults
+      customBenchmarks.forEach((custom) => {
+        const existsInDefaults = defaults.some(d => d.value === custom.id || d.value === custom.symbol);
+        if (!existsInDefaults) {
+          defaults.push({
+            value: custom.id as Exclude<BenchmarkType, null>,
+            label: custom.name,
+            description: custom.description || custom.symbol,
+          });
+        }
+      });
+    }
+    
+    return defaults;
+  }, [customBenchmarks]);
+
   const selectedBenchmark = benchmarks.find(b => b.value === value);
 
   return (

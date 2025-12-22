@@ -750,6 +750,7 @@ class DipFinderService:
                 dip_vs_typical=data["dip_vs_typical"],
                 typical_dip=data.get("typical_dip", 0),
                 persist_days=data["persist_days"],
+                days_since_peak=data.get("days_since_peak", data["persist_days"]),  # fallback to persist_days
                 is_meaningful=data.get("is_meaningful", False),
             )
 

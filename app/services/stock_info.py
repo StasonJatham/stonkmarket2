@@ -20,6 +20,14 @@ _PRICE_CACHE: Dict[str, tuple[float, Dict[str, Any]]] = {}
 _CACHE_TTL = 300  # 5 minutes
 _executor = ThreadPoolExecutor(max_workers=4)
 
+# Known ETF symbols that should skip fundamentals
+_KNOWN_ETFS = {"SPY", "QQQ", "IWM", "DIA", "URTH", "VTI", "VOO", "VEA", "VWO", "EFA", "EEM"}
+
+
+def is_index_or_etf(symbol: str) -> bool:
+    """Check if a symbol is an index (^) or known ETF."""
+    return symbol.startswith("^") or symbol.upper() in _KNOWN_ETFS
+
 
 def get_stock_info(symbol: str) -> Optional[StockInfo]:
     """Fetch detailed stock info from Yahoo Finance with caching and rate limiting."""
@@ -34,6 +42,8 @@ def get_stock_info(symbol: str) -> Optional[StockInfo]:
         logger.warning(f"Rate limit timeout for {symbol}")
         return None
 
+    is_etf_or_index = is_index_or_etf(symbol)
+
     try:
         ticker = yf.Ticker(symbol)
         info = ticker.info or {}
@@ -41,17 +51,18 @@ def get_stock_info(symbol: str) -> Optional[StockInfo]:
         stock_info = StockInfo(
             symbol=symbol,
             name=info.get("shortName") or info.get("longName"),
-            sector=info.get("sector"),
-            industry=info.get("industry"),
-            market_cap=info.get("marketCap"),
-            pe_ratio=info.get("trailingPE"),
-            forward_pe=info.get("forwardPE"),
-            dividend_yield=info.get("dividendYield"),
+            # Skip fundamentals for ETFs/indexes
+            sector=None if is_etf_or_index else info.get("sector"),
+            industry=None if is_etf_or_index else info.get("industry"),
+            market_cap=info.get("totalAssets") if is_etf_or_index else info.get("marketCap"),
+            pe_ratio=None if is_etf_or_index else info.get("trailingPE"),
+            forward_pe=None if is_etf_or_index else info.get("forwardPE"),
+            dividend_yield=info.get("dividendYield"),  # ETFs can have dividend yield
             beta=info.get("beta"),
             avg_volume=info.get("averageVolume"),
             summary=info.get("longBusinessSummary"),
             website=info.get("website"),
-            recommendation=info.get("recommendationKey"),
+            recommendation=None if is_etf_or_index else info.get("recommendationKey"),
         )
         _INFO_CACHE[symbol] = (now, stock_info)
         return stock_info
@@ -74,6 +85,8 @@ def _get_stock_info_with_prices(symbol: str) -> Optional[Dict[str, Any]]:
         logger.warning(f"Rate limit timeout for {symbol}")
         return None
     
+    is_etf_or_index = is_index_or_etf(symbol)
+    
     try:
         ticker = yf.Ticker(symbol)
         info = ticker.info or {}
@@ -93,19 +106,22 @@ def _get_stock_info_with_prices(symbol: str) -> Optional[Dict[str, Any]]:
         result = {
             "symbol": symbol,
             "name": info.get("shortName") or info.get("longName"),
-            "sector": info.get("sector"),
-            "industry": info.get("industry"),
-            "market_cap": info.get("marketCap"),
+            # Skip fundamentals for ETFs/indexes - they don't have meaningful values
+            "sector": None if is_etf_or_index else info.get("sector"),
+            "industry": None if is_etf_or_index else info.get("industry"),
+            "market_cap": info.get("totalAssets") if is_etf_or_index else info.get("marketCap"),  # ETFs use totalAssets
             "current_price": float(current_price) if current_price else 0,
             "previous_close": float(previous_close) if previous_close else None,
             "change_percent": round(change_percent, 4) if change_percent is not None else None,
             "ath_price": float(ath_price) if ath_price else 0,
             "fifty_two_week_high": float(ath_price) if ath_price else 0,
             "fifty_two_week_low": float(info.get("fiftyTwoWeekLow", 0)),
-            "pe_ratio": info.get("trailingPE"),
+            # Skip P/E and recommendation for ETFs/indexes
+            "pe_ratio": None if is_etf_or_index else info.get("trailingPE"),
             "avg_volume": info.get("averageVolume"),
             "summary": info.get("longBusinessSummary"),
-            "recommendation": info.get("recommendationKey"),
+            "recommendation": None if is_etf_or_index else info.get("recommendationKey"),
+            "is_etf_or_index": is_etf_or_index,  # Flag for frontend
         }
         _PRICE_CACHE[symbol] = (now, result)
         return result

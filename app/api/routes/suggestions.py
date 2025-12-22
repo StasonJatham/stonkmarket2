@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import re
 from datetime import datetime, timedelta
 from typing import List, Optional
 
@@ -22,10 +23,34 @@ router = APIRouter(prefix="/suggestions", tags=["suggestions"])
 # Vote cooldown in days
 VOTE_COOLDOWN_DAYS = 7
 
+# Symbol validation pattern: 1-10 chars, alphanumeric + dot only
+SYMBOL_PATTERN = re.compile(r'^[A-Z0-9.]{1,10}$')
+
 
 def _hash_fingerprint(fingerprint: str) -> str:
     """Hash fingerprint for storage."""
     return hashlib.sha256(fingerprint.encode()).hexdigest()[:32]
+
+
+def _validate_symbol_format(symbol: str) -> str:
+    """Validate and normalize symbol format."""
+    normalized = symbol.strip().upper()
+    if not normalized:
+        raise ValidationError(
+            message="Symbol cannot be empty",
+            details={"symbol": symbol}
+        )
+    if len(normalized) > 10:
+        raise ValidationError(
+            message="Symbol must be 10 characters or less",
+            details={"symbol": symbol, "max_length": 10}
+        )
+    if not SYMBOL_PATTERN.match(normalized):
+        raise ValidationError(
+            message="Symbol can only contain letters, numbers, and dots",
+            details={"symbol": symbol}
+        )
+    return normalized
 
 
 # =============================================================================
@@ -36,7 +61,7 @@ def _hash_fingerprint(fingerprint: str) -> str:
 @router.post("", response_model=dict, status_code=201)
 async def suggest_stock(
     request: Request,
-    symbol: str = Query(..., min_length=1, max_length=20, description="Stock symbol"),
+    symbol: str = Query(..., min_length=1, max_length=10, description="Stock symbol (1-10 chars, letters/numbers/dots only)"),
 ):
     """
     Suggest a new stock to be tracked.
@@ -44,7 +69,8 @@ async def suggest_stock(
     Public endpoint - no auth required.
     If stock already suggested, adds a vote instead.
     """
-    symbol = symbol.strip().upper()
+    # Validate symbol format
+    symbol = _validate_symbol_format(symbol)
     fingerprint = get_request_fingerprint(request)
     fingerprint_hash = _hash_fingerprint(fingerprint)
 
@@ -388,6 +414,78 @@ async def approve_suggestion(
     return {
         "message": f"Approved and added {symbol} to tracking. AI content generating in background.",
         "symbol": symbol,
+    }
+
+
+@router.patch("/{suggestion_id}", response_model=dict)
+async def update_suggestion(
+    suggestion_id: int,
+    new_symbol: str = Query(None, description="New symbol to use (e.g., change .F to .DE)"),
+    admin: TokenData = Depends(require_admin),
+):
+    """Update a suggestion's symbol (admin only).
+    
+    Useful for correcting symbols (e.g., German stocks listed as .F vs .DE).
+    """
+    # Get suggestion
+    suggestion = await fetch_one(
+        "SELECT id, symbol, status FROM stock_suggestions WHERE id = $1", suggestion_id
+    )
+
+    if not suggestion:
+        raise NotFoundError(
+            message=f"Suggestion {suggestion_id} not found",
+            details={"id": suggestion_id},
+        )
+
+    updates = {}
+    
+    if new_symbol:
+        # Validate the new symbol
+        new_symbol = _validate_symbol_format(new_symbol)
+        
+        # Check if the new symbol already exists
+        existing = await fetch_one(
+            "SELECT id FROM stock_suggestions WHERE symbol = $1 AND id != $2",
+            new_symbol,
+            suggestion_id,
+        )
+        
+        if existing:
+            raise ValidationError(
+                message=f"Symbol {new_symbol} already exists as a suggestion",
+                details={"new_symbol": new_symbol},
+            )
+        
+        updates["symbol"] = new_symbol
+
+    if not updates:
+        raise ValidationError(
+            message="No updates provided",
+            details={"suggestion_id": suggestion_id},
+        )
+
+    # Build update query
+    set_parts = []
+    params = []
+    param_idx = 1
+    
+    for key, value in updates.items():
+        set_parts.append(f"{key} = ${param_idx}")
+        params.append(value)
+        param_idx += 1
+    
+    params.append(suggestion_id)
+    
+    await execute(
+        f"UPDATE stock_suggestions SET {', '.join(set_parts)} WHERE id = ${param_idx}",
+        *params,
+    )
+
+    return {
+        "message": f"Updated suggestion #{suggestion_id}",
+        "old_symbol": suggestion["symbol"],
+        "new_symbol": updates.get("symbol", suggestion["symbol"]),
     }
 
 

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence, useMotionValue, useTransform } from 'framer-motion';
-import { AreaChart, Area, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { useIsMobile } from '@/hooks/useIsMobile';
+import { AreaChart, Area, ResponsiveContainer, XAxis, YAxis } from 'recharts';
 import type { PanInfo } from 'framer-motion';
 import { 
   getDipCards, 
@@ -30,9 +31,11 @@ import {
   ThumbsDown,
   Lightbulb,
   DollarSign,
-  MapPin,
-  Clock,
-  Flame
+  Building2,
+  Calendar,
+  Flame,
+  TrendingDown,
+  Award
 } from 'lucide-react';
 
 // Swipe threshold in pixels
@@ -72,16 +75,50 @@ function formatDipPct(value: number): string {
   return `-${value.toFixed(0)}%`;
 }
 
-// Custom tooltip for chart
-function ChartTooltip({ active, payload }: { active?: boolean; payload?: Array<{ value: number }> }) {
-  if (active && payload && payload.length) {
-    return (
-      <div className="bg-background/95 backdrop-blur-sm border border-border rounded-lg px-3 py-2 shadow-lg">
-        <p className="text-sm font-medium">{formatPrice(payload[0].value)}</p>
-      </div>
-    );
-  }
-  return null;
+function formatCompactNumber(value: number): string {
+  if (value >= 1e9) return `${(value / 1e9).toFixed(1)}B`;
+  if (value >= 1e6) return `${(value / 1e6).toFixed(1)}M`;
+  if (value >= 1e3) return `${(value / 1e3).toFixed(1)}K`;
+  return value.toString();
+}
+
+// Get stock logo URL (free API)
+function getStockLogoUrl(symbol: string): string {
+  // Using logo.clearbit.com or a fallback
+  const cleanSymbol = symbol.replace('.', '-').toLowerCase();
+  // Map common symbols to company domains
+  const domainMap: Record<string, string> = {
+    'aapl': 'apple.com',
+    'msft': 'microsoft.com',
+    'googl': 'google.com',
+    'goog': 'google.com',
+    'amzn': 'amazon.com',
+    'meta': 'meta.com',
+    'tsla': 'tesla.com',
+    'nvda': 'nvidia.com',
+    'amd': 'amd.com',
+    'intc': 'intel.com',
+    'nflx': 'netflix.com',
+    'crm': 'salesforce.com',
+    'orcl': 'oracle.com',
+    'adbe': 'adobe.com',
+    'csco': 'cisco.com',
+    'ibm': 'ibm.com',
+    'pypl': 'paypal.com',
+    'dis': 'disney.com',
+    'nke': 'nike.com',
+    'ko': 'coca-cola.com',
+    'pep': 'pepsico.com',
+    'wmt': 'walmart.com',
+    'jpm': 'jpmorgan.com',
+    'v': 'visa.com',
+    'ma': 'mastercard.com',
+    'bac': 'bankofamerica.com',
+    'gs': 'goldmansachs.com',
+    'ms': 'morganstanley.com',
+  };
+  const domain = domainMap[cleanSymbol] || `${cleanSymbol}.com`;
+  return `https://logo.clearbit.com/${domain}`;
 }
 
 // Sentiment indicator
@@ -118,17 +155,19 @@ function SwipeableCard({
   onVote, 
   isTop,
   chartData,
+  onSwipeComplete,
 }: { 
   card: DipCard; 
   onVote: (vote: VoteType) => void;
   isTop: boolean;
   chartData?: ChartDataPoint[];
+  onSwipeComplete?: () => void;
 }) {
   const x = useMotionValue(0);
-  const rotate = useTransform(x, [-200, 200], [-20, 20]);
+  const rotate = useTransform(x, [-200, 200], [-15, 15]);
   const buyOpacity = useTransform(x, [0, SWIPE_THRESHOLD], [0, 1]);
   const sellOpacity = useTransform(x, [-SWIPE_THRESHOLD, 0], [1, 0]);
-  const scale = useTransform(x, [-200, 0, 200], [0.95, 1, 0.95]);
+  const [logoError, setLogoError] = useState(false);
   
   const handleDragEnd = (_: unknown, info: PanInfo) => {
     if (info.offset.x > SWIPE_THRESHOLD) {
@@ -138,9 +177,8 @@ function SwipeableCard({
     }
   };
 
-  const buyPct = card.vote_counts.buy + card.vote_counts.sell > 0
-    ? (card.vote_counts.buy / (card.vote_counts.buy + card.vote_counts.sell)) * 100
-    : 50;
+  const totalVotes = card.vote_counts.buy + card.vote_counts.sell;
+  const buyPct = totalVotes > 0 ? (card.vote_counts.buy / totalVotes) * 100 : 50;
   const sellPct = 100 - buyPct;
 
   // Prepare chart data for mini chart
@@ -149,70 +187,121 @@ function SwipeableCard({
     return chartData.slice(-60).map((p, i) => ({ x: i, y: p.close }));
   }, [chartData]);
 
-  // Calculate "age" (days since peak)
-  const stockAge = card.days_below || 0;
+  // Days in dip (like "age")
+  const daysInDip = card.days_below || 0;
 
   return (
     <motion.div
       className="absolute inset-0 cursor-grab active:cursor-grabbing touch-none"
-      style={{ x, rotate, scale, zIndex: isTop ? 10 : 0 }}
+      style={{ x, rotate, zIndex: isTop ? 10 : 0 }}
       drag={isTop ? 'x' : false}
       dragConstraints={{ left: 0, right: 0 }}
       dragElastic={0.7}
       dragTransition={{ bounceStiffness: 300, bounceDamping: 20 }}
       onDragEnd={handleDragEnd}
-      initial={{ scale: 0.9, opacity: 0, y: 20 }}
+      initial={{ scale: 0.95, opacity: 0, y: 30 }}
       animate={{ 
-        scale: isTop ? 1 : 0.92, 
-        opacity: isTop ? 1 : 0.6,
-        y: isTop ? 0 : 10,
+        scale: 1, 
+        opacity: isTop ? 1 : 0, // Hide non-top cards completely
+        y: 0,
       }}
       transition={springTransition}
       exit={{ 
-        x: 400, 
+        x: x.get() > 0 ? 400 : -400, 
         opacity: 0,
-        rotate: 15,
+        rotate: x.get() > 0 ? 15 : -15,
+        transition: { duration: 0.3 }
       }}
-      whileHover={isTop ? { scale: 1.02 } : {}}
+      onAnimationComplete={(def) => {
+        if (def === 'exit' && onSwipeComplete) {
+          onSwipeComplete();
+        }
+      }}
     >
-      {/* Swipe indicators - Match/Nope style */}
+      {/* Swipe indicators - NOPE/BUY overlay */}
       <motion.div 
-        className="absolute left-4 top-4 z-20 pointer-events-none"
+        className="absolute left-4 top-6 z-20 pointer-events-none"
         style={{ opacity: sellOpacity }}
       >
-        <div className="border-4 border-danger rounded-lg px-4 py-1 rotate-[-20deg]">
-          <span className="text-danger font-black text-3xl tracking-wider">NOPE</span>
+        <div className="border-4 border-danger rounded-lg px-4 py-1 rotate-[-15deg] bg-background/80">
+          <span className="text-danger font-black text-2xl tracking-wider">NOPE</span>
         </div>
       </motion.div>
       <motion.div 
-        className="absolute right-4 top-4 z-20 pointer-events-none"
+        className="absolute right-4 top-6 z-20 pointer-events-none"
         style={{ opacity: buyOpacity }}
       >
-        <div className="border-4 border-success rounded-lg px-4 py-1 rotate-[20deg]">
-          <span className="text-success font-black text-3xl tracking-wider">BUY!</span>
+        <div className="border-4 border-success rounded-lg px-4 py-1 rotate-[15deg] bg-background/80">
+          <span className="text-success font-black text-2xl tracking-wider">BUY!</span>
         </div>
       </motion.div>
 
       <Card className="h-full flex flex-col overflow-hidden bg-card border-0 shadow-2xl rounded-3xl">
-        {/* Chart as "Profile Photo" - takes up top half */}
-        <div className="relative h-[45%] bg-gradient-to-b from-muted/80 to-muted/20 overflow-hidden">
+        {/* Header Row - Symbol, Name, Logo, Age */}
+        <div className="shrink-0 p-4 pb-2 flex items-start justify-between">
+          <div className="flex items-center gap-3">
+            {/* Company Logo */}
+            <div className="w-12 h-12 rounded-xl bg-muted flex items-center justify-center overflow-hidden border border-border/50">
+              {!logoError ? (
+                <img 
+                  src={getStockLogoUrl(card.symbol)}
+                  alt={card.symbol}
+                  className="w-full h-full object-contain p-1"
+                  onError={() => setLogoError(true)}
+                />
+              ) : (
+                <Building2 className="w-6 h-6 text-muted-foreground" />
+              )}
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <Badge variant="secondary" className="font-bold text-sm">
+                  {card.symbol}
+                </Badge>
+                {card.ai_rating === 'strong_buy' || card.ai_rating === 'buy' ? (
+                  <Badge className="bg-blue-500 text-white border-0 text-xs">
+                    <Award className="w-3 h-3 mr-0.5" />
+                    AI Pick
+                  </Badge>
+                ) : null}
+              </div>
+              <p className="text-sm text-foreground font-medium mt-0.5 line-clamp-1">
+                {card.name || card.symbol}
+              </p>
+            </div>
+          </div>
+          <div className="text-right">
+            <p className="text-xs text-muted-foreground flex items-center gap-1 justify-end">
+              <Calendar className="w-3 h-3" />
+              {daysInDip}d in dip
+            </p>
+            {card.vote_counts.buy > 5 && (
+              <Badge className="bg-gradient-to-r from-orange-500 to-pink-500 text-white border-0 text-xs mt-1">
+                <Flame className="w-3 h-3 mr-0.5" />
+                Hot
+              </Badge>
+            )}
+          </div>
+        </div>
+
+        {/* Chart as "Profile Photo" */}
+        <div className="relative flex-1 min-h-[180px] max-h-[240px] bg-gradient-to-b from-muted/30 to-transparent mx-4 rounded-xl overflow-hidden border border-border/30">
           {miniChartData.length > 0 ? (
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={miniChartData} margin={{ top: 10, right: 10, left: 10, bottom: 10 }}>
+              <AreaChart data={miniChartData} margin={{ top: 20, right: 10, left: 10, bottom: 10 }}>
                 <defs>
                   <linearGradient id={`tinder-gradient-${card.symbol}`} x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="var(--danger)" stopOpacity={0.6} />
-                    <stop offset="100%" stopColor="var(--danger)" stopOpacity={0.1} />
+                    <stop offset="0%" stopColor="var(--danger)" stopOpacity={0.4} />
+                    <stop offset="100%" stopColor="var(--danger)" stopOpacity={0.05} />
                   </linearGradient>
                 </defs>
                 <XAxis dataKey="x" hide />
                 <YAxis hide domain={['dataMin', 'dataMax']} />
-                <Tooltip content={<ChartTooltip />} cursor={{ stroke: 'var(--muted-foreground)', strokeWidth: 1, strokeDasharray: '4 4' }} />
                 <Area
                   type="monotone"
                   dataKey="y"
                   stroke="var(--danger)"
-                  strokeWidth={3}
+                  strokeWidth={2}
                   fill={`url(#tinder-gradient-${card.symbol})`}
                   isAnimationActive={true}
                   animationDuration={600}
@@ -221,109 +310,75 @@ function SwipeableCard({
             </ResponsiveContainer>
           ) : (
             <div className="h-full flex items-center justify-center">
-              <BarChart3 className="w-16 h-16 text-muted-foreground/30" />
+              <BarChart3 className="w-12 h-12 text-muted-foreground/30" />
             </div>
           )}
           
-          {/* Gradient overlay for text readability */}
-          <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-card to-transparent" />
-          
-          {/* Stock "name" overlay at bottom of photo */}
-          <div className="absolute bottom-4 left-4 right-4">
-            <div className="flex items-end justify-between">
-              <div>
-                <h2 className="text-4xl font-bold text-foreground drop-shadow-lg flex items-center gap-2">
-                  {card.symbol}
-                  {card.ai_rating === 'strong_buy' || card.ai_rating === 'buy' ? (
-                    <Badge className="bg-blue-500 text-white border-0">
-                      <Check className="w-3 h-3 mr-0.5" />
-                      Verified
-                    </Badge>
-                  ) : null}
-                </h2>
-                {stockAge > 0 && (
-                  <div className="flex items-center gap-3 text-muted-foreground mt-1">
-                    <span className="flex items-center gap-1">
-                      <Clock className="w-4 h-4" />
-                      {stockAge} days in the dip
-                    </span>
-                  </div>
-                )}
-              </div>
-              {card.dip_pct > 0 && (
-                <div className="text-right">
-                  <Badge variant="destructive" className="text-lg px-3 py-1 font-bold">
-                    {formatDipPct(card.dip_pct)}
-                  </Badge>
-                </div>
-              )}
-            </div>
+          {/* Dip percentage badge overlay */}
+          <div className="absolute top-3 right-3">
+            <Badge variant="destructive" className="text-base px-2.5 py-0.5 font-bold shadow-lg">
+              <TrendingDown className="w-3.5 h-3.5 mr-1" />
+              {formatDipPct(card.dip_pct)}
+            </Badge>
           </div>
-          
-          {/* Hot badge for popular stocks */}
-          {card.vote_counts.buy > 5 && (
-            <div className="absolute top-4 right-4">
-              <Badge className="bg-gradient-to-r from-orange-500 to-pink-500 text-white border-0 gap-1">
-                <Flame className="w-3 h-3" />
-                Popular
-              </Badge>
-            </div>
+        </div>
+
+        {/* Key Stats Chips */}
+        <div className="shrink-0 px-4 py-2 flex flex-wrap gap-1.5">
+          <Badge variant="outline" className="rounded-full text-xs">
+            💰 {formatPrice(card.current_price)}
+          </Badge>
+          <Badge variant="outline" className="rounded-full text-xs">
+            📈 Peak: {formatPrice(card.ref_high)}
+          </Badge>
+          {card.sector && (
+            <Badge variant="outline" className="rounded-full text-xs">
+              🏢 {card.sector}
+            </Badge>
           )}
         </div>
 
-        {/* Profile Info - Tinder style */}
-        <CardContent className="flex-1 p-5 flex flex-col gap-3 overflow-y-auto">
-          {/* Name and sector like job title */}
-          <div>
-            <p className="text-lg font-medium">{card.name || card.symbol}</p>
-            {card.sector && (
-              <p className="text-muted-foreground flex items-center gap-1">
-                <MapPin className="w-4 h-4" />
-                {card.sector}
-              </p>
-            )}
-          </div>
+        {/* Bio */}
+        <div className="shrink-0 px-4 py-2 border-t border-border/30">
+          <p className="text-sm leading-relaxed line-clamp-3 text-muted-foreground">
+            {card.tinder_bio 
+              ? card.tinder_bio.replace(/^"|"$/g, '')
+              : `Looking for investors who appreciate a good dip. 📉 Currently ${formatDipPct(card.dip_pct)} off my peak. Swipe right if you see my potential! 💸`
+            }
+          </p>
+        </div>
 
-          {/* Bio - the star of the show! */}
-          {card.tinder_bio ? (
-            <div className="flex-1 py-3 border-y border-border/50">
-              <p className="text-[15px] leading-relaxed">{card.tinder_bio.replace(/^"|"$/g, '')}</p>
+        {/* Vote Stats & Sentiment */}
+        <div className="shrink-0 p-4 pt-2 border-t border-border/30 bg-muted/20">
+          {/* Stats Row */}
+          <div className="flex items-center justify-between text-xs text-muted-foreground mb-2">
+            <div className="flex items-center gap-3">
+              <span className="flex items-center gap-1">
+                <Users className="w-3.5 h-3.5" />
+                {totalVotes} votes
+              </span>
+              <span className="flex items-center gap-1 text-success">
+                <ThumbsUp className="w-3.5 h-3.5" />
+                {card.vote_counts.buy}
+              </span>
+              <span className="flex items-center gap-1 text-danger">
+                <ThumbsDown className="w-3.5 h-3.5" />
+                {card.vote_counts.sell}
+              </span>
             </div>
-          ) : (
-            <div className="flex-1 py-3 border-y border-border/50">
-              <p className="text-[15px] leading-relaxed text-muted-foreground italic">
-                Looking for investors who appreciate a good dip. 📉 {card.dip_pct > 0 ? `Currently ${formatDipPct(card.dip_pct)} off my peak - that's basically a sale, right?` : ''} Swipe right if you see my true value! 💸
-              </p>
-            </div>
-          )}
-
-          {/* Quick stats like Tinder interests */}
-          <div className="flex flex-wrap gap-2">
-            <Badge variant="outline" className="rounded-full">
-              💰 {formatPrice(card.current_price)}
-            </Badge>
-            <Badge variant="outline" className="rounded-full">
-              📈 ATH: {formatPrice(card.ref_high)}
-            </Badge>
+            {buyPct > 60 && <span className="text-success font-medium">🐂 Bullish</span>}
+            {sellPct > 60 && <span className="text-danger font-medium">🐻 Bearish</span>}
           </div>
-
-          {/* Community sentiment as "mutual friends" */}
-          <div className="mt-auto pt-2">
-            <div className="flex items-center gap-2 mb-2 text-sm text-muted-foreground">
-              <Users className="w-4 h-4" />
-              <span>{card.vote_counts.buy + card.vote_counts.sell} investors voted</span>
-              {buyPct > 60 && <span className="text-success">• Mostly bullish 🐂</span>}
-              {sellPct > 60 && <span className="text-danger">• Mostly bearish 🐻</span>}
-            </div>
-            <SentimentBar buyPct={buyPct} sellPct={sellPct} />
-          </div>
-        </CardContent>
+          
+          {/* Sentiment Bar */}
+          <SentimentBar buyPct={buyPct} sellPct={sellPct} />
+        </div>
       </Card>
     </motion.div>
   );
 }
 
-// Suggestion card for voting mode
+// Suggestion card for voting mode - Tinder-style!
 function SuggestionSwipeCard({ 
   suggestion, 
   onVote, 
@@ -337,6 +392,7 @@ function SuggestionSwipeCard({
   const rotate = useTransform(x, [-200, 200], [-15, 15]);
   const approveOpacity = useTransform(x, [0, SWIPE_THRESHOLD], [0, 1]);
   const skipOpacity = useTransform(x, [-SWIPE_THRESHOLD, 0], [1, 0]);
+  const [logoError, setLogoError] = useState(false);
   
   const handleDragEnd = (_: unknown, info: PanInfo) => {
     if (info.offset.x > SWIPE_THRESHOLD) {
@@ -346,111 +402,156 @@ function SuggestionSwipeCard({
     }
   };
 
-  const scale = useTransform(x, [-200, 0, 200], [0.95, 1, 0.95]);
-
   return (
     <motion.div
       className="absolute inset-0 cursor-grab active:cursor-grabbing touch-none"
-      style={{ x, rotate, scale, zIndex: isTop ? 10 : 0 }}
+      style={{ x, rotate, zIndex: isTop ? 10 : 0 }}
       drag={isTop ? 'x' : false}
       dragConstraints={{ left: 0, right: 0 }}
       dragElastic={0.7}
       dragTransition={{ bounceStiffness: 300, bounceDamping: 20 }}
       onDragEnd={handleDragEnd}
-      initial={{ scale: 0.9, opacity: 0, y: 20 }}
+      initial={{ scale: 0.95, opacity: 0, y: 30 }}
       animate={{ 
-        scale: isTop ? 1 : 0.92, 
-        opacity: isTop ? 1 : 0.6,
-        y: isTop ? 0 : 10,
+        scale: 1, 
+        opacity: isTop ? 1 : 0,
+        y: 0,
       }}
       transition={springTransition}
       exit={{ 
-        x: 400, 
+        x: x.get() > 0 ? 400 : -400, 
         opacity: 0,
-        rotate: 15,
+        rotate: x.get() > 0 ? 15 : -15,
+        transition: { duration: 0.3 }
       }}
-      whileHover={isTop ? { scale: 1.02 } : {}}
     >
-      {/* Swipe indicators */}
+      {/* Swipe indicators - SKIP/VOTE overlay */}
       <motion.div 
-        className="absolute -left-4 top-1/2 -translate-y-1/2 z-20 pointer-events-none"
+        className="absolute left-4 top-6 z-20 pointer-events-none"
         style={{ opacity: skipOpacity }}
-        initial={{ scale: 0.8 }}
-        animate={{ scale: 1 }}
       >
-        <motion.div 
-          className="bg-muted text-muted-foreground p-3 rounded-full shadow-lg"
-          animate={{ scale: [1, 1.1, 1] }}
-          transition={{ repeat: Infinity, duration: 1.5 }}
-        >
-          <X className="w-8 h-8" />
-        </motion.div>
+        <div className="border-4 border-muted-foreground rounded-lg px-4 py-1 rotate-[-15deg] bg-background/80">
+          <span className="text-muted-foreground font-black text-2xl tracking-wider">SKIP</span>
+        </div>
       </motion.div>
       <motion.div 
-        className="absolute -right-4 top-1/2 -translate-y-1/2 z-20 pointer-events-none"
+        className="absolute right-4 top-6 z-20 pointer-events-none"
         style={{ opacity: approveOpacity }}
-        initial={{ scale: 0.8 }}
-        animate={{ scale: 1 }}
       >
-        <motion.div 
-          className="bg-success text-white p-3 rounded-full shadow-lg"
-          animate={{ scale: [1, 1.1, 1] }}
-          transition={{ repeat: Infinity, duration: 1.5 }}
-        >
-          <ThumbsUp className="w-8 h-8" />
-        </motion.div>
+        <div className="border-4 border-success rounded-lg px-4 py-1 rotate-[15deg] bg-background/80">
+          <span className="text-success font-black text-2xl tracking-wider">VOTE!</span>
+        </div>
       </motion.div>
 
-      <Card className="h-full flex flex-col overflow-hidden bg-card border-border/50 shadow-xl hover:shadow-2xl transition-shadow duration-300">
-        <CardContent className="flex-1 p-6 flex flex-col">
-          {/* Header */}
-          <div className="flex items-start justify-between mb-4">
+      <Card className="h-full flex flex-col overflow-hidden bg-card border-0 shadow-2xl rounded-3xl">
+        {/* Header Row - Symbol, Name, Logo */}
+        <div className="shrink-0 p-4 pb-2 flex items-start justify-between">
+          <div className="flex items-center gap-3">
+            {/* Company Logo */}
+            <div className="w-12 h-12 rounded-xl bg-muted flex items-center justify-center overflow-hidden border border-border/50">
+              {!logoError ? (
+                <img 
+                  src={getStockLogoUrl(suggestion.symbol)}
+                  alt={suggestion.symbol}
+                  className="w-full h-full object-contain p-1"
+                  onError={() => setLogoError(true)}
+                />
+              ) : (
+                <Building2 className="w-6 h-6 text-muted-foreground" />
+              )}
+            </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-3xl font-bold">{suggestion.symbol}</h2>
-                <Badge variant="secondary" className="font-normal">
+                <Badge variant="secondary" className="font-bold text-sm">
+                  {suggestion.symbol}
+                </Badge>
+                <Badge className="bg-chart-4/20 text-chart-4 border-chart-4/30 text-xs">
+                  <Lightbulb className="w-3 h-3 mr-0.5" />
                   Suggestion
                 </Badge>
               </div>
-              <p className="text-muted-foreground mt-1">
+              <p className="text-sm text-foreground font-medium mt-0.5 line-clamp-1">
                 {suggestion.name || suggestion.symbol}
               </p>
             </div>
-            <Badge variant="outline" className="bg-chart-4/20 text-chart-4 border-chart-4/30">
+          </div>
+          <div className="text-right">
+            <Badge variant="outline" className="bg-success/10 text-success border-success/30">
               <ThumbsUp className="w-3 h-3 mr-1" />
+              {suggestion.vote_count}
+            </Badge>
+          </div>
+        </div>
+
+        {/* Placeholder Chart Area - showing pending state */}
+        <div className="relative flex-1 min-h-[180px] max-h-[240px] bg-gradient-to-b from-muted/30 to-transparent mx-4 rounded-xl overflow-hidden border border-border/30 flex items-center justify-center">
+          <div className="text-center">
+            <BarChart3 className="w-16 h-16 mx-auto text-muted-foreground/30 mb-2" />
+            <p className="text-sm text-muted-foreground">Chart available after approval</p>
+          </div>
+          
+          {/* Vote count badge overlay */}
+          <div className="absolute top-3 right-3">
+            <Badge className="bg-chart-4 text-white text-base px-2.5 py-0.5 font-bold shadow-lg border-0">
+              <Users className="w-3.5 h-3.5 mr-1" />
               {suggestion.vote_count} votes
             </Badge>
           </div>
+        </div>
 
-          {/* Suggestion info */}
-          <div className="flex-1 flex flex-col gap-4">
-            <div className="bg-muted/30 rounded-lg p-4">
-              <div className="flex items-center gap-2 mb-2">
-                <Lightbulb className="w-4 h-4 text-chart-4" />
-                <span className="text-sm font-medium">Why this stock?</span>
-              </div>
-              <p className="text-sm text-muted-foreground">
-                Community suggested stock awaiting approval. Vote to add it to the tracking list!
-              </p>
+        {/* Key Stats Chips */}
+        <div className="shrink-0 px-4 py-2 flex flex-wrap gap-1.5">
+          {suggestion.sector && (
+            <Badge variant="outline" className="rounded-full text-xs">
+              🏢 {suggestion.sector}
+            </Badge>
+          )}
+          <Badge variant="outline" className="rounded-full text-xs">
+            ⏳ Pending Approval
+          </Badge>
+          <Badge variant="outline" className="rounded-full text-xs">
+            🗳️ Community Pick
+          </Badge>
+        </div>
+
+        {/* Bio/Summary */}
+        <div className="shrink-0 px-4 py-2 border-t border-border/30">
+          <p className="text-sm leading-relaxed line-clamp-3 text-muted-foreground">
+            {suggestion.summary 
+              ? suggestion.summary
+              : `Hey there! 👋 I'm ${suggestion.name || suggestion.symbol} and I'm waiting to join the party. Vote for me to get tracked! The community thinks I have potential. 🚀`
+            }
+          </p>
+        </div>
+
+        {/* Vote Info & Call to Action */}
+        <div className="shrink-0 p-4 pt-2 border-t border-border/30 bg-muted/20">
+          <div className="flex items-center justify-between text-xs text-muted-foreground mb-2">
+            <div className="flex items-center gap-3">
+              <span className="flex items-center gap-1">
+                <Lightbulb className="w-3.5 h-3.5 text-chart-4" />
+                Community Suggested
+              </span>
             </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="bg-muted/30 rounded-lg p-3 text-center">
-                <p className="text-xs text-muted-foreground mb-1">Current Votes</p>
-                <p className="text-xl font-semibold">{suggestion.vote_count}</p>
-              </div>
-              <div className="bg-muted/30 rounded-lg p-3 text-center">
-                <p className="text-xs text-muted-foreground mb-1">Status</p>
-                <Badge variant="secondary" className="mt-1">Pending</Badge>
-              </div>
+            {suggestion.vote_count >= 5 && (
+              <span className="text-success font-medium">🔥 Trending</span>
+            )}
+          </div>
+          
+          {/* Progress to approval */}
+          <div className="space-y-1">
+            <div className="flex justify-between text-xs text-muted-foreground">
+              <span>Votes needed for auto-approval</span>
+              <span>{suggestion.vote_count}/10</span>
+            </div>
+            <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+              <div 
+                className="h-full bg-success transition-all duration-300" 
+                style={{ width: `${Math.min(suggestion.vote_count * 10, 100)}%` }}
+              />
             </div>
           </div>
-
-          {/* Instructions */}
-          <div className="text-center text-sm text-muted-foreground border-t pt-4 mt-4">
-            <p>Swipe right to vote, left to skip</p>
-          </div>
-        </CardContent>
+        </div>
       </Card>
     </motion.div>
   );
@@ -459,6 +560,7 @@ function SuggestionSwipeCard({
 type SwipeMode = 'dips' | 'suggestions';
 
 export function DipSwipePage() {
+  const isMobile = useIsMobile();
   const [mode, setMode] = useState<SwipeMode>('dips');
   const [cards, setCards] = useState<DipCard[]>([]);
   const [suggestions, setSuggestions] = useState<TopSuggestion[]>([]);
@@ -501,10 +603,9 @@ export function DipSwipePage() {
   const currentCard = useMemo(() => cards[currentIndex], [cards, currentIndex]);
   const nextCard = useMemo(() => cards[currentIndex + 1], [cards, currentIndex]);
   const currentSuggestion = useMemo(() => suggestions[currentIndex], [suggestions, currentIndex]);
-  const nextSuggestion = useMemo(() => suggestions[currentIndex + 1], [suggestions, currentIndex]);
   const totalItems = mode === 'dips' ? cards.length : suggestions.length;
 
-  // Fetch chart data for current and next cards
+  // Fetch chart data for current and next cards (prefetch next for smooth experience)
   useEffect(() => {
     if (mode !== 'dips') return;
     
@@ -586,15 +687,17 @@ export function DipSwipePage() {
   // Loading state
   if (isLoading) {
     return (
-      <div className="container max-w-lg mx-auto px-4 py-8">
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold mb-2">DipSwipe</h1>
-          <p className="text-muted-foreground">
-            {mode === 'dips' ? 'Swipe right to buy, left to pass' : 'Vote on stock suggestions'}
-          </p>
-        </div>
+      <div className={`container max-w-lg mx-auto px-4 ${isMobile ? 'py-2' : 'py-8'}`}>
+        {!isMobile && (
+          <div className="text-center mb-8">
+            <h1 className="text-3xl font-bold mb-2">DipSwipe</h1>
+            <p className="text-muted-foreground">
+              {mode === 'dips' ? 'Swipe right to buy, left to pass' : 'Vote on stock suggestions'}
+            </p>
+          </div>
+        )}
         <ModeSelector />
-        <Card className="h-[600px]">
+        <Card className={isMobile ? 'h-[calc(100vh-120px)]' : 'h-[600px]'}>
           <CardContent className="p-6 space-y-4">
             <Skeleton className="h-8 w-24" />
             <Skeleton className="h-6 w-48" />
@@ -613,9 +716,9 @@ export function DipSwipePage() {
   // Error state
   if (error) {
     return (
-      <div className="container max-w-lg mx-auto px-4 py-8">
+      <div className={`container max-w-lg mx-auto px-4 ${isMobile ? 'py-2' : 'py-8'}`}>
         <div className="text-center">
-          <h1 className="text-3xl font-bold mb-4">DipSwipe</h1>
+          {!isMobile && <h1 className="text-3xl font-bold mb-4">DipSwipe</h1>}
           <ModeSelector />
           <Card className="p-8">
             <p className="text-danger mb-4">{error}</p>
@@ -632,9 +735,9 @@ export function DipSwipePage() {
   // No more cards
   if (currentIndex >= totalItems) {
     return (
-      <div className="container max-w-lg mx-auto px-4 py-8">
+      <div className={`container max-w-lg mx-auto px-4 ${isMobile ? 'py-2' : 'py-8'}`}>
         <div className="text-center">
-          <h1 className="text-3xl font-bold mb-4">DipSwipe</h1>
+          {!isMobile && <h1 className="text-3xl font-bold mb-4">DipSwipe</h1>}
           <ModeSelector />
           <Card className="p-8">
             <BarChart3 className="w-16 h-16 mx-auto mb-4 text-muted-foreground" />
@@ -658,169 +761,153 @@ export function DipSwipePage() {
   }
 
   return (
-    <div className="container max-w-lg mx-auto px-4 py-8">
-      {/* Header */}
-      <div className="text-center mb-4">
-        <h1 className="text-3xl font-bold mb-2">DipSwipe</h1>
-        <p className="text-muted-foreground">
-          {mode === 'dips' ? 'Swipe right to buy, left to pass' : 'Vote on community suggestions'}
-        </p>
-      </div>
+    <div className={`container max-w-lg mx-auto px-4 ${isMobile ? 'py-2 overflow-hidden' : 'py-8'}`}>
+      {/* Header - Hidden on mobile */}
+      {!isMobile && (
+        <div className="text-center mb-4">
+          <h1 className="text-3xl font-bold mb-2">DipSwipe</h1>
+          <p className="text-muted-foreground">
+            {mode === 'dips' ? 'Swipe right to buy, left to pass' : 'Vote on community suggestions'}
+          </p>
+        </div>
+      )}
 
       {/* Mode Selector */}
       <ModeSelector />
 
-      {/* Progress */}
-      <div className="flex items-center justify-center gap-2 mb-4">
-        <Badge variant="outline">
+      {/* Progress - Simplified on mobile */}
+      <div className="flex items-center justify-center gap-2 mb-2">
+        <Badge variant="outline" className={isMobile ? 'text-xs' : ''}>
           {currentIndex + 1} / {totalItems}
         </Badge>
-        <Badge variant="secondary">
-          {votedCards.size} voted
-        </Badge>
+        {!isMobile && (
+          <Badge variant="secondary">
+            {votedCards.size} voted
+          </Badge>
+        )}
       </div>
 
-      {/* Card stack */}
-      <div className="relative h-[600px] mb-6">
+      {/* Card stack - Full height on mobile */}
+      <div className={`relative ${isMobile ? 'h-[calc(100vh-140px)]' : 'h-[520px]'} mb-2`}>
         <AnimatePresence mode="popLayout">
-          {mode === 'dips' ? (
-            <>
-              {nextCard && (
-                <SwipeableCard
-                  key={nextCard.symbol}
-                  card={nextCard}
-                  chartData={chartDataMap[nextCard.symbol]}
-                  onVote={() => {}}
-                  isTop={false}
-                />
-              )}
-              {currentCard && (
-                <SwipeableCard
-                  key={currentCard.symbol}
-                  card={currentCard}
-                  chartData={chartDataMap[currentCard.symbol]}
-                  onVote={handleVote}
-                  isTop={true}
-                />
-              )}
-            </>
-          ) : (
-            <>
-              {nextSuggestion && (
-                <SuggestionSwipeCard
-                  key={nextSuggestion.symbol}
-                  suggestion={nextSuggestion}
-                  onVote={() => {}}
-                  isTop={false}
-                />
-              )}
-              {currentSuggestion && (
-                <SuggestionSwipeCard
-                  key={currentSuggestion.symbol}
-                  suggestion={currentSuggestion}
-                  onVote={handleSuggestionVote}
-                  isTop={true}
-                />
-              )}
-            </>
+          {mode === 'dips' && currentCard && (
+            <SwipeableCard
+              key={currentCard.symbol}
+              card={currentCard}
+              chartData={chartDataMap[currentCard.symbol]}
+              onVote={handleVote}
+              isTop={true}
+            />
+          )}
+          {mode === 'suggestions' && currentSuggestion && (
+            <SuggestionSwipeCard
+              key={currentSuggestion.symbol}
+              suggestion={currentSuggestion}
+              onVote={handleSuggestionVote}
+              isTop={true}
+            />
           )}
         </AnimatePresence>
       </div>
 
-      {/* Action buttons */}
-      <div className="flex items-center justify-center gap-4">
-        <Button
-          variant="outline"
-          size="icon"
-          className="w-12 h-12 rounded-full"
-          onClick={handlePrevious}
-          disabled={currentIndex === 0}
-        >
-          <ChevronLeft className="w-6 h-6" />
-        </Button>
-        
-        {mode === 'dips' ? (
-          <>
-            <motion.button
-              className="w-16 h-16 rounded-full bg-danger text-white flex items-center justify-center shadow-lg"
-              variants={voteButtonVariants}
-              whileHover="hover"
-              whileTap="tap"
-              onClick={() => handleVote('sell')}
-              disabled={isVoting}
-            >
-              <X className="w-8 h-8" />
-            </motion.button>
-            
-            <Button
-              variant="ghost"
-              size="icon"
-              className="w-12 h-12 rounded-full"
-              onClick={handleSkip}
-            >
-              <ChevronRight className="w-6 h-6" />
-            </Button>
-            
-            <motion.button
-              className="w-16 h-16 rounded-full bg-success text-white flex items-center justify-center shadow-lg"
-              variants={voteButtonVariants}
-              whileHover="hover"
-              whileTap="tap"
-              onClick={() => handleVote('buy')}
-              disabled={isVoting}
-            >
-              <Check className="w-8 h-8" />
-            </motion.button>
-          </>
-        ) : (
-          <>
-            <motion.button
-              className="w-16 h-16 rounded-full bg-muted text-muted-foreground flex items-center justify-center shadow-lg"
-              variants={voteButtonVariants}
-              whileHover="hover"
-              whileTap="tap"
-              onClick={() => handleSuggestionVote(false)}
-              disabled={isVoting}
-            >
-              <X className="w-8 h-8" />
-            </motion.button>
-            
-            <Button
-              variant="ghost"
-              size="icon"
-              className="w-12 h-12 rounded-full"
-              onClick={handleSkip}
-            >
-              <ChevronRight className="w-6 h-6" />
-            </Button>
-            
-            <motion.button
-              className="w-16 h-16 rounded-full bg-success text-white flex items-center justify-center shadow-lg"
-              variants={voteButtonVariants}
-              whileHover="hover"
-              whileTap="tap"
-              onClick={() => handleSuggestionVote(true)}
-              disabled={isVoting}
-            >
-              <ThumbsUp className="w-8 h-8" />
-            </motion.button>
-          </>
-        )}
+      {/* Action buttons - Hidden on mobile (swipe only) */}
+      {!isMobile && (
+        <div className="flex items-center justify-center gap-4">
+          <Button
+            variant="outline"
+            size="icon"
+            className="w-12 h-12 rounded-full"
+            onClick={handlePrevious}
+            disabled={currentIndex === 0}
+          >
+            <ChevronLeft className="w-6 h-6" />
+          </Button>
+          
+          {mode === 'dips' ? (
+            <>
+              <motion.button
+                className="w-16 h-16 rounded-full bg-danger text-white flex items-center justify-center shadow-lg"
+                variants={voteButtonVariants}
+                whileHover="hover"
+                whileTap="tap"
+                onClick={() => handleVote('sell')}
+                disabled={isVoting}
+              >
+                <X className="w-8 h-8" />
+              </motion.button>
+              
+              <Button
+                variant="ghost"
+                size="icon"
+                className="w-12 h-12 rounded-full"
+                onClick={handleSkip}
+              >
+                <ChevronRight className="w-6 h-6" />
+              </Button>
+              
+              <motion.button
+                className="w-16 h-16 rounded-full bg-success text-white flex items-center justify-center shadow-lg"
+                variants={voteButtonVariants}
+                whileHover="hover"
+                whileTap="tap"
+                onClick={() => handleVote('buy')}
+                disabled={isVoting}
+              >
+                <Check className="w-8 h-8" />
+              </motion.button>
+            </>
+          ) : (
+            <>
+              <motion.button
+                className="w-16 h-16 rounded-full bg-muted text-muted-foreground flex items-center justify-center shadow-lg"
+                variants={voteButtonVariants}
+                whileHover="hover"
+                whileTap="tap"
+                onClick={() => handleSuggestionVote(false)}
+                disabled={isVoting}
+              >
+                <X className="w-8 h-8" />
+              </motion.button>
+              
+              <Button
+                variant="ghost"
+                size="icon"
+                className="w-12 h-12 rounded-full"
+                onClick={handleSkip}
+              >
+                <ChevronRight className="w-6 h-6" />
+              </Button>
+              
+              <motion.button
+                className="w-16 h-16 rounded-full bg-success text-white flex items-center justify-center shadow-lg"
+                variants={voteButtonVariants}
+                whileHover="hover"
+                whileTap="tap"
+                onClick={() => handleSuggestionVote(true)}
+                disabled={isVoting}
+              >
+                <ThumbsUp className="w-8 h-8" />
+              </motion.button>
+            </>
+          )}
 
-        <Button
-          variant="outline"
-          size="icon"
-          className="w-12 h-12 rounded-full"
-          onClick={loadCards}
-        >
-          <RefreshCw className="w-5 h-5" />
-        </Button>
-      </div>
+          <Button
+            variant="outline"
+            size="icon"
+            className="w-12 h-12 rounded-full"
+            onClick={loadCards}
+          >
+            <RefreshCw className="w-5 h-5" />
+          </Button>
+        </div>
+      )}
 
-      {/* Instructions */}
-      <div className="text-center mt-8 text-sm text-muted-foreground">
-        <p>Drag card left or right, or use buttons below</p>
-      </div>
+      {/* Instructions - Hidden on mobile */}
+      {!isMobile && (
+        <div className="text-center mt-8 text-sm text-muted-foreground">
+          <p>Drag card left or right, or use buttons below</p>
+        </div>
+      )}
     </div>
   );
 }

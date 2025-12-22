@@ -25,14 +25,20 @@ import {
   Send,
 } from 'lucide-react';
 import { validateSymbol, suggestStock } from '@/services/api';
+import { useTheme } from '@/context/ThemeContext';
+
+// Symbol validation: 1-10 chars, alphanumeric + dot only
+const SYMBOL_REGEX = /^[A-Z0-9.]{1,10}$/;
 
 interface StockPreview {
   symbol: string;
   name: string;
   sector?: string;
+  summary?: string;
 }
 
 export function SuggestStockDialog() {
+  const { getActiveColors } = useTheme();
   const [open, setOpen] = useState(false);
   const [symbol, setSymbol] = useState('');
   const [isValidating, setIsValidating] = useState(false);
@@ -43,6 +49,21 @@ export function SuggestStockDialog() {
   const [submitMessage, setSubmitMessage] = useState<string | null>(null);
   // Rate limit state - can be populated from API response headers
   const [rateLimit] = useState<{ remaining: number; resetIn: number } | null>(null);
+
+  // Get theme colors for styled error/success messages
+  const colors = getActiveColors();
+
+  const validateSymbolFormat = (value: string): string | null => {
+    if (!value.trim()) return null;
+    const upper = value.trim().toUpperCase();
+    if (upper.length > 10) {
+      return 'Symbol must be 10 characters or less';
+    }
+    if (!SYMBOL_REGEX.test(upper)) {
+      return 'Symbol can only contain letters, numbers, and dots';
+    }
+    return null;
+  };
 
   const resetState = () => {
     setSymbol('');
@@ -60,8 +81,25 @@ export function SuggestStockDialog() {
     setOpen(newOpen);
   };
 
+  const handleSymbolChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value.toUpperCase();
+    setSymbol(value);
+    // Clear validation error when user starts typing again
+    if (validationError) {
+      const formatError = validateSymbolFormat(value);
+      setValidationError(formatError);
+    }
+  };
+
   const handleValidate = async () => {
     if (!symbol.trim()) return;
+
+    // Frontend validation first
+    const formatError = validateSymbolFormat(symbol);
+    if (formatError) {
+      setValidationError(formatError);
+      return;
+    }
 
     setIsValidating(true);
     setValidationError(null);
@@ -71,9 +109,10 @@ export function SuggestStockDialog() {
       const result = await validateSymbol(symbol.trim().toUpperCase());
       if (result.valid && result.name) {
         setStockPreview({
-          symbol: symbol.trim().toUpperCase(),
+          symbol: result.symbol,
           name: result.name,
-          sector: (result as { sector?: string }).sector,
+          sector: result.sector,
+          summary: result.summary,
         });
       } else {
         setValidationError(result.error || 'Symbol not found');
@@ -147,7 +186,7 @@ export function SuggestStockDialog() {
                 animate={{ scale: 1 }}
                 transition={{ type: "spring", stiffness: 300, damping: 20, delay: 0.1 }}
               >
-                <CheckCircle className="h-16 w-16 mx-auto text-success" />
+                <CheckCircle className="h-16 w-16 mx-auto" style={{ color: colors.up }} />
               </motion.div>
               <motion.div
                 initial={{ opacity: 0, y: 10 }}
@@ -184,7 +223,7 @@ export function SuggestStockDialog() {
                     id="symbol"
                     placeholder="e.g., AAPL, MSFT, TSLA"
                     value={symbol}
-                    onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+                    onChange={handleSymbolChange}
                     onKeyDown={handleKeyDown}
                     disabled={isValidating || !!stockPreview}
                     className="flex-1 uppercase"
@@ -224,7 +263,8 @@ export function SuggestStockDialog() {
                     initial={{ opacity: 0, height: 0 }}
                     animate={{ opacity: 1, height: 'auto' }}
                     exit={{ opacity: 0, height: 0 }}
-                    className="flex items-center gap-2 text-sm text-destructive"
+                    className="flex items-center gap-2 text-sm"
+                    style={{ color: colors.down }}
                   >
                     <AlertCircle className="h-4 w-4" />
                     {validationError}
@@ -246,9 +286,9 @@ export function SuggestStockDialog() {
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
                               <span className="font-bold text-lg">{stockPreview.symbol}</span>
-                              <CheckCircle className="h-4 w-4 text-success" />
+                              <CheckCircle className="h-4 w-4" style={{ color: colors.up }} />
                             </div>
-                            <p className="text-sm text-muted-foreground truncate">
+                            <p className="text-sm text-muted-foreground">
                               {stockPreview.name}
                             </p>
                             {stockPreview.sector && (
@@ -258,6 +298,11 @@ export function SuggestStockDialog() {
                                   {stockPreview.sector}
                                 </Badge>
                               </div>
+                            )}
+                            {stockPreview.summary && (
+                              <p className="text-xs text-muted-foreground mt-3 line-clamp-3">
+                                {stockPreview.summary}
+                              </p>
                             )}
                           </div>
                         </div>
@@ -274,7 +319,8 @@ export function SuggestStockDialog() {
                     initial={{ opacity: 0, height: 0 }}
                     animate={{ opacity: 1, height: 'auto' }}
                     exit={{ opacity: 0, height: 0 }}
-                    className="flex items-center gap-2 text-sm text-destructive"
+                    className="flex items-center gap-2 text-sm"
+                    style={{ color: colors.down }}
                   >
                     <AlertCircle className="h-4 w-4" />
                     {submitMessage}

@@ -2,10 +2,32 @@ import { createContext, useContext, useState, useEffect, useCallback, useMemo, t
 
 type Theme = 'light' | 'dark' | 'system';
 
+interface CustomColors {
+  up: string;
+  down: string;
+}
+
+const DEFAULT_COLORS: CustomColors = {
+  up: '#22c55e', // Green
+  down: '#ef4444', // Red
+};
+
+const COLORBLIND_COLORS: CustomColors = {
+  up: '#3b82f6', // Blue
+  down: '#f97316', // Orange
+};
+
 interface ThemeContextType {
   theme: Theme;
   setTheme: (theme: Theme) => void;
   resolvedTheme: 'light' | 'dark';
+  colorblindMode: boolean;
+  setColorblindMode: (enabled: boolean) => void;
+  customColors: CustomColors;
+  setCustomColors: (colors: CustomColors) => void;
+  resetColors: () => void;
+  /** Get the currently active colors (respects colorblind mode) */
+  getActiveColors: () => CustomColors;
 }
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
@@ -25,6 +47,27 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     return 'system';
   });
 
+  const [colorblindMode, setColorblindModeState] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('colorblind-mode') === 'true';
+    }
+    return false;
+  });
+
+  const [customColors, setCustomColorsState] = useState<CustomColors>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('custom-colors');
+      if (saved) {
+        try {
+          return JSON.parse(saved);
+        } catch {
+          return DEFAULT_COLORS;
+        }
+      }
+    }
+    return DEFAULT_COLORS;
+  });
+
   const resolvedTheme = useMemo(() => 
     theme === 'system' ? getSystemTheme() : theme,
     [theme]
@@ -36,6 +79,47 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     root.classList.add(resolvedTheme);
     localStorage.setItem('theme', theme);
   }, [theme, resolvedTheme]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    if (colorblindMode) {
+      root.classList.add('colorblind');
+    } else {
+      root.classList.remove('colorblind');
+    }
+    localStorage.setItem('colorblind-mode', String(colorblindMode));
+  }, [colorblindMode]);
+
+  // Apply custom/colorblind colors to CSS variables
+  // This ensures text-success and text-danger use the right colors
+  useEffect(() => {
+    const root = document.documentElement;
+    const activeColors = colorblindMode ? COLORBLIND_COLORS : customColors;
+    
+    // Check if we're using non-default colors
+    const isUsingCustomColors = 
+      colorblindMode || 
+      customColors.up !== DEFAULT_COLORS.up || 
+      customColors.down !== DEFAULT_COLORS.down;
+    
+    if (isUsingCustomColors) {
+      // Override the CSS variables directly so text-success/text-danger work
+      root.style.setProperty('--success', activeColors.up);
+      root.style.setProperty('--danger', activeColors.down);
+      root.style.setProperty('--color-success', activeColors.up);
+      root.style.setProperty('--color-danger', activeColors.down);
+    } else {
+      // Remove inline styles to use CSS defaults
+      root.style.removeProperty('--success');
+      root.style.removeProperty('--danger');
+      root.style.removeProperty('--color-success');
+      root.style.removeProperty('--color-danger');
+    }
+    
+    // Also set the custom color variables for components that use them directly
+    root.style.setProperty('--color-success-custom', activeColors.up);
+    root.style.setProperty('--color-danger-custom', activeColors.down);
+  }, [colorblindMode, customColors]);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
@@ -54,11 +138,38 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     setThemeState(newTheme);
   }, []);
 
+  const setColorblindMode = useCallback((enabled: boolean) => {
+    setColorblindModeState(enabled);
+  }, []);
+
+  const setCustomColors = useCallback((colors: CustomColors) => {
+    setCustomColorsState(colors);
+    localStorage.setItem('custom-colors', JSON.stringify(colors));
+    // Apply immediately if not in colorblind mode
+    const root = document.documentElement;
+    root.style.setProperty('--color-success-custom', colors.up);
+    root.style.setProperty('--color-danger-custom', colors.down);
+  }, []);
+
+  const resetColors = useCallback(() => {
+    setCustomColors(DEFAULT_COLORS);
+  }, [setCustomColors]);
+
+  const getActiveColors = useCallback(() => {
+    return colorblindMode ? COLORBLIND_COLORS : customColors;
+  }, [colorblindMode, customColors]);
+
   const value = useMemo(() => ({
     theme,
     setTheme,
     resolvedTheme,
-  }), [theme, setTheme, resolvedTheme]);
+    colorblindMode,
+    setColorblindMode,
+    customColors,
+    setCustomColors,
+    resetColors,
+    getActiveColors,
+  }), [theme, setTheme, resolvedTheme, colorblindMode, setColorblindMode, customColors, setCustomColors, resetColors, getActiveColors]);
 
   return (
     <ThemeContext.Provider value={value}>

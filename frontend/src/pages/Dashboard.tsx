@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
-  getRanking, 
   getStockChart, 
   getStockInfo,
   getBenchmarkChart,
   mergeChartData,
   aggregatePortfolioPerformance,
+  getAvailableBenchmarks,
 } from '@/services/api';
 import type { 
   DipStock, 
@@ -15,8 +16,9 @@ import type {
   BenchmarkType,
   ComparisonChartData,
   AggregatedPerformance,
+  PublicBenchmark,
 } from '@/services/api';
-import { DipTicker } from '@/components/DipTicker';
+import { useDips } from '@/context/DipContext';
 import { StockCard } from '@/components/StockCard';
 import { StockDetailsPanel } from '@/components/StockDetailsPanel';
 import { BenchmarkSelector } from '@/components/BenchmarkSelector';
@@ -26,8 +28,9 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
 import { 
-  RefreshCw, 
   Search, 
   TrendingDown, 
   LayoutGrid, 
@@ -62,21 +65,18 @@ const item = {
 };
 
 export function Dashboard() {
-  const [stocks, setStocks] = useState<DipStock[]>([]);
+  const { stocks, isLoading: isLoadingRanking, lastUpdated, error, showAllStocks, setShowAllStocks } = useDips();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [selectedStock, setSelectedStock] = useState<DipStock | null>(null);
   const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
   const [stockInfo, setStockInfo] = useState<StockInfo | null>(null);
   const [chartPeriod, setChartPeriod] = useState(365);
-  const [isLoadingRanking, setIsLoadingRanking] = useState(true);
   const [isLoadingChart, setIsLoadingChart] = useState(false);
   const [isLoadingInfo, setIsLoadingInfo] = useState(false);
-  const [lastUpdated, setLastUpdated] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
   const [sortBy, setSortBy] = useState<SortBy>('score');
   const [isMobileDetailOpen, setIsMobileDetailOpen] = useState(false);
-  const [showAllStocks, setShowAllStocks] = useState(false);
   
   // Benchmark state
   const [benchmark, setBenchmark] = useState<BenchmarkType>(null);
@@ -85,11 +85,27 @@ export function Dashboard() {
   const [comparisonData, setComparisonData] = useState<ComparisonChartData[]>([]);
   const [aggregatedData, setAggregatedData] = useState<AggregatedPerformance[]>([]);
   const [showPortfolioChart, setShowPortfolioChart] = useState(false);
+  const [availableBenchmarks, setAvailableBenchmarks] = useState<PublicBenchmark[]>([]);
 
-  // Load ranking on mount and when showAllStocks changes
+  // Fetch available benchmarks on mount
   useEffect(() => {
-    loadRanking();
-  }, [showAllStocks]);
+    getAvailableBenchmarks()
+      .then(setAvailableBenchmarks)
+      .catch(() => setAvailableBenchmarks([]));
+  }, []);
+
+  // Handle URL query param for stock selection (from ticker click)
+  useEffect(() => {
+    const stockSymbol = searchParams.get('stock');
+    if (stockSymbol && stocks.length > 0) {
+      const stock = stocks.find(s => s.symbol === stockSymbol);
+      if (stock) {
+        setSelectedStock(stock);
+        // Clear the param after selection
+        setSearchParams({}, { replace: true });
+      }
+    }
+  }, [searchParams, stocks, setSearchParams]);
 
   // Memoized filtered and sorted stocks
   const filteredStocks = useMemo(() => {
@@ -148,38 +164,62 @@ export function Dashboard() {
       const optimalPeriod = calculateOptimalPeriod(selectedStock);
       setChartPeriod(optimalPeriod);
       
-      loadChart(selectedStock.symbol);
       loadStockInfo(selectedStock.symbol);
     }
   }, [selectedStock?.symbol, calculateOptimalPeriod]);
 
-  // Reload chart when period changes
+  // Consolidated chart loading - load both stock and benchmark chart together
   useEffect(() => {
-    if (selectedStock) {
-      loadChart(selectedStock.symbol);
-    }
-  }, [chartPeriod]);
+    async function loadAllChartData() {
+      if (!selectedStock) {
+        setChartData([]);
+        setBenchmarkData([]);
+        setComparisonData([]);
+        return;
+      }
 
-  // Load benchmark data when benchmark changes
-  useEffect(() => {
-    if (benchmark) {
-      loadBenchmarkData();
-    } else {
-      setBenchmarkData([]);
-      setComparisonData([]);
-      setAggregatedData([]);
-    }
-  }, [benchmark, chartPeriod]);
+      // Load stock chart
+      setIsLoadingChart(true);
+      try {
+        const stockChartData = await getStockChart(selectedStock.symbol, chartPeriod);
+        setChartData(stockChartData);
 
-  // Merge stock and benchmark data for comparison
-  useEffect(() => {
-    if (chartData.length > 0 && benchmarkData.length > 0 && benchmark) {
-      const merged = mergeChartData(chartData, benchmarkData);
-      setComparisonData(merged);
-    } else {
-      setComparisonData([]);
+        // If benchmark is selected, load it and merge
+        if (benchmark) {
+          setIsLoadingBenchmark(true);
+          try {
+            const benchData = await getBenchmarkChart(benchmark, chartPeriod);
+            setBenchmarkData(benchData);
+            
+            // Merge data for comparison chart
+            if (stockChartData.length > 0 && benchData.length > 0) {
+              const merged = mergeChartData(stockChartData, benchData);
+              setComparisonData(merged);
+            } else {
+              setComparisonData([]);
+            }
+          } catch (err) {
+            console.error('Failed to load benchmark data:', err);
+            setBenchmarkData([]);
+            setComparisonData([]);
+          } finally {
+            setIsLoadingBenchmark(false);
+          }
+        } else {
+          setBenchmarkData([]);
+          setComparisonData([]);
+        }
+      } catch (err) {
+        console.error('Failed to load chart:', err);
+        setChartData([]);
+        setComparisonData([]);
+      } finally {
+        setIsLoadingChart(false);
+      }
     }
-  }, [chartData, benchmarkData, benchmark]);
+
+    loadAllChartData();
+  }, [selectedStock?.symbol, chartPeriod, benchmark]);
 
   // Calculate aggregated portfolio performance when stocks or benchmark changes
   useEffect(() => {
@@ -189,20 +229,6 @@ export function Dashboard() {
       setAggregatedData([]);
     }
   }, [stocks, benchmarkData, benchmark]);
-
-  async function loadBenchmarkData() {
-    if (!benchmark) return;
-    setIsLoadingBenchmark(true);
-    try {
-      const data = await getBenchmarkChart(benchmark, chartPeriod);
-      setBenchmarkData(data);
-    } catch (err) {
-      console.error('Failed to load benchmark data:', err);
-      setBenchmarkData([]);
-    } finally {
-      setIsLoadingBenchmark(false);
-    }
-  }
 
   async function calculateAggregatedPerformance() {
     if (!benchmark || stocks.length === 0) return;
@@ -233,33 +259,6 @@ export function Dashboard() {
     }
   }
 
-  async function loadRanking() {
-    setIsLoadingRanking(true);
-    setError(null);
-    try {
-      const response = await getRanking(false, showAllStocks);
-      setStocks(response.ranking);
-      setLastUpdated(response.last_updated);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load ranking');
-    } finally {
-      setIsLoadingRanking(false);
-    }
-  }
-
-  async function loadChart(symbol: string) {
-    setIsLoadingChart(true);
-    try {
-      const data = await getStockChart(symbol, chartPeriod);
-      setChartData(data);
-    } catch (err) {
-      console.error('Failed to load chart:', err);
-      setChartData([]);
-    } finally {
-      setIsLoadingChart(false);
-    }
-  }
-
   async function loadStockInfo(symbol: string) {
     setIsLoadingInfo(true);
     try {
@@ -281,16 +280,9 @@ export function Dashboard() {
     }
   }, []);
 
-  const handleSliderSelect = useCallback((symbol: string) => {
-    const stock = stocks.find(s => s.symbol === symbol);
-    if (stock) {
-      setSelectedStock(stock);
-    }
-  }, [stocks]);
-
   return (
     <div className="space-y-8">
-      {/* Hero Section with Featured Slider */}
+      {/* Hero Section */}
       <section>
         <motion.div
           initial={{ opacity: 0, y: -10 }}
@@ -304,26 +296,11 @@ export function Dashboard() {
             </p>
           </div>
           {lastUpdated && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-muted-foreground"
-              onClick={loadRanking}
-            >
-              <RefreshCw className="h-4 w-4 mr-2" />
-              <span className="hidden sm:inline">
-                Updated {new Date(lastUpdated).toLocaleTimeString()}
-              </span>
-            </Button>
+            <span className="text-xs text-muted-foreground hidden sm:inline">
+              Last updated {new Date(lastUpdated).toLocaleTimeString()}
+            </span>
           )}
         </motion.div>
-
-        {/* Dip Ticker - compact scrolling badges */}
-        <DipTicker
-          stocks={stocks}
-          isLoading={isLoadingRanking}
-          onSelectStock={handleSliderSelect}
-        />
       </section>
 
       {/* Error Alert */}
@@ -372,7 +349,8 @@ export function Dashboard() {
           {/* Benchmark Selector */}
           <BenchmarkSelector 
             value={benchmark} 
-            onChange={setBenchmark} 
+            onChange={setBenchmark}
+            customBenchmarks={availableBenchmarks}
           />
 
           {/* Portfolio Chart Toggle */}
@@ -426,6 +404,18 @@ export function Dashboard() {
             </DropdownMenuContent>
           </DropdownMenu>
 
+          {/* Show All Toggle */}
+          <div className="flex items-center gap-2 border rounded-lg px-3 py-1.5">
+            <Switch
+              id="show-all"
+              checked={showAllStocks}
+              onCheckedChange={setShowAllStocks}
+            />
+            <Label htmlFor="show-all" className="text-sm cursor-pointer whitespace-nowrap">
+              Show all
+            </Label>
+          </div>
+
           {/* View Mode Toggle */}
           <div className="flex items-center border rounded-lg p-0.5">
             <Button
@@ -455,7 +445,8 @@ export function Dashboard() {
           <Skeleton className="h-4 w-32" />
         ) : (
           <span>
-            {filteredStocks.length} {filteredStocks.length === 1 ? 'stock' : 'stocks'} in dip
+            {filteredStocks.length} {filteredStocks.length === 1 ? 'stock' : 'stocks'} 
+            {showAllStocks ? ' tracked' : ' in dip'}
             {searchQuery && ` matching "${searchQuery}"`}
           </span>
         )}
@@ -528,7 +519,7 @@ export function Dashboard() {
         </div>
 
         {/* Desktop Details Panel */}
-        <div className="hidden lg:block sticky top-20 h-[calc(100vh-6rem)]">
+        <div className="hidden lg:block sticky top-16 h-[calc(100vh-5rem)]">
           <StockDetailsPanel
             stock={selectedStock}
             chartData={chartData}

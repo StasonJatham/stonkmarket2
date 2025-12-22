@@ -137,6 +137,23 @@ export async function getStockInfo(symbol: string): Promise<StockInfo> {
   );
 }
 
+export interface PublicBenchmark {
+  id: string;
+  symbol: string;
+  name: string;
+  description?: string | null;
+}
+
+export async function getAvailableBenchmarks(): Promise<PublicBenchmark[]> {
+  const cacheKey = 'benchmarks';
+  
+  return apiCache.fetch(
+    cacheKey,
+    () => fetchAPI<PublicBenchmark[]>('/dips/benchmarks'),
+    { ttl: CACHE_TTL.RANKING } // Cache for same time as ranking
+  );
+}
+
 export async function getCronJobs(): Promise<CronJob[]> {
   return apiCache.fetch(
     'cronjobs',
@@ -554,15 +571,16 @@ export interface SymbolValidationResponse {
   symbol: string;
   name?: string;
   sector?: string;
+  summary?: string;
   error?: string;
 }
 
-export async function validateSymbol(symbol: string): Promise<{ valid: boolean; name?: string; error?: string }> {
+export async function validateSymbol(symbol: string): Promise<SymbolValidationResponse> {
   try {
     const result = await fetchAPI<SymbolValidationResponse>(`/symbols/validate/${symbol.toUpperCase()}`);
-    return { valid: result.valid, name: result.name, error: result.error };
+    return result;
   } catch {
-    return { valid: false, error: 'Failed to validate symbol' };
+    return { valid: false, symbol: symbol.toUpperCase(), error: 'Failed to validate symbol' };
   }
 }
 
@@ -895,10 +913,10 @@ export interface TopSuggestion {
 
 // Public endpoints (no auth required)
 export async function suggestStock(symbol: string): Promise<{ message: string; symbol: string; vote_count: number; status: string }> {
-  return fetchAPI<{ message: string; symbol: string; vote_count: number; status: string }>('/suggestions', {
-    method: 'POST',
-    body: JSON.stringify({ symbol }),
-  });
+  return fetchAPI<{ message: string; symbol: string; vote_count: number; status: string }>(
+    `/suggestions?symbol=${encodeURIComponent(symbol.toUpperCase())}`,
+    { method: 'POST' }
+  );
 }
 
 export async function voteForSuggestion(symbol: string): Promise<{ message: string; symbol: string; auto_approved?: boolean }> {
@@ -941,4 +959,12 @@ export async function rejectSuggestion(suggestionId: number, reason?: string): P
   });
 }
 
-
+export async function updateSuggestion(
+  suggestionId: number, 
+  newSymbol: string
+): Promise<{ message: string; old_symbol: string; new_symbol: string }> {
+  return fetchAPI<{ message: string; old_symbol: string; new_symbol: string }>(
+    `/suggestions/${suggestionId}?new_symbol=${encodeURIComponent(newSymbol.toUpperCase())}`,
+    { method: 'PATCH' }
+  );
+}

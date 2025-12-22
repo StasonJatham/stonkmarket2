@@ -48,7 +48,12 @@ async def set_mfa_secret(username: str, mfa_secret: str) -> bool:
         mfa_secret,
         username.lower(),
     )
-    return result > 0
+    # execute returns string like "UPDATE 1" - extract the count
+    try:
+        count = int(result.split()[-1])
+        return count > 0
+    except (ValueError, IndexError):
+        return False
 
 
 async def enable_mfa(username: str, backup_codes: str) -> bool:
@@ -62,7 +67,12 @@ async def enable_mfa(username: str, backup_codes: str) -> bool:
         backup_codes,
         username.lower(),
     )
-    return result > 0
+    # execute returns string like "UPDATE 1" - extract the count
+    try:
+        count = int(result.split()[-1])
+        return count > 0
+    except (ValueError, IndexError):
+        return False
 
 
 async def disable_mfa(username: str) -> bool:
@@ -75,7 +85,12 @@ async def disable_mfa(username: str) -> bool:
         """,
         username.lower(),
     )
-    return result > 0
+    # execute returns string like "UPDATE 1" - extract the count
+    try:
+        count = int(result.split()[-1])
+        return count > 0
+    except (ValueError, IndexError):
+        return False
 
 
 async def verify_and_consume_backup_code(username: str, code_hash: str) -> bool:

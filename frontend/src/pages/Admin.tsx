@@ -57,7 +57,8 @@ import {
   TrendingUp,
   User,
   Cog,
-  Lightbulb
+  Lightbulb,
+  Sparkles
 } from 'lucide-react';
 import { CronBuilder, validateCron, describeCron } from '@/components/CronBuilder';
 import { SymbolManager } from '@/components/SymbolManager';
@@ -67,6 +68,7 @@ import { ApiKeyManager } from '@/components/ApiKeyManager';
 import { UserApiKeyManager } from '@/components/UserApiKeyManager';
 import { SystemSettings } from '@/components/SystemSettings';
 import { SuggestionManager } from '@/components/SuggestionManager';
+import { AIManager } from '@/components/AIManager';
 
 export function AdminPage() {
   const { user } = useAuth();
@@ -270,6 +272,10 @@ export function AdminPage() {
                 <Lightbulb className="h-4 w-4 mr-2" />
                 Suggestions
               </TabsTrigger>
+              <TabsTrigger value="ai">
+                <Sparkles className="h-4 w-4 mr-2" />
+                AI Content
+              </TabsTrigger>
               <TabsTrigger value="system">
                 <Cog className="h-4 w-4 mr-2" />
                 System
@@ -294,6 +300,11 @@ export function AdminPage() {
         {/* Suggestions Tab */}
         <TabsContent value="suggestions">
           <SuggestionManager />
+        </TabsContent>
+
+        {/* AI Content Tab */}
+        <TabsContent value="ai">
+          <AIManager />
         </TabsContent>
 
         {/* System Settings Tab - includes Service Keys */}

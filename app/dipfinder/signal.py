@@ -96,6 +96,7 @@ class DipSignal:
             "dip_vs_typical": round(self.dip_metrics.dip_vs_typical, 4),
             "typical_dip": round(self.dip_metrics.typical_dip, 6),
             "persist_days": self.dip_metrics.persist_days,
+            "days_since_peak": self.dip_metrics.days_since_peak,
             "is_meaningful": self.dip_metrics.is_meaningful,
             # Market context
             "dip_mkt": round(self.market_context.dip_mkt, 6),

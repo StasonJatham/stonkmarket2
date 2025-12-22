@@ -8,6 +8,7 @@ import {
   Legend,
   ResponsiveContainer,
   ReferenceLine,
+  Tooltip,
 } from 'recharts';
 import type { ComparisonChartData, BenchmarkType } from '@/services/api';
 import { getBenchmarkName } from '@/services/api';
@@ -21,6 +22,7 @@ import {
 } from '@/components/ui/chart';
 import { Badge } from '@/components/ui/badge';
 import { TrendingUp, TrendingDown } from 'lucide-react';
+import { useTheme } from '@/context/ThemeContext';
 
 interface ComparisonChartProps {
   data: ComparisonChartData[];
@@ -29,6 +31,7 @@ interface ComparisonChartProps {
   benchmark: BenchmarkType;
   isLoading?: boolean;
   height?: number;
+  compact?: boolean; // Render without Card wrapper
 }
 
 export function ComparisonChart({
@@ -37,18 +40,25 @@ export function ComparisonChart({
   stockName,
   benchmark,
   isLoading,
-  height = 300,
+  height = 200,
+  compact = false,
 }: ComparisonChartProps) {
+  const { colorblindMode, customColors } = useTheme();
+  
+  // Get colors from theme
+  const stockColor = colorblindMode ? '#3b82f6' : customColors.up;
+  const benchmarkColor = '#888888'; // Neutral gray for benchmark
+
   const chartConfig: ChartConfig = useMemo(() => ({
     stockNormalized: {
       label: stockSymbol,
-      color: 'hsl(var(--chart-1))',
+      color: stockColor,
     },
     benchmarkNormalized: {
       label: getBenchmarkName(benchmark) || 'Benchmark',
-      color: 'hsl(var(--chart-2))',
+      color: benchmarkColor,
     },
-  }), [stockSymbol, benchmark]);
+  }), [stockSymbol, benchmark, stockColor, benchmarkColor]);
 
   const { stockPerformance, benchmarkPerformance, outperformance } = useMemo(() => {
     if (data.length < 2) return { stockPerformance: 0, benchmarkPerformance: 0, outperformance: 0 };
@@ -65,6 +75,9 @@ export function ComparisonChart({
   }, [data]);
 
   if (isLoading) {
+    if (compact) {
+      return <Skeleton className={`h-[${height}px] w-full rounded-lg`} />;
+    }
     return (
       <Card>
         <CardHeader className="pb-2">
@@ -72,16 +85,23 @@ export function ComparisonChart({
           <Skeleton className="h-4 w-32 mt-1" />
         </CardHeader>
         <CardContent>
-          <Skeleton className="h-[300px] w-full" />
+          <Skeleton className={`h-[${height}px] w-full`} />
         </CardContent>
       </Card>
     );
   }
 
   if (data.length === 0) {
+    if (compact) {
+      return (
+        <div className={`flex items-center justify-center h-[${height}px] text-muted-foreground text-sm`}>
+          Loading comparison...
+        </div>
+      );
+    }
     return (
       <Card>
-        <CardContent className="flex items-center justify-center h-[300px] text-muted-foreground">
+        <CardContent className={`flex items-center justify-center h-[${height}px] text-muted-foreground`}>
           No chart data available
         </CardContent>
       </Card>
@@ -89,6 +109,90 @@ export function ComparisonChart({
   }
 
   const hasBenchmark = benchmark && data.some(d => d.benchmarkNormalized !== undefined);
+
+  // Compact mode: render without Card wrapper
+  if (compact) {
+    return (
+      <div className="space-y-2">
+        {/* Compact header */}
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-muted-foreground">
+            {stockSymbol} vs {getBenchmarkName(benchmark)}
+          </span>
+          {hasBenchmark && (
+            <div className="flex items-center gap-2">
+              <span className={stockPerformance >= 0 ? 'text-success' : 'text-danger'}>
+                {stockPerformance >= 0 ? '+' : ''}{stockPerformance.toFixed(1)}%
+              </span>
+              <span className="text-muted-foreground">vs</span>
+              <span className={benchmarkPerformance >= 0 ? 'text-success' : 'text-danger'}>
+                {benchmarkPerformance >= 0 ? '+' : ''}{benchmarkPerformance.toFixed(1)}%
+              </span>
+              <Badge 
+                variant={outperformance >= 0 ? 'default' : 'destructive'}
+                className="text-xs px-1.5 py-0"
+              >
+                {outperformance >= 0 ? '+' : ''}{outperformance.toFixed(1)}%
+              </Badge>
+            </div>
+          )}
+        </div>
+        {/* Chart */}
+        <ResponsiveContainer width="100%" height={height}>
+          <LineChart data={data} margin={{ top: 5, right: 5, left: 0, bottom: 0 }}>
+            <XAxis
+              dataKey="displayDate"
+              axisLine={false}
+              tickLine={false}
+              tick={{ fontSize: 9, fill: 'hsl(var(--muted-foreground))' }}
+              tickMargin={4}
+              minTickGap={50}
+            />
+            <YAxis
+              axisLine={false}
+              tickLine={false}
+              tick={{ fontSize: 9, fill: 'hsl(var(--muted-foreground))' }}
+              tickMargin={4}
+              tickFormatter={(value) => `${value.toFixed(0)}%`}
+              width={35}
+            />
+            <ReferenceLine y={0} stroke="hsl(var(--muted-foreground))" strokeDasharray="3 3" strokeOpacity={0.3} />
+            <Tooltip
+              contentStyle={{
+                backgroundColor: 'hsl(var(--background))',
+                border: '1px solid hsl(var(--border))',
+                borderRadius: '6px',
+                fontSize: '11px',
+                padding: '6px 10px',
+              }}
+              formatter={(value: number, name: string) => {
+                const label = name === 'stockNormalized' ? stockSymbol : getBenchmarkName(benchmark);
+                return [`${value.toFixed(2)}%`, label];
+              }}
+              labelFormatter={(label) => label}
+            />
+            <Line
+              type="monotone"
+              dataKey="stockNormalized"
+              stroke={stockColor}
+              strokeWidth={2}
+              dot={false}
+            />
+            {hasBenchmark && (
+              <Line
+                type="monotone"
+                dataKey="benchmarkNormalized"
+                stroke={benchmarkColor}
+                strokeWidth={1.5}
+                strokeDasharray="4 4"
+                dot={false}
+              />
+            )}
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    );
+  }
 
   return (
     <Card>
@@ -146,12 +250,12 @@ export function ComparisonChart({
             >
               <defs>
                 <linearGradient id="stockGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="hsl(var(--chart-1))" stopOpacity={0.3} />
-                  <stop offset="95%" stopColor="hsl(var(--chart-1))" stopOpacity={0} />
+                  <stop offset="5%" stopColor={stockColor} stopOpacity={0.3} />
+                  <stop offset="95%" stopColor={stockColor} stopOpacity={0} />
                 </linearGradient>
                 <linearGradient id="benchmarkGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="hsl(var(--chart-2))" stopOpacity={0.2} />
-                  <stop offset="95%" stopColor="hsl(var(--chart-2))" stopOpacity={0} />
+                  <stop offset="5%" stopColor={benchmarkColor} stopOpacity={0.2} />
+                  <stop offset="95%" stopColor={benchmarkColor} stopOpacity={0} />
                 </linearGradient>
               </defs>
               
@@ -212,7 +316,7 @@ export function ComparisonChart({
               <Line
                 type="monotone"
                 dataKey="stockNormalized"
-                stroke="hsl(var(--chart-1))"
+                stroke={stockColor}
                 strokeWidth={2}
                 dot={false}
                 activeDot={{ r: 4, strokeWidth: 0 }}
@@ -222,7 +326,7 @@ export function ComparisonChart({
                 <Line
                   type="monotone"
                   dataKey="benchmarkNormalized"
-                  stroke="hsl(var(--chart-2))"
+                  stroke={benchmarkColor}
                   strokeWidth={2}
                   strokeDasharray="4 4"
                   dot={false}

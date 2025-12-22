@@ -1,8 +1,7 @@
-import { useState } from 'react';
-import { motion } from 'framer-motion';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import type { DipStock } from '@/services/api';
-import { Badge } from '@/components/ui/badge';
-import { TrendingDown } from 'lucide-react';
+import { TrendingDown, TrendingUp } from 'lucide-react';
+import { useTheme } from '@/context/ThemeContext';
 
 interface DipTickerProps {
   stocks: DipStock[];
@@ -11,58 +10,127 @@ interface DipTickerProps {
 }
 
 export function DipTicker({ stocks, onSelectStock, isLoading }: DipTickerProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [offset, setOffset] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
+  const animationRef = useRef<number | null>(null);
+  const lastTimeRef = useRef<number>(0);
+  const pausedOffsetRef = useRef<number>(0);
+  const { colorblindMode, customColors } = useTheme();
   
-  // Take top 10 dips for ticker
-  const tickerStocks = stocks.slice(0, 10);
+  // Get colors - use colorblind colors if enabled, otherwise custom colors
+  const upColor = colorblindMode ? '#3b82f6' : customColors.up;
+  const downColor = colorblindMode ? '#f97316' : customColors.down;
   
-  // Duplicate for seamless loop
-  const duplicatedStocks = [...tickerStocks, ...tickerStocks];
+  // Show all available stocks up to 40
+  const tickerStocks = stocks.slice(0, 40);
+  
+  // Speed in pixels per second (slower for readability)
+  const speed = 20;
+
+  const animate = useCallback((timestamp: number) => {
+    if (!lastTimeRef.current) {
+      lastTimeRef.current = timestamp;
+    }
+    
+    const delta = timestamp - lastTimeRef.current;
+    lastTimeRef.current = timestamp;
+    
+    if (!isPaused && contentRef.current) {
+      const contentWidth = contentRef.current.scrollWidth / 2;
+      
+      setOffset(prev => {
+        const newOffset = prev + (speed * delta) / 1000;
+        // Reset when we've scrolled through one full set
+        return newOffset >= contentWidth ? 0 : newOffset;
+      });
+    }
+    
+    animationRef.current = requestAnimationFrame(animate);
+  }, [isPaused]);
+
+  useEffect(() => {
+    if (tickerStocks.length === 0) return;
+    
+    animationRef.current = requestAnimationFrame(animate);
+    
+    return () => {
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+      }
+    };
+  }, [animate, tickerStocks.length]);
+
+  const handleMouseEnter = () => {
+    pausedOffsetRef.current = offset;
+    setIsPaused(true);
+  };
+
+  const handleMouseLeave = () => {
+    // Resume from where we left off, no jump
+    lastTimeRef.current = 0;
+    setIsPaused(false);
+  };
 
   if (isLoading || tickerStocks.length === 0) {
     return null;
   }
 
+  // Duplicate stocks for seamless loop
+  const duplicatedStocks = [...tickerStocks, ...tickerStocks];
+
   return (
     <div 
-      className="relative overflow-hidden py-2 border-y border-border/50 bg-muted/20"
-      onMouseEnter={() => setIsPaused(true)}
-      onMouseLeave={() => setIsPaused(false)}
+      ref={containerRef}
+      className="relative overflow-hidden py-1.5 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b border-border/40"
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
     >
-      <motion.div
-        className="flex gap-3 whitespace-nowrap"
-        animate={{
-          x: isPaused ? undefined : [0, -50 * tickerStocks.length],
-        }}
-        transition={{
-          x: {
-            duration: tickerStocks.length * 4,
-            repeat: Infinity,
-            ease: "linear",
-          },
-        }}
+      <div
+        ref={contentRef}
+        className="flex gap-6 whitespace-nowrap"
+        style={{ transform: `translateX(-${offset}px)` }}
       >
-        {duplicatedStocks.map((stock, i) => (
-          <button
-            key={`${stock.symbol}-${i}`}
-            onClick={() => onSelectStock(stock.symbol)}
-            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-border/50 bg-background hover:bg-muted/50 transition-colors cursor-pointer shrink-0"
-          >
-            <TrendingDown className="h-3 w-3 text-danger" />
-            <span className="font-medium text-sm">{stock.symbol}</span>
-            <Badge variant="outline" className="text-xs px-1.5 py-0 h-5 text-danger border-danger/30">
-              {(stock.depth * 100).toFixed(1)}%
-            </Badge>
-            <span className="text-xs text-muted-foreground">
-              ${stock.last_price.toFixed(2)}
-            </span>
-          </button>
-        ))}
-      </motion.div>
+        {duplicatedStocks.map((stock, i) => {
+          const changePercent = stock.change_percent ?? 0;
+          const isPositiveChange = changePercent >= 0;
+          
+          return (
+            <button
+              key={`${stock.symbol}-${i}`}
+              onClick={() => onSelectStock(stock.symbol)}
+              className="inline-flex items-center gap-2 text-xs hover:bg-muted/50 px-2 py-0.5 rounded transition-colors cursor-pointer shrink-0"
+            >
+              <span className="font-semibold text-foreground">{stock.symbol}</span>
+              <span className="text-muted-foreground">${stock.last_price.toFixed(2)}</span>
+              <span className="inline-flex items-center gap-0.5" style={{ color: downColor }}>
+                <TrendingDown className="h-3 w-3" />
+                <span className="font-mono">-{(Math.abs(stock.depth) * 100).toFixed(1)}%</span>
+              </span>
+              {stock.change_percent !== null && (
+                <span 
+                  className="inline-flex items-center gap-0.5"
+                  style={{ color: isPositiveChange ? upColor : downColor }}
+                >
+                  {isPositiveChange ? (
+                    <TrendingUp className="h-3 w-3" />
+                  ) : (
+                    <TrendingDown className="h-3 w-3" />
+                  )}
+                  <span className="font-mono">
+                    {isPositiveChange ? '+' : ''}{changePercent.toFixed(1)}%
+                  </span>
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
       
       {/* Fade edges */}
-      <div className="absolute inset-y-0 left-0 w-8 bg-gradient-to-r from-background to-transparent pointer-events-none" />
-      <div className="absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-background to-transparent pointer-events-none" />
+      <div className="absolute inset-y-0 left-0 w-12 bg-gradient-to-r from-background to-transparent pointer-events-none" />
+      <div className="absolute inset-y-0 right-0 w-12 bg-gradient-to-l from-background to-transparent pointer-events-none" />
     </div>
   );
 }

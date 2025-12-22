@@ -73,6 +73,120 @@ async def data_grab_job() -> str:
         raise
 
 
+@register_job("cache_warmup")
+async def cache_warmup_job() -> str:
+    """
+    Pre-cache chart data for top dips and benchmarks.
+
+    Schedule: After data_grab (Mon-Fri at 11:30pm) or on demand
+    """
+    import aiohttp
+    from app.database.connection import fetch_all, fetch_one
+    from app.dipfinder.service import get_dipfinder_service
+    from app.cache.cache import Cache
+    from datetime import date, timedelta
+
+    logger.info("Starting cache_warmup job")
+
+    await _broadcast_job_event(
+        "cache_warmup", WSEventType.CRONJOB_STARTED, "Warming up caches"
+    )
+
+    try:
+        # Get top 20 dips by depth
+        rows = await fetch_all("""
+            SELECT symbol FROM symbols 
+            WHERE is_active = TRUE 
+            ORDER BY COALESCE(
+                (SELECT depth FROM dip_signals WHERE dip_signals.symbol = symbols.symbol ORDER BY updated_at DESC LIMIT 1),
+                0
+            ) DESC
+            LIMIT 20
+        """)
+        symbols = [row["symbol"] for row in rows]
+
+        # Add benchmark symbols
+        benchmark_symbols = ["^GSPC", "SPY", "URTH"]
+        
+        # Chart periods to pre-cache
+        periods = [90, 180, 365]
+        
+        service = get_dipfinder_service()
+        cached_count = 0
+        chart_cache = Cache(prefix="chart", default_ttl=3600)
+
+        for symbol in symbols + benchmark_symbols:
+            for days in periods:
+                cache_key = f"{symbol}:{days}"
+                
+                # Skip if already cached
+                existing = await chart_cache.get(cache_key)
+                if existing:
+                    continue
+
+                try:
+                    # Fetch price data
+                    prices = await service.price_provider.get_prices(
+                        symbol,
+                        start_date=date.today() - timedelta(days=days),
+                        end_date=date.today(),
+                    )
+
+                    if prices is not None and not prices.empty:
+                        # Get min_dip_pct for the symbol
+                        symbol_row = await fetch_one(
+                            "SELECT min_dip_pct FROM symbols WHERE symbol = $1", symbol
+                        )
+                        min_dip_pct = float(symbol_row["min_dip_pct"]) if symbol_row and symbol_row["min_dip_pct"] else 0.10
+
+                        # Build chart data
+                        ref_high = float(prices["Close"].max())
+                        threshold = ref_high * (1.0 - min_dip_pct)
+                        
+                        ref_high_date = None
+                        dip_start_date = None
+                        if "Close" in prices.columns and not prices.empty:
+                            ref_high_idx = prices["Close"].idxmax()
+                            ref_high_date = str(ref_high_idx.date()) if hasattr(ref_high_idx, "date") else str(ref_high_idx)
+                            prices_after_peak = prices.loc[ref_high_idx:]
+                            if len(prices_after_peak) > 1:
+                                dip_low_idx = prices_after_peak["Close"].idxmin()
+                                dip_start_date = str(dip_low_idx.date()) if hasattr(dip_low_idx, "date") else str(dip_low_idx)
+
+                        chart_points = []
+                        for idx, row_data in prices.iterrows():
+                            close = float(row_data["Close"])
+                            drawdown = (close - ref_high) / ref_high if ref_high > 0 else 0.0
+                            chart_points.append({
+                                "date": str(idx.date()) if hasattr(idx, "date") else str(idx),
+                                "close": close,
+                                "ref_high": ref_high,
+                                "threshold": threshold,
+                                "drawdown": drawdown,
+                                "since_dip": None,
+                                "dip_start_date": dip_start_date,
+                                "ref_high_date": ref_high_date,
+                            })
+
+                        await chart_cache.set(cache_key, chart_points)
+                        cached_count += 1
+                        logger.debug(f"Cached chart for {symbol}:{days}")
+
+                except Exception as e:
+                    logger.warning(f"Failed to cache {symbol}:{days}: {e}")
+                    continue
+
+        message = f"Warmed up {cached_count} chart caches"
+        await _broadcast_job_event("cache_warmup", WSEventType.CRONJOB_COMPLETE, message)
+        logger.info(f"cache_warmup: {message}")
+        return message
+
+    except Exception as e:
+        await _broadcast_job_event("cache_warmup", WSEventType.CRONJOB_ERROR, str(e))
+        logger.error(f"cache_warmup failed: {e}")
+        raise
+
+
 @register_job("batch_ai_tinder")
 async def batch_ai_tinder_job() -> str:
     """

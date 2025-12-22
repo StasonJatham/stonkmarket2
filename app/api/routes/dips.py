@@ -7,6 +7,7 @@ from datetime import date, timedelta
 from typing import List
 
 from fastapi import APIRouter, Depends, Path, Query
+from pydantic import BaseModel
 
 from app.api.dependencies import require_admin, require_user
 from app.cache.cache import Cache
@@ -17,6 +18,8 @@ from app.dipfinder.service import get_dipfinder_service
 from app.repositories import symbols as symbol_repo
 from app.schemas.dips import ChartPoint, DipStateResponse, RankingEntry, StockInfo
 from app.services.stock_info import get_stock_info, get_stock_info_async
+from app.services.runtime_settings import get_runtime_setting
+
 
 router = APIRouter()
 
@@ -31,6 +34,26 @@ _info_cache = Cache(prefix="stockinfo", default_ttl=3600)  # 1 hour
 def _validate_symbol_path(symbol: str = Path(..., min_length=1, max_length=10)) -> str:
     """Validate and normalize symbol from path parameter."""
     return symbol.strip().upper()
+
+
+class BenchmarkInfo(BaseModel):
+    """Public benchmark information."""
+    id: str
+    symbol: str
+    name: str
+    description: str | None = None
+
+
+@router.get(
+    "/benchmarks",
+    response_model=List[BenchmarkInfo],
+    summary="Get available benchmarks",
+    description="Get list of available benchmarks for comparison. Public endpoint.",
+)
+async def get_benchmarks() -> List[BenchmarkInfo]:
+    """Get available benchmarks from runtime settings."""
+    benchmarks = get_runtime_setting("benchmarks", [])
+    return [BenchmarkInfo(**b) for b in benchmarks]
 
 
 @router.get(
@@ -48,11 +71,13 @@ async def get_ranking(show_all: bool = False) -> List[RankingEntry]:
     if cached:
         return [RankingEntry(**item) for item in cached]
 
-    # Get all symbols from database
+    # Get all symbols from database (includes per-symbol min_dip_pct thresholds)
     symbols = await symbol_repo.list_symbols()
     if not symbols:
         return []
 
+    # Build a map of symbol -> min_dip_pct threshold
+    symbol_thresholds = {s.symbol: s.min_dip_pct for s in symbols}
     tickers = [s.symbol for s in symbols]
 
     # Get signals from dipfinder service
@@ -73,12 +98,16 @@ async def get_ranking(show_all: bool = False) -> List[RankingEntry]:
                 stock_info_map[symbol] = info
 
     # Convert signals to ranking entries with enriched data
-    # Filter by is_meaningful unless show_all is True
+    # Filter by each stock's individual dip threshold unless show_all is True
     ranking = []
     for signal in signals:
         if signal.dip_metrics:
-            # Skip non-meaningful dips unless show_all is True
-            if not show_all and not signal.dip_metrics.is_meaningful:
+            # Get this stock's minimum dip threshold (default 10% if not set)
+            min_dip_threshold = symbol_thresholds.get(signal.ticker, 0.10)
+            dip_pct = signal.dip_metrics.dip_pct
+            
+            # Skip stocks not meeting their individual dip threshold unless show_all is True
+            if not show_all and dip_pct < min_dip_threshold:
                 continue
                 
             # Get enriched info if available
@@ -124,14 +153,17 @@ async def refresh_ranking(
     admin: TokenData = Depends(require_admin),
 ) -> List[RankingEntry]:
     """Force refresh of dip ranking (fetches new data)."""
-    # Invalidate cache
-    await _ranking_cache.delete("all")
+    # Invalidate both cache keys
+    await _ranking_cache.delete("all:True")
+    await _ranking_cache.delete("all:False")
 
-    # Get all symbols from database
+    # Get all symbols from database (includes per-symbol min_dip_pct thresholds)
     symbols = await symbol_repo.list_symbols()
     if not symbols:
         return []
 
+    # Build a map of symbol -> min_dip_pct threshold
+    symbol_thresholds = {s.symbol: s.min_dip_pct for s in symbols}
     tickers = [s.symbol for s in symbols]
 
     # Get signals with force refresh
@@ -152,10 +184,11 @@ async def refresh_ranking(
                 stock_info_map[symbol] = info
 
     # Convert signals to ranking entries with enriched data
-    # Only include stocks that are in a meaningful dip
+    # Include all stocks in refresh (show_all behavior)
     ranking = []
+    filtered_ranking = []
     for signal in signals:
-        if signal.dip_metrics and signal.dip_metrics.is_meaningful:
+        if signal.dip_metrics:
             # Get enriched info if available
             info = stock_info_map.get(signal.ticker, {})
             
@@ -176,12 +209,19 @@ async def refresh_ranking(
                 updated_at=signal.as_of_date if signal.as_of_date else None,
             )
             ranking.append(entry)
+            
+            # Check if this stock meets its individual dip threshold
+            min_dip_threshold = symbol_thresholds.get(signal.ticker, 0.10)
+            if signal.dip_metrics.dip_pct >= min_dip_threshold:
+                filtered_ranking.append(entry)
 
     # Sort by depth (deepest dip first)
     ranking.sort(key=lambda x: x.depth, reverse=True)
+    filtered_ranking.sort(key=lambda x: x.depth, reverse=True)
 
-    # Cache the new result
-    await _ranking_cache.set("all", [r.model_dump() for r in ranking])
+    # Cache both filtered and unfiltered results
+    await _ranking_cache.set("all:True", [r.model_dump() for r in ranking])
+    await _ranking_cache.set("all:False", [r.model_dump() for r in filtered_ranking])
 
     return ranking
 
