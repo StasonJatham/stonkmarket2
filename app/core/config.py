@@ -36,10 +36,6 @@ class Settings(BaseSettings):
         default="postgresql://stonkmarket:stonkmarket@localhost:5432/stonkmarket",
         description="PostgreSQL connection URL",
     )
-    sqlite_path: str = Field(
-        default="/data/dips.sqlite",
-        description="SQLite database path (for legacy sync operations)",
-    )
     db_pool_min_size: int = Field(
         default=5, ge=1, le=20, description="Minimum database pool connections"
     )

@@ -2,8 +2,8 @@
 
 from . import auth_user
 from . import cronjobs
-from . import dips
 from . import symbols
-from . import suggestions
+from . import api_keys
+from . import api_usage
 
-__all__ = ["auth_user", "cronjobs", "dips", "symbols", "suggestions"]
+__all__ = ["auth_user", "cronjobs", "symbols", "api_keys", "api_usage"]

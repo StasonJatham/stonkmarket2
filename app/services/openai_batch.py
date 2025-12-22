@@ -19,7 +19,7 @@ from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 
 from app.core.logging import get_logger
-from app.database.connection import get_db, fetch_one, execute
+from app.database.connection import fetch_one, execute
 from app.repositories import api_keys as api_keys_repo
 
 logger = get_logger("openai_batch")
@@ -73,37 +73,45 @@ class BatchJobType(str, Enum):
 
 # Optimized system prompts
 SYSTEM_PROMPTS = {
-    "dip_bio": """You are a witty copywriter creating fun Tinder-style dating profiles for stocks.
+    "dip_bio": """You write Tinder bios for stocks. The stock is the person looking for a match.
 
-STYLE:
-- Write from the stock/company's perspective (first person)
-- Playful personality that reflects the company's business
-- Use dating/investing puns and double meanings
-- Include 1-2 relevant emojis
-- 2-3 sentences max, under 300 chars
-- DO NOT include ratings like "buy", "hold", "sell" - just personality!
-- DO NOT wrap in quotes - just the raw bio text
+RULES:
+- First person, BE THE STOCK's personality 
+- Match the company's vibe (tech = nerdy, retail = friendly, energy = rugged)
+- Actual dating profile energy - flirty, confident, maybe a little unhinged
+- Make investors LAUGH then think "maybe I should buy this"
+- Max 2-3 sentences, include 1-2 emojis
+- NO investor jargon like "fundamentals" or "long-term value" - this is Tinder not CNBC
+- DO NOT include buy/sell ratings
 
-EXAMPLES:
-Down 15% but my fundamentals are still intact 💪 Looking for patient investors who appreciate a discount. Swipe right if you believe in comebacks.
-Just got ghosted by the market, but my revenue keeps growing. Seeking someone who sees past short-term drama 📉→📈
-I run the cloud ☁️ and I could run your portfolio too. Looking for long-term commitment, not just a fling.
+VIBE CHECK - Real Tinder energy:
+"6'2" if that matters. 6 figures if that matters more. Currently on sale, won't be for long 💅"
+"They call me overvalued until I'm undervalued, then they call me a genius. Pick a side babe 🙄"
+"Your parents will hate me. Your portfolio will thank me. DM me for a wild ride 🎢"
+"Just broke up with my ATH. Looking for someone who appreciates a glow-down. I promise I'll bounce back 💪"
+"Heard you like red flags? I've got a red chart instead. But my vibe? Immaculate. Trust the process."
+"I sell [product]. You sell me short. We're not the same but we could be something special 👀"
 """,
-    "dip_rating": """You are a balanced financial analyst providing stock dip ratings.
+    "dip_rating": """You are a decisive stock analyst rating dip buying opportunities.
 
-TASK: Analyze the dip and provide a JSON response with:
+TASK: Analyze this dip and give your honest rating:
 - rating: "strong_buy" | "buy" | "hold" | "sell" | "strong_sell"
-- reasoning: 2-3 sentence explanation
-- confidence: 1-10 score
+- reasoning: 2-3 sentence explanation with specific insight
+- confidence: 1-10 (how sure you are)
 
-GUIDELINES:
-- Consider dip magnitude vs historical volatility
-- Factor in company fundamentals if provided
-- Not every dip is a buying opportunity
-- Be conservative with "strong_buy" or "strong_sell"
-- Confidence reflects data quality, not conviction
+RATING GUIDE:
+- strong_buy: Dip >20% on a quality company, rare opportunity
+- buy: Dip 10-20% with solid fundamentals, good entry
+- hold: Either wait for more data or current price is fair
+- sell: Red flags despite the dip, avoid this one
+- strong_sell: Major problems, this dip could get worse
 
-Respond ONLY with valid JSON.""",
+BE DECISIVE - don't default to "hold" just to be safe. Take a stance based on:
+1. How significant is this dip? (>15% is notable)
+2. Is this a quality company or junk?
+3. Is this a temporary pullback or trend reversal?
+
+Give a real opinion. Investors want actionable insights, not fence-sitting.""",
     "suggestion_bio": """You are a creative copywriter writing Tinder-style profiles for stock suggestions.
 
 STYLE:
@@ -118,12 +126,15 @@ Focus on what would make investors curious about this stock.""",
 
 
 async def _get_client() -> Optional[AsyncOpenAI]:
-    """Get OpenAI client with API key from database."""
-    # get_db is a sync context manager, so use it synchronously
-    with get_db() as conn:
-        api_key = api_keys_repo.get_decrypted_key(
-            conn, api_keys_repo.OPENAI_API_KEY
-        )
+    """Get OpenAI client with API key from environment or database."""
+    import os
+    
+    # First check environment variable
+    api_key = os.environ.get("OPENAI_API_KEY")
+    
+    # Fall back to database if not in env
+    if not api_key:
+        api_key = await api_keys_repo.get_decrypted_key(api_keys_repo.OPENAI_API_KEY)
 
     if not api_key:
         logger.warning("OpenAI API key not configured")

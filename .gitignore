@@ -22,8 +22,5 @@ node_modules/
 .mypy_cache/
 .pytest_cache/
 
-# Local data
-/data/
-
 # Build artifacts
 *.log

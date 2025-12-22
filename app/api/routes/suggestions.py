@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import re
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from typing import List, Optional
 
+import yfinance as yf
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
 
 from app.api.dependencies import require_admin, get_request_fingerprint
@@ -15,6 +17,7 @@ from app.core.exceptions import ValidationError, NotFoundError
 from app.core.logging import get_logger
 from app.core.security import TokenData
 from app.database.connection import fetch_all, fetch_one, execute
+from app.services.runtime_settings import get_runtime_setting
 
 logger = get_logger("api.routes.suggestions")
 
@@ -25,6 +28,43 @@ VOTE_COOLDOWN_DAYS = 7
 
 # Symbol validation pattern: 1-10 chars, alphanumeric + dot only
 SYMBOL_PATTERN = re.compile(r'^[A-Z0-9.]{1,10}$')
+
+# Thread pool for blocking yfinance calls
+_executor = ThreadPoolExecutor(max_workers=2)
+
+
+def _get_ipo_year(symbol: str) -> Optional[int]:
+    """Get IPO/first trade year for a symbol from Yahoo Finance."""
+    try:
+        ticker = yf.Ticker(symbol)
+        info = ticker.info or {}
+        first_trade_ms = info.get("firstTradeDateMilliseconds")
+        if first_trade_ms:
+            first_trade_date = datetime.utcfromtimestamp(first_trade_ms / 1000)
+            return first_trade_date.year
+    except Exception as e:
+        logger.debug(f"Failed to get IPO year for {symbol}: {e}")
+    return None
+
+
+def _get_stock_info(symbol: str) -> dict:
+    """Get IPO year and website for a symbol from Yahoo Finance."""
+    result = {"ipo_year": None, "website": None}
+    try:
+        ticker = yf.Ticker(symbol)
+        info = ticker.info or {}
+        
+        # Get IPO year
+        first_trade_ms = info.get("firstTradeDateMilliseconds")
+        if first_trade_ms:
+            first_trade_date = datetime.utcfromtimestamp(first_trade_ms / 1000)
+            result["ipo_year"] = first_trade_date.year
+        
+        # Get website
+        result["website"] = info.get("website")
+    except Exception as e:
+        logger.debug(f"Failed to get stock info for {symbol}: {e}")
+    return result
 
 
 def _hash_fingerprint(fingerprint: str) -> str:
@@ -58,9 +98,22 @@ def _validate_symbol_format(symbol: str) -> str:
 # =============================================================================
 
 
+@router.get("/settings", response_model=dict)
+async def get_suggestion_settings():
+    """
+    Get public suggestion settings.
+    
+    Returns auto-approval threshold and other public settings.
+    """
+    return {
+        "auto_approve_votes": get_runtime_setting("auto_approve_votes", 10),
+    }
+
+
 @router.post("", response_model=dict, status_code=201)
 async def suggest_stock(
     request: Request,
+    background_tasks: BackgroundTasks,
     symbol: str = Query(..., min_length=1, max_length=10, description="Stock symbol (1-10 chars, letters/numbers/dots only)"),
 ):
     """
@@ -115,12 +168,32 @@ async def suggest_stock(
         )
 
         new_score = existing["vote_score"] + 1
+        current_status = existing["status"]
+        auto_approved = False
+        
+        # Check for auto-approval if still pending
+        if current_status == "pending":
+            auto_approve_threshold = get_runtime_setting("auto_approve_votes", 10)
+            if new_score >= auto_approve_threshold:
+                # Auto-approve the suggestion
+                await execute(
+                    """UPDATE stock_suggestions 
+                       SET status = 'approved', approved_by = NULL, reviewed_at = NOW()
+                       WHERE id = $1 AND status = 'pending'""",
+                    suggestion_id,
+                )
+                current_status = "approved"
+                auto_approved = True
+                logger.info(f"Auto-approved suggestion {symbol} with {new_score} votes (threshold: {auto_approve_threshold})")
+                # Trigger background processing for data + AI
+                background_tasks.add_task(_process_approved_symbol, symbol)
 
         return {
             "message": "Vote added successfully",
             "symbol": symbol,
             "vote_count": new_score,
-            "status": existing["status"],
+            "status": current_status,
+            "auto_approved": auto_approved,
         }
 
     # Create new suggestion
@@ -152,6 +225,7 @@ async def suggest_stock(
 async def vote_for_suggestion(
     request: Request,
     symbol: str,
+    background_tasks: BackgroundTasks,
 ):
     """
     Vote for an existing stock suggestion.
@@ -206,18 +280,65 @@ async def vote_for_suggestion(
         suggestion_id,
     )
 
-    return {"message": "Vote recorded", "symbol": symbol}
+    new_score = suggestion["vote_score"] + 1
+    current_status = suggestion["status"]
+    auto_approved = False
+    
+    # Check for auto-approval if still pending
+    if current_status == "pending":
+        auto_approve_threshold = get_runtime_setting("auto_approve_votes", 10)
+        if new_score >= auto_approve_threshold:
+            # Auto-approve the suggestion
+            await execute(
+                """UPDATE stock_suggestions 
+                   SET status = 'approved', approved_by = NULL, reviewed_at = NOW()
+                   WHERE id = $1 AND status = 'pending'""",
+                suggestion_id,
+            )
+            current_status = "approved"
+            auto_approved = True
+            logger.info(f"Auto-approved suggestion {symbol} with {new_score} votes (threshold: {auto_approve_threshold})")
+            # Trigger background processing for data + AI
+            background_tasks.add_task(_process_approved_symbol, symbol)
+
+    return {
+        "message": "Vote recorded", 
+        "symbol": symbol,
+        "vote_count": new_score,
+        "status": current_status,
+        "auto_approved": auto_approved,
+    }
 
 
 @router.get("/top", response_model=List[dict])
 async def get_top_suggestions(
+    request: Request,
     limit: int = Query(10, ge=1, le=50),
+    exclude_voted: bool = Query(False, description="Exclude suggestions the user has already voted on"),
 ):
     """
     Get top voted pending suggestions.
 
     Public endpoint - shows what stocks the community wants tracked.
     """
+    # Get user fingerprint hash
+    fingerprint = get_request_fingerprint(request)
+    fingerprint_hash = _hash_fingerprint(fingerprint)
+    
+    # If exclude_voted, get suggestions the user has already voted on
+    voted_symbols = set()
+    if exclude_voted:
+        cooldown_start = datetime.utcnow() - timedelta(days=VOTE_COOLDOWN_DAYS)
+        voted_rows = await fetch_all(
+            """SELECT DISTINCT ss.symbol 
+               FROM suggestion_votes sv
+               JOIN stock_suggestions ss ON sv.suggestion_id = ss.id
+               WHERE sv.fingerprint = $1 AND sv.created_at > $2""",
+            fingerprint_hash,
+            cooldown_start,
+        )
+        voted_symbols = {row["symbol"] for row in voted_rows}
+    
     rows = await fetch_all(
         """SELECT symbol, company_name as name, vote_score as vote_count, 
                   NULL as sector, NULL as summary
@@ -225,8 +346,21 @@ async def get_top_suggestions(
            WHERE status = 'pending'
            ORDER BY vote_score DESC
            LIMIT $1""",
-        limit,
+        limit + len(voted_symbols),  # Fetch extra to account for filtering
     )
+    
+    # Filter out voted symbols
+    if voted_symbols:
+        rows = [row for row in rows if row["symbol"] not in voted_symbols][:limit]
+
+    # Fetch IPO years and websites in parallel using thread pool
+    loop = asyncio.get_event_loop()
+    symbols = [row["symbol"] for row in rows]
+    stock_infos = await asyncio.gather(*[
+        loop.run_in_executor(_executor, _get_stock_info, symbol)
+        for symbol in symbols
+    ])
+    stock_info_map = dict(zip(symbols, stock_infos))
 
     return [
         {
@@ -235,6 +369,8 @@ async def get_top_suggestions(
             "vote_count": row["vote_count"],
             "sector": row["sector"],
             "summary": row["summary"],
+            "ipo_year": stock_info_map.get(row["symbol"], {}).get("ipo_year"),
+            "website": stock_info_map.get(row["symbol"], {}).get("website"),
         }
         for row in rows
     ]
@@ -413,6 +549,44 @@ async def approve_suggestion(
 
     return {
         "message": f"Approved and added {symbol} to tracking. AI content generating in background.",
+        "symbol": symbol,
+    }
+
+
+@router.post("/{suggestion_id}/refresh", response_model=dict)
+async def refresh_suggestion_data(
+    suggestion_id: int,
+    admin: TokenData = Depends(require_admin),
+):
+    """Refresh data and AI content for an approved suggestion (admin only).
+    
+    Fetches latest Yahoo Finance data and regenerates AI bio/rating in real-time.
+    """
+    # Get suggestion
+    suggestion = await fetch_one(
+        "SELECT id, symbol, status FROM stock_suggestions WHERE id = $1",
+        suggestion_id,
+    )
+
+    if not suggestion:
+        raise NotFoundError(
+            message=f"Suggestion #{suggestion_id} not found",
+            details={"id": suggestion_id},
+        )
+
+    if suggestion["status"] != "approved":
+        raise ValidationError(
+            message="Only approved suggestions can be refreshed",
+            details={"status": suggestion["status"]},
+        )
+
+    symbol = suggestion["symbol"]
+    
+    # Process the symbol synchronously (not in background) for immediate feedback
+    await _process_approved_symbol(symbol)
+
+    return {
+        "message": f"Refreshed data and AI content for {symbol}",
         "symbol": symbol,
     }
 

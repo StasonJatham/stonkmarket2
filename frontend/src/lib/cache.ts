@@ -145,4 +145,7 @@ export const CACHE_TTL = {
   STOCK_INFO: 60 * 60 * 1000,   // 1 hour - rarely changes
   BENCHMARK: 60 * 60 * 1000,    // 1 hour - market data
   CRON_JOBS: 60 * 1000,         // 1 minute - admin data
+  SYMBOLS: 24 * 60 * 60 * 1000, // 24 hours - symbol list, invalidated on add/delete
+  SETTINGS: 60 * 60 * 1000,     // 1 hour - runtime settings
+  SUGGESTIONS: 5 * 60 * 1000,   // 5 minutes - suggestion settings
 } as const;

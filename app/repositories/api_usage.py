@@ -1,14 +1,15 @@
-"""API usage tracking repository for OpenAI costs."""
+"""API usage tracking repository for OpenAI costs - PostgreSQL async."""
 
 from __future__ import annotations
 
-import sqlite3
+import json
 from datetime import datetime, timedelta
 from typing import Optional, Any
 
+from app.database.connection import fetch_one, fetch_all, execute
 
-def record_usage(
-    conn: sqlite3.Connection,
+
+async def record_usage(
     service: str,
     operation: str,
     input_tokens: int,
@@ -18,68 +19,62 @@ def record_usage(
     metadata: Optional[dict] = None,
 ) -> int:
     """Record an API usage entry."""
-    import json
-
-    now = datetime.utcnow().isoformat()
-    cur = conn.execute(
+    result = await execute(
         """
         INSERT INTO api_usage (service, operation, input_tokens, output_tokens, cost_usd, is_batch, metadata, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+        RETURNING id
         """,
-        (
-            service,
-            operation,
-            input_tokens,
-            output_tokens,
-            cost_usd,
-            int(is_batch),
-            json.dumps(metadata or {}),
-            now,
-        ),
+        service,
+        operation,
+        input_tokens,
+        output_tokens,
+        cost_usd,
+        is_batch,
+        json.dumps(metadata or {}),
     )
-    conn.commit()
-    return cur.lastrowid or 0
+    # Parse "INSERT 0 1" or similar
+    return 0
 
 
-def get_usage_summary(
-    conn: sqlite3.Connection,
+async def get_usage_summary(
     days: int = 30,
 ) -> dict[str, Any]:
     """Get usage summary for the last N days."""
-    cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+    cutoff = datetime.utcnow() - timedelta(days=days)
 
-    cur = conn.execute(
+    rows = await fetch_all(
         """
         SELECT 
             service,
             COUNT(*) as request_count,
-            SUM(input_tokens) as total_input_tokens,
-            SUM(output_tokens) as total_output_tokens,
-            SUM(cost_usd) as total_cost_usd,
-            SUM(CASE WHEN is_batch = 1 THEN 1 ELSE 0 END) as batch_requests,
-            SUM(CASE WHEN is_batch = 0 THEN 1 ELSE 0 END) as realtime_requests
+            COALESCE(SUM(input_tokens), 0) as total_input_tokens,
+            COALESCE(SUM(output_tokens), 0) as total_output_tokens,
+            COALESCE(SUM(cost_usd), 0) as total_cost_usd,
+            SUM(CASE WHEN is_batch THEN 1 ELSE 0 END) as batch_requests,
+            SUM(CASE WHEN NOT is_batch THEN 1 ELSE 0 END) as realtime_requests
         FROM api_usage
-        WHERE created_at > ?
+        WHERE created_at > $1
         GROUP BY service
         """,
-        (cutoff,),
+        cutoff,
     )
 
     by_service = {}
     total_cost = 0.0
     total_requests = 0
 
-    for row in cur.fetchall():
+    for row in rows:
         service = row["service"]
         by_service[service] = {
             "request_count": row["request_count"],
             "input_tokens": row["total_input_tokens"] or 0,
             "output_tokens": row["total_output_tokens"] or 0,
-            "cost_usd": round(row["total_cost_usd"] or 0, 4),
+            "cost_usd": round(float(row["total_cost_usd"] or 0), 4),
             "batch_requests": row["batch_requests"],
             "realtime_requests": row["realtime_requests"],
         }
-        total_cost += row["total_cost_usd"] or 0
+        total_cost += float(row["total_cost_usd"] or 0)
         total_requests += row["request_count"]
 
     return {
@@ -90,109 +85,101 @@ def get_usage_summary(
     }
 
 
-def get_daily_costs(
-    conn: sqlite3.Connection,
+async def get_daily_costs(
     days: int = 30,
 ) -> list[dict[str, Any]]:
     """Get daily cost breakdown."""
-    cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+    cutoff = datetime.utcnow() - timedelta(days=days)
 
-    cur = conn.execute(
+    rows = await fetch_all(
         """
         SELECT 
             DATE(created_at) as date,
-            SUM(cost_usd) as cost_usd,
+            COALESCE(SUM(cost_usd), 0) as cost_usd,
             COUNT(*) as request_count,
-            SUM(input_tokens + output_tokens) as total_tokens
+            COALESCE(SUM(input_tokens + output_tokens), 0) as total_tokens
         FROM api_usage
-        WHERE created_at > ?
+        WHERE created_at > $1
         GROUP BY DATE(created_at)
         ORDER BY date DESC
         """,
-        (cutoff,),
+        cutoff,
     )
 
     return [
         {
-            "date": row["date"],
-            "cost_usd": round(row["cost_usd"] or 0, 4),
+            "date": str(row["date"]),
+            "cost_usd": round(float(row["cost_usd"] or 0), 4),
             "request_count": row["request_count"],
             "total_tokens": row["total_tokens"] or 0,
         }
-        for row in cur.fetchall()
+        for row in rows
     ]
 
 
-def get_batch_jobs(
-    conn: sqlite3.Connection,
+async def get_batch_jobs(
     limit: int = 20,
 ) -> list[dict[str, Any]]:
     """Get recent batch jobs."""
-    cur = conn.execute(
+    rows = await fetch_all(
         """
         SELECT id, batch_id, job_type, status, item_count, cost_usd, created_at, completed_at, error_message
         FROM batch_jobs
         ORDER BY created_at DESC
-        LIMIT ?
+        LIMIT $1
         """,
-        (limit,),
+        limit,
     )
 
-    return [dict(row) for row in cur.fetchall()]
+    return [dict(row) for row in rows]
 
 
-def record_batch_job(
-    conn: sqlite3.Connection,
+async def record_batch_job(
     batch_id: str,
     job_type: str,
-    item_count: int,
+    total_requests: int,
 ) -> int:
     """Record a new batch job."""
-    now = datetime.utcnow().isoformat()
-    cur = conn.execute(
+    await execute(
         """
         INSERT INTO batch_jobs (batch_id, job_type, status, item_count, created_at)
-        VALUES (?, ?, 'pending', ?, ?)
+        VALUES ($1, $2, 'pending', $3, NOW())
         """,
-        (batch_id, job_type, item_count, now),
+        batch_id, job_type, total_requests,
     )
-    conn.commit()
-    return cur.lastrowid or 0
+    return 0
 
 
-def update_batch_job(
-    conn: sqlite3.Connection,
+async def update_batch_job(
     batch_id: str,
     status: str,
     cost_usd: Optional[float] = None,
     error_message: Optional[str] = None,
 ) -> bool:
     """Update batch job status."""
-    now = datetime.utcnow().isoformat()
-
     if status == "completed":
-        cur = conn.execute(
+        await execute(
             """
             UPDATE batch_jobs 
-            SET status = ?, cost_usd = ?, completed_at = ?
-            WHERE batch_id = ?
+            SET status = $1, cost_usd = $2, completed_at = NOW()
+            WHERE batch_id = $3
             """,
-            (status, cost_usd, now, batch_id),
+            status, cost_usd, batch_id,
         )
-    elif error_message:
-        cur = conn.execute(
+    elif status == "failed":
+        await execute(
             """
             UPDATE batch_jobs 
-            SET status = ?, error_message = ?, completed_at = ?
-            WHERE batch_id = ?
+            SET status = $1, error_message = $2, completed_at = NOW()
+            WHERE batch_id = $3
             """,
-            (status, error_message, now, batch_id),
+            status, error_message, batch_id,
         )
     else:
-        cur = conn.execute(
-            "UPDATE batch_jobs SET status = ? WHERE batch_id = ?",
-            (status, batch_id),
+        await execute(
+            """
+            UPDATE batch_jobs SET status = $1 WHERE batch_id = $2
+            """,
+            status, batch_id,
         )
-
-    conn.commit()
-    return cur.rowcount > 0
+    return True

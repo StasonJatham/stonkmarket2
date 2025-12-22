@@ -1,17 +1,17 @@
-"""Admin settings API routes."""
+"""Admin settings API routes - PostgreSQL async."""
 
 from __future__ import annotations
 
 import os
-import sqlite3
 from typing import Dict, Any
 
 from fastapi import APIRouter, Depends
 
-from app.api.dependencies import get_db, require_admin
+from app.api.dependencies import require_admin
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.core.security import TokenData
+from app.database.connection import fetch_one, fetch_all
 from app.schemas.admin_settings import (
     AppSettingsResponse,
     RuntimeSettingsResponse,
@@ -21,7 +21,8 @@ from app.schemas.admin_settings import (
 )
 from app.services.runtime_settings import (
     get_all_runtime_settings,
-    update_runtime_settings as update_settings,
+    update_runtime_settings as update_settings_async,
+    check_openai_configured,
 )
 
 logger = get_logger("api.admin_settings")
@@ -89,7 +90,17 @@ async def update_runtime_settings(
 ) -> RuntimeSettingsResponse:
     """Update runtime settings."""
     update_dict = updates.model_dump(exclude_none=True)
-    updated = update_settings(update_dict)
+    
+    # If trying to enable AI, check if OpenAI is configured
+    if update_dict.get("ai_enrichment_enabled") is True:
+        if not await check_openai_configured():
+            from app.core.exceptions import ValidationError
+            raise ValidationError(
+                "Cannot enable AI enrichment: OpenAI API key is not configured. "
+                "Set OPENAI_API_KEY environment variable or add via API Keys settings."
+            )
+    
+    updated = await update_settings_async(update_dict)
     logger.info(f"Runtime settings updated by {user.sub}: {update_dict}")
     return RuntimeSettingsResponse(**updated)
 
@@ -101,21 +112,20 @@ async def update_runtime_settings(
     description="Get complete system status including settings and service health.",
 )
 async def get_system_status(
-    conn: sqlite3.Connection = Depends(get_db),
     user: TokenData = Depends(require_admin),
 ) -> SystemStatusResponse:
     """Get complete system status."""
     # Get cronjobs
     cronjobs = []
     try:
-        cursor = conn.execute(
+        rows = await fetch_all(
             """
             SELECT name, cron, description, last_run, last_status
             FROM cronjobs
             ORDER BY name
             """
         )
-        for row in cursor.fetchall():
+        for row in rows:
             cronjobs.append(
                 CronJobSummary(
                     name=row["name"],
@@ -129,13 +139,12 @@ async def get_system_status(
         logger.warning(f"Failed to fetch cronjobs: {e}")
 
     # Check OpenAI configuration
-    openai_configured = bool(os.environ.get("OPENAI_API_KEY"))
+    openai_configured = await check_openai_configured()
 
     # Get symbol count
     total_symbols = 0
     try:
-        cursor = conn.execute("SELECT COUNT(*) as count FROM symbols")
-        row = cursor.fetchone()
+        row = await fetch_one("SELECT COUNT(*) as count FROM symbols")
         if row:
             total_symbols = row["count"]
     except Exception as e:
@@ -144,10 +153,9 @@ async def get_system_status(
     # Get pending suggestions count
     pending_suggestions = 0
     try:
-        cursor = conn.execute(
+        row = await fetch_one(
             "SELECT COUNT(*) as count FROM stock_suggestions WHERE status = 'pending'"
         )
-        row = cursor.fetchone()
         if row:
             pending_suggestions = row["count"]
     except Exception as e:
@@ -161,3 +169,15 @@ async def get_system_status(
         total_symbols=total_symbols,
         pending_suggestions=pending_suggestions,
     )
+
+
+@router.get(
+    "/openai-status",
+    summary="Check OpenAI configuration status",
+    description="Check if OpenAI API key is configured.",
+)
+async def get_openai_status(
+    user: TokenData = Depends(require_admin),
+) -> dict:
+    """Check if OpenAI is configured."""
+    return {"configured": await check_openai_configured()}

@@ -103,6 +103,13 @@ def _get_stock_info_with_prices(symbol: str) -> Optional[Dict[str, Any]]:
         # Get 52-week high as proxy for ATH
         ath_price = info.get("fiftyTwoWeekHigh") or 0
         
+        # Get IPO year from first trade date
+        ipo_year = None
+        first_trade_ms = info.get("firstTradeDateMilliseconds")
+        if first_trade_ms:
+            from datetime import datetime
+            ipo_year = datetime.utcfromtimestamp(first_trade_ms / 1000).year
+        
         result = {
             "symbol": symbol,
             "name": info.get("shortName") or info.get("longName"),
@@ -120,6 +127,8 @@ def _get_stock_info_with_prices(symbol: str) -> Optional[Dict[str, Any]]:
             "pe_ratio": None if is_etf_or_index else info.get("trailingPE"),
             "avg_volume": info.get("averageVolume"),
             "summary": info.get("longBusinessSummary"),
+            "website": info.get("website"),  # For logo URLs
+            "ipo_year": ipo_year,
             "recommendation": None if is_etf_or_index else info.get("recommendationKey"),
             "is_etf_or_index": is_etf_or_index,  # Flag for frontend
         }

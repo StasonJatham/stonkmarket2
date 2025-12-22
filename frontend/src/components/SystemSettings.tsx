@@ -4,6 +4,7 @@ import {
   getRuntimeSettings, 
   updateRuntimeSettings, 
   getAppSettings,
+  checkOpenAIStatus,
   type RuntimeSettings,
   type AppSettings,
   type BenchmarkConfig
@@ -33,14 +34,15 @@ import {
   Bot, 
   Trash2,
   AlertCircle,
-  CheckCircle
+  CheckCircle,
+  KeyRound,
 } from 'lucide-react';
 
 const AI_MODELS = [
   { value: 'gpt-4o-mini', label: 'GPT-4o Mini (Fast & affordable)' },
   { value: 'gpt-4.1-mini', label: 'GPT-4.1 Mini' },
-  { value: 'gpt-4o', label: 'GPT-4o' },
-  { value: 'gpt-4o-mini', label: 'GPT-4o Mini' },
+  { value: 'gpt-4o', label: 'GPT-4o (Best quality)' },
+  { value: 'gpt-4.1', label: 'GPT-4.1 (Latest)' },
 ];
 
 export function SystemSettings() {
@@ -60,6 +62,7 @@ export function SystemSettings() {
   const [buyThreshold, setBuyThreshold] = useState(60);
   const [holdThreshold, setHoldThreshold] = useState(40);
   const [benchmarks, setBenchmarks] = useState<BenchmarkConfig[]>([]);
+  const [openaiConfigured, setOpenaiConfigured] = useState(false);
 
   useEffect(() => {
     loadSettings();
@@ -69,12 +72,14 @@ export function SystemSettings() {
     setIsLoading(true);
     setError(null);
     try {
-      const [app, runtime] = await Promise.all([
+      const [app, runtime, openaiStatus] = await Promise.all([
         getAppSettings(),
-        getRuntimeSettings()
+        getRuntimeSettings(),
+        checkOpenAIStatus(),
       ]);
       setAppSettings(app);
       setRuntimeSettings(runtime);
+      setOpenaiConfigured(openaiStatus.configured);
       
       // Initialize form state
       setAiEnabled(runtime.ai_enrichment_enabled);
@@ -176,6 +181,16 @@ export function SystemSettings() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
+          {/* OpenAI Key Warning */}
+          {!openaiConfigured && (
+            <div className="flex items-center gap-2 p-3 rounded-lg bg-warning/10 text-warning border border-warning/20">
+              <KeyRound className="h-4 w-4 shrink-0" />
+              <span className="text-sm">
+                OpenAI API key not configured. Set <code className="px-1 py-0.5 bg-muted rounded text-xs">OPENAI_API_KEY</code> environment variable or add via API Keys.
+              </span>
+            </div>
+          )}
+          
           {/* AI Enable Toggle */}
           <div className="flex items-center justify-between">
             <div className="space-y-0.5">
@@ -187,6 +202,7 @@ export function SystemSettings() {
             <Switch
               checked={aiEnabled}
               onCheckedChange={setAiEnabled}
+              disabled={!openaiConfigured}
             />
           </div>
 

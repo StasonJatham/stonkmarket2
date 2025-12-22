@@ -26,12 +26,17 @@ import {
   BarChart3, 
   Calendar,
   ExternalLink,
-  X,
   Activity,
   Percent,
-  Target
+  Target,
+  Sparkles,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+
+interface AiData {
+  ai_rating: 'strong_buy' | 'buy' | 'hold' | 'sell' | 'strong_sell' | null;
+  ai_reasoning: string | null;
+}
 
 interface StockDetailsPanelProps {
   stock: DipStock | null;
@@ -46,6 +51,9 @@ interface StockDetailsPanelProps {
   benchmark?: BenchmarkType;
   comparisonData?: ComparisonChartData[];
   isLoadingBenchmark?: boolean;
+  // AI props (optional)
+  aiData?: AiData | null;
+  isLoadingAi?: boolean;
 }
 
 function formatMarketCap(value: number | null): string {
@@ -71,10 +79,12 @@ export function StockDetailsPanel({
   onPeriodChange,
   isLoadingChart,
   isLoadingInfo,
-  onClose,
+  onClose: _onClose,
   benchmark,
   comparisonData = [],
   isLoadingBenchmark = false,
+  aiData,
+  isLoadingAi = false,
 }: StockDetailsPanelProps) {
   const formattedChartData = useMemo(() => {
     return chartData.map((point) => ({
@@ -153,21 +163,16 @@ export function StockDetailsPanel({
     >
       <Card className="h-full flex flex-col overflow-hidden">
         {/* Header - Fixed */}
-        <CardHeader className="pb-2 shrink-0 border-b border-border/50">
+        <CardHeader className="py-2 md:py-4 px-3 md:px-6 shrink-0 border-b border-border/50">
           <div className="flex items-start justify-between">
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <CardTitle className="text-2xl">{stock.symbol}</CardTitle>
-                <Button variant="ghost" size="icon" className="h-6 w-6 md:hidden" onClick={onClose}>
-                  <X className="h-4 w-4" />
-                </Button>
-              </div>
-              <p className="text-sm text-muted-foreground truncate mt-0.5">
+              <CardTitle className="text-xl md:text-2xl">{stock.symbol}</CardTitle>
+              <p className="text-xs md:text-sm text-muted-foreground truncate">
                 {stock.name || stock.symbol}
               </p>
             </div>
             <div className="text-right">
-              <div className="text-2xl font-bold font-mono">
+              <div className="text-xl md:text-2xl font-bold font-mono">
                 ${stock.last_price.toFixed(2)}
               </div>
               <div className={`flex items-center justify-end gap-1 text-sm ${
@@ -186,7 +191,7 @@ export function StockDetailsPanel({
           </div>
 
           {/* Period Selector */}
-          <div className="flex items-center justify-between mt-4">
+          <div className="flex items-center justify-between mt-2 md:mt-4">
             <div className="flex gap-1">
               {periods.map((p) => (
                 <Button
@@ -203,182 +208,183 @@ export function StockDetailsPanel({
           </div>
         </CardHeader>
 
-        {/* Chart Section - Fixed */}
-        <div className="shrink-0 px-4 md:px-6 py-1 border-b border-border/50">
-          {/* Dip Summary Banner */}
-          {stock && (
-            <div className="flex items-center gap-3 py-1.5 px-2.5 rounded-md border border-border/50 bg-muted/30 mb-3 text-xs">
-              <div className="flex items-center gap-1.5">
-                <TrendingDown className="h-3 w-3 text-muted-foreground" />
-                <span className="text-muted-foreground">Dip:</span>
-                <span className="font-medium text-danger">-{(stock.depth * 100).toFixed(1)}%</span>
-              </div>
-              {stock.days_since_dip && (
+        {/* Scrollable Content - Chart + Data */}
+        <ScrollArea className="flex-1 min-h-0">
+          {/* Chart Section */}
+          <div className="px-3 md:px-6 py-2">
+            {/* Dip Summary Banner */}
+            {stock && (
+              <div className="flex items-center gap-3 py-1 px-2 rounded-md border border-border/50 bg-muted/30 mb-2 text-xs">
                 <div className="flex items-center gap-1.5">
-                  <Calendar className="h-3 w-3 text-muted-foreground" />
-                  <span className="text-muted-foreground">{stock.days_since_dip}d</span>
+                  <TrendingDown className="h-3 w-3 text-muted-foreground" />
+                  <span className="text-muted-foreground">Dip:</span>
+                  <span className="font-medium text-danger">-{(stock.depth * 100).toFixed(1)}%</span>
                 </div>
-              )}
-              {chartData[0]?.since_dip !== null && chartData[0]?.since_dip !== undefined && (
-                <div className="flex items-center gap-1.5 ml-auto">
-                  <Target className="h-3 w-3 text-muted-foreground" />
-                  <span className="text-muted-foreground">Recovery:</span>
-                  <span className={`font-medium ${chartData[chartData.length - 1]?.since_dip && chartData[chartData.length - 1].since_dip! > 0 ? 'text-success' : 'text-danger'}`}>
-                    {chartData[chartData.length - 1]?.since_dip ? (chartData[chartData.length - 1].since_dip! * 100).toFixed(1) : '0'}%
-                  </span>
+                {stock.days_since_dip && (
+                  <div className="flex items-center gap-1.5">
+                    <Calendar className="h-3 w-3 text-muted-foreground" />
+                    <span className="text-muted-foreground">{stock.days_since_dip}d</span>
+                  </div>
+                )}
+                {chartData[0]?.since_dip !== null && chartData[0]?.since_dip !== undefined && (
+                  <div className="flex items-center gap-1.5 ml-auto">
+                    <Target className="h-3 w-3 text-muted-foreground" />
+                    <span className="text-muted-foreground">Recovery:</span>
+                    <span className={`font-medium ${chartData[chartData.length - 1]?.since_dip && chartData[chartData.length - 1].since_dip! > 0 ? 'text-success' : 'text-danger'}`}>
+                      {chartData[chartData.length - 1]?.since_dip ? (chartData[chartData.length - 1].since_dip! * 100).toFixed(1) : '0'}%
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Chart */}
+            <div className="h-40 lg:h-60 w-full">
+              {/* Show comparison chart when benchmark is selected, otherwise show main chart */}
+              {benchmark ? (
+                <ComparisonChart
+                  data={comparisonData}
+                  stockSymbol={stock.symbol}
+                  benchmark={benchmark}
+                  isLoading={isLoadingBenchmark}
+                  height={160}
+                  compact
+                />
+              ) : isLoadingChart ? (
+                <Skeleton className="h-full w-full" />
+              ) : formattedChartData.length > 0 ? (
+                <ResponsiveContainer width="100%" height={160} minWidth={0}>
+                  <ComposedChart 
+                    key={`${stock.symbol}-${chartPeriod}`}
+                    data={chartDataWithTrendline}
+                  >
+                    <defs>
+                      <linearGradient id={`gradient-${stock.symbol}-${chartPeriod}`} x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor={chartColor} stopOpacity={0.3}>
+                          <animate attributeName="stop-color" to={chartColor} dur="0.3s" fill="freeze" />
+                        </stop>
+                        <stop offset="100%" stopColor={chartColor} stopOpacity={0}>
+                          <animate attributeName="stop-color" to={chartColor} dur="0.3s" fill="freeze" />
+                        </stop>
+                      </linearGradient>
+                    </defs>
+                    <XAxis
+                      dataKey="displayDate"
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{ fontSize: 10 }}
+                      tickMargin={8}
+                      minTickGap={40}
+                    />
+                    <YAxis
+                      domain={['dataMin', 'dataMax']}
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{ fontSize: 10 }}
+                      tickMargin={8}
+                      tickFormatter={(value) => `$${value.toFixed(0)}`}
+                      width={45}
+                    />
+                    {/* Current price reference line (aligns with red dot) */}
+                    {currentPrice && (
+                      <ReferenceLine
+                        y={currentPrice}
+                        stroke="var(--danger)"
+                        strokeDasharray="5 5"
+                        strokeOpacity={0.7}
+                      />
+                    )}
+                    {/* Peak price reference line (aligns with green dot) */}
+                    {chartData[0]?.ref_high && (
+                      <ReferenceLine
+                        y={chartData[0].ref_high}
+                        stroke="var(--success)"
+                        strokeDasharray="3 3"
+                        strokeOpacity={0.5}
+                      />
+                    )}
+                    {/* Trendline connecting peak to current */}
+                    <Line
+                      type="linear"
+                      dataKey="trendline"
+                      stroke="var(--muted-foreground)"
+                      strokeWidth={1}
+                      strokeDasharray="3 3"
+                      strokeOpacity={0.4}
+                      dot={false}
+                      connectNulls={true}
+                      isAnimationActive={false}
+                    />
+                    {/* Mark the current price point (red - shows where we are now in the dip) */}
+                    {currentPointIndex >= 0 && formattedChartData[currentPointIndex] && (
+                      <ReferenceDot
+                        x={formattedChartData[currentPointIndex].displayDate}
+                        y={formattedChartData[currentPointIndex].close}
+                        r={4}
+                        fill="var(--danger)"
+                        stroke="var(--background)"
+                        strokeWidth={2}
+                      />
+                    )}
+                    {/* Mark the ref high point */}
+                    {refHighIndex >= 0 && formattedChartData[refHighIndex] && (
+                      <ReferenceDot
+                        x={formattedChartData[refHighIndex].displayDate}
+                        y={formattedChartData[refHighIndex].close}
+                        r={4}
+                        fill="var(--success)"
+                        stroke="var(--background)"
+                        strokeWidth={2}
+                      />
+                    )}
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: 'var(--background)',
+                        border: '1px solid var(--border)',
+                        borderRadius: '8px',
+                        fontSize: '12px',
+                        padding: '8px 12px',
+                      }}
+                      formatter={(value: number, name: string, props) => {
+                        if (name === 'trendline') return null; // Hide trendline from tooltip
+                        const point = props.payload;
+                        const items: [string, string][] = [
+                          [`$${value.toFixed(2)}`, 'Price']
+                        ];
+                        if (point.drawdown !== null) {
+                          items.push([`${(point.drawdown * 100).toFixed(1)}%`, 'Drawdown']);
+                        }
+                        if (point.since_dip !== null) {
+                          items.push([`${(point.since_dip * 100).toFixed(1)}%`, 'Since Dip']);
+                        }
+                        return items;
+                      }}
+                      labelFormatter={(label) => label}
+                    />
+                    <Area
+                      type="linear"
+                      dataKey="close"
+                      stroke={chartColor}
+                      strokeWidth={2}
+                      fill={`url(#gradient-${stock.symbol}-${chartPeriod})`}
+                      isAnimationActive={true}
+                      animationDuration={800}
+                      animationEasing="ease-out"
+                    />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-full flex items-center justify-center text-muted-foreground">
+                  No chart data available
                 </div>
               )}
             </div>
-          )}
-
-          {/* Chart */}
-          <div className="h-52 lg:h-60">
-            {/* Show comparison chart when benchmark is selected, otherwise show main chart */}
-            {benchmark ? (
-              <ComparisonChart
-                data={comparisonData}
-                stockSymbol={stock.symbol}
-                benchmark={benchmark}
-                isLoading={isLoadingBenchmark}
-                height={208}
-                compact
-              />
-            ) : isLoadingChart ? (
-              <Skeleton className="h-full w-full" />
-            ) : formattedChartData.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart 
-                  key={`${stock.symbol}-${chartPeriod}`}
-                  data={chartDataWithTrendline}
-                >
-                  <defs>
-                    <linearGradient id={`gradient-${stock.symbol}-${chartPeriod}`} x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={chartColor} stopOpacity={0.3}>
-                        <animate attributeName="stop-color" to={chartColor} dur="0.3s" fill="freeze" />
-                      </stop>
-                      <stop offset="100%" stopColor={chartColor} stopOpacity={0}>
-                        <animate attributeName="stop-color" to={chartColor} dur="0.3s" fill="freeze" />
-                      </stop>
-                    </linearGradient>
-                  </defs>
-                  <XAxis
-                    dataKey="displayDate"
-                    axisLine={false}
-                    tickLine={false}
-                    tick={{ fontSize: 10 }}
-                    tickMargin={8}
-                    minTickGap={40}
-                  />
-                  <YAxis
-                    domain={['dataMin', 'dataMax']}
-                    axisLine={false}
-                    tickLine={false}
-                    tick={{ fontSize: 10 }}
-                    tickMargin={8}
-                    tickFormatter={(value) => `$${value.toFixed(0)}`}
-                    width={45}
-                  />
-                  {/* Current price reference line (aligns with red dot) */}
-                  {currentPrice && (
-                    <ReferenceLine
-                      y={currentPrice}
-                      stroke="var(--danger)"
-                      strokeDasharray="5 5"
-                      strokeOpacity={0.7}
-                    />
-                  )}
-                  {/* Peak price reference line (aligns with green dot) */}
-                  {chartData[0]?.ref_high && (
-                    <ReferenceLine
-                      y={chartData[0].ref_high}
-                      stroke="var(--success)"
-                      strokeDasharray="3 3"
-                      strokeOpacity={0.5}
-                    />
-                  )}
-                  {/* Trendline connecting peak to current */}
-                  <Line
-                    type="linear"
-                    dataKey="trendline"
-                    stroke="var(--muted-foreground)"
-                    strokeWidth={1}
-                    strokeDasharray="3 3"
-                    strokeOpacity={0.4}
-                    dot={false}
-                    connectNulls={true}
-                    isAnimationActive={false}
-                  />
-                  {/* Mark the current price point (red - shows where we are now in the dip) */}
-                  {currentPointIndex >= 0 && formattedChartData[currentPointIndex] && (
-                    <ReferenceDot
-                      x={formattedChartData[currentPointIndex].displayDate}
-                      y={formattedChartData[currentPointIndex].close}
-                      r={4}
-                      fill="var(--danger)"
-                      stroke="var(--background)"
-                      strokeWidth={2}
-                    />
-                  )}
-                  {/* Mark the ref high point */}
-                  {refHighIndex >= 0 && formattedChartData[refHighIndex] && (
-                    <ReferenceDot
-                      x={formattedChartData[refHighIndex].displayDate}
-                      y={formattedChartData[refHighIndex].close}
-                      r={4}
-                      fill="var(--success)"
-                      stroke="var(--background)"
-                      strokeWidth={2}
-                    />
-                  )}
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: 'var(--background)',
-                      border: '1px solid var(--border)',
-                      borderRadius: '8px',
-                      fontSize: '12px',
-                      padding: '8px 12px',
-                    }}
-                    formatter={(value: number, name: string, props) => {
-                      if (name === 'trendline') return null; // Hide trendline from tooltip
-                      const point = props.payload;
-                      const items: [string, string][] = [
-                        [`$${value.toFixed(2)}`, 'Price']
-                      ];
-                      if (point.drawdown !== null) {
-                        items.push([`${(point.drawdown * 100).toFixed(1)}%`, 'Drawdown']);
-                      }
-                      if (point.since_dip !== null) {
-                        items.push([`${(point.since_dip * 100).toFixed(1)}%`, 'Since Dip']);
-                      }
-                      return items;
-                    }}
-                    labelFormatter={(label) => label}
-                  />
-                  <Area
-                    type="linear"
-                    dataKey="close"
-                    stroke={chartColor}
-                    strokeWidth={2}
-                    fill={`url(#gradient-${stock.symbol}-${chartPeriod})`}
-                    isAnimationActive={true}
-                    animationDuration={800}
-                    animationEasing="ease-out"
-                  />
-                </ComposedChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="h-full flex items-center justify-center text-muted-foreground">
-                No chart data available
-              </div>
-            )}
           </div>
-        </div>
 
-        {/* Data Section - Scrollable */}
-        <ScrollArea className="flex-1 min-h-0">
-          <CardContent className="pt-4 px-4 md:px-6">
+          {/* Data Section */}
+          <CardContent className="pt-3 pb-4 px-3 md:px-6">
             {/* Key Stats */}
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-2 md:gap-3">
               <StatItem
                 icon={TrendingDown}
                 label="Dip Depth"
@@ -415,9 +421,9 @@ export function StockDetailsPanel({
             {/* Extended Fundamentals from stockInfo */}
             {stockInfo && (
               <>
-                <Separator className="my-4" />
+                <Separator className="my-3" />
                 
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-2 md:gap-3 mb-3">
                   {stockInfo.forward_pe !== null && stockInfo.forward_pe !== undefined && (
                     <StatItem
                       icon={Activity}
@@ -495,6 +501,44 @@ export function StockDetailsPanel({
                   <Skeleton className="h-5 w-24" />
                   <Skeleton className="h-4 w-full" />
                   <Skeleton className="h-4 w-3/4" />
+                </div>
+              </>
+            )}
+
+            {/* AI Analysis Section */}
+            {(aiData?.ai_reasoning || isLoadingAi) && (
+              <>
+                <Separator className="my-4" />
+                <div className="p-3 bg-gradient-to-br from-primary/5 to-primary/10 rounded-lg border border-primary/20">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Sparkles className="h-4 w-4 text-primary" />
+                    <span className="text-sm font-medium">AI Analysis</span>
+                    {aiData?.ai_rating && (
+                      <Badge 
+                        variant={
+                          aiData.ai_rating === 'strong_buy' || aiData.ai_rating === 'buy' 
+                            ? 'default' 
+                            : aiData.ai_rating === 'strong_sell' || aiData.ai_rating === 'sell'
+                              ? 'destructive'
+                              : 'secondary'
+                        }
+                        className="ml-auto"
+                      >
+                        {aiData.ai_rating.replace('_', ' ').toUpperCase()}
+                      </Badge>
+                    )}
+                  </div>
+                  {isLoadingAi ? (
+                    <div className="space-y-1">
+                      <Skeleton className="h-3 w-full" />
+                      <Skeleton className="h-3 w-4/5" />
+                      <Skeleton className="h-3 w-3/4" />
+                    </div>
+                  ) : aiData?.ai_reasoning ? (
+                    <p className="text-xs leading-relaxed text-muted-foreground whitespace-pre-wrap">
+                      {aiData.ai_reasoning}
+                    </p>
+                  ) : null}
                 </div>
               </>
             )}

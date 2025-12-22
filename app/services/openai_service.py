@@ -8,7 +8,6 @@ from typing import Optional, Any
 from openai import AsyncOpenAI
 
 from app.core.logging import get_logger
-from app.database.connection import get_db
 from app.repositories import api_keys as api_keys_repo
 
 logger = get_logger("openai_service")
@@ -19,8 +18,7 @@ MODEL = "gpt-4o-mini"
 
 async def _get_client() -> Optional[AsyncOpenAI]:
     """Get OpenAI client with API key from database."""
-    with get_db() as conn:
-        api_key = api_keys_repo.get_decrypted_key(conn, api_keys_repo.OPENAI_API_KEY)
+    api_key = await api_keys_repo.get_decrypted_key(api_keys_repo.OPENAI_API_KEY)
 
     if not api_key:
         logger.warning("OpenAI API key not configured")

@@ -138,7 +138,7 @@ export function ComparisonChart({
           )}
         </div>
         {/* Chart */}
-        <ResponsiveContainer width="100%" height={height}>
+        <ResponsiveContainer width="100%" height={height} minWidth={0} debounce={50}>
           <LineChart data={data} margin={{ top: 5, right: 5, left: 0, bottom: 0 }}>
             <XAxis
               dataKey="displayDate"
@@ -243,7 +243,7 @@ export function ComparisonChart({
       </CardHeader>
       <CardContent>
         <ChartContainer config={chartConfig} className={`h-[${height}px] w-full`}>
-          <ResponsiveContainer width="100%" height={height}>
+          <ResponsiveContainer width="100%" height={height} minWidth={0} debounce={50}>
             <LineChart
               data={data}
               margin={{ top: 10, right: 10, left: 0, bottom: 0 }}

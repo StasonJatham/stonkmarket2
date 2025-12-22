@@ -2,7 +2,6 @@
 
 from .app import create_api_app
 from .dependencies import (
-    get_db,
     require_user,
     require_admin,
     get_current_user,
@@ -11,7 +10,6 @@ from .dependencies import (
 
 __all__ = [
     "create_api_app",
-    "get_db",
     "require_user",
     "require_admin",
     "get_current_user",

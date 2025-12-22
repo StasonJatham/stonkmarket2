@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Optional, Any
 
 from app.core.logging import get_logger
@@ -43,6 +44,14 @@ async def get_dip_card(symbol: str) -> Optional[dict[str, Any]]:
     # Get vote counts
     vote_counts = await dip_votes_repo.get_vote_counts(symbol)
 
+    # Calculate days in dip from first_seen
+    days_below = 0
+    if dip_row["first_seen"]:
+        first_seen = dip_row["first_seen"]
+        if hasattr(first_seen, 'tzinfo') and first_seen.tzinfo is None:
+            first_seen = first_seen.replace(tzinfo=timezone.utc)
+        days_below = (datetime.now(timezone.utc) - first_seen).days
+
     # Build base card
     card = {
         "symbol": symbol.upper(),
@@ -51,7 +60,7 @@ async def get_dip_card(symbol: str) -> Optional[dict[str, Any]]:
         else 0,
         "ref_high": float(dip_row["ath_price"]) if dip_row["ath_price"] else 0,
         "dip_pct": float(dip_row["dip_percentage"]) if dip_row["dip_percentage"] else 0,
-        "days_below": 0,  # Not tracked in new schema, could add if needed
+        "days_below": days_below,
         "vote_counts": vote_counts,
     }
 
@@ -64,18 +73,22 @@ async def get_dip_card(symbol: str) -> Optional[dict[str, Any]]:
     return card
 
 
-async def get_dip_card_with_fresh_ai(symbol: str) -> Optional[dict[str, Any]]:
+async def get_dip_card_with_fresh_ai(symbol: str, force_refresh: bool = False) -> Optional[dict[str, Any]]:
     """
-    Get dip card with fresh AI analysis (generates if needed).
+    Get dip card with fresh AI analysis (generates if needed or forced).
 
     This fetches stock info and generates AI content if not cached.
+    
+    Args:
+        symbol: Stock symbol
+        force_refresh: If True, regenerate AI even if cached
     """
     card = await get_dip_card(symbol)
     if not card:
         return None
 
-    # If AI analysis already cached, return as-is
-    if card.get("tinder_bio"):
+    # If AI analysis already cached and not forcing refresh, return as-is
+    if card.get("tinder_bio") and not force_refresh:
         return card
 
     # Fetch stock info for AI generation
@@ -111,6 +124,8 @@ async def get_dip_card_with_fresh_ai(symbol: str) -> Optional[dict[str, Any]]:
         card["name"] = info.get("name")
         card["sector"] = info.get("sector")
         card["industry"] = info.get("industry")
+        card["website"] = info.get("website")
+        card["ipo_year"] = info.get("ipo_year")
 
     card["tinder_bio"] = bio
     if rating_result:
@@ -128,12 +143,15 @@ async def get_all_dip_cards(include_ai: bool = False) -> list[dict[str, Any]]:
     Args:
         include_ai: If True, fetch fresh AI analysis for cards without it (slower)
     """
-    # Get all dip states
+    # Get all dip states with symbol info
     dip_rows = await fetch_all(
         """
-        SELECT symbol, current_price, ath_price, dip_percentage, first_seen, last_updated
-        FROM dip_state
-        ORDER BY dip_percentage DESC
+        SELECT ds.symbol, ds.current_price, ds.ath_price, ds.dip_percentage, 
+               ds.first_seen, ds.last_updated,
+               s.name, s.sector
+        FROM dip_state ds
+        JOIN symbols s ON s.symbol = ds.symbol
+        ORDER BY ds.dip_percentage DESC
         """
     )
 
@@ -151,15 +169,26 @@ async def get_all_dip_cards(include_ai: bool = False) -> list[dict[str, Any]]:
     ai_by_symbol = {r["symbol"]: dict(r) for r in ai_rows}
 
     cards = []
+    now = datetime.now(timezone.utc)
     for dip in dip_rows:
         symbol = dip["symbol"]
 
+        # Calculate days in dip from first_seen
+        days_below = 0
+        if dip["first_seen"]:
+            first_seen = dip["first_seen"]
+            if hasattr(first_seen, 'tzinfo') and first_seen.tzinfo is None:
+                first_seen = first_seen.replace(tzinfo=timezone.utc)
+            days_below = (now - first_seen).days
+
         card = {
             "symbol": symbol,
+            "name": dip["name"],
+            "sector": dip["sector"],
             "current_price": float(dip["current_price"]) if dip["current_price"] else 0,
             "ref_high": float(dip["ath_price"]) if dip["ath_price"] else 0,
             "dip_pct": float(dip["dip_percentage"]) if dip["dip_percentage"] else 0,
-            "days_below": 0,
+            "days_below": days_below,
             "vote_counts": all_vote_counts.get(
                 symbol,
                 {

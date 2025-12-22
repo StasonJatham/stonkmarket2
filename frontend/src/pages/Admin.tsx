@@ -259,7 +259,11 @@ export function AdminPage() {
       </AnimatePresence>
 
       {/* Main Tabs */}
-      <Tabs defaultValue="symbols" className="space-y-6">
+      <Tabs 
+        defaultValue={localStorage.getItem('admin-tab') || 'symbols'} 
+        onValueChange={(value) => localStorage.setItem('admin-tab', value)}
+        className="space-y-6"
+      >
         {/* Simplified Tab Navigation */}
         <div className="w-full">
           <ScrollArea className="w-full">

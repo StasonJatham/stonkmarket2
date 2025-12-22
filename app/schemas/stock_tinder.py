@@ -44,6 +44,8 @@ class DipCard(BaseModel):
     name: Optional[str] = None
     sector: Optional[str] = None
     industry: Optional[str] = None
+    website: Optional[str] = Field(None, description="Company website URL for logo")
+    ipo_year: Optional[int] = Field(None, description="Year of IPO/first trade")
 
     # Price data
     current_price: float

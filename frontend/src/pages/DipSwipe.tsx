@@ -1,12 +1,14 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence, useMotionValue, useTransform } from 'framer-motion';
 import { useIsMobile } from '@/hooks/useIsMobile';
-import { AreaChart, Area, ResponsiveContainer, XAxis, YAxis } from 'recharts';
+import { useTheme } from '@/context/ThemeContext';
+import { AreaChart, Area, ResponsiveContainer, XAxis, YAxis, Tooltip } from 'recharts';
 import type { PanInfo } from 'framer-motion';
 import { 
   getDipCards, 
   voteDip,
   getTopSuggestions,
+  getSuggestionSettings,
   voteForSuggestion,
   getStockChart,
   type DipCard, 
@@ -75,18 +77,30 @@ function formatDipPct(value: number): string {
   return `-${value.toFixed(0)}%`;
 }
 
-function formatCompactNumber(value: number): string {
-  if (value >= 1e9) return `${(value / 1e9).toFixed(1)}B`;
-  if (value >= 1e6) return `${(value / 1e6).toFixed(1)}M`;
-  if (value >= 1e3) return `${(value / 1e3).toFixed(1)}K`;
-  return value.toString();
+// Format bio text to add paragraph breaks at natural points
+function formatBioText(text: string): string {
+  // Split on emoji followed by space or end of sentence patterns
+  return text
+    .replace(/([.!?])\s+/g, '$1\n\n')  // Add line break after sentences
+    .replace(/(👋|🚀|📉|💸|🎯|✨)\s*/g, '$1\n\n')  // Add line break after certain emojis
+    .replace(/\n{3,}/g, '\n\n')  // Normalize multiple line breaks
+    .trim();
 }
 
-// Get stock logo URL (free API)
-function getStockLogoUrl(symbol: string): string {
-  // Using logo.clearbit.com or a fallback
+// Get stock logo URL using Google Favicon API
+function getStockLogoUrl(symbol: string, website?: string | null): string {
+  // If website provided, extract domain
+  if (website) {
+    try {
+      const url = new URL(website);
+      return `https://www.google.com/s2/favicons?domain=${url.hostname}&sz=128`;
+    } catch {
+      // Invalid URL, fall through to domain map
+    }
+  }
+  
+  // Fallback: Map common symbols to company domains
   const cleanSymbol = symbol.replace('.', '-').toLowerCase();
-  // Map common symbols to company domains
   const domainMap: Record<string, string> = {
     'aapl': 'apple.com',
     'msft': 'microsoft.com',
@@ -116,37 +130,68 @@ function getStockLogoUrl(symbol: string): string {
     'bac': 'bankofamerica.com',
     'gs': 'goldmansachs.com',
     'ms': 'morganstanley.com',
+    'pltr': 'palantir.com',
+    'snow': 'snowflake.com',
+    'coin': 'coinbase.com',
+    'uber': 'uber.com',
+    'lyft': 'lyft.com',
+    'sq': 'squareup.com',
+    'shop': 'shopify.com',
+    'twlo': 'twilio.com',
+    'zm': 'zoom.us',
+    'docu': 'docusign.com',
   };
   const domain = domainMap[cleanSymbol] || `${cleanSymbol}.com`;
-  return `https://logo.clearbit.com/${domain}`;
+  return `https://www.google.com/s2/favicons?domain=${domain}&sz=128`;
 }
 
-// Sentiment indicator
-function SentimentBar({ buyPct, sellPct }: { buyPct: number; sellPct: number }) {
-  return (
-    <div className="space-y-1">
-      <div className="flex justify-between text-xs text-muted-foreground">
-        <span className="flex items-center gap-1">
-          <ThumbsUp className="w-3 h-3 text-success" />
-          {buyPct.toFixed(0)}%
-        </span>
-        <span className="flex items-center gap-1">
-          {sellPct.toFixed(0)}%
-          <ThumbsDown className="w-3 h-3 text-danger" />
-        </span>
-      </div>
-      <div className="h-1.5 bg-muted rounded-full overflow-hidden flex">
-        <div 
-          className="bg-success transition-all duration-300" 
-          style={{ width: `${buyPct}%` }}
-        />
-        <div 
-          className="bg-danger transition-all duration-300" 
-          style={{ width: `${sellPct}%` }}
-        />
-      </div>
-    </div>
-  );
+// Colorblind-friendly colors for dip indicator
+const DIP_COLOR_COLORBLIND = '#0066CC'; // Blue - visible to all color blindness types
+const DIP_COLOR_NORMAL = '#ef4444'; // Red for dip
+const SUCCESS_COLOR = '#22c55e'; // Green
+
+// Helper to convert hex to rgba
+function hexToRgba(hex: string, alpha: number): string {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+// Chart colors based on theme preference - respects color picker
+function getChartColors(isColorblind: boolean, customColors?: { up: string; down: string }, isPositive: boolean = false) {
+  // Colorblind mode takes priority
+  if (isColorblind) {
+    return {
+      stroke: DIP_COLOR_COLORBLIND,
+      gradientStart: 'rgba(0, 102, 204, 0.4)',
+      gradientEnd: 'rgba(0, 102, 204, 0.05)',
+    };
+  }
+  
+  // Use custom colors if provided (from color picker)
+  if (customColors) {
+    const color = isPositive ? customColors.up : customColors.down;
+    return {
+      stroke: color,
+      gradientStart: hexToRgba(color, 0.4),
+      gradientEnd: hexToRgba(color, 0.05),
+    };
+  }
+  
+  // Fallback to defaults
+  if (isPositive) {
+    return {
+      stroke: SUCCESS_COLOR,
+      gradientStart: 'rgba(34, 197, 94, 0.4)',
+      gradientEnd: 'rgba(34, 197, 94, 0.05)',
+    };
+  }
+  return {
+    stroke: DIP_COLOR_NORMAL,
+    gradientStart: 'rgba(239, 68, 68, 0.4)',
+    gradientEnd: 'rgba(239, 68, 68, 0.05)',
+  };
 }
 
 // Individual swipeable card - Tinder-style!
@@ -156,12 +201,16 @@ function SwipeableCard({
   isTop,
   chartData,
   onSwipeComplete,
+  colorblindMode,
+  customColors,
 }: { 
   card: DipCard; 
   onVote: (vote: VoteType) => void;
   isTop: boolean;
   chartData?: ChartDataPoint[];
   onSwipeComplete?: () => void;
+  colorblindMode: boolean;
+  customColors?: { up: string; down: string };
 }) {
   const x = useMotionValue(0);
   const rotate = useTransform(x, [-200, 200], [-15, 15]);
@@ -236,28 +285,28 @@ function SwipeableCard({
         </div>
       </motion.div>
 
-      <Card className="h-full flex flex-col overflow-hidden bg-card border-0 shadow-2xl rounded-3xl">
+      <Card className="h-full flex flex-col overflow-hidden bg-card border-0 shadow-2xl rounded-3xl p-0">
         {/* Header Row - Symbol, Name, Logo, Age */}
-        <div className="shrink-0 p-4 pb-2 flex items-start justify-between">
-          <div className="flex items-center gap-3">
+        <div className="shrink-0 px-4 pt-3 pb-1 flex items-start justify-between">
+          <div className="flex items-center gap-2">
             {/* Company Logo */}
-            <div className="w-12 h-12 rounded-xl bg-muted flex items-center justify-center overflow-hidden border border-border/50">
+            <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center overflow-hidden border border-border/50">
               {!logoError ? (
                 <img 
-                  src={getStockLogoUrl(card.symbol)}
+                  src={getStockLogoUrl(card.symbol, card.website)}
                   alt={card.symbol}
-                  className="w-full h-full object-contain p-1"
+                  className="w-full h-full object-contain p-0.5"
                   onError={() => setLogoError(true)}
                 />
               ) : (
-                <Building2 className="w-6 h-6 text-muted-foreground" />
+                <Building2 className="w-5 h-5 text-muted-foreground" />
               )}
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <Badge variant="secondary" className="font-bold text-sm">
+              <div className="flex items-center gap-1.5">
+                <span className="font-bold text-base">
                   {card.symbol}
-                </Badge>
+                </span>
                 {card.ai_rating === 'strong_buy' || card.ai_rating === 'buy' ? (
                   <Badge className="bg-blue-500 text-white border-0 text-xs">
                     <Award className="w-3 h-3 mr-0.5" />
@@ -265,8 +314,8 @@ function SwipeableCard({
                   </Badge>
                 ) : null}
               </div>
-              <p className="text-sm text-foreground font-medium mt-0.5 line-clamp-1">
-                {card.name || card.symbol}
+              <p className="text-xs text-muted-foreground font-medium mt-0.5 line-clamp-1">
+                {card.name || 'Loading...'}
               </p>
             </div>
           </div>
@@ -284,23 +333,35 @@ function SwipeableCard({
           </div>
         </div>
 
-        {/* Chart as "Profile Photo" */}
-        <div className="relative flex-1 min-h-[180px] max-h-[240px] bg-gradient-to-b from-muted/30 to-transparent mx-4 rounded-xl overflow-hidden border border-border/30">
+        {/* Chart as "Profile Photo" - compact, with tooltip */}
+        <div className="relative shrink-0 h-[120px] mx-4 rounded-lg overflow-hidden">
           {miniChartData.length > 0 ? (
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={miniChartData} margin={{ top: 20, right: 10, left: 10, bottom: 10 }}>
+              <AreaChart data={miniChartData} margin={{ top: 5, right: 5, left: 5, bottom: 5 }}>
                 <defs>
                   <linearGradient id={`tinder-gradient-${card.symbol}`} x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="var(--danger)" stopOpacity={0.4} />
-                    <stop offset="100%" stopColor="var(--danger)" stopOpacity={0.05} />
+                    <stop offset="0%" stopColor={getChartColors(colorblindMode, customColors).gradientStart} />
+                    <stop offset="100%" stopColor={getChartColors(colorblindMode, customColors).gradientEnd} />
                   </linearGradient>
                 </defs>
                 <XAxis dataKey="x" hide />
                 <YAxis hide domain={['dataMin', 'dataMax']} />
+                <Tooltip
+                  content={({ active, payload }) => {
+                    if (active && payload?.[0]?.value) {
+                      return (
+                        <div className="bg-background/95 border border-border px-2 py-1 rounded shadow-lg">
+                          <span className="text-sm font-medium">{formatPrice(payload[0].value as number)}</span>
+                        </div>
+                      );
+                    }
+                    return null;
+                  }}
+                />
                 <Area
                   type="monotone"
                   dataKey="y"
-                  stroke="var(--danger)"
+                  stroke={getChartColors(colorblindMode, customColors).stroke}
                   strokeWidth={2}
                   fill={`url(#tinder-gradient-${card.symbol})`}
                   isAnimationActive={true}
@@ -315,43 +376,71 @@ function SwipeableCard({
           )}
           
           {/* Dip percentage badge overlay */}
-          <div className="absolute top-3 right-3">
-            <Badge variant="destructive" className="text-base px-2.5 py-0.5 font-bold shadow-lg">
-              <TrendingDown className="w-3.5 h-3.5 mr-1" />
-              {formatDipPct(card.dip_pct)}
+          <div className="absolute top-1 right-1">
+            <Badge 
+              className="text-sm px-2 py-0.5 font-bold shadow-lg text-white border-0"
+              style={{ backgroundColor: colorblindMode ? DIP_COLOR_COLORBLIND : (customColors?.down || DIP_COLOR_NORMAL) }}
+            >
+              <TrendingDown className="w-3 h-3 mr-1" />
+              Dip {formatDipPct(card.dip_pct)}
+            </Badge>
+          </div>
+          {/* Timeframe badge */}
+          <div className="absolute bottom-1 left-1">
+            <Badge variant="outline" className="text-xs px-1.5 py-0 bg-background/80">
+              90 days
             </Badge>
           </div>
         </div>
 
-        {/* Key Stats Chips */}
-        <div className="shrink-0 px-4 py-2 flex flex-wrap gap-1.5">
-          <Badge variant="outline" className="rounded-full text-xs">
+        {/* Key Stats Chips - compact */}
+        <div className="shrink-0 px-4 py-2 flex flex-wrap gap-1">
+          <Badge variant="outline" className="rounded-full text-xs px-2 py-0">
             💰 {formatPrice(card.current_price)}
           </Badge>
-          <Badge variant="outline" className="rounded-full text-xs">
+          <Badge variant="outline" className="rounded-full text-xs px-2 py-0">
             📈 Peak: {formatPrice(card.ref_high)}
           </Badge>
           {card.sector && (
-            <Badge variant="outline" className="rounded-full text-xs">
+            <Badge variant="outline" className="rounded-full text-xs px-2 py-0">
               🏢 {card.sector}
+            </Badge>
+          )}
+          {card.ipo_year && (
+            <Badge variant="outline" className="rounded-full text-xs px-2 py-0">
+              📅 Since {card.ipo_year}
             </Badge>
           )}
         </div>
 
-        {/* Bio */}
-        <div className="shrink-0 px-4 py-2 border-t border-border/30">
-          <p className="text-sm leading-relaxed line-clamp-3 text-muted-foreground">
-            {card.tinder_bio 
+        {/* Bio - flex-1 to take remaining space, larger text */}
+        <div className="flex-1 px-4 py-3 border-t border-border/30 overflow-y-auto min-h-0">
+          <p className="text-base leading-relaxed text-foreground whitespace-pre-wrap">
+            {formatBioText(card.tinder_bio 
               ? card.tinder_bio.replace(/^"|"$/g, '')
               : `Looking for investors who appreciate a good dip. 📉 Currently ${formatDipPct(card.dip_pct)} off my peak. Swipe right if you see my potential! 💸`
-            }
+            )}
           </p>
+          
+          {/* AI Analysis - Expandable */}
+          {card.ai_reasoning && (
+            <details className="mt-2 group">
+              <summary className="text-xs text-primary cursor-pointer hover:text-primary/80 flex items-center gap-1">
+                <span className="group-open:hidden">📊 View AI Analysis</span>
+                <span className="hidden group-open:inline">📊 Hide AI Analysis</span>
+              </summary>
+              <div className="mt-2 p-2 bg-muted/50 rounded-md border border-border/30">
+                <p className="text-xs leading-relaxed text-muted-foreground whitespace-pre-wrap">
+                  {card.ai_reasoning}
+                </p>
+              </div>
+            </details>
+          )}
         </div>
 
-        {/* Vote Stats & Sentiment */}
-        <div className="shrink-0 p-4 pt-2 border-t border-border/30 bg-muted/20">
-          {/* Stats Row */}
-          <div className="flex items-center justify-between text-xs text-muted-foreground mb-2">
+        {/* Vote Stats - thumbs only, no sentiment bar */}
+        <div className="shrink-0 px-4 py-2 border-t border-border/30 bg-muted/20">
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
             <div className="flex items-center gap-3">
               <span className="flex items-center gap-1">
                 <Users className="w-3.5 h-3.5" />
@@ -369,9 +458,6 @@ function SwipeableCard({
             {buyPct > 60 && <span className="text-success font-medium">🐂 Bullish</span>}
             {sellPct > 60 && <span className="text-danger font-medium">🐻 Bearish</span>}
           </div>
-          
-          {/* Sentiment Bar */}
-          <SentimentBar buyPct={buyPct} sellPct={sellPct} />
         </div>
       </Card>
     </motion.div>
@@ -383,10 +469,12 @@ function SuggestionSwipeCard({
   suggestion, 
   onVote, 
   isTop,
+  autoApproveVotes = 10,
 }: { 
   suggestion: TopSuggestion; 
   onVote: (approve: boolean) => void;
   isTop: boolean;
+  autoApproveVotes?: number;
 }) {
   const x = useMotionValue(0);
   const rotate = useTransform(x, [-200, 200], [-15, 15]);
@@ -443,114 +531,84 @@ function SuggestionSwipeCard({
         </div>
       </motion.div>
 
-      <Card className="h-full flex flex-col overflow-hidden bg-card border-0 shadow-2xl rounded-3xl">
-        {/* Header Row - Symbol, Name, Logo */}
-        <div className="shrink-0 p-4 pb-2 flex items-start justify-between">
-          <div className="flex items-center gap-3">
-            {/* Company Logo */}
-            <div className="w-12 h-12 rounded-xl bg-muted flex items-center justify-center overflow-hidden border border-border/50">
-              {!logoError ? (
-                <img 
-                  src={getStockLogoUrl(suggestion.symbol)}
-                  alt={suggestion.symbol}
-                  className="w-full h-full object-contain p-1"
-                  onError={() => setLogoError(true)}
-                />
-              ) : (
-                <Building2 className="w-6 h-6 text-muted-foreground" />
+      <Card className="h-full flex flex-col overflow-hidden bg-card border-0 shadow-2xl rounded-3xl py-0">
+        {/* Compact Header - Logo, Name, Stats in row */}
+        <div className="shrink-0 px-4 pt-3 pb-2 flex items-start gap-3 bg-gradient-to-b from-chart-4/10 to-transparent">
+          {/* Company Logo */}
+          <div className="w-14 h-14 shrink-0 rounded-xl bg-background flex items-center justify-center overflow-hidden border-2 border-chart-4/30 shadow-md">
+            {!logoError ? (
+              <img 
+                src={getStockLogoUrl(suggestion.symbol, suggestion.website)}
+                alt={suggestion.symbol}
+                className="w-full h-full object-contain p-1.5"
+                onError={() => setLogoError(true)}
+              />
+            ) : (
+              <Building2 className="w-7 h-7 text-muted-foreground" />
+            )}
+          </div>
+          {/* Name & Badges */}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-0.5">
+              <span className="font-bold text-lg">{suggestion.symbol}</span>
+              <Badge className="bg-chart-4/20 text-chart-4 border-chart-4/30 text-xs px-1.5 py-0">
+                <Lightbulb className="w-2.5 h-2.5 mr-0.5" />
+                Suggestion
+              </Badge>
+            </div>
+            <p className="text-sm text-muted-foreground font-medium truncate">
+              {suggestion.name && suggestion.name !== suggestion.symbol ? suggestion.name : 'Community Suggestion'}
+            </p>
+            {/* Inline stats */}
+            <div className="flex flex-wrap gap-1 mt-1">
+              {suggestion.sector && (
+                <span className="text-xs text-muted-foreground">🏢 {suggestion.sector}</span>
+              )}
+              {suggestion.ipo_year && (
+                <span className="text-xs text-muted-foreground">• 📅 {suggestion.ipo_year}</span>
               )}
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <Badge variant="secondary" className="font-bold text-sm">
-                  {suggestion.symbol}
-                </Badge>
-                <Badge className="bg-chart-4/20 text-chart-4 border-chart-4/30 text-xs">
-                  <Lightbulb className="w-3 h-3 mr-0.5" />
-                  Suggestion
-                </Badge>
-              </div>
-              <p className="text-sm text-foreground font-medium mt-0.5 line-clamp-1">
-                {suggestion.name || suggestion.symbol}
-              </p>
+          </div>
+          {/* Vote count badge */}
+          <div className="shrink-0 flex flex-col items-center">
+            <div className="w-12 h-12 rounded-full bg-success/15 border border-success/30 flex flex-col items-center justify-center">
+              <span className="text-lg font-bold text-success leading-none">{suggestion.vote_count}</span>
+              <ThumbsUp className="w-3 h-3 text-success mt-0.5" />
             </div>
-          </div>
-          <div className="text-right">
-            <Badge variant="outline" className="bg-success/10 text-success border-success/30">
-              <ThumbsUp className="w-3 h-3 mr-1" />
-              {suggestion.vote_count}
-            </Badge>
+            {suggestion.vote_count >= 5 && (
+              <span className="text-xs text-orange-500 mt-1">🔥</span>
+            )}
           </div>
         </div>
 
-        {/* Placeholder Chart Area - showing pending state */}
-        <div className="relative flex-1 min-h-[180px] max-h-[240px] bg-gradient-to-b from-muted/30 to-transparent mx-4 rounded-xl overflow-hidden border border-border/30 flex items-center justify-center">
-          <div className="text-center">
-            <BarChart3 className="w-16 h-16 mx-auto text-muted-foreground/30 mb-2" />
-            <p className="text-sm text-muted-foreground">Chart available after approval</p>
-          </div>
-          
-          {/* Vote count badge overlay */}
-          <div className="absolute top-3 right-3">
-            <Badge className="bg-chart-4 text-white text-base px-2.5 py-0.5 font-bold shadow-lg border-0">
-              <Users className="w-3.5 h-3.5 mr-1" />
-              {suggestion.vote_count} votes
-            </Badge>
-          </div>
-        </div>
-
-        {/* Key Stats Chips */}
-        <div className="shrink-0 px-4 py-2 flex flex-wrap gap-1.5">
-          {suggestion.sector && (
-            <Badge variant="outline" className="rounded-full text-xs">
-              🏢 {suggestion.sector}
-            </Badge>
-          )}
-          <Badge variant="outline" className="rounded-full text-xs">
-            ⏳ Pending Approval
-          </Badge>
-          <Badge variant="outline" className="rounded-full text-xs">
-            🗳️ Community Pick
-          </Badge>
-        </div>
-
-        {/* Bio/Summary */}
-        <div className="shrink-0 px-4 py-2 border-t border-border/30">
-          <p className="text-sm leading-relaxed line-clamp-3 text-muted-foreground">
-            {suggestion.summary 
+        {/* Bio/Summary - Takes up main space */}
+        <div className="flex-1 min-h-0 px-4 py-3 overflow-y-auto">
+          <p className="text-base leading-relaxed text-foreground whitespace-pre-wrap">
+            {formatBioText(suggestion.summary 
               ? suggestion.summary
-              : `Hey there! 👋 I'm ${suggestion.name || suggestion.symbol} and I'm waiting to join the party. Vote for me to get tracked! The community thinks I have potential. 🚀`
-            }
+              : `Hey there! 👋 I'm ${suggestion.name || suggestion.symbol} and I'm waiting to join the party. Vote for me to get tracked! The community thinks I have potential – be part of the crew that brings me in! 🚀`
+            )}
           </p>
         </div>
 
-        {/* Vote Info & Call to Action */}
-        <div className="shrink-0 p-4 pt-2 border-t border-border/30 bg-muted/20">
-          <div className="flex items-center justify-between text-xs text-muted-foreground mb-2">
-            <div className="flex items-center gap-3">
-              <span className="flex items-center gap-1">
-                <Lightbulb className="w-3.5 h-3.5 text-chart-4" />
-                Community Suggested
-              </span>
+        {/* Progress to Approval - Compact footer */}
+        <div className="shrink-0 px-4 py-2.5 border-t border-border/30 bg-muted/20">
+          <div className="flex items-center gap-3">
+            <div className="flex-1">
+              <div className="h-2 bg-muted rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-gradient-to-r from-success to-chart-4 transition-all duration-300 rounded-full" 
+                  style={{ width: `${Math.min((suggestion.vote_count / autoApproveVotes) * 100, 100)}%` }}
+                />
+              </div>
             </div>
-            {suggestion.vote_count >= 5 && (
-              <span className="text-success font-medium">🔥 Trending</span>
-            )}
+            <span className="text-xs text-muted-foreground shrink-0">{suggestion.vote_count}/{autoApproveVotes}</span>
           </div>
-          
-          {/* Progress to approval */}
-          <div className="space-y-1">
-            <div className="flex justify-between text-xs text-muted-foreground">
-              <span>Votes needed for auto-approval</span>
-              <span>{suggestion.vote_count}/10</span>
-            </div>
-            <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-              <div 
-                className="h-full bg-success transition-all duration-300" 
-                style={{ width: `${Math.min(suggestion.vote_count * 10, 100)}%` }}
-              />
-            </div>
-          </div>
+          {suggestion.vote_count >= autoApproveVotes && (
+            <p className="text-xs text-success mt-1 text-center font-medium">
+              ✅ Eligible for auto-approval!
+            </p>
+          )}
         </div>
       </Card>
     </motion.div>
@@ -561,6 +619,7 @@ type SwipeMode = 'dips' | 'suggestions';
 
 export function DipSwipePage() {
   const isMobile = useIsMobile();
+  const { colorblindMode, customColors } = useTheme();
   const [mode, setMode] = useState<SwipeMode>('dips');
   const [cards, setCards] = useState<DipCard[]>([]);
   const [suggestions, setSuggestions] = useState<TopSuggestion[]>([]);
@@ -570,16 +629,26 @@ export function DipSwipePage() {
   const [error, setError] = useState<string | null>(null);
   const [votedCards, setVotedCards] = useState<Set<string>>(new Set());
   const [chartDataMap, setChartDataMap] = useState<Record<string, ChartDataPoint[]>>({});
+  const [autoApproveVotes, setAutoApproveVotes] = useState(10);
+
+  // Fetch suggestion settings
+  useEffect(() => {
+    getSuggestionSettings()
+      .then(settings => setAutoApproveVotes(settings.auto_approve_votes))
+      .catch(() => setAutoApproveVotes(10));
+  }, []);
 
   const loadCards = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     try {
       if (mode === 'dips') {
-        const response = await getDipCards(true);
+        // Exclude cards user has already voted on
+        const response = await getDipCards(true, true);
         setCards(response.cards);
       } else {
-        const data = await getTopSuggestions(50);
+        // Exclude suggestions user has already voted on
+        const data = await getTopSuggestions(50, true);
         setSuggestions(data);
       }
       setCurrentIndex(0);
@@ -775,20 +844,15 @@ export function DipSwipePage() {
       {/* Mode Selector */}
       <ModeSelector />
 
-      {/* Progress - Simplified on mobile */}
+      {/* Progress indicator - shows position in deck */}
       <div className="flex items-center justify-center gap-2 mb-2">
-        <Badge variant="outline" className={isMobile ? 'text-xs' : ''}>
-          {currentIndex + 1} / {totalItems}
+        <Badge variant="outline" className={isMobile ? 'text-xs' : ''} title="Card position / Total unvoted cards">
+          📊 {currentIndex + 1} of {totalItems} {mode === 'dips' ? 'stocks' : 'suggestions'}
         </Badge>
-        {!isMobile && (
-          <Badge variant="secondary">
-            {votedCards.size} voted
-          </Badge>
-        )}
       </div>
 
-      {/* Card stack - Full height on mobile */}
-      <div className={`relative ${isMobile ? 'h-[calc(100vh-140px)]' : 'h-[520px]'} mb-2`}>
+      {/* Card stack - Responsive height based on content */}
+      <div className={`relative ${isMobile ? 'h-[calc(100vh-140px)]' : 'min-h-[500px] h-[calc(100vh-280px)] max-h-[800px]'} mb-2`}>
         <AnimatePresence mode="popLayout">
           {mode === 'dips' && currentCard && (
             <SwipeableCard
@@ -797,6 +861,8 @@ export function DipSwipePage() {
               chartData={chartDataMap[currentCard.symbol]}
               onVote={handleVote}
               isTop={true}
+              colorblindMode={colorblindMode}
+              customColors={customColors}
             />
           )}
           {mode === 'suggestions' && currentSuggestion && (
@@ -805,6 +871,7 @@ export function DipSwipePage() {
               suggestion={currentSuggestion}
               onVote={handleSuggestionVote}
               isTop={true}
+              autoApproveVotes={autoApproveVotes}
             />
           )}
         </AnimatePresence>

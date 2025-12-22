@@ -237,7 +237,7 @@ export function SymbolManager({ onError }: SymbolManagerProps) {
                         {symbol.symbol}
                       </Badge>
                     </TableCell>
-                    <TableCell>{symbol.min_dip_pct}%</TableCell>
+                    <TableCell>{(symbol.min_dip_pct * 100).toFixed(0)}%</TableCell>
                     <TableCell>{symbol.min_days} days</TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1">

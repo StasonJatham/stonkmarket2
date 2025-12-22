@@ -27,12 +27,12 @@ services:
       - SCHEDULER_ENABLED=${SCHEDULER_ENABLED:-true}
       - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
       - CORS_ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
     ports:
       - "8000:8000"
     volumes:
       # Mount source code for hot reloading
       - ./app:/app/app:ro
-      - ./data:/data
     depends_on:
       postgres:
         condition: service_healthy

@@ -55,7 +55,6 @@ services:
     read_only: true
     tmpfs:
       - /tmp:mode=1777
-      - /data:uid=1000,gid=1000,mode=0755
 
   postgres:
     image: postgres:17-alpine

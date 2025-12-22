@@ -8,6 +8,7 @@ import {
   mergeChartData,
   aggregatePortfolioPerformance,
   getAvailableBenchmarks,
+  getDipCard,
 } from '@/services/api';
 import type { 
   DipStock, 
@@ -17,6 +18,7 @@ import type {
   ComparisonChartData,
   AggregatedPerformance,
   PublicBenchmark,
+  DipCard,
 } from '@/services/api';
 import { useDips } from '@/context/DipContext';
 import { StockCard } from '@/components/StockCard';
@@ -86,6 +88,10 @@ export function Dashboard() {
   const [aggregatedData, setAggregatedData] = useState<AggregatedPerformance[]>([]);
   const [showPortfolioChart, setShowPortfolioChart] = useState(false);
   const [availableBenchmarks, setAvailableBenchmarks] = useState<PublicBenchmark[]>([]);
+  
+  // AI Analysis state
+  const [aiData, setAiData] = useState<{ ai_rating: DipCard['ai_rating']; ai_reasoning: string | null } | null>(null);
+  const [isLoadingAi, setIsLoadingAi] = useState(false);
 
   // Fetch available benchmarks on mount
   useEffect(() => {
@@ -94,18 +100,70 @@ export function Dashboard() {
       .catch(() => setAvailableBenchmarks([]));
   }, []);
 
+  // Sync URL params to state on mount and URL changes
+  useEffect(() => {
+    const urlSearch = searchParams.get('search');
+    const urlSort = searchParams.get('sort') as SortBy | null;
+    const urlView = searchParams.get('view') as ViewMode | null;
+    const urlShowAll = searchParams.get('showAll');
+    
+    if (urlSearch !== null) setSearchQuery(urlSearch);
+    if (urlSort && ['score', 'depth', 'recovery', 'name'].includes(urlSort)) setSortBy(urlSort);
+    if (urlView && ['grid', 'list'].includes(urlView)) setViewMode(urlView);
+    if (urlShowAll === 'true') setShowAllStocks(true);
+  }, []);
+
+  // Update URL when filters change (debounced to avoid too many updates)
+  const updateUrlParams = useCallback((updates: Record<string, string | null>) => {
+    const newParams = new URLSearchParams(searchParams);
+    
+    Object.entries(updates).forEach(([key, value]) => {
+      if (value === null || value === '' || value === 'false') {
+        newParams.delete(key);
+      } else {
+        newParams.set(key, value);
+      }
+    });
+    
+    // Only update if params actually changed
+    const currentStr = searchParams.toString();
+    const newStr = newParams.toString();
+    if (currentStr !== newStr) {
+      setSearchParams(newParams, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
+
+  // Sync state changes to URL
+  useEffect(() => {
+    updateUrlParams({
+      search: searchQuery || null,
+      sort: sortBy !== 'score' ? sortBy : null,
+      view: viewMode !== 'grid' ? viewMode : null,
+      showAll: showAllStocks ? 'true' : null,
+    });
+  }, [searchQuery, sortBy, viewMode, showAllStocks, updateUrlParams]);
+
   // Handle URL query param for stock selection (from ticker click)
   useEffect(() => {
     const stockSymbol = searchParams.get('stock');
     if (stockSymbol && stocks.length > 0) {
-      const stock = stocks.find(s => s.symbol === stockSymbol);
+      // First check if stock is in current view
+      let stock = stocks.find(s => s.symbol.toUpperCase() === stockSymbol.toUpperCase());
+      
+      // If not found and not showing all stocks, switch to all stocks view
+      if (!stock && !showAllStocks) {
+        setShowAllStocks(true);
+        // Stock will be found after showAllStocks triggers a re-fetch
+        return;
+      }
+      
       if (stock) {
         setSelectedStock(stock);
-        // Clear the param after selection
-        setSearchParams({}, { replace: true });
+        // Keep the stock param in URL for sharing
+        updateUrlParams({ stock: stock.symbol });
       }
     }
-  }, [searchParams, stocks, setSearchParams]);
+  }, [searchParams, stocks, showAllStocks, setShowAllStocks, updateUrlParams]);
 
   // Memoized filtered and sorted stocks
   const filteredStocks = useMemo(() => {
@@ -165,6 +223,9 @@ export function Dashboard() {
       setChartPeriod(optimalPeriod);
       
       loadStockInfo(selectedStock.symbol);
+      loadAiData(selectedStock.symbol);
+    } else {
+      setAiData(null);
     }
   }, [selectedStock?.symbol, calculateOptimalPeriod]);
 
@@ -269,6 +330,22 @@ export function Dashboard() {
       setStockInfo(null);
     } finally {
       setIsLoadingInfo(false);
+    }
+  }
+
+  async function loadAiData(symbol: string) {
+    setIsLoadingAi(true);
+    try {
+      const card = await getDipCard(symbol);
+      setAiData({
+        ai_rating: card.ai_rating,
+        ai_reasoning: card.ai_reasoning,
+      });
+    } catch (err) {
+      console.error('Failed to load AI data:', err);
+      setAiData(null);
+    } finally {
+      setIsLoadingAi(false);
     }
   }
 
@@ -532,6 +609,8 @@ export function Dashboard() {
             benchmark={benchmark}
             comparisonData={comparisonData}
             isLoadingBenchmark={isLoadingBenchmark}
+            aiData={aiData}
+            isLoadingAi={isLoadingAi}
           />
         </div>
       </div>
@@ -540,7 +619,7 @@ export function Dashboard() {
       <Sheet open={isMobileDetailOpen && !!selectedStock} onOpenChange={setIsMobileDetailOpen}>
         <SheetContent side="bottom" className="h-[90vh] p-0">
           <SheetTitle className="sr-only">Stock Details</SheetTitle>
-          <div className="h-full overflow-hidden pt-2 px-4 pb-safe">
+          <div className="h-full overflow-hidden pt-2 pb-safe">
             <StockDetailsPanel
               stock={selectedStock}
               chartData={chartData}
@@ -553,6 +632,8 @@ export function Dashboard() {
               benchmark={benchmark}
               comparisonData={comparisonData}
               isLoadingBenchmark={isLoadingBenchmark}
+              aiData={aiData}
+              isLoadingAi={isLoadingAi}
             />
           </div>
         </SheetContent>

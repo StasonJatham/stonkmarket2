@@ -379,6 +379,7 @@ export interface DipCard {
   name: string | null;
   sector: string | null;
   industry: string | null;
+  website: string | null;
   current_price: number;
   ref_high: number;
   dip_pct: number;
@@ -389,6 +390,7 @@ export interface DipCard {
   ai_reasoning: string | null;
   ai_confidence: number | null;
   vote_counts: VoteCounts;
+  ipo_year: number | null;
 }
 
 export interface DipCardList {
@@ -408,12 +410,12 @@ export interface DipStats {
 
 export type VoteType = 'buy' | 'sell';
 
-export async function getDipCards(includeAi: boolean = false): Promise<DipCardList> {
-  const cacheKey = `tinder:cards:${includeAi}`;
+export async function getDipCards(includeAi: boolean = false, excludeVoted: boolean = false): Promise<DipCardList> {
+  const cacheKey = `tinder:cards:${includeAi}:${excludeVoted}`;
   
   return apiCache.fetch(
     cacheKey,
-    () => fetchAPI<DipCardList>(`/tinder/cards?include_ai=${includeAi}`),
+    () => fetchAPI<DipCardList>(`/tinder/cards?include_ai=${includeAi}&exclude_voted=${excludeVoted}`),
     { ttl: CACHE_TTL.RANKING }
   );
 }
@@ -535,7 +537,11 @@ export interface Symbol {
 }
 
 export async function getSymbols(): Promise<Symbol[]> {
-  return fetchAPI<Symbol[]>('/symbols');
+  return apiCache.fetch(
+    'symbols-list',
+    () => fetchAPI<Symbol[]>('/symbols'),
+    { ttl: CACHE_TTL.SYMBOLS }
+  );
 }
 
 export async function getSymbol(symbol: string): Promise<Symbol> {
@@ -543,23 +549,31 @@ export async function getSymbol(symbol: string): Promise<Symbol> {
 }
 
 export async function createSymbol(data: { symbol: string; min_dip_pct?: number; min_days?: number }): Promise<Symbol> {
-  return fetchAPI<Symbol>('/symbols', {
+  const result = await fetchAPI<Symbol>('/symbols', {
     method: 'POST',
     body: JSON.stringify(data),
   });
+  // Invalidate symbols cache on add
+  apiCache.invalidate(/^symbols/);
+  return result;
 }
 
 export async function updateSymbol(symbol: string, data: { min_dip_pct?: number; min_days?: number }): Promise<Symbol> {
-  return fetchAPI<Symbol>(`/symbols/${symbol}`, {
+  const result = await fetchAPI<Symbol>(`/symbols/${symbol}`, {
     method: 'PUT',
     body: JSON.stringify(data),
   });
+  // Invalidate symbols cache on update
+  apiCache.invalidate(/^symbols/);
+  return result;
 }
 
 export async function deleteSymbol(symbol: string): Promise<void> {
   await fetchAPI(`/symbols/${symbol}`, {
     method: 'DELETE',
   });
+  // Invalidate symbols cache on delete
+  apiCache.invalidate(/^symbols/);
 }
 
 // =============================================================================
@@ -816,6 +830,7 @@ export interface RuntimeSettings {
   ai_batch_size: number;
   ai_model: string;
   suggestion_cleanup_days: number;
+  auto_approve_votes: number;
   benchmarks: BenchmarkConfig[];
 }
 
@@ -841,18 +856,29 @@ export async function getAppSettings(): Promise<AppSettings> {
 }
 
 export async function getRuntimeSettings(): Promise<RuntimeSettings> {
-  return fetchAPI<RuntimeSettings>('/admin/settings/runtime');
+  return apiCache.fetch(
+    'runtime-settings',
+    () => fetchAPI<RuntimeSettings>('/admin/settings/runtime'),
+    { ttl: CACHE_TTL.SETTINGS }
+  );
 }
 
 export async function updateRuntimeSettings(updates: Partial<RuntimeSettings>): Promise<RuntimeSettings> {
-  return fetchAPI<RuntimeSettings>('/admin/settings/runtime', {
+  const result = await fetchAPI<RuntimeSettings>('/admin/settings/runtime', {
     method: 'PATCH',
     body: JSON.stringify(updates),
   });
+  // Invalidate settings caches on update
+  apiCache.invalidate(/^(runtime-settings|suggestion-settings)/);
+  return result;
 }
 
 export async function getSystemStatus(): Promise<SystemStatus> {
   return fetchAPI<SystemStatus>('/admin/settings/status');
+}
+
+export async function checkOpenAIStatus(): Promise<{ configured: boolean }> {
+  return fetchAPI<{ configured: boolean }>('/admin/settings/openai-status');
 }
 
 // =============================================================================
@@ -909,6 +935,8 @@ export interface TopSuggestion {
   vote_count: number;
   sector: string | null;
   summary: string | null;
+  ipo_year: number | null;
+  website: string | null;
 }
 
 // Public endpoints (no auth required)
@@ -920,13 +948,21 @@ export async function suggestStock(symbol: string): Promise<{ message: string; s
 }
 
 export async function voteForSuggestion(symbol: string): Promise<{ message: string; symbol: string; auto_approved?: boolean }> {
-  return fetchAPI<{ message: string; symbol: string; auto_approved?: boolean }>(`/suggestions/${symbol}/vote`, {
+  return fetchAPI<{ message: string; symbol: string; auto_approved?: boolean }>(`/suggestions/${encodeURIComponent(symbol.toUpperCase())}/vote`, {
     method: 'PUT',
   });
 }
 
-export async function getTopSuggestions(limit: number = 10): Promise<TopSuggestion[]> {
-  return fetchAPI<TopSuggestion[]>(`/suggestions/top?limit=${limit}`);
+export async function getTopSuggestions(limit: number = 10, excludeVoted: boolean = false): Promise<TopSuggestion[]> {
+  return fetchAPI<TopSuggestion[]>(`/suggestions/top?limit=${limit}&exclude_voted=${excludeVoted}`);
+}
+
+export async function getSuggestionSettings(): Promise<{ auto_approve_votes: number }> {
+  return apiCache.fetch(
+    'suggestion-settings',
+    () => fetchAPI<{ auto_approve_votes: number }>('/suggestions/settings'),
+    { ttl: CACHE_TTL.SUGGESTIONS }
+  );
 }
 
 export async function getPendingSuggestions(page: number = 1, pageSize: number = 20): Promise<SuggestionListResponse> {
@@ -966,5 +1002,14 @@ export async function updateSuggestion(
   return fetchAPI<{ message: string; old_symbol: string; new_symbol: string }>(
     `/suggestions/${suggestionId}?new_symbol=${encodeURIComponent(newSymbol.toUpperCase())}`,
     { method: 'PATCH' }
+  );
+}
+
+export async function refreshSuggestionData(
+  suggestionId: number
+): Promise<{ message: string; symbol: string }> {
+  return fetchAPI<{ message: string; symbol: string }>(
+    `/suggestions/${suggestionId}/refresh`,
+    { method: 'POST' }
   );
 }

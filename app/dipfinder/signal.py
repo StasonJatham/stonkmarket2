@@ -248,14 +248,18 @@ def compute_dip_score(
     if config is None:
         config = get_dipfinder_config()
 
+    # GATE: If dip is below minimum threshold, score is 0
+    # This prevents stocks with minimal dips from getting any score
+    if dip_metrics.dip_pct < config.min_dip_abs:
+        return 0.0
+
     score = 0.0
 
     # Base score from dip magnitude (max 40 points)
     # More dip = higher score (for buying opportunity)
-    if dip_metrics.dip_pct >= config.min_dip_abs:
-        # Scale from 10% (baseline) to 40% (extreme)
-        magnitude_factor = min((dip_metrics.dip_pct - config.min_dip_abs) / 0.30, 1.0)
-        score += 20 + magnitude_factor * 20
+    # Scale from min_dip_abs (baseline) to 40% (extreme)
+    magnitude_factor = min((dip_metrics.dip_pct - config.min_dip_abs) / 0.30, 1.0)
+    score += 20 + magnitude_factor * 20
 
     # Percentile/rarity score (max 25 points)
     # Higher percentile = rarer dip = higher score
@@ -383,11 +387,21 @@ def compute_signal(
     dip_score = compute_dip_score(dip_metrics, market_context, config)
 
     # Compute final score (weighted combination)
-    final_score = (
-        config.weight_dip * dip_score
-        + config.weight_quality * quality_metrics.score
-        + config.weight_stability * stability_metrics.score
-    )
+    # GATE: If dip is below minimum threshold, cap final score low
+    # This prevents high-quality stocks with minimal dips from appearing as opportunities
+    if dip_metrics.dip_pct < config.min_dip_abs:
+        # No meaningful dip - score is just quality/stability with low cap
+        final_score = min(
+            config.weight_quality * quality_metrics.score
+            + config.weight_stability * stability_metrics.score,
+            25.0  # Cap at 25 for non-dip stocks
+        )
+    else:
+        final_score = (
+            config.weight_dip * dip_score
+            + config.weight_quality * quality_metrics.score
+            + config.weight_stability * stability_metrics.score
+        )
 
     # Determine alert level
     should_alert = (

@@ -397,7 +397,7 @@ async def get_chart(
     "/{symbol}/info",
     response_model=StockInfo,
     summary="Get stock info",
-    description="Get detailed stock information from external source.",
+    description="Get detailed stock information from external source. Public endpoint.",
     responses={
         404: {"description": "Symbol not found"},
         503: {"description": "External service unavailable"},
@@ -405,7 +405,6 @@ async def get_chart(
 )
 async def get_stock_info_endpoint(
     symbol: str = Depends(_validate_symbol_path),
-    user: TokenData = Depends(require_user),
 ) -> StockInfo:
     """Get detailed stock information."""
     # Try cache first

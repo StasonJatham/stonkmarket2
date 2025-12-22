@@ -23,9 +23,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code (will be overridden by volume mount)
 COPY app ./app
 
-# Create data directory
-RUN mkdir -p /data && chmod 755 /data
-
 EXPOSE 8000
 
 # Default command - will be overridden in docker-compose

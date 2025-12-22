@@ -1,11 +1,15 @@
-"""Database module with connection pooling and transaction management."""
+"""Database module with PostgreSQL connection pooling."""
 
 from .connection import (
-    init_db,
-    get_db_connection,
-    get_db,
-    close_db,
-    db_healthcheck,
+    init_pg_pool,
+    close_pg_pool,
+    get_pg_pool,
+    get_pg_connection,
+    fetch_one,
+    fetch_all,
+    fetch_val,
+    execute,
+    execute_many,
 )
 from .models import (
     DipState,
@@ -17,11 +21,15 @@ from .models import (
 )
 
 __all__ = [
-    "init_db",
-    "get_db_connection",
-    "get_db",
-    "close_db",
-    "db_healthcheck",
+    "init_pg_pool",
+    "close_pg_pool",
+    "get_pg_pool",
+    "get_pg_connection",
+    "fetch_one",
+    "fetch_all",
+    "fetch_val",
+    "execute",
+    "execute_many",
     "DipState",
     "SymbolConfig",
     "CronJobConfig",

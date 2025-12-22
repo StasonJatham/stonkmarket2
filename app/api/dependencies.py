@@ -15,26 +15,11 @@ from app.core.fingerprint import (
     get_vote_identifier,
     get_suggestion_identifier,
 )
-from app.database import get_db_connection
 from app.cache.rate_limit import check_rate_limit
-
-
-def get_db():
-    """
-    Dependency for getting a database connection.
-
-    Usage:
-        @router.get("/items")
-        async def get_items(conn = Depends(get_db)):
-            ...
-    """
-    with get_db_connection() as conn:
-        yield conn
 
 
 # Re-export fingerprint functions for backwards compatibility
 __all__ = [
-    "get_db",
     "get_client_ip",
     "get_request_fingerprint",
     "get_vote_identifier",

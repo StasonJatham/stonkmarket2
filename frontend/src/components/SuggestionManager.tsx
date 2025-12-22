@@ -1,10 +1,13 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   getAllSuggestions,
   approveSuggestion,
   rejectSuggestion,
   updateSuggestion,
+  refreshSuggestionData,
+  getRuntimeSettings,
+  updateRuntimeSettings,
   type Suggestion,
   type SuggestionStatus,
 } from '@/services/api';
@@ -12,6 +15,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Slider } from '@/components/ui/slider';
 import {
   Table,
   TableBody,
@@ -50,6 +54,7 @@ import {
   Loader2,
   AlertCircle,
   Pencil,
+  Settings,
 } from 'lucide-react';
 
 function getStatusBadge(status: SuggestionStatus) {
@@ -99,6 +104,12 @@ export function SuggestionManager() {
   const [editingSymbol, setEditingSymbol] = useState('');
   const [newSymbol, setNewSymbol] = useState('');
 
+  // Auto-approve settings
+  const [autoApproveVotes, setAutoApproveVotes] = useState(10);
+  const [savedAutoApproveVotes, setSavedAutoApproveVotes] = useState(10);
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const pageSize = 15;
 
   const loadSuggestions = useCallback(async () => {
@@ -116,6 +127,47 @@ export function SuggestionManager() {
       setIsLoading(false);
     }
   }, [statusFilter, page]);
+
+  // Load runtime settings on mount
+  useEffect(() => {
+    async function loadSettings() {
+      try {
+        const settings = await getRuntimeSettings();
+        setAutoApproveVotes(settings.auto_approve_votes);
+        setSavedAutoApproveVotes(settings.auto_approve_votes);
+      } catch (err) {
+        console.error('Failed to load settings:', err);
+      }
+    }
+    loadSettings();
+  }, []);
+
+  // Auto-save when slider changes (debounced)
+  const handleAutoApproveChange = (value: number) => {
+    setAutoApproveVotes(value);
+    
+    // Clear existing timeout
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+    
+    // Debounce save by 800ms
+    saveTimeoutRef.current = setTimeout(async () => {
+      if (value !== savedAutoApproveVotes) {
+        setIsSavingSettings(true);
+        try {
+          await updateRuntimeSettings({ auto_approve_votes: value });
+          setSavedAutoApproveVotes(value);
+        } catch (err) {
+          setError(err instanceof Error ? err.message : 'Failed to save settings');
+          // Revert on error
+          setAutoApproveVotes(savedAutoApproveVotes);
+        } finally {
+          setIsSavingSettings(false);
+        }
+      }
+    }, 800);
+  };
 
   useEffect(() => {
     loadSuggestions();
@@ -186,6 +238,18 @@ export function SuggestionManager() {
     }
   }
 
+  async function handleRefreshData(id: number) {
+    setActionLoading(id);
+    try {
+      await refreshSuggestionData(id);
+      await loadSuggestions();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to refresh data');
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
   function formatDate(dateStr: string | null): string {
     if (!dateStr) return '—';
     return new Date(dateStr).toLocaleDateString();
@@ -226,6 +290,36 @@ export function SuggestionManager() {
         </div>
       </CardHeader>
       <CardContent>
+        {/* Auto-Approve Settings */}
+        <div className="mb-6 p-4 rounded-lg border bg-muted/30">
+          <div className="flex items-center gap-2 mb-3">
+            <Settings className="h-4 w-4 text-muted-foreground" />
+            <span className="text-sm font-medium">Auto-Approve Settings</span>
+            {isSavingSettings && (
+              <Loader2 className="h-3 w-3 animate-spin text-muted-foreground ml-auto" />
+            )}
+            {!isSavingSettings && autoApproveVotes !== savedAutoApproveVotes && (
+              <span className="text-xs text-muted-foreground ml-auto">Saving...</span>
+            )}
+          </div>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <Label className="text-sm text-muted-foreground">Votes to auto-approve</Label>
+              <Badge variant="secondary">{autoApproveVotes} votes</Badge>
+            </div>
+            <Slider
+              value={[autoApproveVotes]}
+              onValueChange={([v]) => handleAutoApproveChange(v)}
+              min={3}
+              max={50}
+              step={1}
+            />
+            <p className="text-xs text-muted-foreground">
+              Suggestions with this many votes will be automatically approved for tracking
+            </p>
+          </div>
+        </div>
+        
         {/* Error */}
         <AnimatePresence>
           {error && (
@@ -341,6 +435,26 @@ export function SuggestionManager() {
                             >
                               <X className="h-4 w-4 mr-1" />
                               Reject
+                            </Button>
+                          </div>
+                        ) : suggestion.status === 'approved' ? (
+                          <div className="flex items-center justify-end gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-8"
+                              onClick={() => handleRefreshData(suggestion.id)}
+                              disabled={actionLoading === suggestion.id}
+                              title="Fetch latest data and regenerate AI content"
+                            >
+                              {actionLoading === suggestion.id ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <>
+                                  <RefreshCw className="h-4 w-4 mr-1" />
+                                  Refresh Data
+                                </>
+                              )}
                             </Button>
                           </div>
                         ) : (

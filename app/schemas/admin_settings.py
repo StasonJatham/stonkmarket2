@@ -66,6 +66,9 @@ class RuntimeSettingsResponse(BaseModel):
     suggestion_cleanup_days: int = Field(
         default=30, ge=1, le=365, description="Days to keep rejected suggestions"
     )
+    auto_approve_votes: int = Field(
+        default=10, ge=1, le=1000, description="Votes needed for auto-approval"
+    )
     benchmarks: List[BenchmarkConfig] = Field(
         default_factory=list, description="Configured benchmark indices"
     )
@@ -81,6 +84,7 @@ class RuntimeSettingsUpdate(BaseModel):
     ai_batch_size: Optional[int] = Field(default=None, ge=0, le=50)
     ai_model: Optional[str] = None
     suggestion_cleanup_days: Optional[int] = Field(default=None, ge=1, le=365)
+    auto_approve_votes: Optional[int] = Field(default=None, ge=1, le=1000)
     benchmarks: Optional[List[BenchmarkConfig]] = None
 
 

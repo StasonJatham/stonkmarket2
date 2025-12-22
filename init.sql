@@ -248,6 +248,26 @@ CREATE TABLE IF NOT EXISTS cronjobs (
 );
 
 CREATE INDEX idx_cronjobs_active ON cronjobs(is_active) WHERE is_active = TRUE;
+
+-- Runtime settings (persisted key-value store)
+CREATE TABLE IF NOT EXISTS runtime_settings (
+    key VARCHAR(100) PRIMARY KEY,
+    value JSONB NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Insert default runtime settings
+INSERT INTO runtime_settings (key, value) VALUES
+    ('signal_threshold_strong_buy', '80.0'),
+    ('signal_threshold_buy', '60.0'),
+    ('signal_threshold_hold', '40.0'),
+    ('ai_enrichment_enabled', 'true'),
+    ('ai_batch_size', '0'),
+    ('ai_model', '"gpt-4o-mini"'),
+    ('suggestion_cleanup_days', '30'),
+    ('auto_approve_votes', '10'),
+    ('benchmarks', '[{"id": "SP500", "symbol": "^GSPC", "name": "S&P 500", "description": "US Large Cap Index"}, {"id": "MSCI_WORLD", "symbol": "URTH", "name": "MSCI World", "description": "Global Developed Markets"}]')
+ON CONFLICT (key) DO NOTHING;
 CREATE INDEX idx_cronjobs_next_run ON cronjobs(next_run);
 
 -- ============================================================================

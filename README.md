@@ -217,7 +217,6 @@ All configuration via environment variables (see `.env.example`):
 | `ENVIRONMENT` | development/staging/production | development |
 | `DEBUG` | Enable debug mode | false |
 | `VALKEY_URL` | Valkey connection URL | redis://localhost:6379/0 |
-| `DB_PATH` | SQLite database path | /data/dips.sqlite |
 | `CORS_ALLOWED_ORIGINS` | Allowed origins (comma-separated) | |
 | `RATE_LIMIT_REQUESTS` | Requests per window | 100 |
 | `RATE_LIMIT_WINDOW` | Window in seconds | 60 |

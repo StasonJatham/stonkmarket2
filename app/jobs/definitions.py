@@ -53,7 +53,7 @@ async def data_grab_job() -> str:
 
         service = get_dipfinder_service()
         signals = await service.get_signals(tickers, force_refresh=True)
-        dips = sum(1 for s in signals if s.dip_metrics and s.dip_metrics.in_dip)
+        dips = sum(1 for s in signals if s.dip_metrics and s.dip_metrics.is_meaningful)
 
         # Invalidate caches since new data is available
         ranking_cache = Cache(prefix="ranking", default_ttl=1800)
@@ -294,7 +294,7 @@ async def cleanup_job() -> str:
     try:
         # Rejected suggestions > 7 days
         await execute(
-            "DELETE FROM stock_suggestions WHERE status = 'rejected' AND updated_at < NOW() - INTERVAL '7 days'"
+            "DELETE FROM stock_suggestions WHERE status = 'rejected' AND reviewed_at < NOW() - INTERVAL '7 days'"
         )
 
         # Pending suggestions > 30 days

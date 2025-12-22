@@ -10,8 +10,9 @@ from app.api.app import create_api_app
 from app.cache.client import close_valkey_client, get_valkey_client
 from app.core.config import settings
 from app.core.logging import get_logger, setup_logging
-from app.database import close_db, init_db
+from app.database.connection import init_pg_pool, close_pg_pool
 from app.jobs import start_scheduler, stop_scheduler
+from app.services.runtime_settings import init_runtime_settings
 import app.jobs.definitions  # noqa: F401 - register jobs
 
 logger = get_logger("main")
@@ -26,8 +27,12 @@ async def lifespan(app: FastAPI):
     logger.info(f"Environment: {settings.environment}")
 
     # Initialize database
-    init_db()
-    logger.info("Database initialized")
+    await init_pg_pool()
+    logger.info("PostgreSQL pool initialized")
+
+    # Initialize runtime settings from database
+    await init_runtime_settings()
+    logger.info("Runtime settings initialized")
 
     # Initialize Valkey connection
     try:
@@ -53,7 +58,7 @@ async def lifespan(app: FastAPI):
     await close_valkey_client()
 
     # Close database connections
-    close_db()
+    await close_pg_pool()
 
     logger.info("Shutdown complete")
 

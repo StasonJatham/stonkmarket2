@@ -9,6 +9,7 @@ from fastapi import APIRouter, Query, Request, Header
 from app.core.exceptions import NotFoundError, ValidationError
 from app.core.fingerprint import get_vote_identifier
 from app.repositories import user_api_keys
+from app.repositories import dip_votes as dip_votes_repo
 from app.schemas.stock_tinder import (
     DipCard,
     DipCardList,
@@ -29,12 +30,27 @@ router = APIRouter()
     description="Get all current dips as tinder-style cards.",
 )
 async def get_dip_cards(
+    request: Request,
     include_ai: bool = Query(
         False, description="Fetch fresh AI analysis for cards without it (slower)"
+    ),
+    exclude_voted: bool = Query(
+        False, description="Exclude cards the user has already voted on"
     ),
 ) -> DipCardList:
     """Get all current dips as swipeable cards."""
     cards = await stock_tinder.get_all_dip_cards(include_ai=include_ai)
+
+    # If exclude_voted, filter out cards the user has already voted on
+    if exclude_voted:
+        # Compute vote_id for each symbol and check which have votes
+        voted_symbols = set()
+        for c in cards:
+            vote_id = get_vote_identifier(request, c["symbol"])
+            vote = await dip_votes_repo.get_user_vote_for_symbol(c["symbol"], vote_id)
+            if vote:
+                voted_symbols.add(c["symbol"])
+        cards = [c for c in cards if c["symbol"] not in voted_symbols]
 
     return DipCardList(
         cards=[
@@ -43,6 +59,8 @@ async def get_dip_cards(
                 name=c.get("name"),
                 sector=c.get("sector"),
                 industry=c.get("industry"),
+                website=c.get("website"),
+                ipo_year=c.get("ipo_year"),
                 current_price=c["current_price"],
                 ref_high=c["ref_high"],
                 dip_pct=c["dip_pct"],
@@ -84,6 +102,8 @@ async def get_dip_card(
         name=card.get("name"),
         sector=card.get("sector"),
         industry=card.get("industry"),
+        website=card.get("website"),
+        ipo_year=card.get("ipo_year"),
         current_price=card["current_price"],
         ref_high=card["ref_high"],
         dip_pct=card["dip_pct"],
@@ -181,7 +201,7 @@ async def get_dip_stats(symbol: str) -> DipStats:
 )
 async def refresh_ai_analysis(symbol: str) -> DipCard:
     """Force refresh AI analysis for a dip."""
-    card = await stock_tinder.get_dip_card_with_fresh_ai(symbol.upper())
+    card = await stock_tinder.get_dip_card_with_fresh_ai(symbol.upper(), force_refresh=True)
 
     if not card:
         raise NotFoundError(f"Symbol {symbol.upper()} is not currently in a dip")
@@ -191,6 +211,8 @@ async def refresh_ai_analysis(symbol: str) -> DipCard:
         name=card.get("name"),
         sector=card.get("sector"),
         industry=card.get("industry"),
+        website=card.get("website"),
+        ipo_year=card.get("ipo_year"),
         current_price=card["current_price"],
         ref_high=card["ref_high"],
         dip_pct=card["dip_pct"],

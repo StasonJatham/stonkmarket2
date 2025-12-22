@@ -8,10 +8,27 @@ from fastapi import APIRouter
 
 from app.cache.client import valkey_healthcheck
 from app.core.config import settings
-from app.database import db_healthcheck
+from app.core.logging import get_logger
+from app.database.connection import get_pg_pool
 from app.schemas.common import HealthResponse
 
 router = APIRouter(prefix="/health")
+
+logger = get_logger("health")
+
+
+async def db_healthcheck() -> bool:
+    """Check PostgreSQL database health."""
+    try:
+        pool = await get_pg_pool()
+        if pool is None:
+            return False
+        async with pool.acquire() as conn:
+            await conn.fetchval("SELECT 1")
+        return True
+    except Exception as e:
+        logger.warning(f"Database healthcheck failed: {e}")
+        return False
 
 
 @router.get(
