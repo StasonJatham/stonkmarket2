@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
@@ -92,6 +92,10 @@ export function Dashboard() {
   // AI Analysis state
   const [aiData, setAiData] = useState<{ ai_rating: DipCard['ai_rating']; ai_reasoning: string | null } | null>(null);
   const [isLoadingAi, setIsLoadingAi] = useState(false);
+  
+  // Infinite scroll state
+  const [visibleCount, setVisibleCount] = useState(20);
+  const loadMoreRef = useRef<HTMLDivElement>(null);
 
   // Fetch available benchmarks on mount
   useEffect(() => {
@@ -196,8 +200,47 @@ export function Dashboard() {
       }
     });
 
+    // If a stock is selected via URL param (e.g. from ticker click), move it to the top
+    const stockParam = searchParams.get('stock');
+    if (stockParam) {
+      const paramUpper = stockParam.toUpperCase();
+      const selectedIndex = result.findIndex(s => s.symbol.toUpperCase() === paramUpper);
+      if (selectedIndex > 0) {
+        const [selected] = result.splice(selectedIndex, 1);
+        result.unshift(selected);
+      }
+    }
+
     return result;
-  }, [stocks, searchQuery, sortBy]);
+  }, [stocks, searchQuery, sortBy, searchParams]);
+
+  // Reset visible count when search/filter changes
+  useEffect(() => {
+    setVisibleCount(20);
+  }, [searchQuery, sortBy, showAllStocks]);
+
+  // Visible stocks for pagination
+  const visibleStocks = useMemo(() => {
+    return filteredStocks.slice(0, visibleCount);
+  }, [filteredStocks, visibleCount]);
+
+  // Infinite scroll observer
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && visibleCount < filteredStocks.length) {
+          setVisibleCount((prev) => Math.min(prev + 20, filteredStocks.length));
+        }
+      },
+      { threshold: 0.1 }
+    );
+
+    if (loadMoreRef.current) {
+      observer.observe(loadMoreRef.current);
+    }
+
+    return () => observer.disconnect();
+  }, [visibleCount, filteredStocks.length]);
 
   // Calculate optimal chart period to show high and dip
   const calculateOptimalPeriod = useCallback((stock: DipStock): number => {
@@ -372,11 +415,19 @@ export function Dashboard() {
               Discover stocks with the best recovery potential
             </p>
           </div>
-          {lastUpdated && (
-            <span className="text-xs text-muted-foreground hidden sm:inline">
-              Last updated {new Date(lastUpdated).toLocaleTimeString()}
-            </span>
-          )}
+          <div className="flex items-center gap-3 text-xs text-muted-foreground hidden sm:flex">
+            {!isLoadingRanking && (
+              <span className="flex items-center gap-1">
+                <TrendingDown className="h-3 w-3" />
+                {stocks.length} tracked
+              </span>
+            )}
+            {lastUpdated && (
+              <span>
+                Updated {new Date(lastUpdated).toLocaleTimeString()}
+              </span>
+            )}
+          </div>
         </motion.div>
       </section>
 
@@ -513,21 +564,20 @@ export function Dashboard() {
             </Button>
           </div>
         </div>
+        
+        {/* Mobile stock count */}
+        <div className="flex sm:hidden items-center gap-2 text-xs text-muted-foreground">
+          {!isLoadingRanking && (
+            <>
+              <TrendingDown className="h-3 w-3" />
+              <span>
+                {filteredStocks.length} {showAllStocks ? 'tracked' : 'in dip'}
+                {searchQuery && ` • "${searchQuery}"`}
+              </span>
+            </>
+          )}
+        </div>
       </motion.div>
-
-      {/* Stock Count */}
-      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-        <TrendingDown className="h-4 w-4" />
-        {isLoadingRanking ? (
-          <Skeleton className="h-4 w-32" />
-        ) : (
-          <span>
-            {filteredStocks.length} {filteredStocks.length === 1 ? 'stock' : 'stocks'} 
-            {showAllStocks ? ' tracked' : ' in dip'}
-            {searchQuery && ` matching "${searchQuery}"`}
-          </span>
-        )}
-      </div>
 
       {/* Portfolio Chart Section */}
       <AnimatePresence>
@@ -572,26 +622,48 @@ export function Dashboard() {
               <p>No stocks match your search</p>
             </motion.div>
           ) : (
-            <motion.div
-              variants={container}
-              initial="hidden"
-              animate="show"
-              className={
-                viewMode === 'grid'
-                  ? 'grid gap-4 sm:grid-cols-2 xl:grid-cols-3'
-                  : 'space-y-3'
-              }
-            >
-              {filteredStocks.map((stock) => (
-                <motion.div key={stock.symbol} variants={item}>
-                  <StockCard
-                    stock={stock}
-                    isSelected={selectedStock?.symbol === stock.symbol}
-                    onClick={() => handleStockSelect(stock)}
-                  />
-                </motion.div>
-              ))}
-            </motion.div>
+            <>
+              <motion.div
+                variants={container}
+                initial="hidden"
+                animate="show"
+                className={
+                  viewMode === 'grid'
+                    ? 'grid gap-4 sm:grid-cols-2 xl:grid-cols-3'
+                    : 'space-y-3'
+                }
+              >
+                {visibleStocks.map((stock) => (
+                  <motion.div key={stock.symbol} variants={item}>
+                    <StockCard
+                      stock={stock}
+                      isSelected={selectedStock?.symbol === stock.symbol}
+                      onClick={() => handleStockSelect(stock)}
+                    />
+                  </motion.div>
+                ))}
+              </motion.div>
+              
+              {/* Load more trigger for infinite scroll */}
+              {visibleCount < filteredStocks.length && (
+                <div
+                  ref={loadMoreRef}
+                  className="flex justify-center py-8"
+                >
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                    Loading more stocks...
+                  </div>
+                </div>
+              )}
+              
+              {/* Show count info */}
+              {visibleCount >= filteredStocks.length && filteredStocks.length > 20 && (
+                <div className="text-center py-4 text-sm text-muted-foreground">
+                  Showing all {filteredStocks.length} stocks
+                </div>
+              )}
+            </>
           )}
         </div>
 

@@ -5,6 +5,7 @@ import { ThemeProvider } from '@/context/ThemeContext';
 import { DipProvider } from '@/context/DipContext';
 import { Layout } from '@/components/layout/Layout';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { UmamiAnalytics } from '@/lib/analytics';
 
 // Lazy load pages for code splitting
@@ -32,6 +33,7 @@ function App() {
         <DipProvider>
           <BrowserRouter>
             <UmamiAnalytics />
+          <ErrorBoundary>
           <Suspense fallback={<PageLoader />}>
             <Routes>
               <Route path="/login" element={<LoginPage />} />
@@ -61,6 +63,7 @@ function App() {
                 </Route>
               </Routes>
             </Suspense>
+          </ErrorBoundary>
           </BrowserRouter>
         </DipProvider>
       </AuthProvider>

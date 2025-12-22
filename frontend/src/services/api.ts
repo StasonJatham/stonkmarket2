@@ -1,6 +1,6 @@
 import { getAuthHeaders } from './auth';
 import { apiCache, CACHE_TTL } from '@/lib/cache';
-import { getDeviceFingerprint, getDeviceFingerprintSync, recordLocalVote, hasVotedLocally } from '@/lib/fingerprint';
+import { getDeviceFingerprint, getDeviceFingerprintSync, recordLocalVote, hasVotedLocally, getLocalVotes } from '@/lib/fingerprint';
 
 const API_BASE = '/api';
 
