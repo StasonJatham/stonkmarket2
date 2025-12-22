@@ -13,6 +13,7 @@ from . import stock_tinder
 from . import dip_changes
 from . import user_api_keys
 from . import dipfinder
+from . import admin_settings
 
 __all__ = [
     "auth",
@@ -28,5 +29,5 @@ __all__ = [
     "dip_changes",
     "user_api_keys",
     "dipfinder",
+    "admin_settings",
 ]
-

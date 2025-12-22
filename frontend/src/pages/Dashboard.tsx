@@ -16,7 +16,7 @@ import type {
   ComparisonChartData,
   AggregatedPerformance,
 } from '@/services/api';
-import { FeaturedSlider } from '@/components/FeaturedSlider';
+import { DipTicker } from '@/components/DipTicker';
 import { StockCard } from '@/components/StockCard';
 import { StockDetailsPanel } from '@/components/StockDetailsPanel';
 import { BenchmarkSelector } from '@/components/BenchmarkSelector';
@@ -25,7 +25,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
-import { Sheet, SheetContent } from '@/components/ui/sheet';
+import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { 
   RefreshCw, 
   Search, 
@@ -76,6 +76,7 @@ export function Dashboard() {
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
   const [sortBy, setSortBy] = useState<SortBy>('score');
   const [isMobileDetailOpen, setIsMobileDetailOpen] = useState(false);
+  const [showAllStocks, setShowAllStocks] = useState(false);
   
   // Benchmark state
   const [benchmark, setBenchmark] = useState<BenchmarkType>(null);
@@ -85,10 +86,10 @@ export function Dashboard() {
   const [aggregatedData, setAggregatedData] = useState<AggregatedPerformance[]>([]);
   const [showPortfolioChart, setShowPortfolioChart] = useState(false);
 
-  // Load ranking on mount
+  // Load ranking on mount and when showAllStocks changes
   useEffect(() => {
     loadRanking();
-  }, []);
+  }, [showAllStocks]);
 
   // Memoized filtered and sorted stocks
   const filteredStocks = useMemo(() => {
@@ -124,16 +125,33 @@ export function Dashboard() {
     return result;
   }, [stocks, searchQuery, sortBy]);
 
-  // Memoized top five stocks for featured slider
-  const topFiveStocks = useMemo(() => stocks.slice(0, 5), [stocks]);
+  // Calculate optimal chart period to show high and dip
+  const calculateOptimalPeriod = useCallback((stock: DipStock): number => {
+    const daysSinceDip = stock.days_since_dip || 90;
+    // Add buffer to show context before the dip (at least 20% more time)
+    const requiredDays = Math.ceil(daysSinceDip * 1.3);
+    
+    // Find smallest period that covers the required days
+    const periods = [30, 90, 180, 365];
+    for (const period of periods) {
+      if (period >= requiredDays) {
+        return period;
+      }
+    }
+    return 365; // Default to 1 year if nothing fits
+  }, []);
 
   // Load chart and info when stock selected
   useEffect(() => {
     if (selectedStock) {
+      // Auto-select optimal period based on dip timeline
+      const optimalPeriod = calculateOptimalPeriod(selectedStock);
+      setChartPeriod(optimalPeriod);
+      
       loadChart(selectedStock.symbol);
       loadStockInfo(selectedStock.symbol);
     }
-  }, [selectedStock?.symbol]);
+  }, [selectedStock?.symbol, calculateOptimalPeriod]);
 
   // Reload chart when period changes
   useEffect(() => {
@@ -219,7 +237,7 @@ export function Dashboard() {
     setIsLoadingRanking(true);
     setError(null);
     try {
-      const response = await getRanking();
+      const response = await getRanking(false, showAllStocks);
       setStocks(response.ranking);
       setLastUpdated(response.last_updated);
     } catch (err) {
@@ -257,7 +275,10 @@ export function Dashboard() {
 
   const handleStockSelect = useCallback((stock: DipStock) => {
     setSelectedStock(stock);
-    setIsMobileDetailOpen(true);
+    // Only open mobile drawer on small screens
+    if (window.innerWidth < 1024) {
+      setIsMobileDetailOpen(true);
+    }
   }, []);
 
   const handleSliderSelect = useCallback((symbol: string) => {
@@ -297,18 +318,12 @@ export function Dashboard() {
           )}
         </motion.div>
 
-        {/* Featured Dips Slider */}
-        <motion.div
-          initial={{ opacity: 0, scale: 0.98 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ delay: 0.1 }}
-        >
-          <FeaturedSlider
-            stocks={topFiveStocks}
-            isLoading={isLoadingRanking}
-            onSelectStock={handleSliderSelect}
-          />
-        </motion.div>
+        {/* Dip Ticker - compact scrolling badges */}
+        <DipTicker
+          stocks={stocks}
+          isLoading={isLoadingRanking}
+          onSelectStock={handleSliderSelect}
+        />
       </section>
 
       {/* Error Alert */}
@@ -330,16 +345,16 @@ export function Dashboard() {
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ delay: 0.2 }}
-        className="flex flex-col sm:flex-row gap-4"
+        className="flex flex-col sm:flex-row gap-3 sm:items-center"
       >
         {/* Search */}
-        <div className="relative flex-1 max-w-sm">
+        <div className="relative flex-1 sm:max-w-xs">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
             placeholder="Search stocks..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-9"
+            className="pl-9 h-9"
           />
           {searchQuery && (
             <Button
@@ -353,7 +368,7 @@ export function Dashboard() {
           )}
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {/* Benchmark Selector */}
           <BenchmarkSelector 
             value={benchmark} 
@@ -366,7 +381,7 @@ export function Dashboard() {
               variant={showPortfolioChart ? 'secondary' : 'outline'}
               size="sm"
               onClick={() => setShowPortfolioChart(!showPortfolioChart)}
-              className="gap-2"
+              className="h-9 gap-2"
             >
               <BarChart3 className="h-4 w-4" />
               <span className="hidden sm:inline">Portfolio</span>
@@ -376,7 +391,7 @@ export function Dashboard() {
           {/* Sort Dropdown */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm">
+              <Button variant="outline" size="sm" className="h-9">
                 <SlidersHorizontal className="h-4 w-4 mr-2" />
                 Sort
               </Button>
@@ -412,7 +427,7 @@ export function Dashboard() {
           </DropdownMenu>
 
           {/* View Mode Toggle */}
-          <div className="flex items-center border rounded-lg p-1">
+          <div className="flex items-center border rounded-lg p-0.5">
             <Button
               variant={viewMode === 'grid' ? 'secondary' : 'ghost'}
               size="icon"
@@ -513,7 +528,7 @@ export function Dashboard() {
         </div>
 
         {/* Desktop Details Panel */}
-        <div className="hidden lg:block sticky top-24 h-[calc(100vh-8rem)]">
+        <div className="hidden lg:block sticky top-20 h-[calc(100vh-6rem)]">
           <StockDetailsPanel
             stock={selectedStock}
             chartData={chartData}
@@ -532,8 +547,9 @@ export function Dashboard() {
 
       {/* Mobile Details Sheet */}
       <Sheet open={isMobileDetailOpen && !!selectedStock} onOpenChange={setIsMobileDetailOpen}>
-        <SheetContent side="bottom" className="h-[85vh] p-0">
-          <div className="h-full pt-4">
+        <SheetContent side="bottom" className="h-[90vh] p-0">
+          <SheetTitle className="sr-only">Stock Details</SheetTitle>
+          <div className="h-full overflow-hidden pt-2 px-4 pb-safe">
             <StockDetailsPanel
               stock={selectedStock}
               chartData={chartData}

@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from datetime import date
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
 
 class DipClassEnum(str, Enum):
     """Dip classification."""
+
     MARKET_DIP = "MARKET_DIP"
     STOCK_SPECIFIC = "STOCK_SPECIFIC"
     MIXED = "MIXED"
@@ -18,6 +18,7 @@ class DipClassEnum(str, Enum):
 
 class AlertLevelEnum(str, Enum):
     """Alert level."""
+
     NONE = "NONE"
     GOOD = "GOOD"
     STRONG = "STRONG"
@@ -25,9 +26,10 @@ class AlertLevelEnum(str, Enum):
 
 # === Request Schemas ===
 
+
 class DipFinderSignalRequest(BaseModel):
     """Request for computing dip signals."""
-    
+
     tickers: List[str] = Field(
         ...,
         min_length=1,
@@ -52,7 +54,7 @@ class DipFinderSignalRequest(BaseModel):
 
 class DipFinderRunRequest(BaseModel):
     """Request to run DipFinder computation."""
-    
+
     tickers: Optional[List[str]] = Field(
         default=None,
         max_length=100,
@@ -70,9 +72,10 @@ class DipFinderRunRequest(BaseModel):
 
 # === Response Schemas ===
 
+
 class QualityFactorsResponse(BaseModel):
     """Quality score contributing factors."""
-    
+
     ticker: str
     score: float = Field(..., ge=0, le=100)
     profit_margin: Optional[float] = None
@@ -96,7 +99,7 @@ class QualityFactorsResponse(BaseModel):
 
 class StabilityFactorsResponse(BaseModel):
     """Stability score contributing factors."""
-    
+
     ticker: str
     score: float = Field(..., ge=0, le=100)
     beta: Optional[float] = None
@@ -114,12 +117,12 @@ class StabilityFactorsResponse(BaseModel):
 
 class DipSignalResponse(BaseModel):
     """Complete dip signal response."""
-    
+
     ticker: str = Field(..., description="Stock ticker symbol")
     window: int = Field(..., description="Window in days")
     benchmark: str = Field(..., description="Benchmark ticker")
     as_of_date: str = Field(..., description="Date of analysis (ISO format)")
-    
+
     # Dip metrics
     dip_stock: float = Field(..., description="Stock dip fraction")
     peak_stock: float = Field(..., description="Peak price in window")
@@ -127,23 +130,23 @@ class DipSignalResponse(BaseModel):
     dip_pctl: float = Field(..., description="Dip percentile (0-100)")
     dip_vs_typical: float = Field(..., description="Ratio vs typical dip")
     persist_days: int = Field(..., description="Days dip has persisted")
-    
+
     # Market context
     dip_mkt: float = Field(..., description="Benchmark dip fraction")
     excess_dip: float = Field(..., description="Stock dip - benchmark dip")
     dip_class: str = Field(..., description="Dip classification")
-    
+
     # Scores
     quality_score: float = Field(..., ge=0, le=100)
     stability_score: float = Field(..., ge=0, le=100)
     dip_score: float = Field(..., ge=0, le=100)
     final_score: float = Field(..., ge=0, le=100)
-    
+
     # Alert
     alert_level: str = Field(..., description="Alert level")
     should_alert: bool = Field(..., description="Whether to alert")
     reason: str = Field(..., description="Human-readable explanation")
-    
+
     # Detailed factors (optional, included on request)
     quality_factors: Optional[QualityFactorsResponse] = Field(
         None,
@@ -153,7 +156,7 @@ class DipSignalResponse(BaseModel):
         None,
         description="Stability score factors",
     )
-    
+
     model_config = {
         "from_attributes": True,
     }
@@ -161,7 +164,7 @@ class DipSignalResponse(BaseModel):
 
 class DipSignalListResponse(BaseModel):
     """Response containing multiple dip signals."""
-    
+
     signals: List[DipSignalResponse] = Field(..., description="List of signals")
     count: int = Field(..., description="Number of signals")
     benchmark: str = Field(..., description="Benchmark used")
@@ -171,10 +174,12 @@ class DipSignalListResponse(BaseModel):
 
 class DipHistoryEntry(BaseModel):
     """Single dip history entry."""
-    
+
     id: int
     ticker: str
-    event_type: str = Field(..., description="entered_dip, exited_dip, deepened, recovered, alert_triggered")
+    event_type: str = Field(
+        ..., description="entered_dip, exited_dip, deepened, recovered, alert_triggered"
+    )
     window_days: int
     dip_pct: Optional[float] = None
     final_score: Optional[float] = None
@@ -184,7 +189,7 @@ class DipHistoryEntry(BaseModel):
 
 class DipHistoryResponse(BaseModel):
     """Response containing dip history for a ticker."""
-    
+
     ticker: str
     history: List[DipHistoryEntry]
     count: int
@@ -192,7 +197,7 @@ class DipHistoryResponse(BaseModel):
 
 class DipFinderRunResponse(BaseModel):
     """Response for run request."""
-    
+
     status: str = Field(..., description="Status: started, completed, failed")
     message: str
     tickers_processed: int = 0
@@ -203,7 +208,7 @@ class DipFinderRunResponse(BaseModel):
 
 class DipFinderConfigResponse(BaseModel):
     """Current DipFinder configuration."""
-    
+
     windows: List[int]
     min_dip_abs: float
     min_persist_days: int

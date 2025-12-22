@@ -53,9 +53,20 @@ import {
   Filter,
   ChevronLeft,
   ChevronRight,
-  X
+  X,
+  TrendingUp,
+  User,
+  Cog,
+  Lightbulb
 } from 'lucide-react';
 import { CronBuilder, validateCron, describeCron } from '@/components/CronBuilder';
+import { SymbolManager } from '@/components/SymbolManager';
+import { UserSettings } from '@/components/UserSettings';
+import { MFASetup } from '@/components/MFASetup';
+import { ApiKeyManager } from '@/components/ApiKeyManager';
+import { UserApiKeyManager } from '@/components/UserApiKeyManager';
+import { SystemSettings } from '@/components/SystemSettings';
+import { SuggestionManager } from '@/components/SuggestionManager';
 
 export function AdminPage() {
   const { user } = useAuth();
@@ -121,7 +132,6 @@ export function AdminPage() {
     setRunningJob(name);
     try {
       await runCronJobNow(name);
-      // Refresh logs after running
       await loadCronLogs();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to run job');
@@ -205,7 +215,7 @@ export function AdminPage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Settings</h1>
           <p className="text-muted-foreground">
-            Manage scheduled jobs and view execution history
+            Manage your account, symbols, and scheduled jobs
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -246,21 +256,68 @@ export function AdminPage() {
         )}
       </AnimatePresence>
 
-      {/* Tabs */}
-      <Tabs defaultValue="jobs" className="space-y-6">
-        <TabsList className="grid w-full max-w-md grid-cols-2">
-          <TabsTrigger value="jobs">
-            <Settings className="h-4 w-4 mr-2" />
-            Scheduled Jobs
-          </TabsTrigger>
-          <TabsTrigger value="logs">
-            <Calendar className="h-4 w-4 mr-2" />
-            Execution Logs
-          </TabsTrigger>
-        </TabsList>
+      {/* Main Tabs */}
+      <Tabs defaultValue="symbols" className="space-y-6">
+        {/* Simplified Tab Navigation */}
+        <div className="w-full">
+          <ScrollArea className="w-full">
+            <TabsList className="inline-flex w-auto">
+              <TabsTrigger value="symbols">
+                <TrendingUp className="h-4 w-4 mr-2" />
+                Symbols
+              </TabsTrigger>
+              <TabsTrigger value="suggestions">
+                <Lightbulb className="h-4 w-4 mr-2" />
+                Suggestions
+              </TabsTrigger>
+              <TabsTrigger value="system">
+                <Cog className="h-4 w-4 mr-2" />
+                System
+              </TabsTrigger>
+              <TabsTrigger value="account">
+                <User className="h-4 w-4 mr-2" />
+                Account
+              </TabsTrigger>
+              <TabsTrigger value="scheduler">
+                <Clock className="h-4 w-4 mr-2" />
+                Scheduler
+              </TabsTrigger>
+            </TabsList>
+          </ScrollArea>
+        </div>
 
-        {/* Jobs Tab */}
-        <TabsContent value="jobs">
+        {/* Symbols Tab */}
+        <TabsContent value="symbols">
+          <SymbolManager />
+        </TabsContent>
+
+        {/* Suggestions Tab */}
+        <TabsContent value="suggestions">
+          <SuggestionManager />
+        </TabsContent>
+
+        {/* System Settings Tab - includes Service Keys */}
+        <TabsContent value="system">
+          <div className="max-w-2xl space-y-6">
+            <SystemSettings />
+            <ApiKeyManager />
+          </div>
+        </TabsContent>
+
+        {/* Account Tab - includes Security and User API Keys */}
+        <TabsContent value="account">
+          <div className="max-w-2xl space-y-6">
+            <UserSettings />
+            <MFASetup />
+            <UserApiKeyManager 
+              onError={(msg) => setError(msg)}
+              onSuccess={() => { /* Could add toast */ }}
+            />
+          </div>
+        </TabsContent>
+
+        {/* Scheduler Tab */}
+        <TabsContent value="scheduler">
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -366,13 +423,15 @@ export function AdminPage() {
               ))
             )}
           </motion.div>
-        </TabsContent>
 
-        {/* Logs Tab */}
-        <TabsContent value="logs">
-          <Card>
+          {/* Logs Section (inline in Scheduler) */}
+          <Card className="mt-6">
             <CardHeader className="pb-4">
-              <div className="flex flex-col sm:flex-row gap-4">
+              <CardTitle className="flex items-center gap-2">
+                <Calendar className="h-5 w-5 text-muted-foreground" />
+                Job Logs
+              </CardTitle>
+              <div className="flex flex-col sm:flex-row gap-4 mt-4">
                 {/* Search */}
                 <div className="relative flex-1">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -403,7 +462,7 @@ export function AdminPage() {
                 {/* Status Filter */}
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button variant="outline">
+                    <Button variant="outline" size="sm">
                       <Filter className="h-4 w-4 mr-2" />
                       {logStatus ? `Status: ${logStatus}` : 'All Status'}
                     </Button>
@@ -422,7 +481,7 @@ export function AdminPage() {
                 </DropdownMenu>
 
                 {/* Refresh */}
-                <Button variant="outline" onClick={loadCronLogs}>
+                <Button variant="outline" size="sm" onClick={loadCronLogs}>
                   <RefreshCw className="h-4 w-4" />
                 </Button>
               </div>
@@ -443,7 +502,7 @@ export function AdminPage() {
                   )}
                 </div>
               ) : (
-                <ScrollArea className="h-[400px]">
+                <ScrollArea className="h-[300px]">
                   <Table>
                     <TableHeader>
                       <TableRow>

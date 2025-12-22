@@ -26,7 +26,7 @@ class RankingEntry(BaseModel):
 
     symbol: str = Field(..., description="Stock ticker symbol")
     name: Optional[str] = Field(None, description="Company name")
-    depth: float = Field(..., description="Dip depth (negative = down)")
+    depth: float = Field(..., description="Dip depth as positive fraction (0.15 = 15% dip)")
     last_price: float = Field(..., description="Last known price")
     previous_close: Optional[float] = Field(None, description="Previous closing price")
     change_percent: Optional[float] = Field(None, description="Daily change percentage")
@@ -37,6 +37,7 @@ class RankingEntry(BaseModel):
     sector: Optional[str] = Field(None, description="Sector")
     pe_ratio: Optional[float] = Field(None, description="P/E ratio")
     volume: Optional[int] = Field(None, description="Trading volume")
+    updated_at: Optional[datetime] = Field(None, description="Last update timestamp")
 
     model_config = {"from_attributes": True}
 

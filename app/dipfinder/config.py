@@ -16,158 +16,118 @@ from pydantic_settings import BaseSettings
 
 class DipFinderSettings(BaseSettings):
     """DipFinder settings from environment."""
-    
+
     # Available windows for dip calculation
     dipfinder_windows: List[int] = Field(
         default=[7, 30, 100, 365],
-        description="Available windows for dip calculation (days)"
+        description="Available windows for dip calculation (days)",
     )
-    
+
     # Dip thresholds
     dipfinder_min_dip_abs: float = Field(
         default=0.10,
         ge=0.01,
         le=0.50,
-        description="Minimum absolute dip percentage (10%)"
+        description="Minimum absolute dip percentage (10%)",
     )
     dipfinder_min_persist_days: int = Field(
-        default=2,
-        ge=1,
-        le=30,
-        description="Minimum days dip must persist"
+        default=2, ge=1, le=30, description="Minimum days dip must persist"
     )
     dipfinder_dip_percentile_threshold: float = Field(
         default=0.80,
         ge=0.50,
         le=0.99,
-        description="Top percentile for significant dip (top 20%)"
+        description="Top percentile for significant dip (top 20%)",
     )
     dipfinder_dip_vs_typical_threshold: float = Field(
-        default=1.5,
-        ge=1.0,
-        le=5.0,
-        description="Multiplier vs typical dip size"
+        default=1.5, ge=1.0, le=5.0, description="Multiplier vs typical dip size"
     )
-    
+
     # Market context thresholds
     dipfinder_market_dip_threshold: float = Field(
-        default=0.06,
-        ge=0.01,
-        le=0.20,
-        description="Market dip threshold (6%)"
+        default=0.06, ge=0.01, le=0.20, description="Market dip threshold (6%)"
     )
     dipfinder_excess_dip_stock_specific: float = Field(
         default=0.04,
         ge=0.01,
         le=0.20,
-        description="Excess dip for stock-specific classification (4%)"
+        description="Excess dip for stock-specific classification (4%)",
     )
     dipfinder_excess_dip_market: float = Field(
         default=0.03,
         ge=0.01,
         le=0.10,
-        description="Max excess for pure market dip (3%)"
+        description="Max excess for pure market dip (3%)",
     )
-    
+
     # Quality and stability gates
     dipfinder_quality_gate: float = Field(
-        default=60.0,
-        ge=0,
-        le=100,
-        description="Minimum quality score for alert"
+        default=60.0, ge=0, le=100, description="Minimum quality score for alert"
     )
     dipfinder_stability_gate: float = Field(
-        default=60.0,
-        ge=0,
-        le=100,
-        description="Minimum stability score for alert"
+        default=60.0, ge=0, le=100, description="Minimum stability score for alert"
     )
-    
+
     # Alert thresholds
     dipfinder_alert_good: float = Field(
-        default=70.0,
-        ge=50,
-        le=100,
-        description="Minimum final score for 'good' alert"
+        default=70.0, ge=50, le=100, description="Minimum final score for 'good' alert"
     )
     dipfinder_alert_strong: float = Field(
         default=80.0,
         ge=60,
         le=100,
-        description="Minimum final score for 'strong' alert"
+        description="Minimum final score for 'strong' alert",
     )
-    
+
     # Score weights
     dipfinder_weight_dip: float = Field(
-        default=0.45,
-        ge=0,
-        le=1,
-        description="Weight for dip score in final"
+        default=0.45, ge=0, le=1, description="Weight for dip score in final"
     )
     dipfinder_weight_quality: float = Field(
-        default=0.30,
-        ge=0,
-        le=1,
-        description="Weight for quality score in final"
+        default=0.30, ge=0, le=1, description="Weight for quality score in final"
     )
     dipfinder_weight_stability: float = Field(
-        default=0.25,
-        ge=0,
-        le=1,
-        description="Weight for stability score in final"
+        default=0.25, ge=0, le=1, description="Weight for stability score in final"
     )
-    
+
     # Default benchmark
     dipfinder_default_benchmark: str = Field(
-        default="SPY",
-        description="Default benchmark ticker"
+        default="SPY", description="Default benchmark ticker"
     )
-    
+
     # Cache TTLs (seconds)
     dipfinder_price_cache_ttl: int = Field(
-        default=3600,
-        ge=300,
-        description="Price data cache TTL (1 hour)"
+        default=3600, ge=300, description="Price data cache TTL (1 hour)"
     )
     dipfinder_info_cache_ttl: int = Field(
-        default=86400,
-        ge=3600,
-        description="yfinance info cache TTL (24 hours)"
+        default=86400, ge=3600, description="yfinance info cache TTL (24 hours)"
     )
     dipfinder_signal_cache_ttl: int = Field(
-        default=1800,
-        ge=300,
-        description="Computed signal cache TTL (30 min)"
+        default=1800, ge=300, description="Computed signal cache TTL (30 min)"
     )
-    
+
     # Rate limiting for yfinance
     dipfinder_yf_batch_size: int = Field(
-        default=10,
-        ge=1,
-        le=50,
-        description="Max symbols per yfinance batch request"
+        default=10, ge=1, le=50, description="Max symbols per yfinance batch request"
     )
     dipfinder_yf_batch_delay: float = Field(
         default=1.0,
         ge=0.1,
         le=10.0,
-        description="Delay between yfinance batches (seconds)"
+        description="Delay between yfinance batches (seconds)",
     )
     dipfinder_yf_info_delay: float = Field(
         default=0.5,
         ge=0.1,
         le=5.0,
-        description="Delay between yfinance info requests (seconds)"
+        description="Delay between yfinance info requests (seconds)",
     )
-    
+
     # History settings
     dipfinder_history_years: int = Field(
-        default=5,
-        ge=1,
-        le=10,
-        description="Years of price history to fetch"
+        default=5, ge=1, le=10, description="Years of price history to fetch"
     )
-    
+
     class Config:
         env_prefix = ""
         extra = "ignore"
@@ -176,59 +136,61 @@ class DipFinderSettings(BaseSettings):
 @dataclass
 class DipFinderConfig:
     """Complete DipFinder configuration.
-    
+
     This can be loaded from settings or overridden per-symbol from the database.
     """
-    
+
     # Windows
     windows: List[int] = field(default_factory=lambda: [7, 30, 100, 365])
-    
+
     # Dip thresholds
     min_dip_abs: float = 0.10
     min_persist_days: int = 2
     dip_percentile_threshold: float = 0.80
     dip_vs_typical_threshold: float = 1.5
-    
+
     # Market context
     market_dip_threshold: float = 0.06
     excess_dip_stock_specific: float = 0.04
     excess_dip_market: float = 0.03
-    
+
     # Gates
     quality_gate: float = 60.0
     stability_gate: float = 60.0
-    
+
     # Alert thresholds
     alert_good: float = 70.0
     alert_strong: float = 80.0
-    
+
     # Weights (must sum to 1.0)
     weight_dip: float = 0.45
     weight_quality: float = 0.30
     weight_stability: float = 0.25
-    
+
     # Default benchmark
     default_benchmark: str = "SPY"
-    
+
     # Cache TTLs
     price_cache_ttl: int = 3600
     info_cache_ttl: int = 86400
     signal_cache_ttl: int = 1800
-    
+
     # Rate limiting
     yf_batch_size: int = 10
     yf_batch_delay: float = 1.0
     yf_info_delay: float = 0.5
-    
+
     # History
     history_years: int = 5
-    
+
     @classmethod
-    def from_settings(cls, settings: Optional[DipFinderSettings] = None) -> "DipFinderConfig":
+    def from_settings(
+        cls, settings: Optional[DipFinderSettings] = None
+    ) -> "DipFinderConfig":
         """Create config from settings."""
         if settings is None:
             settings = DipFinderSettings()
-        
+
         return cls(
             windows=settings.dipfinder_windows,
             min_dip_abs=settings.dipfinder_min_dip_abs,
@@ -254,7 +216,7 @@ class DipFinderConfig:
             yf_info_delay=settings.dipfinder_yf_info_delay,
             history_years=settings.dipfinder_history_years,
         )
-    
+
     def with_overrides(
         self,
         min_dip_abs: Optional[float] = None,
@@ -266,7 +228,7 @@ class DipFinderConfig:
     ) -> "DipFinderConfig":
         """Return a new config with optional overrides applied."""
         from dataclasses import replace
-        
+
         overrides = {}
         if min_dip_abs is not None:
             overrides["min_dip_abs"] = min_dip_abs
@@ -280,7 +242,7 @@ class DipFinderConfig:
             overrides["quality_gate"] = quality_gate
         if stability_gate is not None:
             overrides["stability_gate"] = stability_gate
-        
+
         return replace(self, **overrides) if overrides else self
 
 

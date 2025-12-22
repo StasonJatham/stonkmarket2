@@ -104,26 +104,41 @@ export function CronBuilder({ value, onChange }: CronBuilderProps) {
     !PRESETS.some(p => p.value === value && p.value !== 'custom')
   );
   const [customValue, setCustomValue] = useState(value);
+  const [editableValue, setEditableValue] = useState(value);
   
-  const validation = useMemo(() => validateCron(value), [value]);
-  const description = useMemo(() => describeCron(value), [value]);
+  const validation = useMemo(() => validateCron(editableValue), [editableValue]);
+  const description = useMemo(() => describeCron(editableValue), [editableValue]);
   
   const handlePresetChange = (preset: string) => {
     if (preset === 'custom') {
       setIsCustom(true);
       setCustomValue(value);
+      setEditableValue(value);
     } else {
       setIsCustom(false);
+      setEditableValue(preset);
       onChange(preset);
     }
   };
   
-  const handleCustomChange = (newValue: string) => {
-    setCustomValue(newValue);
-    onChange(newValue);
+  const handleEditableChange = (newValue: string) => {
+    setEditableValue(newValue);
+    // Only propagate if valid
+    const result = validateCron(newValue);
+    if (result.valid) {
+      onChange(newValue);
+      // Check if it matches a preset
+      const matchedPreset = PRESETS.find(p => p.value === newValue && p.value !== 'custom');
+      if (matchedPreset) {
+        setIsCustom(false);
+      } else {
+        setIsCustom(true);
+        setCustomValue(newValue);
+      }
+    }
   };
   
-  const currentPreset = isCustom ? 'custom' : (PRESETS.find(p => p.value === value)?.value || 'custom');
+  const currentPreset = isCustom ? 'custom' : (PRESETS.find(p => p.value === editableValue)?.value || 'custom');
 
   return (
     <div className="space-y-4">
@@ -157,7 +172,10 @@ export function CronBuilder({ value, onChange }: CronBuilderProps) {
           <Label>Cron Expression</Label>
           <Input
             value={customValue}
-            onChange={(e) => handleCustomChange(e.target.value)}
+            onChange={(e) => {
+              setCustomValue(e.target.value);
+              handleEditableChange(e.target.value);
+            }}
             placeholder="* * * * *"
             className="font-mono"
           />
@@ -167,28 +185,35 @@ export function CronBuilder({ value, onChange }: CronBuilderProps) {
         </div>
       )}
 
-      {/* Result */}
-      <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50 border">
-        <div className="space-y-1">
-          <div className="font-mono text-sm font-medium">{value}</div>
-          <div className="text-xs text-muted-foreground">{description}</div>
+      {/* Editable Result - Always allow manual editing */}
+      <div className="space-y-2">
+        <Label className="text-xs">Edit Schedule Directly</Label>
+        <div className="flex items-center gap-2">
+          <Input
+            value={editableValue}
+            onChange={(e) => handleEditableChange(e.target.value)}
+            placeholder="* * * * *"
+            className="font-mono flex-1"
+          />
+          {validation.valid ? (
+            <Badge variant="outline" className="bg-success/10 text-success border-success/30 shrink-0">
+              <CheckCircle className="h-3 w-3 mr-1" />
+              Valid
+            </Badge>
+          ) : (
+            <Badge variant="destructive" className="shrink-0">
+              <AlertCircle className="h-3 w-3 mr-1" />
+              Invalid
+            </Badge>
+          )}
         </div>
-        {validation.valid ? (
-          <Badge variant="outline" className="bg-success/10 text-success border-success/30">
-            <CheckCircle className="h-3 w-3 mr-1" />
-            Valid
-          </Badge>
-        ) : (
-          <Badge variant="destructive">
-            <AlertCircle className="h-3 w-3 mr-1" />
-            Invalid
-          </Badge>
+        {validation.valid && (
+          <p className="text-xs text-muted-foreground">{description}</p>
+        )}
+        {!validation.valid && (
+          <p className="text-xs text-danger">{validation.error}</p>
         )}
       </div>
-      
-      {!validation.valid && (
-        <p className="text-xs text-danger">{validation.error}</p>
-      )}
     </div>
   );
 }

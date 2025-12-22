@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -167,56 +168,73 @@ export function ApiKeyManager({ onError, onSuccess }: ApiKeyManagerProps) {
   // MFA required warning
   if (!mfaEnabled) {
     return (
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Key className="h-5 w-5" />
-            API Keys
-          </CardTitle>
-          <CardDescription>
-            Manage external API keys (OpenAI, etc.)
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="flex items-center gap-3 p-4 bg-warning/10 text-warning rounded-lg">
-            <Shield className="h-5 w-5 shrink-0" />
-            <div>
-              <div className="font-medium">MFA Required</div>
-              <div className="text-sm opacity-80">
-                You must enable two-factor authentication before managing API keys.
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.2 }}
+      >
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Key className="h-5 w-5" />
+              Service Keys
+            </CardTitle>
+            <CardDescription>
+              Configure API keys for external services (OpenAI for AI features)
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <motion.div 
+              className="flex items-center gap-3 p-4 bg-warning/10 text-warning rounded-lg"
+              initial={{ scale: 0.95 }}
+              animate={{ scale: 1 }}
+              transition={{ delay: 0.1 }}
+            >
+              <Shield className="h-5 w-5 shrink-0" />
+              <div>
+                <div className="font-medium">MFA Required</div>
+                <div className="text-sm opacity-80">
+                  You must enable two-factor authentication before managing API keys.
+                </div>
               </div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+            </motion.div>
+          </CardContent>
+        </Card>
+      </motion.div>
     );
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <div>
-            <CardTitle className="flex items-center gap-2">
-              <Key className="h-5 w-5" />
-              API Keys
-            </CardTitle>
-            <CardDescription>
-              Securely store external API keys. MFA verification required for all operations.
-            </CardDescription>
-          </div>
-          <Button onClick={() => setAddDialogOpen(true)}>
-            <Plus className="h-4 w-4 mr-2" />
-            Add Key
-          </Button>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {/* OpenAI Key Status */}
-        <div className="p-4 bg-muted/50 rounded-lg">
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2 }}
+    >
+      <Card>
+        <CardHeader>
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-background rounded-lg">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <Key className="h-5 w-5" />
+                Service Keys
+              </CardTitle>
+              <CardDescription>
+                Configure API keys for backend services (OpenAI for AI features). MFA required.
+              </CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* OpenAI Key Status */}
+          <motion.div 
+            className="p-4 bg-muted/50 rounded-lg"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.1 }}
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-background rounded-lg">
                 <Key className="h-5 w-5" />
               </div>
               <div>
@@ -242,6 +260,17 @@ export function ApiKeyManager({ onError, onSuccess }: ApiKeyManagerProps) {
                     Configured
                   </Badge>
                   <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setKeyName('OPENAI_API_KEY');
+                      setKeyValue('');
+                      setAddDialogOpen(true);
+                    }}
+                  >
+                    Update
+                  </Button>
+                  <Button
                     variant="ghost"
                     size="icon"
                     onClick={() => {
@@ -263,73 +292,49 @@ export function ApiKeyManager({ onError, onSuccess }: ApiKeyManagerProps) {
                   </Button>
                 </>
               ) : (
-                <Badge variant="secondary">Not Set</Badge>
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    setKeyName('OPENAI_API_KEY');
+                    setKeyValue('');
+                    setAddDialogOpen(true);
+                  }}
+                >
+                  <Plus className="h-4 w-4 mr-1" />
+                  Configure
+                </Button>
               )}
             </div>
           </div>
-        </div>
-
-        {/* Other keys */}
-        {keys.filter(k => k.key_name !== 'OPENAI_API_KEY').map((key) => (
-          <div key={key.id} className="p-4 bg-muted/50 rounded-lg">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-background rounded-lg">
-                  <Key className="h-5 w-5" />
-                </div>
-                <div>
-                  <div className="font-medium font-mono">{key.key_name}</div>
-                  <div className="text-sm text-muted-foreground">
-                    <span className="font-mono">{key.key_hint}</span>
-                  </div>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => {
-                    setRevealingKey(key.key_name);
-                    setRevealDialogOpen(true);
-                  }}
-                >
-                  <Eye className="h-4 w-4" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => {
-                    setDeletingKey(key.key_name);
-                    setDeleteDialogOpen(true);
-                  }}
-                >
-                  <Trash2 className="h-4 w-4 text-danger" />
-                </Button>
-              </div>
-            </div>
-          </div>
-        ))}
+        </motion.div>
       </CardContent>
 
-      {/* Add Dialog */}
+      {/* Add/Update Dialog */}
       <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Add API Key</DialogTitle>
+            <DialogTitle>
+              {openAiKey && keyName === 'OPENAI_API_KEY' ? 'Update OpenAI API Key' : 'Configure API Key'}
+            </DialogTitle>
             <DialogDescription>
-              Store an API key securely. You'll need your MFA code to save it.
+              {openAiKey && keyName === 'OPENAI_API_KEY'
+                ? 'Enter the new API key value. This will replace the existing key.'
+                : 'Store an API key securely. You\'ll need your MFA code to save it.'
+              }
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label>Key Name</Label>
-              <Input
-                value={keyName}
-                onChange={(e) => setKeyName(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ''))}
-                placeholder="OPENAI_API_KEY"
-                className="font-mono"
-              />
-            </div>
+            {keyName !== 'OPENAI_API_KEY' && (
+              <div className="space-y-2">
+                <Label>Key Name</Label>
+                <Input
+                  value={keyName}
+                  onChange={(e) => setKeyName(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ''))}
+                  placeholder="OPENAI_API_KEY"
+                  className="font-mono"
+                />
+              </div>
+            )}
             <div className="space-y-2">
               <Label>API Key Value</Label>
               <Input
@@ -460,5 +465,6 @@ export function ApiKeyManager({ onError, onSuccess }: ApiKeyManagerProps) {
         </DialogContent>
       </Dialog>
     </Card>
+    </motion.div>
   );
 }

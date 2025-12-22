@@ -5,7 +5,6 @@ Also provides SQLite sync connections for backward compatibility during migratio
 
 from __future__ import annotations
 
-import asyncio
 import sqlite3
 from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime
@@ -31,19 +30,20 @@ _sqlite_path: Optional[Path] = None
 # SQLite Sync Connections (Legacy - for backward compatibility)
 # ============================================================================
 
+
 def init_sqlite_db(db_path: str = None) -> None:
     """Initialize SQLite database for sync access."""
     global _sqlite_path
-    
+
     path = db_path or settings.sqlite_path or "/data/dips.sqlite"
     _sqlite_path = Path(path)
     _sqlite_path.parent.mkdir(parents=True, exist_ok=True)
-    
+
     # Create tables if needed
     with sqlite3.connect(_sqlite_path) as conn:
         conn.row_factory = sqlite3.Row
         _init_sqlite_tables(conn)
-    
+
     logger.info(f"SQLite database initialized: {_sqlite_path}")
 
 
@@ -159,15 +159,23 @@ def _init_sqlite_tables(conn: sqlite3.Connection) -> None:
         VALUES ('analysis', '30 */4 * * *', 'Run analysis 30 min after data grab');
     """)
     conn.commit()
-    
+
     # Ensure default admin exists
     from app.core.security import hash_password
-    cur = conn.execute("SELECT 1 FROM auth_user WHERE username = ?", (settings.default_admin_user,))
+
+    cur = conn.execute(
+        "SELECT 1 FROM auth_user WHERE username = ?", (settings.default_admin_user,)
+    )
     if cur.fetchone() is None:
         now = datetime.utcnow().isoformat()
         conn.execute(
             "INSERT INTO auth_user (username, password_hash, created_at, updated_at, is_admin) VALUES (?, ?, ?, ?, 1)",
-            (settings.default_admin_user, hash_password(settings.default_admin_password), now, now)
+            (
+                settings.default_admin_user,
+                hash_password(settings.default_admin_password),
+                now,
+                now,
+            ),
         )
         conn.commit()
         logger.info(f"Created default admin user: {settings.default_admin_user}")
@@ -177,10 +185,10 @@ def _init_sqlite_tables(conn: sqlite3.Connection) -> None:
 def get_db_connection() -> Iterator[sqlite3.Connection]:
     """Get a SQLite database connection (sync, for legacy repos)."""
     global _sqlite_path
-    
+
     if _sqlite_path is None:
         init_sqlite_db()
-    
+
     conn = sqlite3.connect(_sqlite_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     try:
@@ -218,13 +226,14 @@ async def db_healthcheck() -> bool:
 # PostgreSQL Async Connections (for new async code like DipFinder)
 # ============================================================================
 
+
 async def init_pg_pool() -> Pool:
     """Initialize PostgreSQL connection pool."""
     global _pool
-    
+
     if _pool is not None:
         return _pool
-    
+
     try:
         _pool = await asyncpg.create_pool(
             dsn=settings.database_url,

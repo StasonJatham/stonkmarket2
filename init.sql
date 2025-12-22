@@ -65,6 +65,9 @@ CREATE TABLE IF NOT EXISTS symbols (
     name VARCHAR(255),
     sector VARCHAR(100),
     market_cap BIGINT,
+    min_dip_pct DECIMAL(5, 4) DEFAULT 0.15,
+    min_days INTEGER DEFAULT 5,
+    is_active BOOLEAN DEFAULT TRUE,
     added_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -379,13 +382,12 @@ ORDER BY date DESC, service;
 -- DEFAULT DATA
 -- ============================================================================
 
--- Insert default cron jobs
+-- Insert default cron jobs (exactly 4)
 INSERT INTO cronjobs (name, cron_expression, is_active, config) VALUES
-    ('dip_scanner', '0 */4 * * *', TRUE, '{"description": "Scan for stock dips every 4 hours"}'),
-    ('batch_ai_dips', '0 3 * * 0', TRUE, '{"description": "Weekly batch AI analysis for all dips (Sunday 3 AM)"}'),
-    ('batch_ai_suggestions', '0 4 * * 0', TRUE, '{"description": "Weekly batch AI bios for suggestions (Sunday 4 AM)"}'),
-    ('cleanup_expired', '0 0 * * *', TRUE, '{"description": "Daily cleanup of expired data"}'),
-    ('sync_batch_jobs', '*/15 * * * *', TRUE, '{"description": "Check batch job status every 15 minutes"}')
+    ('data_grab', '0 23 * * 1-5', TRUE, '{"description": "Fetch stock data from yfinance Mon-Fri 11pm"}'),
+    ('batch_ai_tinder', '0 3 * * 0', TRUE, '{"description": "Generate tinder bios weekly Sunday 3am"}'),
+    ('batch_ai_analysis', '0 4 * * 0', TRUE, '{"description": "Generate dip analysis weekly Sunday 4am"}'),
+    ('cleanup', '0 0 * * *', TRUE, '{"description": "Clean up expired data daily midnight"}')
 ON CONFLICT (name) DO NOTHING;
 
 -- Create indexes for full-text search on stock names

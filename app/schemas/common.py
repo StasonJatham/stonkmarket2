@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, Field
 
@@ -18,22 +18,38 @@ class ErrorResponse(BaseModel):
         default=None, description="Additional error details"
     )
 
-    model_config = {"json_schema_extra": {"example": {"error": "NOT_FOUND", "message": "Symbol not found", "status": 404}}}
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "error": "NOT_FOUND",
+                "message": "Symbol not found",
+                "status": 404,
+            }
+        }
+    }
 
 
 class HealthResponse(BaseModel):
     """Health check response."""
 
-    status: str = Field(..., description="Overall health status", examples=["healthy", "degraded", "unhealthy"])
+    status: str = Field(
+        ...,
+        description="Overall health status",
+        examples=["healthy", "degraded", "unhealthy"],
+    )
     version: str = Field(..., description="Application version")
     timestamp: datetime = Field(default_factory=datetime.utcnow)
-    checks: Dict[str, bool] = Field(default_factory=dict, description="Individual service health checks")
+    checks: Dict[str, bool] = Field(
+        default_factory=dict, description="Individual service health checks"
+    )
 
 
 class PaginationParams(BaseModel):
     """Pagination parameters."""
 
-    limit: int = Field(default=50, ge=1, le=500, description="Number of items to return")
+    limit: int = Field(
+        default=50, ge=1, le=500, description="Number of items to return"
+    )
     offset: int = Field(default=0, ge=0, description="Number of items to skip")
 
 

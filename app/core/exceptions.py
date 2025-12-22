@@ -122,7 +122,9 @@ def register_exception_handlers(app: FastAPI) -> None:
     """Register centralized exception handlers."""
 
     @app.exception_handler(AppException)
-    async def app_exception_handler(request: Request, exc: AppException) -> JSONResponse:
+    async def app_exception_handler(
+        request: Request, exc: AppException
+    ) -> JSONResponse:
         return JSONResponse(
             status_code=exc.status_code,
             content=exc.to_dict(),
@@ -130,7 +132,9 @@ def register_exception_handlers(app: FastAPI) -> None:
         )
 
     @app.exception_handler(Exception)
-    async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    async def generic_exception_handler(
+        request: Request, exc: Exception
+    ) -> JSONResponse:
         # Log the actual error but return generic message
         import logging
 

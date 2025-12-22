@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, Request, Header
+from fastapi import APIRouter, Query, Request, Header
 
-from app.api.dependencies import get_db
 from app.core.exceptions import NotFoundError, ValidationError
 from app.core.fingerprint import get_vote_identifier
 from app.repositories import user_api_keys
@@ -30,11 +29,13 @@ router = APIRouter()
     description="Get all current dips as tinder-style cards.",
 )
 async def get_dip_cards(
-    include_ai: bool = Query(False, description="Fetch fresh AI analysis for cards without it (slower)"),
+    include_ai: bool = Query(
+        False, description="Fetch fresh AI analysis for cards without it (slower)"
+    ),
 ) -> DipCardList:
     """Get all current dips as swipeable cards."""
     cards = await stock_tinder.get_all_dip_cards(include_ai=include_ai)
-    
+
     return DipCardList(
         cards=[
             DipCard(
@@ -74,10 +75,10 @@ async def get_dip_card(
         card = await stock_tinder.get_dip_card_with_fresh_ai(symbol.upper())
     else:
         card = await stock_tinder.get_dip_card(symbol.upper())
-    
+
     if not card:
         raise NotFoundError(f"Symbol {symbol.upper()} is not currently in a dip")
-    
+
     return DipCard(
         symbol=card["symbol"],
         name=card.get("name"),
@@ -110,27 +111,27 @@ async def vote_on_dip(
 ) -> DipVoteResponse:
     """
     Vote on a stock dip.
-    
+
     Uses PUT since voting is idempotent within the cooldown period.
-    
+
     Vote cooldown: Each user can only vote once per stock every 7 days.
     Users are identified by a fingerprint combining IP + browser headers.
-    
+
     API key holders get 10x vote weight. Use X-API-Key header for authenticated voting.
     """
     # Get voter identifier
     vote_id = get_vote_identifier(request, symbol.upper())
-    
+
     # Check for API key and get vote weight
     vote_weight = 1
     api_key_id = None
-    
+
     if x_api_key:
         key_data = await user_api_keys.validate_api_key(x_api_key)
         if key_data:
             vote_weight = key_data.get("vote_weight", 10)
             api_key_id = key_data.get("id")
-    
+
     success, error = await stock_tinder.vote_on_dip(
         symbol=symbol.upper(),
         voter_identifier=vote_id,
@@ -138,12 +139,12 @@ async def vote_on_dip(
         vote_weight=vote_weight,
         api_key_id=api_key_id,
     )
-    
+
     if not success:
         raise ValidationError(error or "Failed to record vote")
-    
+
     weight_msg = f" (weight: {vote_weight}x)" if vote_weight > 1 else ""
-    
+
     return DipVoteResponse(
         symbol=symbol.upper(),
         vote_type=payload.vote_type,
@@ -160,7 +161,7 @@ async def vote_on_dip(
 async def get_dip_stats(symbol: str) -> DipStats:
     """Get voting statistics for a dip."""
     stats = await stock_tinder.get_vote_stats(symbol.upper())
-    
+
     return DipStats(
         symbol=stats["symbol"],
         vote_counts=VoteCounts(**stats["vote_counts"]),
@@ -181,10 +182,10 @@ async def get_dip_stats(symbol: str) -> DipStats:
 async def refresh_ai_analysis(symbol: str) -> DipCard:
     """Force refresh AI analysis for a dip."""
     card = await stock_tinder.get_dip_card_with_fresh_ai(symbol.upper())
-    
+
     if not card:
         raise NotFoundError(f"Symbol {symbol.upper()} is not currently in a dip")
-    
+
     return DipCard(
         symbol=card["symbol"],
         name=card.get("name"),

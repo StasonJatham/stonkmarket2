@@ -162,7 +162,7 @@ def get_auth_rate_limiter() -> RateLimiter:
 
 def get_api_rate_limiter(authenticated: bool = False) -> RateLimiter:
     """Get rate limiter for API endpoints.
-    
+
     Args:
         authenticated: If True, use higher limits for authenticated users
     """

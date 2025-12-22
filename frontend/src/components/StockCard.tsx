@@ -23,10 +23,17 @@ function formatMarketCap(value: number | null): string {
   return `$${value.toFixed(0)}`;
 }
 
-function formatPercent(value: number | null, showSign = true): string {
-  if (value === null) return '—';
-  const sign = showSign && value >= 0 ? '+' : '';
+function formatPercent(value: number | null | undefined, showSign = true): string {
+  if (value === null || value === undefined) return '—';
+  const sign = showSign ? (value >= 0 ? '+' : '') : '';
   return `${sign}${value.toFixed(2)}%`;
+}
+
+function formatDipPercent(depth: number): string {
+  // Depth is a positive fraction (0.15 = 15% dip from peak)
+  // Display as negative percentage since it's a dip down
+  const pct = depth * 100;
+  return `-${pct.toFixed(1)}%`;
 }
 
 // Memoize the component to prevent unnecessary re-renders
@@ -67,28 +74,31 @@ export const StockCard = memo(function StockCard({
       whileHover={{ scale: 1.01 }}
       whileTap={{ scale: 0.99 }}
       transition={{ duration: 0.15 }}
+      className="h-full"
     >
       <Card 
-        className={`overflow-hidden cursor-pointer transition-all duration-200 hover:shadow-md ${
+        className={`overflow-hidden cursor-pointer transition-all duration-200 hover:shadow-md h-full ${
           isSelected ? 'ring-2 ring-foreground' : ''
         }`}
         onClick={onClick}
       >
         <CardContent className="p-4">
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
             {/* Stock Info */}
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="font-semibold text-lg">{stock.symbol}</span>
-                {stock.sector && (
-                  <Badge variant="secondary" className="text-xs font-normal hidden sm:inline-flex">
-                    {stock.sector}
-                  </Badge>
-                )}
+            <div className="flex-1 min-w-0 overflow-hidden">
+              <div className="flex flex-col gap-0.5">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="font-semibold text-lg shrink-0">{stock.symbol}</span>
+                  {stock.sector && (
+                    <Badge variant="secondary" className="text-[10px] font-normal px-1.5 py-0 h-4 truncate max-w-[80px] sm:max-w-[120px]">
+                      {stock.sector}
+                    </Badge>
+                  )}
+                </div>
+                <p className="text-sm text-muted-foreground truncate">
+                  {stock.name || stock.symbol}
+                </p>
               </div>
-              <p className="text-sm text-muted-foreground truncate">
-                {stock.name || stock.symbol}
-              </p>
             </div>
 
             {/* Mini Chart */}
@@ -119,18 +129,22 @@ export const StockCard = memo(function StockCard({
               <div className="font-semibold text-lg font-mono">
                 ${stock.last_price.toFixed(2)}
               </div>
-              <div className={`flex items-center justify-end gap-1 text-sm ${
-                isPositive ? 'text-success' : 'text-danger'
-              }`}>
-                {isPositive ? (
-                  <TrendingUp className="h-3.5 w-3.5" />
-                ) : (
-                  <TrendingDown className="h-3.5 w-3.5" />
-                )}
-                <span className="font-medium">
-                  {formatPercent(stock.change_percent)}
-                </span>
-              </div>
+              {stock.change_percent !== null && stock.change_percent !== undefined ? (
+                <div className={`flex items-center justify-end gap-1 text-sm ${
+                  stock.change_percent >= 0 ? 'text-success' : 'text-danger'
+                }`}>
+                  {stock.change_percent >= 0 ? (
+                    <TrendingUp className="h-3.5 w-3.5" />
+                  ) : (
+                    <TrendingDown className="h-3.5 w-3.5" />
+                  )}
+                  <span className="font-medium">
+                    {formatPercent(stock.change_percent)}
+                  </span>
+                </div>
+              ) : (
+                <div className="text-sm text-muted-foreground">—</div>
+              )}
             </div>
 
             {/* Arrow */}
@@ -141,8 +155,8 @@ export const StockCard = memo(function StockCard({
           <div className="flex items-center gap-4 mt-3 pt-3 border-t border-border/50 text-xs text-muted-foreground">
             <div>
               <span className="text-foreground/60">Dip:</span>{' '}
-              <span className={`font-medium ${stock.depth < 0 ? 'text-danger' : ''}`}>
-                {formatPercent(stock.depth * 100)}
+              <span className="font-medium text-danger">
+                {formatDipPercent(stock.depth)}
               </span>
             </div>
             <div>
@@ -170,7 +184,7 @@ export const StockCard = memo(function StockCard({
 
 export function StockCardSkeleton() {
   return (
-    <Card className="overflow-hidden">
+    <Card className="overflow-hidden h-full">
       <CardContent className="p-4">
         <div className="flex items-center gap-4">
           <div className="flex-1 space-y-2">

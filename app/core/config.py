@@ -22,29 +22,42 @@ class Settings(BaseSettings):
     # Application
     app_name: str = "Stonkmarket API"
     app_version: str = "1.0.0"
-    debug: bool = Field(default=False, description="Enable debug mode (disable in production)")
+    debug: bool = Field(
+        default=False, description="Enable debug mode (disable in production)"
+    )
     root_path: str = Field(default="", description="Root path for reverse proxy")
-    environment: str = Field(default="production", description="Environment: development, staging, production")
+    environment: str = Field(
+        default="production",
+        description="Environment: development, staging, production",
+    )
 
     # Database
     database_url: str = Field(
         default="postgresql://stonkmarket:stonkmarket@localhost:5432/stonkmarket",
-        description="PostgreSQL connection URL"
+        description="PostgreSQL connection URL",
     )
     sqlite_path: str = Field(
         default="/data/dips.sqlite",
-        description="SQLite database path (for legacy sync operations)"
+        description="SQLite database path (for legacy sync operations)",
     )
-    db_pool_min_size: int = Field(default=5, ge=1, le=20, description="Minimum database pool connections")
-    db_pool_max_size: int = Field(default=20, ge=5, le=100, description="Maximum database pool connections")
+    db_pool_min_size: int = Field(
+        default=5, ge=1, le=20, description="Minimum database pool connections"
+    )
+    db_pool_max_size: int = Field(
+        default=20, ge=5, le=100, description="Maximum database pool connections"
+    )
 
     # Security
     auth_secret: str = Field(
         default="dev-secret-please-change-in-production-min-32-chars",
         description="Secret key for JWT signing (min 32 chars in production)",
     )
-    access_token_expire_minutes: int = Field(default=60 * 24 * 7, ge=1, description="JWT expiration in minutes")
-    password_min_length: int = Field(default=8, ge=6, description="Minimum password length")
+    access_token_expire_minutes: int = Field(
+        default=60 * 24 * 7, ge=1, description="JWT expiration in minutes"
+    )
+    password_min_length: int = Field(
+        default=8, ge=6, description="Minimum password length"
+    )
 
     # Admin
     default_admin_user: str = Field(default="admin", min_length=3)
@@ -62,29 +75,65 @@ class Settings(BaseSettings):
 
     # Rate limiting (designed to prevent abuse, not interfere with normal usage)
     rate_limit_enabled: bool = Field(default=True, description="Enable rate limiting")
-    rate_limit_auth: str = Field(default="20/minute", description="Rate limit for auth endpoints (unauthenticated)")
-    rate_limit_api_anonymous: str = Field(default="60/minute", description="Rate limit for anonymous API requests")
-    rate_limit_api_authenticated: str = Field(default="600/minute", description="Rate limit for authenticated API requests")
+    rate_limit_auth: str = Field(
+        default="20/minute",
+        description="Rate limit for auth endpoints (unauthenticated)",
+    )
+    rate_limit_api_anonymous: str = Field(
+        default="60/minute", description="Rate limit for anonymous API requests"
+    )
+    rate_limit_api_authenticated: str = Field(
+        default="600/minute", description="Rate limit for authenticated API requests"
+    )
     # Note: Admin users bypass rate limiting entirely
 
     # Suggestion voting settings
-    vote_cooldown_days: int = Field(default=7, ge=1, le=90, description="Days before same user can vote for same stock again")
-    
+    vote_cooldown_days: int = Field(
+        default=7,
+        ge=1,
+        le=90,
+        description="Days before same user can vote for same stock again",
+    )
+
     # Auto-approve settings (all conditions must be met)
-    auto_approve_enabled: bool = Field(default=False, description="Enable auto-approval of suggestions")
-    auto_approve_votes: int = Field(default=50, ge=5, description="Minimum votes required for auto-approval")
-    auto_approve_unique_voters: int = Field(default=10, ge=3, description="Minimum unique voters (by fingerprint) required")
-    auto_approve_min_age_hours: int = Field(default=48, ge=1, description="Minimum hours since suggestion created")
+    auto_approve_enabled: bool = Field(
+        default=False, description="Enable auto-approval of suggestions"
+    )
+    auto_approve_votes: int = Field(
+        default=50, ge=5, description="Minimum votes required for auto-approval"
+    )
+    auto_approve_unique_voters: int = Field(
+        default=10, ge=3, description="Minimum unique voters (by fingerprint) required"
+    )
+    auto_approve_min_age_hours: int = Field(
+        default=48, ge=1, description="Minimum hours since suggestion created"
+    )
 
     # Valkey (Redis-compatible)
-    valkey_url: str = Field(default="redis://valkey:6379/0", description="Valkey connection URL")
+    valkey_url: str = Field(
+        default="redis://valkey:6379/0", description="Valkey connection URL"
+    )
     valkey_max_connections: int = Field(default=10, ge=1, le=100)
-    cache_default_ttl: int = Field(default=300, ge=1, description="Default cache TTL in seconds")
-    session_ttl: int = Field(default=60 * 60 * 24 * 7, ge=60, description="Session TTL in seconds")
+    cache_default_ttl: int = Field(
+        default=300, ge=1, description="Default cache TTL in seconds"
+    )
+    session_ttl: int = Field(
+        default=60 * 60 * 24 * 7, ge=60, description="Session TTL in seconds"
+    )
 
     # Stock data
     default_symbols: List[str] = Field(
-        default_factory=lambda: ["AAPL", "MSFT", "GOOG", "AMZN", "META", "TSLA", "NVDA", "NFLX", "AMD"]
+        default_factory=lambda: [
+            "AAPL",
+            "MSFT",
+            "GOOG",
+            "AMZN",
+            "META",
+            "TSLA",
+            "NVDA",
+            "NFLX",
+            "AMD",
+        ]
     )
     default_min_dip_pct: float = Field(default=0.10, gt=0, lt=1)
     default_min_days: int = Field(default=2, ge=0)
@@ -93,15 +142,23 @@ class Settings(BaseSettings):
     chart_days: int = Field(default=180, ge=7, le=365)
 
     # Scheduler
-    scheduler_enabled: bool = Field(default=True, description="Enable background job scheduler")
+    scheduler_enabled: bool = Field(
+        default=True, description="Enable background job scheduler"
+    )
     scheduler_timezone: str = Field(default="UTC", description="Scheduler timezone")
 
     # External API timeouts
-    external_api_timeout: int = Field(default=30, ge=5, le=120, description="External API timeout in seconds")
-    external_api_retries: int = Field(default=3, ge=0, le=5, description="External API retry count")
+    external_api_timeout: int = Field(
+        default=30, ge=5, le=120, description="External API timeout in seconds"
+    )
+    external_api_retries: int = Field(
+        default=3, ge=0, le=5, description="External API retry count"
+    )
 
     # Logging
-    log_level: str = Field(default="INFO", description="Log level: DEBUG, INFO, WARNING, ERROR")
+    log_level: str = Field(
+        default="INFO", description="Log level: DEBUG, INFO, WARNING, ERROR"
+    )
     log_format: str = Field(default="json", description="Log format: json or text")
 
     @field_validator("cors_origins", mode="before")

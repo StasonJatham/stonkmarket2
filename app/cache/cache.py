@@ -95,6 +95,35 @@ class Cache:
             logger.warning(f"Cache delete failed: {e}")
             return False
 
+    async def invalidate_pattern(self, pattern: str) -> int:
+        """Delete all keys matching pattern in this cache's namespace.
+
+        Args:
+            pattern: Glob pattern (* matches any characters)
+
+        Returns:
+            Number of keys deleted
+        """
+        client = await get_valkey_client()
+        full_pattern = f"{CACHE_PREFIX}:{CACHE_VERSION}:{self.prefix}:{pattern}"
+        try:
+            deleted = 0
+            cursor = None
+            while cursor != 0:
+                cursor, keys = await client.scan(
+                    cursor=cursor or 0, match=full_pattern, count=100
+                )
+                if keys:
+                    await client.delete(*keys)
+                    deleted += len(keys)
+            logger.info(
+                f"Cache invalidate pattern '{full_pattern}': deleted {deleted} keys"
+            )
+            return deleted
+        except Exception as e:
+            logger.warning(f"Cache invalidate pattern failed: {e}")
+            return 0
+
     async def get_or_set(
         self,
         key: str,

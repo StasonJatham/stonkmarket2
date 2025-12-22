@@ -11,7 +11,7 @@ import asyncio
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
@@ -38,10 +38,10 @@ _info_request_lock = asyncio.Lock()
 @dataclass
 class QualityMetrics:
     """Quality metrics and score for a stock."""
-    
+
     ticker: str
     score: float  # 0-100
-    
+
     # Contributing factors
     profit_margin: Optional[float] = None
     operating_margin: Optional[float] = None
@@ -53,18 +53,18 @@ class QualityMetrics:
     earnings_growth: Optional[float] = None
     market_cap: Optional[float] = None
     avg_volume: Optional[float] = None
-    
+
     # Sub-scores (0-100)
     profitability_score: float = 50.0
     balance_sheet_score: float = 50.0
     cash_generation_score: float = 50.0
     growth_score: float = 50.0
     liquidity_score: float = 50.0
-    
+
     # Data quality
     fields_available: int = 0
     fields_total: int = 10
-    
+
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON/DB storage."""
         return {
@@ -112,20 +112,20 @@ def _normalize_score(
 ) -> float:
     """
     Normalize a metric to 0-100 score.
-    
+
     Args:
         value: The metric value
         optimal: Optimal value (gets 100)
         good_range: (low, high) range that gets 60-100
         bad_threshold: Value below which score is 0-40
         inverse: If True, lower is better (e.g., debt ratio)
-        
+
     Returns:
         Score 0-100 (50 if value is None)
     """
     if value is None:
         return 50.0  # Neutral for missing data
-    
+
     if inverse:
         # Flip for metrics where lower is better
         value = -value
@@ -133,9 +133,9 @@ def _normalize_score(
         good_range = (-good_range[1], -good_range[0])
         if bad_threshold is not None:
             bad_threshold = -bad_threshold
-    
+
     low, high = good_range
-    
+
     # Check if in good range
     if low <= value <= high:
         # Linear interpolation 60-100
@@ -143,22 +143,22 @@ def _normalize_score(
             return 80.0
         position = (value - low) / (high - low)
         return 60.0 + position * 40.0
-    
+
     # Above good range (excellent)
     if value > high:
         # Cap at 100, scale bonus
         bonus = min((value - high) / (high - low + 0.001) * 10, 10)
         return min(100.0, 90.0 + bonus)
-    
+
     # Below good range
     if bad_threshold is not None and value < bad_threshold:
         return 20.0  # Very bad
-    
+
     # Between bad threshold and good range
     if low != 0:
         position = max(0, value / low)
         return 40.0 + position * 20.0
-    
+
     return 40.0
 
 
@@ -166,12 +166,12 @@ def _compute_profitability_score(info: Dict[str, Any]) -> tuple[float, Dict[str,
     """Compute profitability sub-score."""
     profit_margin = _safe_float(info.get("profitMargins"))
     operating_margin = _safe_float(info.get("operatingMargins"))
-    
+
     factors = {
         "profit_margin": profit_margin,
         "operating_margin": operating_margin,
     }
-    
+
     # Score profit margin (10% optimal, 5-20% good)
     pm_score = _normalize_score(
         profit_margin,
@@ -179,7 +179,7 @@ def _compute_profitability_score(info: Dict[str, Any]) -> tuple[float, Dict[str,
         good_range=(0.05, 0.25),
         bad_threshold=0.0,
     )
-    
+
     # Score operating margin (15% optimal, 8-30% good)
     om_score = _normalize_score(
         operating_margin,
@@ -187,7 +187,7 @@ def _compute_profitability_score(info: Dict[str, Any]) -> tuple[float, Dict[str,
         good_range=(0.08, 0.35),
         bad_threshold=0.0,
     )
-    
+
     # Average, but weight profit margin slightly higher
     if profit_margin is not None and operating_margin is not None:
         score = pm_score * 0.55 + om_score * 0.45
@@ -197,7 +197,7 @@ def _compute_profitability_score(info: Dict[str, Any]) -> tuple[float, Dict[str,
         score = om_score
     else:
         score = 50.0  # Neutral
-    
+
     return score, factors
 
 
@@ -205,12 +205,12 @@ def _compute_balance_sheet_score(info: Dict[str, Any]) -> tuple[float, Dict[str,
     """Compute balance sheet sub-score."""
     debt_to_equity = _safe_float(info.get("debtToEquity"))
     current_ratio = _safe_float(info.get("currentRatio"))
-    
+
     factors = {
         "debt_to_equity": debt_to_equity,
         "current_ratio": current_ratio,
     }
-    
+
     # Score debt to equity (lower is better, 0-50% good, >200% bad)
     de_score = _normalize_score(
         debt_to_equity,
@@ -219,7 +219,7 @@ def _compute_balance_sheet_score(info: Dict[str, Any]) -> tuple[float, Dict[str,
         bad_threshold=250.0,
         inverse=True,
     )
-    
+
     # Score current ratio (1.5-2.5 optimal)
     cr_score = _normalize_score(
         current_ratio,
@@ -227,41 +227,43 @@ def _compute_balance_sheet_score(info: Dict[str, Any]) -> tuple[float, Dict[str,
         good_range=(1.2, 3.0),
         bad_threshold=0.8,
     )
-    
+
     # Average
     scores = []
     if debt_to_equity is not None:
         scores.append(de_score)
     if current_ratio is not None:
         scores.append(cr_score)
-    
+
     score = sum(scores) / len(scores) if scores else 50.0
-    
+
     return score, factors
 
 
-def _compute_cash_generation_score(info: Dict[str, Any]) -> tuple[float, Dict[str, Any]]:
+def _compute_cash_generation_score(
+    info: Dict[str, Any],
+) -> tuple[float, Dict[str, Any]]:
     """Compute cash generation sub-score."""
     free_cash_flow = _safe_float(info.get("freeCashflow"))
     market_cap = _safe_float(info.get("marketCap"))
-    
+
     factors = {
         "free_cash_flow": free_cash_flow,
     }
-    
+
     # FCF positive is baseline
     if free_cash_flow is None:
         return 50.0, factors
-    
+
     if free_cash_flow <= 0:
         return 30.0, factors  # Negative FCF is concerning
-    
+
     # FCF to market cap ratio (yield)
     fcf_yield = None
     if market_cap and market_cap > 0:
         fcf_yield = free_cash_flow / market_cap
         factors["fcf_to_market_cap"] = fcf_yield
-        
+
         # 5% FCF yield is excellent, 2-8% good
         return _normalize_score(
             fcf_yield,
@@ -269,7 +271,7 @@ def _compute_cash_generation_score(info: Dict[str, Any]) -> tuple[float, Dict[st
             good_range=(0.02, 0.10),
             bad_threshold=0.0,
         ), factors
-    
+
     # Just positive FCF without market cap comparison
     return 60.0, factors
 
@@ -278,28 +280,36 @@ def _compute_growth_score(info: Dict[str, Any]) -> tuple[float, Dict[str, Any]]:
     """Compute growth sub-score."""
     revenue_growth = _safe_float(info.get("revenueGrowth"))
     earnings_growth = _safe_float(info.get("earningsGrowth"))
-    
+
     factors = {
         "revenue_growth": revenue_growth,
         "earnings_growth": earnings_growth,
     }
-    
+
     # Score revenue growth (10-20% good)
-    rg_score = _normalize_score(
-        revenue_growth,
-        optimal=0.15,
-        good_range=(0.05, 0.30),
-        bad_threshold=-0.10,
-    ) if revenue_growth is not None else 50.0
-    
+    rg_score = (
+        _normalize_score(
+            revenue_growth,
+            optimal=0.15,
+            good_range=(0.05, 0.30),
+            bad_threshold=-0.10,
+        )
+        if revenue_growth is not None
+        else 50.0
+    )
+
     # Score earnings growth (15-25% good)
-    eg_score = _normalize_score(
-        earnings_growth,
-        optimal=0.20,
-        good_range=(0.05, 0.40),
-        bad_threshold=-0.20,
-    ) if earnings_growth is not None else 50.0
-    
+    eg_score = (
+        _normalize_score(
+            earnings_growth,
+            optimal=0.20,
+            good_range=(0.05, 0.40),
+            bad_threshold=-0.20,
+        )
+        if earnings_growth is not None
+        else 50.0
+    )
+
     # Average with slight revenue weight
     if revenue_growth is not None and earnings_growth is not None:
         score = rg_score * 0.45 + eg_score * 0.55
@@ -309,22 +319,24 @@ def _compute_growth_score(info: Dict[str, Any]) -> tuple[float, Dict[str, Any]]:
         score = eg_score
     else:
         score = 50.0
-    
+
     return score, factors
 
 
 def _compute_liquidity_score(info: Dict[str, Any]) -> tuple[float, Dict[str, Any]]:
     """Compute liquidity/size sub-score."""
     market_cap = _safe_float(info.get("marketCap"))
-    avg_volume = _safe_float(info.get("averageVolume")) or _safe_float(info.get("averageVolume10days"))
-    
+    avg_volume = _safe_float(info.get("averageVolume")) or _safe_float(
+        info.get("averageVolume10days")
+    )
+
     factors = {
         "market_cap": market_cap,
         "avg_volume": avg_volume,
     }
-    
+
     scores = []
-    
+
     # Market cap score ($10B+ is most stable, $1B minimum for quality)
     if market_cap is not None:
         if market_cap >= 200e9:  # >$200B mega cap
@@ -338,7 +350,7 @@ def _compute_liquidity_score(info: Dict[str, Any]) -> tuple[float, Dict[str, Any
         else:
             mc_score = 20.0  # Micro cap, higher risk
         scores.append(mc_score)
-    
+
     # Volume score (higher is better for liquidity)
     if avg_volume is not None:
         if avg_volume >= 10e6:  # >10M shares/day
@@ -350,9 +362,9 @@ def _compute_liquidity_score(info: Dict[str, Any]) -> tuple[float, Dict[str, Any
         else:
             vol_score = 30.0
         scores.append(vol_score)
-    
+
     score = sum(scores) / len(scores) if scores else 50.0
-    
+
     return score, factors
 
 
@@ -378,10 +390,14 @@ async def _get_cached_info_from_db(ticker: str) -> Optional[Dict[str, Any]]:
             """,
             ticker.upper(),
         )
-        
+
         if row and row["info_data"]:
-            return row["info_data"] if isinstance(row["info_data"], dict) else json.loads(row["info_data"])
-        
+            return (
+                row["info_data"]
+                if isinstance(row["info_data"], dict)
+                else json.loads(row["info_data"])
+            )
+
         return None
     except Exception as e:
         logger.debug(f"Could not load cached info for {ticker}: {e}")
@@ -415,51 +431,51 @@ async def fetch_stock_info(
 ) -> Dict[str, Any]:
     """
     Fetch stock info with caching and rate limiting.
-    
+
     Args:
         ticker: Stock ticker symbol
         config: Optional config for TTL settings
-        
+
     Returns:
         yfinance info dictionary
     """
     global _last_info_request_time
-    
+
     if config is None:
         config = get_dipfinder_config()
-    
+
     ticker = ticker.upper()
-    
+
     # Check in-memory cache first
     now = time.time()
     cached = _info_cache.get(ticker)
     if cached and now - cached[0] < config.info_cache_ttl:
         return cached[1]
-    
+
     # Check database cache
     db_cached = await _get_cached_info_from_db(ticker)
     if db_cached:
         _info_cache[ticker] = (now, db_cached)
         return db_cached
-    
+
     # Rate limiting
     async with _info_request_lock:
         elapsed = time.time() - _last_info_request_time
         if elapsed < config.yf_info_delay:
             await asyncio.sleep(config.yf_info_delay - elapsed)
         _last_info_request_time = time.time()
-    
+
     # Fetch from yfinance (in thread pool)
     loop = asyncio.get_event_loop()
     info = await loop.run_in_executor(_executor, _fetch_info_sync, ticker)
-    
+
     if info:
         # Cache in memory
         _info_cache[ticker] = (time.time(), info)
-        
+
         # Cache in database
         await _save_info_to_db(ticker, info, config.info_cache_ttl)
-    
+
     return info
 
 
@@ -470,46 +486,52 @@ async def compute_quality_score(
 ) -> QualityMetrics:
     """
     Compute quality score for a stock.
-    
+
     Args:
         ticker: Stock ticker symbol
         info: Pre-fetched yfinance info (fetches if None)
         config: Optional config
-        
+
     Returns:
         QualityMetrics with score and contributing factors
     """
     if info is None:
         info = await fetch_stock_info(ticker, config)
-    
+
     if not info:
         return QualityMetrics(
             ticker=ticker,
             score=50.0,  # Neutral if no data
             fields_available=0,
         )
-    
+
     # Compute sub-scores
     prof_score, prof_factors = _compute_profitability_score(info)
     bs_score, bs_factors = _compute_balance_sheet_score(info)
     cash_score, cash_factors = _compute_cash_generation_score(info)
     growth_score, growth_factors = _compute_growth_score(info)
     liq_score, liq_factors = _compute_liquidity_score(info)
-    
+
     # Weighted final score
     # Profitability and cash generation are most important for dip buying
     final_score = (
-        prof_score * 0.25 +
-        bs_score * 0.15 +
-        cash_score * 0.25 +
-        growth_score * 0.15 +
-        liq_score * 0.20
+        prof_score * 0.25
+        + bs_score * 0.15
+        + cash_score * 0.25
+        + growth_score * 0.15
+        + liq_score * 0.20
     )
-    
+
     # Count available fields
-    all_factors = {**prof_factors, **bs_factors, **cash_factors, **growth_factors, **liq_factors}
+    all_factors = {
+        **prof_factors,
+        **bs_factors,
+        **cash_factors,
+        **growth_factors,
+        **liq_factors,
+    }
     fields_available = sum(1 for v in all_factors.values() if v is not None)
-    
+
     return QualityMetrics(
         ticker=ticker,
         score=final_score,
@@ -539,23 +561,23 @@ async def batch_fetch_info(
 ) -> Dict[str, Dict[str, Any]]:
     """
     Fetch info for multiple tickers with rate limiting.
-    
+
     Args:
         tickers: List of ticker symbols
         config: Optional config
-        
+
     Returns:
         Dict mapping ticker -> info
     """
     if config is None:
         config = get_dipfinder_config()
-    
+
     results: Dict[str, Dict[str, Any]] = {}
-    
+
     for ticker in tickers:
         info = await fetch_stock_info(ticker, config)
         results[ticker] = info
-    
+
     return results
 
 

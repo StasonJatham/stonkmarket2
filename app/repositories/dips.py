@@ -43,9 +43,7 @@ def get_state(conn: sqlite3.Connection, symbol: str) -> DipState | None:
     return DipState.from_row(row) if row else None
 
 
-def save_states_batch(
-    conn: sqlite3.Connection, states: Dict[str, DipState]
-) -> None:
+def save_states_batch(conn: sqlite3.Connection, states: Dict[str, DipState]) -> None:
     """Save multiple dip states."""
     now = datetime.utcnow().isoformat()
     conn.executemany(

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
 from typing import Optional
 
 from fastapi import Cookie, Depends, Header, Request
@@ -70,7 +69,6 @@ async def get_current_user(
     request: Request,
     authorization: Optional[str] = Header(default=None),
     session: Optional[str] = Cookie(default=None),
-    conn: sqlite3.Connection = Depends(get_db),
 ) -> Optional[TokenData]:
     """
     Get current authenticated user (optional).
@@ -88,10 +86,10 @@ async def get_current_user(
         if not await validate_token_not_revoked(token_data):
             return None
 
-        # Verify user still exists in database
-        from app.repositories.auth_user import get_user
+        # Verify user still exists in database (async)
+        from app.repositories import auth_user as auth_repo
 
-        user = get_user(conn, token_data.sub)
+        user = await auth_repo.get_user(token_data.sub)
         if user is None:
             return None
 
@@ -104,7 +102,6 @@ async def require_user(
     request: Request,
     authorization: Optional[str] = Header(default=None),
     session: Optional[str] = Cookie(default=None),
-    conn: sqlite3.Connection = Depends(get_db),
 ) -> TokenData:
     """
     Require authenticated user.
@@ -130,10 +127,10 @@ async def require_user(
             error_code="TOKEN_REVOKED",
         )
 
-    # Verify user still exists in database
-    from app.repositories.auth_user import get_user
+    # Verify user still exists in database (async)
+    from app.repositories import auth_user as auth_repo
 
-    user = get_user(conn, token_data.sub)
+    user = await auth_repo.get_user(token_data.sub)
     if user is None:
         raise AuthenticationError(
             message="User no longer exists",
@@ -175,7 +172,7 @@ async def rate_limit_api(
     user: Optional[TokenData] = Depends(get_current_user),
 ) -> None:
     """Apply rate limiting for API endpoints.
-    
+
     Rate limits are designed to prevent abuse, not interfere with normal usage:
     - Admin users: No rate limiting
     - Authenticated users: 600 requests/minute (very generous)
@@ -183,7 +180,7 @@ async def rate_limit_api(
     """
     if not settings.rate_limit_enabled:
         return
-    
+
     # Admins bypass rate limiting entirely
     if user and user.is_admin:
         return
@@ -191,8 +188,9 @@ async def rate_limit_api(
     # Use user ID if authenticated, otherwise IP
     identifier = user.sub if user else get_client_ip(request)
     is_authenticated = user is not None
-    
+
     # Import here to avoid circular imports
     from app.cache.rate_limit import get_api_rate_limiter
+
     limiter = get_api_rate_limiter(authenticated=is_authenticated)
     await check_rate_limit(identifier, limiter=limiter)

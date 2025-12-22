@@ -10,7 +10,12 @@ This module provides:
 """
 
 from .config import DipFinderConfig, get_dipfinder_config
-from .dip import compute_dip_series_windowed, compute_dip_percentile, compute_persistence, DipMetrics
+from .dip import (
+    compute_dip_series_windowed,
+    compute_dip_percentile,
+    compute_persistence,
+    DipMetrics,
+)
 from .fundamentals import compute_quality_score, QualityMetrics
 from .stability import compute_stability_score, StabilityMetrics
 from .signal import compute_signal, DipSignal, DipClass, AlertLevel, MarketContext

@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timedelta
 from typing import Optional
 
-from app.database.connection import get_db, fetch_all, fetch_one, execute
+from app.database.connection import fetch_all, execute
 from app.services.openai_batch import (
     create_batch_job,
     check_batch_status,
@@ -57,36 +56,42 @@ async def get_dips_needing_analysis() -> list[dict]:
 async def schedule_batch_dip_analysis() -> Optional[str]:
     """
     Schedule a batch job to analyze all current dips.
-    
+
     Returns:
         Batch job ID if created, None if no dips to analyze
     """
     dips = await get_dips_needing_analysis()
-    
+
     if not dips:
         logger.info("No dips need AI analysis")
         return None
-    
+
     logger.info(f"Scheduling batch AI analysis for {len(dips)} dips")
-    
+
     # Prepare requests for batch
     requests = []
     for dip in dips:
         # Create analysis request
-        requests.append({
-            "custom_id": f"dip_analysis_{dip['symbol']}",
-            "symbol": dip["symbol"],
-            "current_price": float(dip["current_price"]) if dip["current_price"] else None,
-            "ath_price": float(dip["ath_price"]) if dip["ath_price"] else None,
-            "dip_percentage": float(dip["dip_percentage"]) if dip["dip_percentage"] else None,
-        })
-    
+        requests.append(
+            {
+                "custom_id": f"dip_analysis_{dip['symbol']}",
+                "symbol": dip["symbol"],
+                "current_price": float(dip["current_price"])
+                if dip["current_price"]
+                else None,
+                "ath_price": float(dip["ath_price"]) if dip["ath_price"] else None,
+                "dip_percentage": float(dip["dip_percentage"])
+                if dip["dip_percentage"]
+                else None,
+            }
+        )
+
     # Create batch job
     batch_id = await create_batch_job(
         job_type=BatchJobType.DIP_ANALYSIS,
         requests=requests,
     )
-    
+
     if batch_id:
         # Record batch job
         await api_usage.record_batch_job(
@@ -94,43 +99,45 @@ async def schedule_batch_dip_analysis() -> Optional[str]:
             job_type=BatchJobType.DIP_ANALYSIS.value,
             total_requests=len(requests),
         )
-        
+
         logger.info(f"Created batch job {batch_id} for {len(dips)} dips")
-    
+
     return batch_id
 
 
 async def schedule_batch_suggestion_bios() -> Optional[str]:
     """
     Schedule a batch job to generate bios for pending suggestions.
-    
+
     Returns:
         Batch job ID if created, None if no suggestions
     """
     suggestions = await get_pending_suggestions()
-    
+
     if not suggestions:
         logger.info("No pending suggestions need bios")
         return None
-    
+
     logger.info(f"Scheduling batch AI bios for {len(suggestions)} suggestions")
-    
+
     # Prepare requests for batch
     requests = []
     for suggestion in suggestions:
-        requests.append({
-            "custom_id": f"suggestion_bio_{suggestion['symbol']}",
-            "symbol": suggestion["symbol"],
-            "company_name": suggestion.get("company_name"),
-            "reason": suggestion.get("reason"),
-        })
-    
+        requests.append(
+            {
+                "custom_id": f"suggestion_bio_{suggestion['symbol']}",
+                "symbol": suggestion["symbol"],
+                "company_name": suggestion.get("company_name"),
+                "reason": suggestion.get("reason"),
+            }
+        )
+
     # Create batch job
     batch_id = await create_batch_job(
         job_type=BatchJobType.SUGGESTION_BIO,
         requests=requests,
     )
-    
+
     if batch_id:
         # Record batch job
         await api_usage.record_batch_job(
@@ -138,16 +145,20 @@ async def schedule_batch_suggestion_bios() -> Optional[str]:
             job_type=BatchJobType.SUGGESTION_BIO.value,
             total_requests=len(requests),
         )
-        
+
         logger.info(f"Created batch job {batch_id} for {len(suggestions)} suggestions")
-    
+
     return batch_id
+
+
+# Alias for tinder bios
+schedule_batch_tinder_bios = schedule_batch_suggestion_bios
 
 
 async def process_completed_batch_jobs() -> int:
     """
     Check for and process completed batch jobs.
-    
+
     Returns:
         Number of jobs processed
     """
@@ -159,21 +170,21 @@ async def process_completed_batch_jobs() -> int:
         WHERE status IN ('pending', 'validating', 'in_progress', 'finalizing')
         """
     )
-    
+
     processed = 0
-    
+
     for row in rows:
         batch_id = row["batch_id"]
         job_type = row["job_type"]
-        
+
         # Check status
         status_info = await check_batch_status(batch_id)
-        
+
         if not status_info:
             continue
-        
+
         new_status = status_info.get("status", "unknown")
-        
+
         # Update status in database
         await execute(
             """
@@ -192,15 +203,15 @@ async def process_completed_batch_jobs() -> int:
             status_info.get("error_file_id"),
             batch_id,
         )
-        
+
         # If completed, retrieve and process results
         if new_status == "completed":
             results = await retrieve_batch_results(batch_id)
-            
+
             if results:
                 await _process_batch_results(batch_id, job_type, results)
                 processed += 1
-                
+
                 # Update completion time and cost
                 await execute(
                     """
@@ -212,7 +223,7 @@ async def process_completed_batch_jobs() -> int:
                     status_info.get("total_cost", 0),
                     batch_id,
                 )
-    
+
     return processed
 
 
@@ -223,32 +234,42 @@ async def _process_batch_results(
 ) -> None:
     """Process results from a completed batch job."""
     logger.info(f"Processing {len(results)} results from batch {batch_id}")
-    
+
     for result in results:
         custom_id = result.get("custom_id", "")
         response = result.get("response", {})
-        
+
         try:
             if job_type == BatchJobType.DIP_ANALYSIS.value:
                 # Extract symbol from custom_id (dip_analysis_SYMBOL)
                 symbol = custom_id.replace("dip_analysis_", "")
-                
+
                 # Parse the AI response
-                content = response.get("body", {}).get("choices", [{}])[0].get("message", {}).get("content", "")
-                
+                content = (
+                    response.get("body", {})
+                    .get("choices", [{}])[0]
+                    .get("message", {})
+                    .get("content", "")
+                )
+
                 # Store the analysis
                 await _store_dip_analysis(symbol, content, batch_id)
-                
+
             elif job_type == BatchJobType.SUGGESTION_BIO.value:
                 # Extract symbol from custom_id (suggestion_bio_SYMBOL)
                 symbol = custom_id.replace("suggestion_bio_", "")
-                
+
                 # Parse the AI response
-                content = response.get("body", {}).get("choices", [{}])[0].get("message", {}).get("content", "")
-                
+                content = (
+                    response.get("body", {})
+                    .get("choices", [{}])[0]
+                    .get("message", {})
+                    .get("content", "")
+                )
+
                 # Store the bio
                 await _store_suggestion_bio(symbol, content)
-                
+
         except Exception as e:
             logger.error(f"Error processing batch result for {custom_id}: {e}")
 
@@ -256,7 +277,7 @@ async def _process_batch_results(
 async def _store_dip_analysis(symbol: str, content: str, batch_id: str) -> None:
     """Store AI analysis for a dip."""
     import json
-    
+
     try:
         # Try to parse as JSON (rating + reasoning)
         data = json.loads(content)
@@ -268,16 +289,16 @@ async def _store_dip_analysis(symbol: str, content: str, batch_id: str) -> None:
         rating = 5.0
         reasoning = ""
         bio = content
-    
+
     expires_at = datetime.utcnow() + timedelta(days=7)
-    
+
     await execute(
         """
         INSERT INTO dip_ai_analysis (
             symbol, tinder_bio, ai_rating, rating_reasoning,
             model_used, is_batch_generated, batch_job_id, generated_at, expires_at
         )
-        VALUES ($1, $2, $3, $4, 'gpt-4o-mini', TRUE, $5, NOW(), $6)
+        VALUES ($1, $2, $3, $4, 'gpt-5-mini', TRUE, $5, NOW(), $6)
         ON CONFLICT (symbol) DO UPDATE SET
             tinder_bio = EXCLUDED.tinder_bio,
             ai_rating = EXCLUDED.ai_rating,
@@ -287,9 +308,14 @@ async def _store_dip_analysis(symbol: str, content: str, batch_id: str) -> None:
             generated_at = NOW(),
             expires_at = EXCLUDED.expires_at
         """,
-        symbol.upper(), bio, rating, reasoning, batch_id, expires_at
+        symbol.upper(),
+        bio,
+        rating,
+        reasoning,
+        batch_id,
+        expires_at,
     )
-    
+
     logger.debug(f"Stored AI analysis for {symbol}")
 
 
@@ -301,9 +327,10 @@ async def _store_suggestion_bio(symbol: str, bio: str) -> None:
         SET ai_bio = $1, updated_at = NOW()
         WHERE symbol = $2
         """,
-        bio, symbol.upper()
+        bio,
+        symbol.upper(),
     )
-    
+
     logger.debug(f"Stored AI bio for suggestion {symbol}")
 
 
@@ -315,11 +342,11 @@ async def run_realtime_analysis_for_new_stock(
 ) -> dict:
     """
     Run real-time AI analysis for a newly added stock.
-    
+
     Called when a stock is approved from suggestions and added to dips.
     """
     logger.info(f"Running real-time AI analysis for new stock: {symbol}")
-    
+
     try:
         # Generate bio
         bio = await generate_dip_bio_realtime(
@@ -328,7 +355,7 @@ async def run_realtime_analysis_for_new_stock(
             ath_price=ath_price,
             dip_percentage=dip_percentage,
         )
-        
+
         # Get rating
         rating_data = await rate_dip_realtime(
             symbol=symbol,
@@ -336,10 +363,10 @@ async def run_realtime_analysis_for_new_stock(
             ath_price=ath_price,
             dip_percentage=dip_percentage,
         )
-        
+
         # Store the analysis
         expires_at = datetime.utcnow() + timedelta(days=7)
-        
+
         await execute(
             """
             INSERT INTO dip_ai_analysis (
@@ -357,20 +384,20 @@ async def run_realtime_analysis_for_new_stock(
             """,
             symbol.upper(),
             bio,
-            rating_data.get("rating", 5.0),
-            rating_data.get("reasoning", ""),
+            rating_data.get("rating") if rating_data else None,  # String rating like 'buy', 'hold'
+            rating_data.get("reasoning", "") if rating_data else "",
             expires_at,
         )
-        
+
         logger.info(f"Completed real-time analysis for {symbol}")
-        
+
         return {
             "symbol": symbol,
             "bio": bio,
-            "rating": rating_data.get("rating", 5.0),
-            "reasoning": rating_data.get("reasoning", ""),
+            "rating": rating_data.get("rating") if rating_data else None,
+            "reasoning": rating_data.get("reasoning", "") if rating_data else "",
         }
-        
+
     except Exception as e:
         logger.error(f"Failed to run real-time analysis for {symbol}: {e}")
         return {"symbol": symbol, "error": str(e)}
@@ -380,16 +407,17 @@ async def run_realtime_analysis_for_new_stock(
 # Cron Job Functions (called by scheduler)
 # ============================================================================
 
+
 async def cron_batch_ai_dips() -> dict:
     """
     Cron job: Schedule weekly batch AI analysis for all dips.
-    
+
     Runs Sunday 3 AM UTC by default.
     """
     logger.info("Running weekly batch AI analysis for dips")
-    
+
     batch_id = await schedule_batch_dip_analysis()
-    
+
     return {
         "job": "batch_ai_dips",
         "batch_id": batch_id,
@@ -400,13 +428,13 @@ async def cron_batch_ai_dips() -> dict:
 async def cron_batch_ai_suggestions() -> dict:
     """
     Cron job: Schedule weekly batch AI bios for suggestions.
-    
+
     Runs Sunday 4 AM UTC by default.
     """
     logger.info("Running weekly batch AI bios for suggestions")
-    
+
     batch_id = await schedule_batch_suggestion_bios()
-    
+
     return {
         "job": "batch_ai_suggestions",
         "batch_id": batch_id,
@@ -417,13 +445,13 @@ async def cron_batch_ai_suggestions() -> dict:
 async def cron_sync_batch_jobs() -> dict:
     """
     Cron job: Check and process completed batch jobs.
-    
+
     Runs every 15 minutes.
     """
     logger.info("Syncing batch job statuses")
-    
+
     processed = await process_completed_batch_jobs()
-    
+
     return {
         "job": "sync_batch_jobs",
         "processed": processed,
@@ -433,19 +461,19 @@ async def cron_sync_batch_jobs() -> dict:
 async def cron_cleanup_expired() -> dict:
     """
     Cron job: Clean up expired data.
-    
+
     Runs daily at midnight.
     """
     from app.repositories.dip_history import cleanup_old_history
-    
+
     logger.info("Running daily cleanup")
-    
+
     # Clean up old dip history (keep 90 days)
     history_deleted = await cleanup_old_history(days=90)
-    
+
     # Clean up old rate limit entries
     await execute("SELECT cleanup_rate_limits()")
-    
+
     return {
         "job": "cleanup_expired",
         "history_deleted": history_deleted,

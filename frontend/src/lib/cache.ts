@@ -140,9 +140,9 @@ export const apiCache = new ApiCache();
 
 // Cache TTL constants for different data types
 export const CACHE_TTL = {
-  RANKING: 2 * 60 * 1000,      // 2 minutes - frequently updated
-  CHART: 10 * 60 * 1000,       // 10 minutes - historical data
-  STOCK_INFO: 30 * 60 * 1000,  // 30 minutes - rarely changes
-  BENCHMARK: 15 * 60 * 1000,   // 15 minutes - market data
-  CRON_JOBS: 60 * 1000,        // 1 minute - admin data
+  RANKING: 30 * 60 * 1000,      // 30 minutes - data only changes when job runs
+  CHART: 60 * 60 * 1000,        // 1 hour - historical data, invalidated when job runs
+  STOCK_INFO: 60 * 60 * 1000,   // 1 hour - rarely changes
+  BENCHMARK: 60 * 60 * 1000,    // 1 hour - market data
+  CRON_JOBS: 60 * 1000,         // 1 minute - admin data
 } as const;

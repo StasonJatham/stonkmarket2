@@ -12,7 +12,7 @@ from app.core.config import settings
 from app.core.logging import get_logger, setup_logging
 from app.database import close_db, init_db
 from app.jobs import start_scheduler, stop_scheduler
-from app.jobs.definitions import analysis_job, data_grab_job  # noqa: F401 - register jobs
+import app.jobs.definitions  # noqa: F401 - register jobs
 
 logger = get_logger("main")
 

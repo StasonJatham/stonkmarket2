@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -52,32 +53,42 @@ export function UserSettings({ onError, onSuccess }: UserSettingsProps) {
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <User className="h-5 w-5" />
-          Account Settings
-        </CardTitle>
-        <CardDescription>
-          Update your username and password
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-6">
-        {/* Current user info */}
-        <div className="p-4 bg-muted/50 rounded-lg">
-          <div className="text-sm text-muted-foreground">Current username</div>
-          <div className="font-medium">{user?.username}</div>
-        </div>
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2 }}
+    >
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <User className="h-5 w-5" />
+            Account Settings
+          </CardTitle>
+          <CardDescription>
+            Update your username and password
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {/* Current user info */}
+          <motion.div 
+            className="p-4 bg-muted/50 rounded-lg"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.1 }}
+          >
+            <div className="text-sm text-muted-foreground">Current username</div>
+            <div className="font-medium">{user?.username}</div>
+          </motion.div>
 
-        {/* Username change (optional) */}
-        <div className="space-y-2">
-          <Label>New Username (optional)</Label>
-          <Input
-            value={newUsername}
-            onChange={(e) => setNewUsername(e.target.value)}
-            placeholder="Leave blank to keep current"
-          />
-        </div>
+          {/* Username change (optional) */}
+          <div className="space-y-2">
+            <Label>New Username (optional)</Label>
+            <Input
+              value={newUsername}
+              onChange={(e) => setNewUsername(e.target.value)}
+              placeholder="Leave blank to keep current"
+            />
+          </div>
 
         {/* Current password */}
         <div className="space-y-2">
@@ -129,5 +140,6 @@ export function UserSettings({ onError, onSuccess }: UserSettingsProps) {
         </Button>
       </CardContent>
     </Card>
+    </motion.div>
   );
 }

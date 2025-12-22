@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.core.config import settings
@@ -12,7 +11,22 @@ from app.core.exceptions import register_exception_handlers
 from app.core.logging import get_logger, request_id_var
 from app.schemas.common import ErrorResponse
 
-from .routes import auth, cronjobs, dips, health, symbols, suggestions, ws, mfa, api_keys, stock_tinder, dip_changes, user_api_keys, dipfinder
+from .routes import (
+    auth,
+    cronjobs,
+    dips,
+    health,
+    symbols,
+    suggestions,
+    ws,
+    mfa,
+    api_keys,
+    stock_tinder,
+    dip_changes,
+    user_api_keys,
+    dipfinder,
+    admin_settings,
+)
 
 logger = get_logger("api")
 
@@ -28,11 +42,15 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+        response.headers["Permissions-Policy"] = (
+            "geolocation=(), microphone=(), camera=()"
+        )
 
         # HSTS (only when HTTPS is enabled)
         if settings.https_enabled:
-            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+            response.headers["Strict-Transport-Security"] = (
+                "max-age=31536000; includeSubDomains"
+            )
 
         return response
 
@@ -64,11 +82,11 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
 
         duration = time.monotonic() - start_time
-        
+
         # Log path only (not query params which may contain tokens)
         # This prevents WebSocket ?token=xxx from appearing in logs
         path = request.url.path
-        
+
         logger.info(
             f"{request.method} {path} -> {response.status_code} ({duration:.3f}s)",
             extra={
@@ -127,6 +145,9 @@ def create_api_app() -> FastAPI:
     app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
     app.include_router(mfa.router, prefix="/auth/mfa", tags=["MFA"])
     app.include_router(api_keys.router, prefix="/admin/api-keys", tags=["API Keys"])
+    app.include_router(
+        admin_settings.router, prefix="/admin/settings", tags=["Admin Settings"]
+    )
     app.include_router(user_api_keys.router, tags=["User API Keys"])
     app.include_router(symbols.router, prefix="/symbols", tags=["Symbols"])
     app.include_router(dips.router, prefix="/dips", tags=["Dips"])

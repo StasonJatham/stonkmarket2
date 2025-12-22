@@ -13,7 +13,7 @@ from app.repositories import api_keys as api_keys_repo
 
 logger = get_logger("openai_service")
 
-# GPT-4o-mini for cost-effective generation
+# gpt-4o-mini for cost-effective generation
 MODEL = "gpt-4o-mini"
 
 
@@ -21,11 +21,11 @@ async def _get_client() -> Optional[AsyncOpenAI]:
     """Get OpenAI client with API key from database."""
     with get_db() as conn:
         api_key = api_keys_repo.get_decrypted_key(conn, api_keys_repo.OPENAI_API_KEY)
-    
+
     if not api_key:
         logger.warning("OpenAI API key not configured")
         return None
-    
+
     return AsyncOpenAI(api_key=api_key)
 
 
@@ -40,7 +40,7 @@ async def generate_stock_bio(
 ) -> Optional[str]:
     """
     Generate a fun Tinder-style bio for a stock.
-    
+
     Args:
         symbol: Stock ticker symbol
         name: Company name
@@ -49,14 +49,14 @@ async def generate_stock_bio(
         summary: Company business summary
         last_price: Current stock price
         price_change_pct: 90-day price change percentage
-        
+
     Returns:
         Generated bio string, or None if generation fails
     """
     client = await _get_client()
     if not client:
         return None
-    
+
     # Build context
     context_parts = [f"Stock: {symbol}"]
     if name:
@@ -72,9 +72,9 @@ async def generate_stock_bio(
     if price_change_pct is not None:
         direction = "up" if price_change_pct > 0 else "down"
         context_parts.append(f"90-day change: {direction} {abs(price_change_pct):.1f}%")
-    
+
     context = "\n".join(context_parts)
-    
+
     prompt = f"""Generate a fun, witty Tinder-style dating profile bio for this stock. 
 The bio should be written from the stock's perspective, as if it were on a dating app looking for investors.
 Keep it playful, use investing/dating puns, and highlight the stock's personality based on its business.
@@ -97,11 +97,11 @@ Write the bio now (no intro, just the bio):"""
             max_tokens=200,
             temperature=0.8,
         )
-        
+
         bio = response.choices[0].message.content
         logger.info(f"Generated bio for {symbol}")
         return bio.strip() if bio else None
-        
+
     except Exception as e:
         logger.error(f"Failed to generate bio for {symbol}: {e}")
         return None
@@ -113,7 +113,7 @@ async def rate_dip(
 ) -> Optional[dict[str, Any]]:
     """
     Rate a stock dip using AI analysis.
-    
+
     Args:
         symbol: Stock ticker symbol
         dip_data: Dictionary containing:
@@ -126,7 +126,7 @@ async def rate_dip(
             - dip_pct: Current dip percentage
             - days_below: Days below threshold
             - fundamentals: Optional dict of fundamental data (P/E, market cap, etc.)
-            
+
     Returns:
         Dict with:
             - rating: 'strong_buy', 'buy', 'hold', 'sell', 'strong_sell'
@@ -137,10 +137,10 @@ async def rate_dip(
     client = await _get_client()
     if not client:
         return None
-    
+
     # Build context
     context_parts = [f"Stock: {symbol}"]
-    
+
     if dip_data.get("name"):
         context_parts.append(f"Company: {dip_data['name']}")
     if dip_data.get("sector"):
@@ -149,7 +149,7 @@ async def rate_dip(
         context_parts.append(f"Industry: {dip_data['industry']}")
     if dip_data.get("summary"):
         context_parts.append(f"Business: {dip_data['summary'][:500]}")
-    
+
     # Price data
     if dip_data.get("current_price"):
         context_parts.append(f"Current Price: ${dip_data['current_price']:.2f}")
@@ -159,7 +159,7 @@ async def rate_dip(
         context_parts.append(f"Current Dip: -{dip_data['dip_pct']:.1f}% from high")
     if dip_data.get("days_below"):
         context_parts.append(f"Days in Dip: {dip_data['days_below']}")
-    
+
     # Fundamentals if provided
     if dip_data.get("fundamentals"):
         fundamentals = dip_data["fundamentals"]
@@ -168,18 +168,22 @@ async def rate_dip(
         if fundamentals.get("market_cap"):
             cap = fundamentals["market_cap"]
             if cap > 1e12:
-                context_parts.append(f"Market Cap: ${cap/1e12:.1f}T")
+                context_parts.append(f"Market Cap: ${cap / 1e12:.1f}T")
             elif cap > 1e9:
-                context_parts.append(f"Market Cap: ${cap/1e9:.1f}B")
+                context_parts.append(f"Market Cap: ${cap / 1e9:.1f}B")
             else:
-                context_parts.append(f"Market Cap: ${cap/1e6:.1f}M")
+                context_parts.append(f"Market Cap: ${cap / 1e6:.1f}M")
         if fundamentals.get("dividend_yield"):
-            context_parts.append(f"Dividend Yield: {fundamentals['dividend_yield']:.2f}%")
+            context_parts.append(
+                f"Dividend Yield: {fundamentals['dividend_yield']:.2f}%"
+            )
         if fundamentals.get("52_week_change"):
-            context_parts.append(f"52-Week Change: {fundamentals['52_week_change']:.1f}%")
-    
+            context_parts.append(
+                f"52-Week Change: {fundamentals['52_week_change']:.1f}%"
+            )
+
     context = "\n".join(context_parts)
-    
+
     prompt = f"""Analyze this stock dip and provide an investment rating.
 
 {context}
@@ -209,14 +213,14 @@ Respond in JSON format:
             temperature=0.3,  # Lower temp for more consistent ratings
             response_format={"type": "json_object"},
         )
-        
+
         content = response.choices[0].message.content
         if content:
             result = json.loads(content)
             logger.info(f"Generated dip rating for {symbol}: {result.get('rating')}")
             return result
         return None
-        
+
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse AI response for {symbol}: {e}")
         return None
@@ -231,16 +235,16 @@ async def generate_tinder_bio_for_dip(
 ) -> Optional[str]:
     """
     Generate a Tinder-style bio specifically for a stock in a dip.
-    
+
     This version emphasizes the dip aspect with more dramatic/humorous tone.
     """
     client = await _get_client()
     if not client:
         return None
-    
+
     # Build context
     context_parts = [f"Stock: {symbol}"]
-    
+
     if dip_data.get("name"):
         context_parts.append(f"Company: {dip_data['name']}")
     if dip_data.get("sector"):
@@ -253,9 +257,9 @@ async def generate_tinder_bio_for_dip(
         context_parts.append(f"DOWN {dip_data['dip_pct']:.1f}% from recent high")
     if dip_data.get("days_below"):
         context_parts.append(f"Been down for {dip_data['days_below']} days")
-    
+
     context = "\n".join(context_parts)
-    
+
     prompt = f"""Generate a Tinder-style dating bio for this stock that's currently in a DIP.
 The bio should be from the stock's perspective, acknowledging it's going through a rough patch.
 Be dramatic, funny, maybe a bit self-deprecating about the price drop.
@@ -279,11 +283,11 @@ Write the bio (no intro, just the bio):"""
             max_tokens=200,
             temperature=0.85,
         )
-        
+
         bio = response.choices[0].message.content
         logger.info(f"Generated dip bio for {symbol}")
         return bio.strip() if bio else None
-        
+
     except Exception as e:
         logger.error(f"Failed to generate dip bio for {symbol}: {e}")
         return None
@@ -292,14 +296,14 @@ Write the bio (no intro, just the bio):"""
 async def check_api_key_valid() -> tuple[bool, Optional[str]]:
     """
     Check if the OpenAI API key is valid.
-    
+
     Returns:
         Tuple of (is_valid, error_message)
     """
     client = await _get_client()
     if not client:
         return False, "API key not configured"
-    
+
     try:
         # Make a minimal API call to verify the key
         await client.models.list()

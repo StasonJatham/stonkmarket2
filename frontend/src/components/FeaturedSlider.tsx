@@ -82,16 +82,19 @@ export function FeaturedSlider({ stocks, chartDataMap, isLoading, onSelectStock 
 
   const variants = {
     enter: (dir: number) => ({
-      x: dir > 0 ? 300 : -300,
+      x: dir > 0 ? 200 : -200,
       opacity: 0,
+      scale: 0.98,
     }),
     center: {
       x: 0,
       opacity: 1,
+      scale: 1,
     },
     exit: (dir: number) => ({
-      x: dir > 0 ? -300 : 300,
+      x: dir > 0 ? -200 : 200,
       opacity: 0,
+      scale: 0.98,
     }),
   };
 
@@ -122,7 +125,7 @@ export function FeaturedSlider({ stocks, chartDataMap, isLoading, onSelectStock 
 
         {/* Slide Content */}
         <div className="relative h-52 overflow-hidden">
-          <AnimatePresence mode="wait" custom={direction}>
+          <AnimatePresence initial={false} mode="popLayout" custom={direction}>
             <motion.div
               key={currentStock.symbol}
               custom={direction}
@@ -130,7 +133,10 @@ export function FeaturedSlider({ stocks, chartDataMap, isLoading, onSelectStock 
               initial="enter"
               animate="center"
               exit="exit"
-              transition={{ duration: 0.3, ease: 'easeInOut' }}
+              transition={{ 
+                x: { type: "spring", stiffness: 300, damping: 30 },
+                opacity: { duration: 0.2 }
+              }}
               className="absolute inset-0 p-6 cursor-pointer"
               onClick={() => onSelectStock(currentStock.symbol)}
             >

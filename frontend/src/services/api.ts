@@ -92,11 +92,11 @@ export interface CronLogsResponse {
 }
 
 // API functions with caching
-export async function getRanking(skipCache = false): Promise<RankingResponse> {
-  const cacheKey = 'ranking';
+export async function getRanking(skipCache = false, showAll = false): Promise<RankingResponse> {
+  const cacheKey = `ranking:${showAll}`;
   
   const fetcher = async () => {
-    const ranking = await fetchAPI<DipStock[]>('/dips/ranking');
+    const ranking = await fetchAPI<DipStock[]>(`/dips/ranking?show_all=${showAll}`);
     return {
       ranking: ranking.map((stock, index) => ({
         ...stock,
@@ -122,7 +122,7 @@ export async function getStockChart(symbol: string, days: number = 180): Promise
   
   return apiCache.fetch(
     cacheKey,
-    () => fetchAPI<ChartDataPoint[]>(`/dips/${symbol}/history?days=${days}`),
+    () => fetchAPI<ChartDataPoint[]>(`/dips/${symbol}/chart?days=${days}`),
     { ttl: CACHE_TTL.CHART, staleWhileRevalidate: true }
   );
 }
@@ -217,7 +217,8 @@ export async function getBenchmarkChart(
   days: number = 365
 ): Promise<ChartDataPoint[]> {
   const symbol = BENCHMARK_SYMBOLS[benchmark];
-  return fetchAPI<ChartDataPoint[]>(`/dips/${symbol}/history?days=${days}`);
+  // Use /chart endpoint which exists, not /history
+  return fetchAPI<ChartDataPoint[]>(`/dips/${symbol}/chart?days=${days}`);
 }
 
 // Normalize chart data to percentage change from first value
@@ -461,12 +462,12 @@ export interface DipSignal {
   persist_days: number;
   dip_mkt: number;
   excess_dip: number;
-  dip_class: 'UNIQUE' | 'RELATIVE' | 'MARKET_WIDE' | 'MICRO';
+  dip_class: 'MARKET_DIP' | 'STOCK_SPECIFIC' | 'MIXED';
   quality_score: number;
   stability_score: number;
   dip_score: number;
   final_score: number;
-  alert_level: 'HIGH' | 'MEDIUM' | 'LOW' | 'NONE';
+  alert_level: 'NONE' | 'GOOD' | 'STRONG';
   should_alert: boolean;
   reason: string;
   quality_factors?: QualityFactors;
@@ -548,12 +549,20 @@ export async function deleteSymbol(symbol: string): Promise<void> {
 // SYMBOL VALIDATION (Yahoo Finance)
 // =============================================================================
 
+export interface SymbolValidationResponse {
+  valid: boolean;
+  symbol: string;
+  name?: string;
+  sector?: string;
+  error?: string;
+}
+
 export async function validateSymbol(symbol: string): Promise<{ valid: boolean; name?: string; error?: string }> {
   try {
-    const info = await fetchAPI<StockInfo>(`/dips/${symbol.toUpperCase()}/info`);
-    return { valid: true, name: info.name || symbol };
+    const result = await fetchAPI<SymbolValidationResponse>(`/symbols/validate/${symbol.toUpperCase()}`);
+    return { valid: result.valid, name: result.name, error: result.error };
   } catch {
-    return { valid: false, error: 'Symbol not found on Yahoo Finance' };
+    return { valid: false, error: 'Failed to validate symbol' };
   }
 }
 
@@ -625,32 +634,207 @@ export interface ApiKeyList {
 }
 
 export async function listApiKeys(): Promise<ApiKeyList> {
-  return fetchAPI<ApiKeyList>('/api-keys');
+  return fetchAPI<ApiKeyList>('/admin/api-keys');
 }
 
 export async function createApiKey(keyName: string, apiKey: string, mfaCode: string): Promise<ApiKeyInfo> {
-  return fetchAPI<ApiKeyInfo>('/api-keys', {
+  return fetchAPI<ApiKeyInfo>('/admin/api-keys', {
     method: 'POST',
     body: JSON.stringify({ key_name: keyName, api_key: apiKey, mfa_code: mfaCode }),
   });
 }
 
 export async function revealApiKey(keyName: string, mfaCode: string): Promise<{ key_name: string; api_key: string }> {
-  return fetchAPI<{ key_name: string; api_key: string }>(`/api-keys/${keyName}/reveal`, {
+  return fetchAPI<{ key_name: string; api_key: string }>(`/admin/api-keys/${keyName}/reveal`, {
     method: 'POST',
     body: JSON.stringify({ mfa_code: mfaCode }),
   });
 }
 
 export async function deleteApiKey(keyName: string, mfaCode: string): Promise<void> {
-  await fetchAPI(`/api-keys/${keyName}`, {
+  await fetchAPI(`/admin/api-keys/${keyName}`, {
     method: 'DELETE',
     body: JSON.stringify({ mfa_code: mfaCode }),
   });
 }
 
 export async function checkApiKey(keyName: string): Promise<{ key_name: string; exists: boolean; key_hint: string | null }> {
-  return fetchAPI<{ key_name: string; exists: boolean; key_hint: string | null }>(`/api-keys/check/${keyName}`);
+  return fetchAPI<{ key_name: string; exists: boolean; key_hint: string | null }>(`/admin/api-keys/check/${keyName}`);
+}
+
+// =============================================================================
+// USER API KEYS (External access keys for the stonkmarket API)
+// =============================================================================
+
+export interface UserApiKey {
+  id: number;
+  key_prefix: string;
+  name: string;
+  description: string | null;
+  vote_weight: number;
+  rate_limit_bypass: boolean;
+  is_active: boolean;
+  usage_count: number;
+  last_used_at: string | null;
+  created_at: string;
+  expires_at: string | null;
+}
+
+export interface UserApiKeyStats {
+  total_keys: number;
+  active_keys: number;
+  inactive_keys: number;
+  expired_keys: number;
+  total_usage: number;
+  last_used: string | null;
+}
+
+export interface CreateUserKeyRequest {
+  name: string;
+  description?: string;
+  vote_weight?: number;
+  rate_limit_bypass?: boolean;
+  expires_days?: number;
+}
+
+export interface CreateUserKeyResponse {
+  key: string;
+  id: number;
+  key_prefix: string;
+  name: string;
+  vote_weight: number;
+  rate_limit_bypass: boolean;
+  expires_at: string | null;
+  warning: string;
+}
+
+export async function listUserApiKeys(activeOnly: boolean = true): Promise<UserApiKey[]> {
+  return fetchAPI<UserApiKey[]>(`/admin/user-keys?active_only=${activeOnly}`);
+}
+
+export async function createUserApiKey(request: CreateUserKeyRequest): Promise<CreateUserKeyResponse> {
+  return fetchAPI<CreateUserKeyResponse>('/admin/user-keys', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
+}
+
+export async function getUserApiKeyStats(): Promise<UserApiKeyStats> {
+  return fetchAPI<UserApiKeyStats>('/admin/user-keys/stats');
+}
+
+export async function getUserApiKey(keyId: number): Promise<UserApiKey> {
+  return fetchAPI<UserApiKey>(`/admin/user-keys/${keyId}`);
+}
+
+export async function updateUserApiKey(
+  keyId: number, 
+  updates: Partial<{ name: string; description: string; vote_weight: number; rate_limit_bypass: boolean }>
+): Promise<UserApiKey> {
+  return fetchAPI<UserApiKey>(`/admin/user-keys/${keyId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(updates),
+  });
+}
+
+export async function deactivateUserApiKey(keyId: number): Promise<void> {
+  await fetchAPI(`/admin/user-keys/${keyId}/deactivate`, {
+    method: 'POST',
+  });
+}
+
+export async function reactivateUserApiKey(keyId: number): Promise<void> {
+  await fetchAPI(`/admin/user-keys/${keyId}/reactivate`, {
+    method: 'POST',
+  });
+}
+
+export async function deleteUserApiKey(keyId: number): Promise<void> {
+  await fetchAPI(`/admin/user-keys/${keyId}`, {
+    method: 'DELETE',
+  });
+}
+
+// =============================================================================
+// ADMIN SETTINGS
+// =============================================================================
+
+export interface AppSettings {
+  app_name: string;
+  app_version: string;
+  environment: string;
+  debug: boolean;
+  default_min_dip_pct: number;
+  default_min_days: number;
+  history_days: number;
+  chart_days: number;
+  vote_cooldown_days: number;
+  auto_approve_enabled: boolean;
+  auto_approve_votes: number;
+  auto_approve_unique_voters: number;
+  auto_approve_min_age_hours: number;
+  rate_limit_enabled: boolean;
+  rate_limit_auth: string;
+  rate_limit_api_anonymous: string;
+  rate_limit_api_authenticated: string;
+  scheduler_enabled: boolean;
+  scheduler_timezone: string;
+  external_api_timeout: number;
+  external_api_retries: number;
+}
+
+export interface BenchmarkConfig {
+  id: string;
+  symbol: string;
+  name: string;
+  description?: string | null;
+}
+
+export interface RuntimeSettings {
+  signal_threshold_strong_buy: number;
+  signal_threshold_buy: number;
+  signal_threshold_hold: number;
+  ai_enrichment_enabled: boolean;
+  ai_batch_size: number;
+  ai_model: string;
+  suggestion_cleanup_days: number;
+  benchmarks: BenchmarkConfig[];
+}
+
+export interface CronJobSummary {
+  name: string;
+  cron: string;
+  description: string | null;
+  last_run: string | null;
+  last_status: string | null;
+}
+
+export interface SystemStatus {
+  app_settings: AppSettings;
+  runtime_settings: RuntimeSettings;
+  cronjobs: CronJobSummary[];
+  openai_configured: boolean;
+  total_symbols: number;
+  pending_suggestions: number;
+}
+
+export async function getAppSettings(): Promise<AppSettings> {
+  return fetchAPI<AppSettings>('/admin/settings/app');
+}
+
+export async function getRuntimeSettings(): Promise<RuntimeSettings> {
+  return fetchAPI<RuntimeSettings>('/admin/settings/runtime');
+}
+
+export async function updateRuntimeSettings(updates: Partial<RuntimeSettings>): Promise<RuntimeSettings> {
+  return fetchAPI<RuntimeSettings>('/admin/settings/runtime', {
+    method: 'PATCH',
+    body: JSON.stringify(updates),
+  });
+}
+
+export async function getSystemStatus(): Promise<SystemStatus> {
+  return fetchAPI<SystemStatus>('/admin/settings/status');
 }
 
 // =============================================================================
@@ -690,6 +874,8 @@ export interface Suggestion {
   updated_at: string | null;
   fetched_at: string | null;
   rejection_reason?: string | null;
+  approved_by?: number | null;
+  reviewed_at?: string | null;
 }
 
 export interface SuggestionListResponse {
@@ -744,14 +930,14 @@ export async function getAllSuggestions(
 
 export async function approveSuggestion(suggestionId: number): Promise<{ message: string; symbol: string }> {
   return fetchAPI<{ message: string; symbol: string }>(`/suggestions/${suggestionId}/approve`, {
-    method: 'PUT',
+    method: 'POST',
   });
 }
 
-export async function rejectSuggestion(suggestionId: number, reason: string): Promise<{ message: string }> {
-  return fetchAPI<{ message: string }>(`/suggestions/${suggestionId}/reject`, {
-    method: 'PUT',
-    body: JSON.stringify({ reason }),
+export async function rejectSuggestion(suggestionId: number, reason?: string): Promise<{ message: string }> {
+  const params = reason ? `?reason=${encodeURIComponent(reason)}` : '';
+  return fetchAPI<{ message: string }>(`/suggestions/${suggestionId}/reject${params}`, {
+    method: 'POST',
   });
 }
 

@@ -100,9 +100,10 @@ export function SymbolManager({ onError }: SymbolManagerProps) {
     
     setIsSaving(true);
     try {
+      // Backend expects min_dip_pct as decimal (0.0 to 1.0), not percentage
       const data = {
         symbol: formSymbol.trim().toUpperCase(),
-        min_dip_pct: parseFloat(formMinDipPct) || 15,
+        min_dip_pct: (parseFloat(formMinDipPct) || 15) / 100,
         min_days: parseInt(formMinDays) || 5,
       };
       
@@ -152,7 +153,8 @@ export function SymbolManager({ onError }: SymbolManagerProps) {
   function openEditDialog(symbol: Symbol) {
     setEditingSymbol(symbol);
     setFormSymbol(symbol.symbol);
-    setFormMinDipPct(symbol.min_dip_pct.toString());
+    // Convert decimal back to percentage for display
+    setFormMinDipPct((symbol.min_dip_pct * 100).toString());
     setFormMinDays(symbol.min_days.toString());
     setValidationResult({ valid: true, name: symbol.symbol });
     setDialogOpen(true);

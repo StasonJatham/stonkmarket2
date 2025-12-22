@@ -6,7 +6,13 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from app.core.config import settings
-from app.database.connection import get_pg_connection, fetch_one, fetch_all, execute, fetch_val
+from app.database.connection import (
+    get_pg_connection,
+    fetch_one,
+    fetch_all,
+    execute,
+    fetch_val,
+)
 from app.core.logging import get_logger
 
 logger = get_logger("dip_votes")
@@ -18,13 +24,13 @@ async def get_vote_cooldown_remaining(
 ) -> Optional[int]:
     """
     Check if user is on cooldown for voting on this symbol.
-    
+
     Returns:
         Seconds remaining on cooldown, or None if can vote
     """
     cooldown_days = settings.vote_cooldown_days
     cutoff = datetime.utcnow() - timedelta(days=cooldown_days)
-    
+
     row = await fetch_one(
         """
         SELECT created_at FROM dip_votes
@@ -32,16 +38,18 @@ async def get_vote_cooldown_remaining(
         ORDER BY created_at DESC
         LIMIT 1
         """,
-        symbol.upper(), fingerprint, cutoff,
+        symbol.upper(),
+        fingerprint,
+        cutoff,
     )
-    
+
     if not row:
         return None
-    
+
     last_vote = row["created_at"]
     cooldown_end = last_vote + timedelta(days=cooldown_days)
     remaining = (cooldown_end - datetime.utcnow()).total_seconds()
-    
+
     return int(remaining) if remaining > 0 else None
 
 
@@ -54,27 +62,27 @@ async def add_vote(
 ) -> tuple[bool, Optional[str]]:
     """
     Add a vote for a dip.
-    
+
     Args:
         symbol: Stock symbol
         fingerprint: Hashed voter identifier
         vote_type: 'buy' or 'sell'
         vote_weight: Vote weight multiplier (default 1, API key users get 10)
         api_key_id: Optional API key ID if using authenticated voting
-        
+
     Returns:
         Tuple of (success, error_message)
     """
     if vote_type not in ("buy", "sell"):
         return False, "Invalid vote type. Must be 'buy' or 'sell'"
-    
+
     # Check cooldown
     cooldown = await get_vote_cooldown_remaining(symbol, fingerprint)
     if cooldown:
         hours = cooldown // 3600
         minutes = (cooldown % 3600) // 60
         return False, f"Vote cooldown active. Try again in {hours}h {minutes}m"
-    
+
     # Check symbol exists in dip_state
     exists = await fetch_val(
         "SELECT EXISTS(SELECT 1 FROM dip_state WHERE symbol = $1)",
@@ -82,7 +90,7 @@ async def add_vote(
     )
     if not exists:
         return False, f"Symbol {symbol.upper()} is not currently in a dip"
-    
+
     # Insert vote with weight
     async with get_pg_connection() as conn:
         await conn.execute(
@@ -95,9 +103,13 @@ async def add_vote(
                 api_key_id = EXCLUDED.api_key_id,
                 created_at = NOW()
             """,
-            symbol.upper(), fingerprint, vote_type, vote_weight, api_key_id,
+            symbol.upper(),
+            fingerprint,
+            vote_type,
+            vote_weight,
+            api_key_id,
         )
-    
+
     logger.info(f"Vote recorded: {symbol.upper()} {vote_type} (weight: {vote_weight})")
     return True, None
 
@@ -116,10 +128,16 @@ async def get_vote_counts(symbol: str) -> dict:
         """,
         symbol.upper(),
     )
-    
+
     if not row:
-        return {"buy": 0, "sell": 0, "buy_weighted": 0, "sell_weighted": 0, "net_score": 0}
-    
+        return {
+            "buy": 0,
+            "sell": 0,
+            "buy_weighted": 0,
+            "sell_weighted": 0,
+            "net_score": 0,
+        }
+
     return {
         "buy": row["buy_count"] or 0,
         "sell": row["sell_count"] or 0,
@@ -143,7 +161,7 @@ async def get_all_vote_counts() -> dict[str, dict]:
         GROUP BY symbol
         """
     )
-    
+
     result = {}
     for row in rows:
         result[row["symbol"]] = {
@@ -153,7 +171,7 @@ async def get_all_vote_counts() -> dict[str, dict]:
             "sell_weighted": row["sell_weighted"] or 0,
             "net_score": (row["buy_weighted"] or 0) - (row["sell_weighted"] or 0),
         }
-    
+
     return result
 
 
@@ -170,7 +188,8 @@ async def get_user_votes(
         ORDER BY created_at DESC
         LIMIT $2
         """,
-        fingerprint, limit,
+        fingerprint,
+        limit,
     )
     return [dict(r) for r in rows]
 
@@ -186,7 +205,8 @@ async def get_user_vote_for_symbol(
         FROM dip_votes
         WHERE symbol = $1 AND fingerprint = $2
         """,
-        symbol.upper(), fingerprint,
+        symbol.upper(),
+        fingerprint,
     )
     return dict(row) if row else None
 
@@ -194,6 +214,7 @@ async def get_user_vote_for_symbol(
 # ============================================================================
 # AI Analysis Functions (PostgreSQL)
 # ============================================================================
+
 
 async def get_ai_analysis(symbol: str) -> Optional[dict]:
     """Get cached AI analysis for a symbol."""
@@ -212,7 +233,7 @@ async def get_ai_analysis(symbol: str) -> Optional[dict]:
 async def upsert_ai_analysis(
     symbol: str,
     tinder_bio: Optional[str] = None,
-    ai_rating: Optional[float] = None,
+    ai_rating: Optional[str] = None,
     ai_reasoning: Optional[str] = None,
     model_used: str = "gpt-4o-mini",
     is_batch: bool = False,
@@ -220,7 +241,7 @@ async def upsert_ai_analysis(
 ) -> dict:
     """Create or update AI analysis for a symbol."""
     expires_at = datetime.utcnow() + timedelta(hours=expires_hours)
-    
+
     async with get_pg_connection() as conn:
         row = await conn.fetchrow(
             """
@@ -240,19 +261,22 @@ async def upsert_ai_analysis(
             RETURNING symbol, tinder_bio, ai_rating, rating_reasoning as ai_reasoning,
                       model_used, is_batch_generated, generated_at, expires_at
             """,
-            symbol.upper(), tinder_bio, ai_rating, ai_reasoning,
-            model_used, is_batch, expires_at,
+            symbol.upper(),
+            tinder_bio,
+            ai_rating,
+            ai_reasoning,
+            model_used,
+            is_batch,
+            expires_at,
         )
-    
+
     return dict(row) if row else {"symbol": symbol.upper()}
 
 
 async def delete_expired_analyses() -> int:
     """Delete expired AI analyses."""
-    result = await execute(
-        "DELETE FROM dip_ai_analysis WHERE expires_at < NOW()"
-    )
-    
+    result = await execute("DELETE FROM dip_ai_analysis WHERE expires_at < NOW()")
+
     try:
         count = int(result.split()[-1])
         return count

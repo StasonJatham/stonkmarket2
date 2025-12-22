@@ -19,14 +19,23 @@ def record_usage(
 ) -> int:
     """Record an API usage entry."""
     import json
-    
+
     now = datetime.utcnow().isoformat()
     cur = conn.execute(
         """
         INSERT INTO api_usage (service, operation, input_tokens, output_tokens, cost_usd, is_batch, metadata, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (service, operation, input_tokens, output_tokens, cost_usd, int(is_batch), json.dumps(metadata or {}), now),
+        (
+            service,
+            operation,
+            input_tokens,
+            output_tokens,
+            cost_usd,
+            int(is_batch),
+            json.dumps(metadata or {}),
+            now,
+        ),
     )
     conn.commit()
     return cur.lastrowid or 0
@@ -38,7 +47,7 @@ def get_usage_summary(
 ) -> dict[str, Any]:
     """Get usage summary for the last N days."""
     cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
-    
+
     cur = conn.execute(
         """
         SELECT 
@@ -55,11 +64,11 @@ def get_usage_summary(
         """,
         (cutoff,),
     )
-    
+
     by_service = {}
     total_cost = 0.0
     total_requests = 0
-    
+
     for row in cur.fetchall():
         service = row["service"]
         by_service[service] = {
@@ -72,7 +81,7 @@ def get_usage_summary(
         }
         total_cost += row["total_cost_usd"] or 0
         total_requests += row["request_count"]
-    
+
     return {
         "period_days": days,
         "total_requests": total_requests,
@@ -87,7 +96,7 @@ def get_daily_costs(
 ) -> list[dict[str, Any]]:
     """Get daily cost breakdown."""
     cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
-    
+
     cur = conn.execute(
         """
         SELECT 
@@ -102,7 +111,7 @@ def get_daily_costs(
         """,
         (cutoff,),
     )
-    
+
     return [
         {
             "date": row["date"],
@@ -128,7 +137,7 @@ def get_batch_jobs(
         """,
         (limit,),
     )
-    
+
     return [dict(row) for row in cur.fetchall()]
 
 
@@ -160,7 +169,7 @@ def update_batch_job(
 ) -> bool:
     """Update batch job status."""
     now = datetime.utcnow().isoformat()
-    
+
     if status == "completed":
         cur = conn.execute(
             """
@@ -184,6 +193,6 @@ def update_batch_job(
             "UPDATE batch_jobs SET status = ? WHERE batch_id = ?",
             (status, batch_id),
         )
-    
+
     conn.commit()
     return cur.rowcount > 0

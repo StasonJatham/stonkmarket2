@@ -36,7 +36,7 @@ def get_decrypted_key(conn: sqlite3.Connection, key_name: str) -> Optional[str]:
 def list_keys(conn: sqlite3.Connection) -> list[dict]:
     """
     List all API keys (without decrypted values).
-    
+
     Returns list of dicts with key_name, key_hint, created_at, updated_at, created_by
     """
     cur = conn.execute(
@@ -69,7 +69,7 @@ def upsert_key(
     now = datetime.utcnow().isoformat()
     encrypted = encrypt_api_key(api_key)
     hint = get_key_hint(api_key)
-    
+
     conn.execute(
         """
         INSERT INTO secure_api_keys(key_name, encrypted_key, key_hint, created_at, updated_at, created_by)

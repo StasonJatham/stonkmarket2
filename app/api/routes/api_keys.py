@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import sqlite3
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends
 
 from app.api.dependencies import get_db, require_admin
-from app.api.routes.mfa import verify_mfa_token
 from app.core.encryption import decrypt_api_key
 from app.core.exceptions import AuthenticationError, NotFoundError, ValidationError
 from app.core.mfa import verify_totp, verify_backup_code
@@ -33,20 +32,20 @@ def _verify_mfa_for_request(
 ) -> None:
     """
     Verify MFA code for an API key operation.
-    
+
     Raises AuthenticationError if MFA verification fails.
     """
     db_user = auth_repo.get_user(conn, user.sub)
     if not db_user:
         raise AuthenticationError(message="User not found")
-    
+
     if not db_user.mfa_enabled:
         raise ValidationError("MFA must be enabled to manage API keys")
-    
+
     # Try TOTP first
     if db_user.mfa_secret and verify_totp(db_user.mfa_secret, mfa_code):
         return
-    
+
     # Try backup code
     if db_user.mfa_backup_codes:
         valid, updated = verify_backup_code(mfa_code, db_user.mfa_backup_codes)
@@ -55,7 +54,7 @@ def _verify_mfa_for_request(
             if updated:
                 auth_repo.update_backup_codes(conn, user.sub, updated)
             return
-    
+
     raise AuthenticationError(message="Invalid MFA code", error_code="INVALID_MFA_CODE")
 
 
@@ -71,7 +70,7 @@ async def list_api_keys(
 ) -> ApiKeyList:
     """List all API keys (hints only, not actual values)."""
     keys = api_keys_repo.list_keys(conn)
-    
+
     return ApiKeyList(
         keys=[
             ApiKeyResponse(
@@ -101,7 +100,7 @@ async def create_or_update_api_key(
     """Create or update an API key with MFA verification."""
     # Verify MFA
     _verify_mfa_for_request(conn, user, payload.mfa_code)
-    
+
     # Store the key
     key = api_keys_repo.upsert_key(
         conn,
@@ -109,7 +108,7 @@ async def create_or_update_api_key(
         api_key=payload.api_key,
         created_by=user.sub,
     )
-    
+
     return ApiKeyResponse(
         id=key.id,
         key_name=key.key_name,
@@ -135,16 +134,16 @@ async def reveal_api_key(
     """Reveal an API key with MFA verification."""
     # Verify MFA
     _verify_mfa_for_request(conn, user, payload.mfa_code)
-    
+
     # Get and decrypt the key
     key = api_keys_repo.get_key(conn, key_name)
     if not key:
         raise NotFoundError(f"API key '{key_name}' not found")
-    
+
     decrypted = decrypt_api_key(key.encrypted_key)
     if not decrypted:
         raise ValidationError("Failed to decrypt API key")
-    
+
     return ApiKeyRevealResponse(
         key_name=key_name,
         api_key=decrypted,
@@ -165,11 +164,11 @@ async def delete_api_key(
     """Delete an API key with MFA verification."""
     # Verify MFA
     _verify_mfa_for_request(conn, user, payload.mfa_code)
-    
+
     # Delete the key
     if not api_keys_repo.delete_key(conn, key_name):
         raise NotFoundError(f"API key '{key_name}' not found")
-    
+
     return {"message": f"API key '{key_name}' deleted successfully"}
 
 
@@ -185,7 +184,7 @@ async def check_api_key(
 ) -> dict:
     """Check if an API key exists (no MFA required, doesn't reveal value)."""
     key = api_keys_repo.get_key(conn, key_name)
-    
+
     return {
         "key_name": key_name,
         "exists": key is not None,

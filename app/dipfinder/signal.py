@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Optional
 
 import numpy as np
 
@@ -20,6 +20,7 @@ from .stability import StabilityMetrics
 
 class DipClass(str, Enum):
     """Dip classification based on market context."""
+
     MARKET_DIP = "MARKET_DIP"  # Dip is mainly due to market decline
     STOCK_SPECIFIC = "STOCK_SPECIFIC"  # Stock is underperforming market significantly
     MIXED = "MIXED"  # Combination of market and stock-specific factors
@@ -27,6 +28,7 @@ class DipClass(str, Enum):
 
 class AlertLevel(str, Enum):
     """Alert level for the signal."""
+
     NONE = "NONE"  # Does not meet alert criteria
     GOOD = "GOOD"  # Meets basic alert criteria
     STRONG = "STRONG"  # Meets strong alert criteria
@@ -35,13 +37,13 @@ class AlertLevel(str, Enum):
 @dataclass
 class MarketContext:
     """Market context for dip classification."""
-    
+
     benchmark_ticker: str
     dip_mkt: float  # Benchmark dip fraction
     dip_stock: float  # Stock dip fraction
     excess_dip: float  # Stock dip - benchmark dip
     dip_class: DipClass
-    
+
     def to_dict(self) -> dict:
         """Convert to dictionary."""
         return {
@@ -56,29 +58,29 @@ class MarketContext:
 @dataclass
 class DipSignal:
     """Complete dip signal with all components."""
-    
+
     ticker: str
     window: int
     benchmark: str
     as_of_date: str  # ISO date string
-    
+
     # Dip metrics
     dip_metrics: DipMetrics
-    
+
     # Market context
     market_context: MarketContext
-    
+
     # Scores
     quality_metrics: QualityMetrics
     stability_metrics: StabilityMetrics
     dip_score: float  # 0-100
     final_score: float  # 0-100
-    
+
     # Alert
     alert_level: AlertLevel
     should_alert: bool
     reason: str  # Human-readable explanation
-    
+
     def to_dict(self) -> dict:
         """Convert to dictionary for API response."""
         return {
@@ -112,7 +114,7 @@ class DipSignal:
             "quality_factors": self.quality_metrics.to_dict(),
             "stability_factors": self.stability_metrics.to_dict(),
         }
-    
+
     def to_db_dict(self) -> dict:
         """Convert to dictionary for database storage."""
         return {
@@ -145,28 +147,28 @@ def classify_dip(
 ) -> DipClass:
     """
     Classify dip based on market context.
-    
+
     Args:
         dip_stock: Stock dip fraction
         dip_mkt: Market/benchmark dip fraction
         config: Configuration with thresholds
-        
+
     Returns:
         DipClass enum value
     """
     if config is None:
         config = get_dipfinder_config()
-    
+
     excess_dip = dip_stock - dip_mkt
-    
+
     # Market dip AND stock not significantly underperforming
     if dip_mkt >= config.market_dip_threshold and excess_dip < config.excess_dip_market:
         return DipClass.MARKET_DIP
-    
+
     # Stock significantly underperforming market
     if excess_dip >= config.excess_dip_stock_specific:
         return DipClass.STOCK_SPECIFIC
-    
+
     # Mixed case
     return DipClass.MIXED
 
@@ -181,7 +183,7 @@ def compute_market_context(
 ) -> MarketContext:
     """
     Compute market context for dip classification.
-    
+
     Args:
         ticker: Stock ticker
         stock_prices: Stock closing prices
@@ -189,30 +191,34 @@ def compute_market_context(
         benchmark_ticker: Benchmark ticker symbol
         window: Window for dip calculation
         config: Configuration
-        
+
     Returns:
         MarketContext with classification
     """
     from .dip import compute_dip_series_windowed
-    
+
     if config is None:
         config = get_dipfinder_config()
-    
+
     # Compute stock dip
     stock_dips = compute_dip_series_windowed(stock_prices, window)
-    dip_stock = float(stock_dips[-1]) if len(stock_dips) > 0 and not np.isnan(stock_dips[-1]) else 0.0
-    
+    dip_stock = (
+        float(stock_dips[-1])
+        if len(stock_dips) > 0 and not np.isnan(stock_dips[-1])
+        else 0.0
+    )
+
     # Compute benchmark dip
     if len(benchmark_prices) >= window:
         benchmark_dips = compute_dip_series_windowed(benchmark_prices, window)
         dip_mkt = float(benchmark_dips[-1]) if not np.isnan(benchmark_dips[-1]) else 0.0
     else:
         dip_mkt = 0.0
-    
+
     excess_dip = dip_stock - dip_mkt
-    
+
     dip_class = classify_dip(dip_stock, dip_mkt, config)
-    
+
     return MarketContext(
         benchmark_ticker=benchmark_ticker,
         dip_mkt=dip_mkt,
@@ -229,42 +235,42 @@ def compute_dip_score(
 ) -> float:
     """
     Compute dip score from dip metrics and market context.
-    
+
     Args:
         dip_metrics: Computed dip metrics
         market_context: Market context with classification
         config: Configuration
-        
+
     Returns:
         Dip score 0-100
     """
     if config is None:
         config = get_dipfinder_config()
-    
+
     score = 0.0
-    
+
     # Base score from dip magnitude (max 40 points)
     # More dip = higher score (for buying opportunity)
     if dip_metrics.dip_pct >= config.min_dip_abs:
         # Scale from 10% (baseline) to 40% (extreme)
         magnitude_factor = min((dip_metrics.dip_pct - config.min_dip_abs) / 0.30, 1.0)
         score += 20 + magnitude_factor * 20
-    
+
     # Percentile/rarity score (max 25 points)
     # Higher percentile = rarer dip = higher score
     percentile_factor = dip_metrics.dip_percentile / 100
     score += percentile_factor * 25
-    
+
     # Dip vs typical score (max 20 points)
     if dip_metrics.dip_vs_typical >= config.dip_vs_typical_threshold:
         typical_factor = min((dip_metrics.dip_vs_typical - 1.0) / 2.0, 1.0)
         score += 10 + typical_factor * 10
-    
+
     # Persistence score (max 10 points)
     if dip_metrics.persist_days >= config.min_persist_days:
         persist_factor = min(dip_metrics.persist_days / 10, 1.0)
         score += 5 + persist_factor * 5
-    
+
     # Classification adjustment (max 5 points)
     if market_context.dip_class == DipClass.STOCK_SPECIFIC:
         # Stock-specific dips may be more actionable (or more risky)
@@ -274,7 +280,7 @@ def compute_dip_score(
     elif market_context.dip_class == DipClass.MARKET_DIP:
         # Market dips can still be good buying opportunities
         score += 2
-    
+
     return min(100.0, max(0.0, score))
 
 
@@ -289,24 +295,24 @@ def generate_reason(
 ) -> str:
     """
     Generate human-readable reason for the signal.
-    
+
     Returns one-line explanation of the opportunity.
     """
     if config is None:
         config = get_dipfinder_config()
-    
+
     parts = []
-    
+
     # Dip description
     dip_pct = dip_metrics.dip_pct * 100
     parts.append(f"{dip_pct:.1f}% from peak")
-    
+
     # Significance
     if dip_metrics.dip_percentile >= 90:
         parts.append("rare dip (top 10%)")
     elif dip_metrics.dip_percentile >= 80:
         parts.append("significant dip (top 20%)")
-    
+
     # Context
     if market_context.dip_class == DipClass.STOCK_SPECIFIC:
         excess_pct = market_context.excess_dip * 100
@@ -315,7 +321,7 @@ def generate_reason(
         parts.append("market-wide decline")
     else:
         parts.append("mixed market/stock factors")
-    
+
     # Quality/stability flags
     if quality_metrics.score >= 80:
         parts.append("excellent fundamentals")
@@ -323,12 +329,12 @@ def generate_reason(
         parts.append("strong fundamentals")
     elif quality_metrics.score < config.quality_gate:
         parts.append("weak fundamentals")
-    
+
     if stability_metrics.score >= 80:
         parts.append("very stable")
     elif stability_metrics.score < config.stability_gate:
         parts.append("higher volatility")
-    
+
     # Combine
     return "; ".join(parts)
 
@@ -346,7 +352,7 @@ def compute_signal(
 ) -> DipSignal:
     """
     Compute complete dip signal for a ticker.
-    
+
     Args:
         ticker: Stock ticker symbol
         stock_prices: Stock closing prices array
@@ -357,31 +363,31 @@ def compute_signal(
         stability_metrics: Pre-computed stability metrics
         as_of_date: Date string (ISO format)
         config: Configuration
-        
+
     Returns:
         Complete DipSignal
     """
     if config is None:
         config = get_dipfinder_config()
-    
+
     # Compute dip metrics
     dip_metrics = compute_dip_metrics(ticker, stock_prices, window, config)
-    
+
     # Compute market context
     market_context = compute_market_context(
         ticker, stock_prices, benchmark_prices, benchmark_ticker, window, config
     )
-    
+
     # Compute dip score
     dip_score = compute_dip_score(dip_metrics, market_context, config)
-    
+
     # Compute final score (weighted combination)
     final_score = (
-        config.weight_dip * dip_score +
-        config.weight_quality * quality_metrics.score +
-        config.weight_stability * stability_metrics.score
+        config.weight_dip * dip_score
+        + config.weight_quality * quality_metrics.score
+        + config.weight_stability * stability_metrics.score
     )
-    
+
     # Determine alert level
     should_alert = (
         final_score >= config.alert_good
@@ -389,7 +395,7 @@ def compute_signal(
         and quality_metrics.score >= config.quality_gate
         and stability_metrics.score >= config.stability_gate
     )
-    
+
     if should_alert:
         if final_score >= config.alert_strong:
             alert_level = AlertLevel.STRONG
@@ -397,13 +403,18 @@ def compute_signal(
             alert_level = AlertLevel.GOOD
     else:
         alert_level = AlertLevel.NONE
-    
+
     # Generate reason
     reason = generate_reason(
-        dip_metrics, market_context, quality_metrics, stability_metrics,
-        dip_score, final_score, config
+        dip_metrics,
+        market_context,
+        quality_metrics,
+        stability_metrics,
+        dip_score,
+        final_score,
+        config,
     )
-    
+
     return DipSignal(
         ticker=ticker,
         window=window,

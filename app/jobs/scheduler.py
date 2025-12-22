@@ -8,11 +8,9 @@ from typing import Callable, Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from croniter import croniter
 
 from app.core.config import settings
 from app.core.logging import get_logger
-from app.database import get_db_connection, init_db
 
 from .registry import get_job, get_all_jobs
 
@@ -46,9 +44,6 @@ class JobScheduler:
             logger.info("Scheduler disabled via SCHEDULER_ENABLED=false")
             return
 
-        # Initialize database
-        init_db()
-
         # Load and schedule jobs from database
         await self._load_jobs()
 
@@ -67,12 +62,45 @@ class JobScheduler:
         logger.info("Job scheduler stopped")
 
     async def _load_jobs(self) -> None:
-        """Load job schedules from database."""
-        from app.repositories.cronjobs import list_cronjobs
+        """Load job schedules from database, seeding any missing registered jobs."""
+        from app.repositories import cronjobs as cron_repo
+        from app.database.connection import execute
 
-        # Get database connection
-        with get_db_connection() as conn:
-            jobs = list_cronjobs(conn)
+        # First, seed any registered jobs that don't exist in DB
+        registered_jobs = get_all_jobs()
+
+        # Define default schedules for registered jobs (exactly 5)
+        default_schedules = {
+            "data_grab": ("0 23 * * 1-5", "Fetch stock data Mon-Fri 11pm"),
+            "batch_ai_tinder": ("0 3 * * 0", "Generate tinder bios weekly Sunday 3am"),
+            "batch_ai_analysis": (
+                "0 4 * * 0",
+                "Generate dip analysis weekly Sunday 4am",
+            ),
+            "batch_poll": ("*/15 * * * *", "Poll for completed batch jobs every 15 min"),
+            "cleanup": ("0 0 * * *", "Clean up expired data daily midnight"),
+        }
+
+        for job_name in registered_jobs:
+            cron_expr, description = default_schedules.get(
+                job_name, ("0 * * * *", f"Job: {job_name}")
+            )
+            try:
+                await execute(
+                    """
+                    INSERT INTO cronjobs (name, cron_expression, is_active, config)
+                    VALUES ($1, $2, TRUE, $3)
+                    ON CONFLICT (name) DO NOTHING
+                    """,
+                    job_name,
+                    cron_expr,
+                    f'{{"description": "{description}"}}',
+                )
+            except Exception as e:
+                logger.warning(f"Failed to seed job {job_name}: {e}")
+
+        # Now load and schedule all jobs from database
+        jobs = await cron_repo.list_cronjobs()
 
         for job_config in jobs:
             job_func = get_job(job_config.name)
@@ -104,7 +132,7 @@ class JobScheduler:
     async def _execute_job(self, name: str, func: Callable) -> None:
         """Execute a job with distributed locking and logging."""
         from app.cache.distributed_lock import DistributedLock
-        from app.repositories.cronjobs import insert_log
+        from app.repositories import cronjobs as cron_repo
 
         lock = DistributedLock(f"job:{name}", timeout=60 * 30)  # 30 min max
 
@@ -118,30 +146,31 @@ class JobScheduler:
             start_time = datetime.now(timezone.utc)
 
             try:
-                # Get fresh connection for job execution
-                with get_db_connection() as conn:
-                    if asyncio.iscoroutinefunction(func):
-                        result = await func(conn)
-                    else:
-                        result = func(conn)
+                # Execute the job (no connection needed anymore)
+                if asyncio.iscoroutinefunction(func):
+                    result = await func()
+                else:
+                    result = func()
 
-                duration = (datetime.now(timezone.utc) - start_time).total_seconds()
-                message = str(result) if result else "Completed successfully"
+                duration_ms = int(
+                    (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
+                )
+                str(result) if result else "Completed successfully"
 
-                # Log success
-                with get_db_connection() as conn:
-                    insert_log(conn, name, "ok", f"{message} ({duration:.2f}s)")
+                # Update job stats in database
+                await cron_repo.update_job_stats(name, "ok", duration_ms)
 
-                logger.info(f"Job {name} completed in {duration:.2f}s")
+                logger.info(f"Job {name} completed in {duration_ms}ms")
 
             except Exception as e:
-                duration = (datetime.now(timezone.utc) - start_time).total_seconds()
+                duration_ms = int(
+                    (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
+                )
 
-                # Log error
-                with get_db_connection() as conn:
-                    insert_log(conn, name, "error", str(e)[:1000])
+                # Update job stats with error
+                await cron_repo.update_job_stats(name, "error", duration_ms, str(e))
 
-                logger.exception(f"Job {name} failed after {duration:.2f}s")
+                logger.exception(f"Job {name} failed after {duration_ms}ms")
 
         finally:
             await lock.release()
@@ -166,12 +195,16 @@ class JobScheduler:
         """Get status of all scheduled jobs."""
         jobs = []
         for job in self._scheduler.get_jobs():
-            jobs.append({
-                "id": job.id,
-                "name": job.name,
-                "next_run_time": job.next_run_time.isoformat() if job.next_run_time else None,
-                "pending": job.pending,
-            })
+            jobs.append(
+                {
+                    "id": job.id,
+                    "name": job.name,
+                    "next_run_time": job.next_run_time.isoformat()
+                    if job.next_run_time
+                    else None,
+                    "pending": job.pending,
+                }
+            )
         return jobs
 
 

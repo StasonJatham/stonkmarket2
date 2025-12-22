@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -177,26 +178,37 @@ export function MFASetup({ onError, onSuccess }: MFASetupProps) {
   // Show backup codes after successful setup
   if (backupCodes) {
     return (
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-success">
-            <CheckCircle className="h-5 w-5" />
-            MFA Enabled Successfully!
-          </CardTitle>
-          <CardDescription>
-            Save these backup codes in a secure location. Each code can only be used once.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 gap-2 p-4 bg-muted rounded-lg font-mono text-sm">
-            {backupCodes.map((code, i) => (
-              <div key={i} className="p-2 bg-background rounded text-center">
-                {code}
-              </div>
-            ))}
-          </div>
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ duration: 0.2 }}
+      >
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-success">
+              <CheckCircle className="h-5 w-5" />
+              MFA Enabled Successfully!
+            </CardTitle>
+            <CardDescription>
+              Save these backup codes in a secure location. Each code can only be used once.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-2 gap-2 p-4 bg-muted rounded-lg font-mono text-sm">
+              {backupCodes.map((code, i) => (
+                <motion.div 
+                  key={i} 
+                  className="p-2 bg-background rounded text-center"
+                  initial={{ opacity: 0, y: 5 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: i * 0.05 }}
+                >
+                  {code}
+                </motion.div>
+              ))}
+            </div>
           
-          <div className="flex gap-2">
+            <div className="flex gap-2">
             <Button
               variant="outline"
               onClick={() => copyToClipboard(backupCodes.join('\n'), 'codes')}
@@ -225,6 +237,7 @@ export function MFASetup({ onError, onSuccess }: MFASetupProps) {
           </div>
         </CardContent>
       </Card>
+      </motion.div>
     );
   }
 

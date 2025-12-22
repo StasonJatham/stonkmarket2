@@ -31,7 +31,9 @@ class LoginRequest(BaseModel):
         """Validate and sanitize username."""
         v = v.strip().lower()
         if not re.match(r"^[a-z0-9_-]+$", v):
-            raise ValueError("Username can only contain letters, numbers, underscores, and hyphens")
+            raise ValueError(
+                "Username can only contain letters, numbers, underscores, and hyphens"
+            )
         return v
 
 
@@ -81,7 +83,9 @@ class PasswordChangeRequest(BaseModel):
             return v
         v = v.strip().lower()
         if not re.match(r"^[a-z0-9_-]+$", v):
-            raise ValueError("Username can only contain letters, numbers, underscores, and hyphens")
+            raise ValueError(
+                "Username can only contain letters, numbers, underscores, and hyphens"
+            )
         return v
 
     @field_validator("new_password")

@@ -98,7 +98,7 @@ class SensitiveDataFilter(logging.Filter):
 
         # Match patterns like "key=value" or "key: value" or "'key': 'value'"
         patterns = [
-            rf'({key}\s*[=:]\s*)[^\s,}}\]]+',
+            rf"({key}\s*[=:]\s*)[^\s,}}\]]+",
             rf"('{key}'\s*:\s*)[^\s,}}\]]+",
             rf'("{key}"\s*:\s*)[^\s,}}\]]+',
         ]

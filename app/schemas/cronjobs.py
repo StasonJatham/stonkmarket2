@@ -80,6 +80,24 @@ class CronJobLogResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class CronJobWithStatsResponse(BaseModel):
+    """CronJob response with execution stats."""
+
+    name: str = Field(..., description="Job name")
+    cron: str = Field(..., description="Cron expression")
+    description: Optional[str] = Field(None, description="Job description")
+    last_run: Optional[datetime] = Field(None, description="Last execution time")
+    last_status: Optional[str] = Field(None, description="Last execution status")
+    last_duration_ms: Optional[int] = Field(
+        None, description="Last execution duration in ms"
+    )
+    run_count: int = Field(default=0, description="Total run count")
+    error_count: int = Field(default=0, description="Total error count")
+    last_error: Optional[str] = Field(None, description="Last error message")
+
+    model_config = {"from_attributes": True}
+
+
 class CronJobLogListResponse(BaseModel):
     """Paginated cron job log list response."""
 

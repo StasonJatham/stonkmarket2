@@ -1,12 +1,10 @@
-"""Authentication routes - strict REST endpoints."""
+"""Authentication routes - PostgreSQL async version."""
 
 from __future__ import annotations
 
-import sqlite3
-
 from fastapi import APIRouter, Depends, Request, Response
 
-from app.api.dependencies import get_db, get_client_ip, require_user, require_admin, rate_limit_auth
+from app.api.dependencies import get_client_ip, require_user, require_admin
 from app.cache.rate_limit import check_rate_limit
 from app.core.config import settings
 from app.core.exceptions import AuthenticationError
@@ -16,6 +14,7 @@ from app.core.security import (
     hash_password,
     verify_password,
 )
+from app.database.connection import execute
 from app.repositories import auth_user as auth_repo
 from app.schemas.auth import (
     LoginRequest,
@@ -41,7 +40,6 @@ async def login(
     request: Request,
     payload: LoginRequest,
     response: Response,
-    conn: sqlite3.Connection = Depends(get_db),
 ) -> LoginResponse:
     """
     Authenticate user and return access token.
@@ -53,8 +51,8 @@ async def login(
     if settings.rate_limit_enabled:
         await check_rate_limit(client_ip, key_prefix="auth")
 
-    # Lookup user
-    user = auth_repo.get_user(conn, payload.username)
+    # Lookup user (async)
+    user = await auth_repo.get_user(payload.username)
     if user is None:
         raise AuthenticationError(
             message="Invalid credentials",
@@ -108,10 +106,10 @@ async def logout(
 ) -> None:
     """Revoke current token and clear session cookie."""
     from app.cache.token_blacklist import blacklist_token
-    
+
     # Blacklist the current token so it can't be reused
     await blacklist_token(user.jti, user.exp)
-    
+
     # Clear the session cookie
     response.delete_cookie(
         key="session",
@@ -152,7 +150,6 @@ async def update_credentials(
     payload: PasswordChangeRequest,
     response: Response,
     user: TokenData = Depends(require_user),
-    conn: sqlite3.Connection = Depends(get_db),
 ) -> UserResponse:
     """
     Update user credentials (username/password).
@@ -160,7 +157,7 @@ async def update_credentials(
     Requires current password for verification.
     """
     # Get current user record
-    current_user = auth_repo.get_user(conn, user.sub)
+    current_user = await auth_repo.get_user(user.sub)
     if current_user is None:
         raise AuthenticationError(
             message="User not found",
@@ -181,15 +178,16 @@ async def update_credentials(
     new_password_hash = hash_password(payload.new_password)
 
     # Update or create new user record
-    auth_repo.upsert_user(conn, new_username, new_password_hash)
+    await auth_repo.upsert_user(new_username, new_password_hash)
 
     # If username changed, delete old record
     if new_username != user.sub:
-        conn.execute("DELETE FROM auth_user WHERE username = ?", (user.sub,))
-        conn.commit()
+        await execute(
+            "DELETE FROM auth_user WHERE username = $1", user.sub.lower()
+        )
 
     # Get admin status from database
-    updated_user = auth_repo.get_user(conn, new_username)
+    updated_user = await auth_repo.get_user(new_username)
     is_admin = updated_user.is_admin if updated_user else False
 
     # Generate new token with updated info
@@ -227,10 +225,10 @@ async def logout_all(
 ) -> None:
     """Revoke all tokens for this user (logout from all devices)."""
     from app.cache.token_blacklist import blacklist_user_tokens
-    
+
     # Invalidate all tokens issued before now
     await blacklist_user_tokens(user.sub)
-    
+
     # Clear the session cookie
     response.delete_cookie(
         key="session",
@@ -252,5 +250,5 @@ async def revoke_user_sessions(
 ) -> None:
     """Admin: Revoke all tokens for a specific user."""
     from app.cache.token_blacklist import blacklist_user_tokens
-    
+
     await blacklist_user_tokens(username.lower())

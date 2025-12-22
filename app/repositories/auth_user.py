@@ -1,116 +1,122 @@
-"""Auth user repository."""
+"""Auth user repository - PostgreSQL async."""
 
 from __future__ import annotations
 
-import sqlite3
-from datetime import datetime
 from typing import Optional
 
+from app.database.connection import fetch_one, execute
 from app.database.models import AuthUser
 
 
-def get_user(conn: sqlite3.Connection, username: str) -> Optional[AuthUser]:
+async def get_user(username: str) -> Optional[AuthUser]:
     """Get a user by username."""
-    cur = conn.execute(
+    row = await fetch_one(
         """
-        SELECT username, password_hash, is_admin, mfa_secret, mfa_enabled, mfa_backup_codes, updated_at 
-        FROM auth_user WHERE username = ?
+        SELECT id, username, password_hash, is_admin, mfa_secret, mfa_enabled, mfa_backup_codes, updated_at 
+        FROM auth_user WHERE username = $1
         """,
-        (username.lower(),),
+        username.lower(),
     )
-    row = cur.fetchone()
     if row:
         return AuthUser.from_row(row)
     return None
 
 
-def upsert_user(conn: sqlite3.Connection, username: str, password_hash: str) -> AuthUser:
+async def upsert_user(username: str, password_hash: str) -> Optional[AuthUser]:
     """Create or update a user."""
-    now = datetime.utcnow().isoformat()
-    conn.execute(
+    await execute(
         """
-        INSERT INTO auth_user(username, password_hash, updated_at) VALUES (?, ?, ?)
+        INSERT INTO auth_user(username, password_hash, created_at, updated_at) 
+        VALUES ($1, $2, NOW(), NOW())
         ON CONFLICT(username) DO UPDATE SET 
             password_hash=excluded.password_hash, 
-            updated_at=excluded.updated_at
+            updated_at=NOW()
         """,
-        (username.lower(), password_hash, now),
+        username.lower(),
+        password_hash,
     )
-    conn.commit()
-    return get_user(conn, username)  # type: ignore
+    return await get_user(username)
 
 
-def set_mfa_secret(conn: sqlite3.Connection, username: str, mfa_secret: str) -> bool:
+async def set_mfa_secret(username: str, mfa_secret: str) -> bool:
     """Set MFA secret for a user (not yet enabled)."""
-    now = datetime.utcnow().isoformat()
-    cur = conn.execute(
+    result = await execute(
         """
-        UPDATE auth_user SET mfa_secret = ?, updated_at = ?
-        WHERE username = ?
+        UPDATE auth_user SET mfa_secret = $1, updated_at = NOW()
+        WHERE username = $2
         """,
-        (mfa_secret, now, username.lower()),
+        mfa_secret,
+        username.lower(),
     )
-    conn.commit()
-    return cur.rowcount > 0
+    return result > 0
 
 
-def enable_mfa(conn: sqlite3.Connection, username: str, backup_codes_json: str) -> bool:
+async def enable_mfa(username: str, backup_codes: str) -> bool:
     """Enable MFA for a user after verification."""
-    now = datetime.utcnow().isoformat()
-    cur = conn.execute(
+    result = await execute(
         """
         UPDATE auth_user 
-        SET mfa_enabled = 1, mfa_backup_codes = ?, updated_at = ?
-        WHERE username = ? AND mfa_secret IS NOT NULL
+        SET mfa_enabled = TRUE, mfa_backup_codes = $1, updated_at = NOW()
+        WHERE username = $2
         """,
-        (backup_codes_json, now, username.lower()),
+        backup_codes,
+        username.lower(),
     )
-    conn.commit()
-    return cur.rowcount > 0
+    return result > 0
 
 
-def disable_mfa(conn: sqlite3.Connection, username: str) -> bool:
+async def disable_mfa(username: str) -> bool:
     """Disable MFA for a user."""
-    now = datetime.utcnow().isoformat()
-    cur = conn.execute(
+    result = await execute(
         """
         UPDATE auth_user 
-        SET mfa_enabled = 0, mfa_secret = NULL, mfa_backup_codes = NULL, updated_at = ?
-        WHERE username = ?
+        SET mfa_enabled = FALSE, mfa_secret = NULL, mfa_backup_codes = NULL, updated_at = NOW()
+        WHERE username = $1
         """,
-        (now, username.lower()),
+        username.lower(),
     )
-    conn.commit()
-    return cur.rowcount > 0
+    return result > 0
 
 
-def update_backup_codes(conn: sqlite3.Connection, username: str, backup_codes_json: str) -> bool:
-    """Update backup codes (after one is used)."""
-    now = datetime.utcnow().isoformat()
-    cur = conn.execute(
-        """
-        UPDATE auth_user SET mfa_backup_codes = ?, updated_at = ?
-        WHERE username = ?
-        """,
-        (backup_codes_json, now, username.lower()),
+async def verify_and_consume_backup_code(username: str, code_hash: str) -> bool:
+    """Verify a backup code and remove it from the list."""
+    user = await get_user(username)
+    if not user or not user.mfa_backup_codes:
+        return False
+
+    import json
+
+    try:
+        backup_codes = json.loads(user.mfa_backup_codes)
+        if code_hash in backup_codes:
+            backup_codes.remove(code_hash)
+            await execute(
+                """
+                UPDATE auth_user 
+                SET mfa_backup_codes = $1, updated_at = NOW()
+                WHERE username = $2
+                """,
+                json.dumps(backup_codes),
+                username.lower(),
+            )
+            return True
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    return False
+
+
+async def get_single_user() -> Optional[AuthUser]:
+    """Get the single user for single-user mode."""
+    row = await fetch_one(
+        "SELECT id, username, password_hash, is_admin, mfa_secret, mfa_enabled, mfa_backup_codes, updated_at FROM auth_user LIMIT 1"
     )
-    conn.commit()
-    return cur.rowcount > 0
-
-
-def delete_user(conn: sqlite3.Connection, username: str) -> bool:
-    """Delete a user."""
-    cur = conn.execute("DELETE FROM auth_user WHERE username = ?", (username.lower(),))
-    conn.commit()
-    return cur.rowcount > 0
-
-
-def any_user(conn: sqlite3.Connection) -> Optional[AuthUser]:
-    """Get any user (for checking if users exist)."""
-    cur = conn.execute(
-        "SELECT username, password_hash, mfa_secret, mfa_enabled, mfa_backup_codes, updated_at FROM auth_user LIMIT 1"
-    )
-    row = cur.fetchone()
     if row:
         return AuthUser.from_row(row)
     return None
+
+
+async def user_exists() -> bool:
+    """Check if any user exists."""
+    row = await fetch_one("SELECT 1 FROM auth_user LIMIT 1")
+    return row is not None

@@ -54,11 +54,11 @@ def _download(symbols: Sequence[str], period_days: int) -> pd.DataFrame:
     tickers = " ".join(symbols)
     key = (tickers, period_days)
     now = time.time()
-    
+
     cached = _DOWNLOAD_CACHE.get(key)
     if cached and now - cached[0] < _CACHE_TTL_SECONDS:
         return cached[1]
-    
+
     try:
         df = yf.download(
             tickers,
@@ -92,17 +92,17 @@ def _state_from_series(close: pd.Series, symbol: str, min_dip_pct: float) -> Dip
     prices = close.to_numpy(dtype=np.float64)
     if len(prices) == 0:
         return DipState(symbol=symbol, ref_high=0.0, days_below=0, last_price=0.0)
-    
+
     ref_high = float(np.max(prices))
     threshold = ref_high * (1.0 - min_dip_pct)
     below = prices <= threshold
-    
+
     if not below[-1]:
         days_below = 0
     else:
         rev = below[::-1]
         days_below = int(np.argmax(~rev)) if (~rev).any() else int(len(prices))
-    
+
     last_price = float(prices[-1])
     return DipState(
         symbol=symbol,
@@ -121,20 +121,22 @@ def refresh_states(conn) -> Dict[str, DipState]:
     thresholds = {s.symbol: s.min_dip_pct for s in symbols}
     hist = _download([s.symbol for s in symbols], settings.history_days)
     states: Dict[str, DipState] = {}
-    
+
     for sym in symbols:
         close = _extract_close_frame(hist, sym.symbol)
         if close.empty:
             # Try individual download
             single = _download([sym.symbol], settings.history_days)
             close = _extract_close_frame(single, sym.symbol)
-        
+
         if close.empty:
             logger.warning(f"No data for {sym.symbol}")
             continue
-        
-        close_window = close.iloc[-min(len(close), settings.history_days):]
-        states[sym.symbol] = _state_from_series(close_window, sym.symbol, thresholds[sym.symbol])
+
+        close_window = close.iloc[-min(len(close), settings.history_days) :]
+        states[sym.symbol] = _state_from_series(
+            close_window, sym.symbol, thresholds[sym.symbol]
+        )
 
     dip_repo.save_states_batch(conn, states)
     logger.info(f"Refreshed {len(states)} dip states")
@@ -147,14 +149,14 @@ def refresh_symbol(conn, symbol: str) -> None:
     cfg = symbol_repo.get_symbol(conn, sym)
     if cfg is None:
         return
-    
+
     data = _download([sym], settings.history_days)
     close = _extract_close_frame(data, sym)
     if close.empty:
         logger.warning(f"No data for {sym}")
         return
-    
-    close_window = close.iloc[-min(len(close), settings.history_days):]
+
+    close_window = close.iloc[-min(len(close), settings.history_days) :]
     state = _state_from_series(close_window, sym, cfg.min_dip_pct)
     dip_repo.save_states_batch(conn, {sym: state})
     logger.info(f"Refreshed dip state for {sym}")
@@ -192,7 +194,7 @@ def compute_ranking_details(conn, force_refresh: bool = False) -> List[RankingEn
     """Compute detailed ranking with caching."""
     global _RANK_CACHE
     now = time.time()
-    
+
     if not force_refresh and _RANK_CACHE and now - _RANK_CACHE[0] < _RANK_CACHE_TTL:
         return _RANK_CACHE[1]
 
@@ -215,13 +217,13 @@ def compute_ranking_details(conn, force_refresh: bool = False) -> List[RankingEn
         if close.empty:
             continue
 
-        close_window = close.iloc[-min(len(close), settings.history_days):]
+        close_window = close.iloc[-min(len(close), settings.history_days) :]
         prices = close_window.to_numpy(dtype=np.float64)
 
         state = _state_from_series(close_window, sym.symbol, min_dip_pct)
         states[sym.symbol] = state
         depth = dip_depth(state)
-        
+
         if depth > -min_dip_pct or state.days_below < min_days:
             continue
 
@@ -229,7 +231,11 @@ def compute_ranking_details(conn, force_refresh: bool = False) -> List[RankingEn
         low_52w = float(np.min(prices))
         last_price = float(prices[-1])
         previous_close = float(prices[-2]) if len(prices) > 1 else last_price
-        change_percent = ((last_price - previous_close) / previous_close * 100) if previous_close else 0
+        change_percent = (
+            ((last_price - previous_close) / previous_close * 100)
+            if previous_close
+            else 0
+        )
 
         idx_max = int(np.argmax(prices))
         threshold = state.ref_high * (1.0 - min_dip_pct)
@@ -238,11 +244,13 @@ def compute_ranking_details(conn, force_refresh: bool = False) -> List[RankingEn
             if prices[j] <= threshold:
                 dip_start_idx = j
                 break
-        days_since_dip = int(len(prices) - 1 - dip_start_idx) if dip_start_idx is not None else None
+        days_since_dip = (
+            int(len(prices) - 1 - dip_start_idx) if dip_start_idx is not None else None
+        )
 
         # Get additional info from yfinance
         info = _get_ticker_info(sym.symbol)
-        
+
         entries.append(
             RankingEntry(
                 symbol=sym.symbol,
@@ -293,7 +301,9 @@ def get_chart_points(
             break
     base_price = prices_window[dip_start_idx] if dip_start_idx is not None else None
     dip_start_date = (
-        str(close_window.index[dip_start_idx].date()) if dip_start_idx is not None else None
+        str(close_window.index[dip_start_idx].date())
+        if dip_start_idx is not None
+        else None
     )
 
     close_trimmed = close_window.iloc[-days:]

@@ -6,8 +6,8 @@ from datetime import datetime
 from typing import Optional
 from hashlib import sha256
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Header
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, HTTPException, Query, Request, Header
+from pydantic import BaseModel
 
 from app.repositories import dip_history
 from app.repositories import user_api_keys
@@ -22,8 +22,10 @@ router = APIRouter(prefix="/dips", tags=["dip-changes"])
 # Schemas
 # ============================================================================
 
+
 class DipChange(BaseModel):
     """A single dip change record."""
+
     symbol: str
     action: str  # 'added', 'removed', 'updated'
     current_price: Optional[float] = None
@@ -34,6 +36,7 @@ class DipChange(BaseModel):
 
 class DipChangesResponse(BaseModel):
     """Response for dip changes endpoint."""
+
     changes: list[DipChange]
     summary: dict
     rate_limit: dict
@@ -41,6 +44,7 @@ class DipChangesResponse(BaseModel):
 
 class DipChangesSummary(BaseModel):
     """Summary of dip changes."""
+
     hours: int
     since: str
     added: int
@@ -65,7 +69,7 @@ def get_client_identifier(request: Request) -> str:
         ip = forwarded.split(",")[0].strip()
     else:
         ip = request.client.host if request.client else "unknown"
-    
+
     # Hash the IP for privacy
     return sha256(ip.encode()).hexdigest()[:16]
 
@@ -76,7 +80,7 @@ async def check_rate_limit(
 ) -> dict:
     """
     Check rate limit for the request.
-    
+
     Returns:
         Dict with rate limit info: {allowed, remaining, reset_at, is_premium}
     """
@@ -91,20 +95,20 @@ async def check_rate_limit(
                 "is_premium": True,
                 "vote_weight": key_data.get("vote_weight", 10),
             }
-    
+
     # Free user rate limiting
     client_id = get_client_identifier(request)
     rate_key = f"{RATE_LIMIT_KEY_PREFIX}{client_id}"
-    
+
     try:
         # Check if rate limited
         last_request = await cache_manager.get(rate_key)
-        
+
         if last_request:
             last_time = datetime.fromisoformat(last_request)
             elapsed = (datetime.utcnow() - last_time).total_seconds()
             remaining = FREE_RATE_LIMIT_SECONDS - elapsed
-            
+
             if remaining > 0:
                 reset_at = last_time.timestamp() + FREE_RATE_LIMIT_SECONDS
                 return {
@@ -114,21 +118,19 @@ async def check_rate_limit(
                     "is_premium": False,
                     "retry_after_seconds": int(remaining),
                 }
-        
+
         # Set rate limit
         await cache_manager.set(
-            rate_key,
-            datetime.utcnow().isoformat(),
-            ttl=FREE_RATE_LIMIT_SECONDS
+            rate_key, datetime.utcnow().isoformat(), ttl=FREE_RATE_LIMIT_SECONDS
         )
-        
+
         return {
             "allowed": True,
             "remaining": 0,
             "reset_at": (datetime.utcnow().timestamp() + FREE_RATE_LIMIT_SECONDS),
             "is_premium": False,
         }
-        
+
     except Exception as e:
         logger.warning(f"Rate limit check failed: {e}")
         # Allow request on cache failure
@@ -139,25 +141,28 @@ async def check_rate_limit(
 # Endpoints
 # ============================================================================
 
+
 @router.get("/changes", response_model=DipChangesResponse)
 async def get_dip_changes(
     request: Request,
-    hours: int = Query(default=24, ge=1, le=168, description="Hours to look back (max 168 = 1 week)"),
+    hours: int = Query(
+        default=24, ge=1, le=168, description="Hours to look back (max 168 = 1 week)"
+    ),
     action: Optional[str] = Query(default=None, pattern="^(added|removed|updated)$"),
     limit: int = Query(default=100, ge=1, le=500),
     x_api_key: Optional[str] = Header(default=None, alias="X-API-Key"),
 ):
     """
     Get dip changes in the last X hours.
-    
+
     Rate limited to 1 request per hour for free users.
     Premium API key holders bypass rate limits.
-    
+
     Use X-API-Key header for authenticated requests.
     """
     # Check rate limit
     rate_info = await check_rate_limit(request, x_api_key)
-    
+
     if not rate_info["allowed"]:
         raise HTTPException(
             status_code=429,
@@ -169,17 +174,17 @@ async def get_dip_changes(
             },
             headers={"Retry-After": str(rate_info.get("retry_after_seconds", 3600))},
         )
-    
+
     # Get changes
     changes = await dip_history.get_dip_changes(
         hours=hours,
         action=action,
         limit=limit,
     )
-    
+
     # Get summary
     summary = await dip_history.get_dip_changes_summary(hours=hours)
-    
+
     return DipChangesResponse(
         changes=[DipChange(**c) for c in changes],
         summary=summary,
@@ -199,12 +204,12 @@ async def get_changes_summary(
 ):
     """
     Get a summary of dip changes without the full list.
-    
+
     Same rate limiting as /changes endpoint.
     """
     # Check rate limit
     rate_info = await check_rate_limit(request, x_api_key)
-    
+
     if not rate_info["allowed"]:
         raise HTTPException(
             status_code=429,
@@ -213,9 +218,9 @@ async def get_changes_summary(
                 "retry_after_seconds": rate_info.get("retry_after_seconds", 3600),
             },
         )
-    
+
     summary = await dip_history.get_dip_changes_summary(hours=hours)
-    
+
     return {
         "summary": summary,
         "rate_limit": {
@@ -233,20 +238,20 @@ async def get_symbol_change_history(
 ):
     """
     Get the change history for a specific symbol.
-    
+
     Shows when the symbol was added/removed from the dip list.
     """
     # Check rate limit
     rate_info = await check_rate_limit(request, x_api_key)
-    
+
     if not rate_info["allowed"]:
         raise HTTPException(
             status_code=429,
             detail={"error": "Rate limit exceeded"},
         )
-    
+
     history = await dip_history.get_symbol_history(symbol, days=days)
-    
+
     return {
         "symbol": symbol.upper(),
         "days": days,

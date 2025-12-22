@@ -5,6 +5,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '@/context/AuthContext';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { SuggestStockDialog } from '@/components/SuggestStockDialog';
 import { TrendingUp, Settings, LogOut, Heart, BarChart3 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
@@ -73,6 +74,7 @@ export function Header() {
 
           {/* Desktop Actions */}
           <div className="hidden md:flex items-center gap-3">
+            <SuggestStockDialog />
             <ThemeToggle />
             {user ? (
               <div className="flex items-center gap-3">
@@ -191,8 +193,9 @@ export function Header() {
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.25 }}
-                className="pt-8 border-t border-border w-48"
+                className="pt-8 border-t border-border w-48 space-y-3"
               >
+                <SuggestStockDialog />
                 {user ? (
                   <Button
                     variant="outline"

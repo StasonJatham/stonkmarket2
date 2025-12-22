@@ -2,31 +2,59 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
+from decimal import Decimal
 
 
 @dataclass
 class DipState:
-    """Dip state for a symbol."""
+    """Dip state for a symbol.
+    
+    Maps to: dip_state table
+    Columns: id, symbol, current_price, ath_price, dip_percentage, first_seen, last_updated
+    """
 
+    id: int
     symbol: str
-    ref_high: float
-    days_below: int
-    last_price: float
-    updated_at: Optional[datetime] = None
+    current_price: float
+    ath_price: float
+    dip_percentage: float
+    first_seen: Optional[datetime] = None
+    last_updated: Optional[datetime] = None
 
     @classmethod
     def from_row(cls, row) -> "DipState":
         """Create from database row."""
-        updated = datetime.fromisoformat(row["updated_at"]) if row["updated_at"] else None
+        keys = list(row.keys())
+        
+        def parse_dt(key: str) -> Optional[datetime]:
+            if key in keys and row[key]:
+                val = row[key]
+                return val if isinstance(val, datetime) else datetime.fromisoformat(val)
+            return None
+        
+        def to_float(key: str, default: float = 0.0) -> float:
+            if key not in keys:
+                return default
+            val = row[key]
+            if val is None:
+                return default
+            if isinstance(val, (float, int)):
+                return float(val)
+            if isinstance(val, Decimal):
+                return float(val)
+            return default
+        
         return cls(
+            id=row["id"],
             symbol=row["symbol"],
-            ref_high=row["ref_high"],
-            days_below=row["days_below"],
-            last_price=row["last_price"],
-            updated_at=updated,
+            current_price=to_float("current_price"),
+            ath_price=to_float("ath_price"),
+            dip_percentage=to_float("dip_percentage"),
+            first_seen=parse_dt("first_seen"),
+            last_updated=parse_dt("last_updated"),
         )
 
 
@@ -42,9 +70,11 @@ class SymbolConfig:
     @classmethod
     def from_row(cls, row) -> "SymbolConfig":
         """Create from database row."""
+        keys = list(row.keys())
         created = None
-        if "created_at" in row.keys() and row["created_at"]:
-            created = datetime.fromisoformat(row["created_at"])
+        if "created_at" in keys and row["created_at"]:
+            val = row["created_at"]
+            created = val if isinstance(val, datetime) else datetime.fromisoformat(val)
         return cls(
             symbol=row["symbol"],
             min_dip_pct=row["min_dip_pct"],
@@ -64,10 +94,11 @@ class CronJobConfig:
     @classmethod
     def from_row(cls, row) -> "CronJobConfig":
         """Create from database row."""
+        keys = list(row.keys())
         return cls(
             name=row["name"],
             cron=row["cron"],
-            description=row["description"] if "description" in row.keys() else None,
+            description=row["description"] if "description" in keys else None,
         )
 
 
@@ -84,12 +115,15 @@ class CronJobLog:
     @classmethod
     def from_row(cls, row) -> "CronJobLog":
         """Create from database row."""
+        keys = list(row.keys())
+        val = row["created_at"]
+        created = val if isinstance(val, datetime) else datetime.fromisoformat(val)
         return cls(
-            id=row["id"] if "id" in row.keys() else 0,
+            id=row["id"] if "id" in keys else 0,
             name=row["name"],
             status=row["status"],
-            message=row["message"] if "message" in row.keys() else None,
-            created_at=datetime.fromisoformat(row["created_at"]),
+            message=row["message"] if "message" in keys else None,
+            created_at=created,
         )
 
 
@@ -108,17 +142,22 @@ class AuthUser:
     @classmethod
     def from_row(cls, row) -> "AuthUser":
         """Create from database row."""
-        keys = row.keys()
+        # Materialize keys to list - asyncpg returns iterator that gets consumed
+        keys = list(row.keys())
         updated = None
         if "updated_at" in keys and row["updated_at"]:
-            updated = datetime.fromisoformat(row["updated_at"])
+            val = row["updated_at"]
+            # asyncpg returns datetime objects directly
+            updated = val if isinstance(val, datetime) else datetime.fromisoformat(val)
         return cls(
             username=row["username"],
             password_hash=row["password_hash"],
             is_admin=bool(row["is_admin"]) if "is_admin" in keys else False,
             mfa_secret=row["mfa_secret"] if "mfa_secret" in keys else None,
             mfa_enabled=bool(row["mfa_enabled"]) if "mfa_enabled" in keys else False,
-            mfa_backup_codes=row["mfa_backup_codes"] if "mfa_backup_codes" in keys else None,
+            mfa_backup_codes=row["mfa_backup_codes"]
+            if "mfa_backup_codes" in keys
+            else None,
             updated_at=updated,
         )
 
@@ -147,16 +186,18 @@ class StockSuggestion:
     @classmethod
     def from_row(cls, row) -> "StockSuggestion":
         """Create from database row."""
-        keys = row.keys()
-        
+        # Materialize keys to list - asyncpg returns iterator that gets consumed
+        keys = list(row.keys())
+
         def get_val(key: str, default=None):
             return row[key] if key in keys else default
-        
+
         def parse_dt(key: str) -> Optional[datetime]:
             if key in keys and row[key]:
-                return datetime.fromisoformat(row[key])
+                val = row[key]
+                return val if isinstance(val, datetime) else datetime.fromisoformat(val)
             return None
-        
+
         return cls(
             id=row["id"],
             symbol=row["symbol"],
@@ -189,9 +230,11 @@ class SuggestionVote:
     @classmethod
     def from_row(cls, row) -> "SuggestionVote":
         """Create from database row."""
+        keys = list(row.keys())
         created = None
-        if "created_at" in row.keys() and row["created_at"]:
-            created = datetime.fromisoformat(row["created_at"])
+        if "created_at" in keys and row["created_at"]:
+            val = row["created_at"]
+            created = val if isinstance(val, datetime) else datetime.fromisoformat(val)
         return cls(
             id=row["id"],
             suggestion_id=row["suggestion_id"],
@@ -215,13 +258,15 @@ class SecureApiKey:
     @classmethod
     def from_row(cls, row) -> "SecureApiKey":
         """Create from database row."""
-        keys = row.keys()
-        
+        # Materialize keys to list - asyncpg returns iterator that gets consumed
+        keys = list(row.keys())
+
         def parse_dt(key: str) -> Optional[datetime]:
             if key in keys and row[key]:
-                return datetime.fromisoformat(row[key])
+                val = row[key]
+                return val if isinstance(val, datetime) else datetime.fromisoformat(val)
             return None
-        
+
         return cls(
             id=row["id"],
             key_name=row["key_name"],
@@ -235,57 +280,84 @@ class SecureApiKey:
 
 @dataclass
 class DipVote:
-    """User vote on a dip (buy/sell/skip)."""
+    """User vote on a dip (buy/sell).
+    
+    Maps to: dip_votes table
+    Columns: id, symbol, fingerprint, vote_type, vote_weight, api_key_id, created_at
+    """
 
     id: int
     symbol: str
-    voter_hash: str
-    vote_type: str  # 'buy', 'sell', 'skip'
+    fingerprint: str
+    vote_type: str  # 'buy' or 'sell'
+    vote_weight: int = 1
+    api_key_id: Optional[int] = None
     created_at: Optional[datetime] = None
 
     @classmethod
     def from_row(cls, row) -> "DipVote":
         """Create from database row."""
+        keys = list(row.keys())
         created = None
-        if "created_at" in row.keys() and row["created_at"]:
-            created = datetime.fromisoformat(row["created_at"])
+        if "created_at" in keys and row["created_at"]:
+            val = row["created_at"]
+            created = val if isinstance(val, datetime) else datetime.fromisoformat(val)
         return cls(
             id=row["id"],
             symbol=row["symbol"],
-            voter_hash=row["voter_hash"],
+            fingerprint=row["fingerprint"],
             vote_type=row["vote_type"],
+            vote_weight=row["vote_weight"] if "vote_weight" in keys else 1,
+            api_key_id=row["api_key_id"] if "api_key_id" in keys else None,
             created_at=created,
         )
 
 
 @dataclass
 class DipAIAnalysis:
-    """Cached AI analysis for a dip."""
+    """Cached AI analysis for a dip.
+    
+    Maps to: dip_ai_analysis table
+    Columns: id, symbol, tinder_bio, ai_rating, rating_reasoning, model_used,
+             tokens_used, is_batch_generated, batch_job_id, generated_at, expires_at
+    """
 
+    id: int
     symbol: str
     tinder_bio: Optional[str] = None
     ai_rating: Optional[str] = None  # 'strong_buy', 'buy', 'hold', 'sell', 'strong_sell'
-    ai_reasoning: Optional[str] = None
-    analysis_data: Optional[str] = None  # JSON blob of data used for analysis
-    created_at: Optional[datetime] = None
+    rating_reasoning: Optional[str] = None
+    model_used: Optional[str] = None
+    tokens_used: Optional[int] = None
+    is_batch_generated: bool = False
+    batch_job_id: Optional[str] = None
+    generated_at: Optional[datetime] = None
     expires_at: Optional[datetime] = None
 
     @classmethod
     def from_row(cls, row) -> "DipAIAnalysis":
         """Create from database row."""
-        keys = row.keys()
-        
+        keys = list(row.keys())
+
         def parse_dt(key: str) -> Optional[datetime]:
             if key in keys and row[key]:
-                return datetime.fromisoformat(row[key])
+                val = row[key]
+                return val if isinstance(val, datetime) else datetime.fromisoformat(val)
             return None
         
+        def get_val(key: str, default=None):
+            return row[key] if key in keys else default
+
         return cls(
+            id=row["id"],
             symbol=row["symbol"],
-            tinder_bio=row["tinder_bio"] if "tinder_bio" in keys else None,
-            ai_rating=row["ai_rating"] if "ai_rating" in keys else None,
-            ai_reasoning=row["ai_reasoning"] if "ai_reasoning" in keys else None,
-            analysis_data=row["analysis_data"] if "analysis_data" in keys else None,
-            created_at=parse_dt("created_at"),
+            tinder_bio=get_val("tinder_bio"),
+            ai_rating=get_val("ai_rating"),
+            rating_reasoning=get_val("rating_reasoning"),
+            model_used=get_val("model_used"),
+            tokens_used=get_val("tokens_used"),
+            is_batch_generated=bool(get_val("is_batch_generated", False)),
+            batch_job_id=get_val("batch_job_id"),
+            generated_at=parse_dt("generated_at"),
             expires_at=parse_dt("expires_at"),
         )

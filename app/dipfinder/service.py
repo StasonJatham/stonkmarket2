@@ -13,13 +13,10 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Protocol
 
-import numpy as np
 import pandas as pd
 import yfinance as yf
 
@@ -28,7 +25,7 @@ from app.core.logging import get_logger
 from app.database.connection import fetch_all, fetch_one, execute, execute_many
 
 from .config import DipFinderConfig, get_dipfinder_config
-from .dip import compute_dip_metrics, DipMetrics
+from .dip import DipMetrics
 from .fundamentals import compute_quality_score, fetch_stock_info, QualityMetrics
 from .stability import compute_stability_score, StabilityMetrics
 from .signal import compute_signal, DipSignal
@@ -45,7 +42,7 @@ _download_lock = asyncio.Lock()
 
 class PriceProvider(Protocol):
     """Protocol for price data providers."""
-    
+
     async def get_prices(
         self,
         ticker: str,
@@ -54,7 +51,7 @@ class PriceProvider(Protocol):
     ) -> Optional[pd.DataFrame]:
         """Get price data for a ticker."""
         ...
-    
+
     async def get_prices_batch(
         self,
         tickers: List[str],
@@ -67,17 +64,17 @@ class PriceProvider(Protocol):
 
 class YFinancePriceProvider:
     """Price provider using yfinance with caching and rate limiting."""
-    
+
     def __init__(self, config: Optional[DipFinderConfig] = None):
         """Initialize provider with optional config."""
         self.config = config or get_dipfinder_config()
         self._cache = Cache(prefix="prices", default_ttl=self.config.price_cache_ttl)
-    
+
     def _normalize_yf_dataframe(self, df: pd.DataFrame, ticker: str) -> pd.DataFrame:
         """Normalize yfinance DataFrame to handle MultiIndex columns."""
         if df.empty:
             return df
-        
+
         # Handle MultiIndex columns (newer yfinance versions)
         if isinstance(df.columns, pd.MultiIndex):
             # Get the ticker-specific columns
@@ -94,7 +91,7 @@ class YFinancePriceProvider:
                     df.columns = df.columns.droplevel(1)
                 except Exception:
                     pass
-        
+
         # Ensure we have proper column names
         expected_cols = {"Close", "Open", "High", "Low", "Volume"}
         if not any(col in df.columns for col in expected_cols):
@@ -102,9 +99,9 @@ class YFinancePriceProvider:
             for col in list(df.columns):
                 if isinstance(col, tuple) and len(col) > 0:
                     df = df.rename(columns={col: col[0]})
-        
+
         return df
-    
+
     def _download_prices_sync(
         self,
         tickers: List[str],
@@ -136,7 +133,7 @@ class YFinancePriceProvider:
         except Exception as e:
             logger.warning(f"yfinance download failed for {tickers}: {e}")
             return pd.DataFrame()
-    
+
     async def _rate_limited_download(
         self,
         tickers: List[str],
@@ -145,13 +142,13 @@ class YFinancePriceProvider:
     ) -> pd.DataFrame:
         """Download with rate limiting."""
         global _last_download_time
-        
+
         async with _download_lock:
             elapsed = time.time() - _last_download_time
             if elapsed < self.config.yf_batch_delay:
                 await asyncio.sleep(self.config.yf_batch_delay - elapsed)
             _last_download_time = time.time()
-        
+
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(
             _executor,
@@ -160,7 +157,7 @@ class YFinancePriceProvider:
             start,
             end,
         )
-    
+
     async def get_prices(
         self,
         ticker: str,
@@ -170,7 +167,7 @@ class YFinancePriceProvider:
         """Get price data for a single ticker."""
         result = await self.get_prices_batch([ticker], start_date, end_date)
         return result.get(ticker)
-    
+
     async def get_prices_batch(
         self,
         tickers: List[str],
@@ -180,7 +177,7 @@ class YFinancePriceProvider:
         """Get price data for multiple tickers with batching."""
         results: Dict[str, pd.DataFrame] = {}
         tickers_to_fetch: List[str] = []
-        
+
         # Check cache first
         for ticker in tickers:
             cache_key = f"{ticker}:{start_date}:{end_date}"
@@ -195,23 +192,23 @@ class YFinancePriceProvider:
                     tickers_to_fetch.append(ticker)
             else:
                 tickers_to_fetch.append(ticker)
-        
+
         if not tickers_to_fetch:
             return results
-        
+
         # Batch download
         start_str = start_date.isoformat()
         end_str = end_date.isoformat()
-        
+
         # Process in batches to respect rate limits
         batch_size = self.config.yf_batch_size
         for i in range(0, len(tickers_to_fetch), batch_size):
-            batch = tickers_to_fetch[i:i + batch_size]
+            batch = tickers_to_fetch[i : i + batch_size]
             df = await self._rate_limited_download(batch, start_str, end_str)
-            
+
             if df.empty:
                 continue
-            
+
             # Extract individual ticker data
             for ticker in batch:
                 try:
@@ -227,34 +224,36 @@ class YFinancePriceProvider:
                             continue
                     else:
                         ticker_df = df
-                    
+
                     if not ticker_df.empty:
                         results[ticker] = ticker_df
-                        
+
                         # Cache the result
                         cache_key = f"{ticker}:{start_date}:{end_date}"
                         cache_data = ticker_df.to_dict()
                         # Convert index to strings for JSON
                         cache_data["index"] = [str(idx) for idx in ticker_df.index]
-                        await self._cache.set(cache_key, cache_data, ttl=self.config.price_cache_ttl)
-                        
+                        await self._cache.set(
+                            cache_key, cache_data, ttl=self.config.price_cache_ttl
+                        )
+
                 except Exception as e:
                     logger.warning(f"Failed to extract data for {ticker}: {e}")
-        
+
         return results
 
 
 class DatabasePriceProvider:
     """Price provider using cached database prices.
-    
+
     Falls back to yfinance if not in database.
     """
-    
+
     def __init__(self, config: Optional[DipFinderConfig] = None):
         """Initialize with optional config."""
         self.config = config or get_dipfinder_config()
         self._yf_provider = YFinancePriceProvider(config)
-    
+
     async def get_prices(
         self,
         ticker: str,
@@ -274,33 +273,38 @@ class DatabasePriceProvider:
             start_date,
             end_date,
         )
-        
+
         if rows and len(rows) > 0:
             df = pd.DataFrame([dict(r) for r in rows])
             df.set_index("date", inplace=True)
-            df.rename(columns={
-                "open": "Open",
-                "high": "High",
-                "low": "Low",
-                "close": "Close",
-                "adj_close": "Adj Close",
-                "volume": "Volume",
-            }, inplace=True)
-            
+            df.rename(
+                columns={
+                    "open": "Open",
+                    "high": "High",
+                    "low": "Low",
+                    "close": "Close",
+                    "adj_close": "Adj Close",
+                    "volume": "Volume",
+                },
+                inplace=True,
+            )
+
             # Check if we have enough data
-            expected_days = (end_date - start_date).days * 0.7  # Approximate trading days
+            expected_days = (
+                end_date - start_date
+            ).days * 0.7  # Approximate trading days
             if len(df) >= expected_days * 0.8:  # Allow 20% missing
                 return df
-        
+
         # Fallback to yfinance
         yf_df = await self._yf_provider.get_prices(ticker, start_date, end_date)
-        
+
         # Cache in database
         if yf_df is not None and not yf_df.empty:
             await self._save_prices_to_db(ticker, yf_df)
-        
+
         return yf_df
-    
+
     async def get_prices_batch(
         self,
         tickers: List[str],
@@ -310,32 +314,42 @@ class DatabasePriceProvider:
         """Get prices for multiple tickers."""
         results: Dict[str, pd.DataFrame] = {}
         tickers_to_fetch: List[str] = []
-        
+
         for ticker in tickers:
             df = await self.get_prices(ticker, start_date, end_date)
             if df is not None and not df.empty:
                 results[ticker] = df
             else:
                 tickers_to_fetch.append(ticker)
-        
+
         return results
-    
+
     async def _save_prices_to_db(self, ticker: str, df: pd.DataFrame) -> None:
         """Save price data to database."""
         try:
             rows = []
             for idx, row in df.iterrows():
-                rows.append((
-                    ticker.upper(),
-                    idx.date() if hasattr(idx, 'date') else idx,
-                    float(row.get("Open", 0)) if pd.notna(row.get("Open")) else None,
-                    float(row.get("High", 0)) if pd.notna(row.get("High")) else None,
-                    float(row.get("Low", 0)) if pd.notna(row.get("Low")) else None,
-                    float(row["Close"]) if pd.notna(row["Close"]) else None,
-                    float(row.get("Adj Close", row["Close"])) if pd.notna(row.get("Adj Close", row["Close"])) else None,
-                    int(row.get("Volume", 0)) if pd.notna(row.get("Volume")) else None,
-                ))
-            
+                rows.append(
+                    (
+                        ticker.upper(),
+                        idx.date() if hasattr(idx, "date") else idx,
+                        float(row.get("Open", 0))
+                        if pd.notna(row.get("Open"))
+                        else None,
+                        float(row.get("High", 0))
+                        if pd.notna(row.get("High"))
+                        else None,
+                        float(row.get("Low", 0)) if pd.notna(row.get("Low")) else None,
+                        float(row["Close"]) if pd.notna(row["Close"]) else None,
+                        float(row.get("Adj Close", row["Close"]))
+                        if pd.notna(row.get("Adj Close", row["Close"]))
+                        else None,
+                        int(row.get("Volume", 0))
+                        if pd.notna(row.get("Volume"))
+                        else None,
+                    )
+                )
+
             if rows:
                 await execute_many(
                     """
@@ -358,7 +372,7 @@ class DatabasePriceProvider:
 
 class DipFinderService:
     """Main service for DipFinder signal computation."""
-    
+
     def __init__(
         self,
         config: Optional[DipFinderConfig] = None,
@@ -367,8 +381,10 @@ class DipFinderService:
         """Initialize service with optional config and price provider."""
         self.config = config or get_dipfinder_config()
         self.price_provider = price_provider or DatabasePriceProvider(self.config)
-        self._signal_cache = Cache(prefix="dipfinder", default_ttl=self.config.signal_cache_ttl)
-    
+        self._signal_cache = Cache(
+            prefix="dipfinder", default_ttl=self.config.signal_cache_ttl
+        )
+
     async def get_signal(
         self,
         ticker: str,
@@ -378,13 +394,13 @@ class DipFinderService:
     ) -> Optional[DipSignal]:
         """
         Get dip signal for a single ticker.
-        
+
         Args:
             ticker: Stock ticker symbol
             benchmark: Benchmark ticker (default from config)
             window: Window for dip calculation (default from config)
             force_refresh: If True, bypass cache
-            
+
         Returns:
             DipSignal or None if computation fails
         """
@@ -392,27 +408,27 @@ class DipFinderService:
         benchmark = benchmark or self.config.default_benchmark
         window = window or self.config.windows[1]  # Default to 30-day
         today = date.today()
-        
+
         # Check cache
         if not force_refresh:
             cache_key = f"{ticker}:{benchmark}:{window}:{today}"
             cached = await self._signal_cache.get(cache_key)
             if cached:
                 return self._deserialize_signal(cached)
-        
+
         # Compute signal
         signal = await self._compute_signal(ticker, benchmark, window, today)
-        
+
         if signal:
             # Cache result
             cache_key = f"{ticker}:{benchmark}:{window}:{today}"
             await self._signal_cache.set(cache_key, signal.to_dict())
-            
+
             # Save to database
             await self._save_signal_to_db(signal)
-        
+
         return signal
-    
+
     async def get_signals(
         self,
         tickers: List[str],
@@ -422,18 +438,18 @@ class DipFinderService:
     ) -> List[DipSignal]:
         """
         Get dip signals for multiple tickers.
-        
+
         Args:
             tickers: List of stock ticker symbols
             benchmark: Benchmark ticker
             window: Window for dip calculation
             force_refresh: If True, bypass cache
-            
+
         Returns:
             List of DipSignals (excluding failures)
         """
         signals = []
-        
+
         for ticker in tickers:
             try:
                 signal = await self.get_signal(ticker, benchmark, window, force_refresh)
@@ -441,9 +457,9 @@ class DipFinderService:
                     signals.append(signal)
             except Exception as e:
                 logger.warning(f"Failed to compute signal for {ticker}: {e}")
-        
+
         return signals
-    
+
     async def get_latest_signals(
         self,
         limit: int = 50,
@@ -452,29 +468,29 @@ class DipFinderService:
     ) -> List[DipSignal]:
         """
         Get latest computed signals from database.
-        
+
         Args:
             limit: Maximum number of signals to return
             min_final_score: Minimum final score filter
             only_alerts: If True, only return alerts
-            
+
         Returns:
             List of DipSignals
         """
         conditions = ["1=1"]
         params = []
         param_idx = 1
-        
+
         if min_final_score is not None:
             conditions.append(f"final_score >= ${param_idx}")
             params.append(min_final_score)
             param_idx += 1
-        
+
         if only_alerts:
             conditions.append("should_alert = TRUE")
-        
+
         where_clause = " AND ".join(conditions)
-        
+
         rows = await fetch_all(
             f"""
             SELECT * FROM dipfinder_latest_signals
@@ -485,9 +501,9 @@ class DipFinderService:
             *params,
             limit,
         )
-        
+
         return [self._row_to_signal(dict(r)) for r in rows if r]
-    
+
     async def get_dip_history(
         self,
         ticker: str,
@@ -495,16 +511,16 @@ class DipFinderService:
     ) -> List[Dict[str, Any]]:
         """
         Get dip history for a ticker.
-        
+
         Args:
             ticker: Stock ticker symbol
             days: Number of days of history
-            
+
         Returns:
             List of history records
         """
         since = datetime.utcnow() - timedelta(days=days)
-        
+
         rows = await fetch_all(
             """
             SELECT * FROM dipfinder_history
@@ -514,9 +530,9 @@ class DipFinderService:
             ticker.upper(),
             since,
         )
-        
+
         return [dict(r) for r in rows]
-    
+
     async def _compute_signal(
         self,
         ticker: str,
@@ -528,42 +544,44 @@ class DipFinderService:
         # Calculate date range
         history_days = self.config.history_years * 365
         start_date = as_of_date - timedelta(days=history_days)
-        
+
         # Fetch prices
         prices = await self.price_provider.get_prices_batch(
             [ticker, benchmark],
             start_date,
             as_of_date,
         )
-        
+
         stock_df = prices.get(ticker)
         benchmark_df = prices.get(benchmark)
-        
+
         if stock_df is None or stock_df.empty:
             logger.warning(f"No price data for {ticker}")
             return None
-        
+
         if benchmark_df is None or benchmark_df.empty:
             logger.warning(f"No price data for benchmark {benchmark}")
             return None
-        
+
         # Extract close prices as numpy arrays
         stock_prices = stock_df["Close"].dropna().to_numpy()
         benchmark_prices = benchmark_df["Close"].dropna().to_numpy()
-        
+
         if len(stock_prices) < window:
-            logger.warning(f"Insufficient price data for {ticker}: {len(stock_prices)} < {window}")
+            logger.warning(
+                f"Insufficient price data for {ticker}: {len(stock_prices)} < {window}"
+            )
             return None
-        
+
         # Fetch yfinance info for quality/stability
         info = await fetch_stock_info(ticker, self.config)
-        
+
         # Compute quality metrics
         quality = await compute_quality_score(ticker, info, self.config)
-        
+
         # Compute stability metrics
         stability = compute_stability_score(ticker, stock_prices, info, self.config)
-        
+
         # Compute full signal
         signal = compute_signal(
             ticker=ticker,
@@ -576,14 +594,14 @@ class DipFinderService:
             as_of_date=as_of_date.isoformat(),
             config=self.config,
         )
-        
+
         return signal
-    
+
     async def _save_signal_to_db(self, signal: DipSignal) -> None:
         """Save signal to database."""
         try:
             expires_at = datetime.utcnow() + timedelta(days=7)
-            
+
             await execute(
                 """
                 INSERT INTO dipfinder_signals (
@@ -646,13 +664,13 @@ class DipFinderService:
                 json.dumps(signal.stability_metrics.to_dict()),
                 expires_at,
             )
-            
+
             # Check if this is a state change that should be logged
             await self._check_and_log_history(signal)
-            
+
         except Exception as e:
             logger.warning(f"Failed to save signal for {signal.ticker}: {e}")
-    
+
     async def _check_and_log_history(self, signal: DipSignal) -> None:
         """Check for dip state changes and log to history."""
         try:
@@ -669,27 +687,35 @@ class DipFinderService:
                 signal.window,
                 signal.as_of_date,
             )
-            
+
             event_type = None
-            
+
             if prev is None and signal.dip_metrics.is_meaningful:
                 event_type = "entered_dip"
             elif prev is not None:
                 was_meaningful = prev["dip_stock"] >= self.config.min_dip_abs
                 is_meaningful = signal.dip_metrics.is_meaningful
-                
+
                 if not was_meaningful and is_meaningful:
                     event_type = "entered_dip"
                 elif was_meaningful and not is_meaningful:
                     event_type = "exited_dip"
-                elif is_meaningful and signal.dip_metrics.dip_pct > prev["dip_stock"] * 1.1:
+                elif (
+                    is_meaningful
+                    and signal.dip_metrics.dip_pct > prev["dip_stock"] * 1.1
+                ):
                     event_type = "deepened"
-                elif is_meaningful and signal.dip_metrics.dip_pct < prev["dip_stock"] * 0.9:
+                elif (
+                    is_meaningful
+                    and signal.dip_metrics.dip_pct < prev["dip_stock"] * 0.9
+                ):
                     event_type = "recovered"
-            
-            if signal.should_alert and (prev is None or not prev.get("should_alert", False)):
+
+            if signal.should_alert and (
+                prev is None or not prev.get("should_alert", False)
+            ):
                 event_type = "alert_triggered"
-            
+
             if event_type:
                 await execute(
                     """
@@ -704,15 +730,15 @@ class DipFinderService:
                     signal.final_score,
                     signal.market_context.dip_class.value,
                 )
-                
+
         except Exception as e:
             logger.debug(f"Could not log dip history: {e}")
-    
+
     def _deserialize_signal(self, data: Dict[str, Any]) -> Optional[DipSignal]:
         """Deserialize signal from cache/db format."""
         try:
             from .signal import DipClass, AlertLevel, MarketContext
-            
+
             # Reconstruct nested objects
             dip_metrics = DipMetrics(
                 ticker=data["ticker"],
@@ -726,7 +752,7 @@ class DipFinderService:
                 persist_days=data["persist_days"],
                 is_meaningful=data.get("is_meaningful", False),
             )
-            
+
             market_context = MarketContext(
                 benchmark_ticker=data["benchmark"],
                 dip_mkt=data["dip_mkt"],
@@ -734,27 +760,35 @@ class DipFinderService:
                 excess_dip=data["excess_dip"],
                 dip_class=DipClass(data["dip_class"]),
             )
-            
+
             quality_factors = data.get("quality_factors", {})
             if isinstance(quality_factors, str):
                 quality_factors = json.loads(quality_factors)
-            
+
             quality_metrics = QualityMetrics(
                 ticker=data["ticker"],
                 score=data["quality_score"],
-                **{k: v for k, v in quality_factors.items() if k not in ("ticker", "score")},
+                **{
+                    k: v
+                    for k, v in quality_factors.items()
+                    if k not in ("ticker", "score")
+                },
             )
-            
+
             stability_factors = data.get("stability_factors", {})
             if isinstance(stability_factors, str):
                 stability_factors = json.loads(stability_factors)
-            
+
             stability_metrics = StabilityMetrics(
                 ticker=data["ticker"],
                 score=data["stability_score"],
-                **{k: v for k, v in stability_factors.items() if k not in ("ticker", "score")},
+                **{
+                    k: v
+                    for k, v in stability_factors.items()
+                    if k not in ("ticker", "score")
+                },
             )
-            
+
             return DipSignal(
                 ticker=data["ticker"],
                 window=data["window"],
@@ -773,32 +807,40 @@ class DipFinderService:
         except Exception as e:
             logger.warning(f"Failed to deserialize signal: {e}")
             return None
-    
+
     def _row_to_signal(self, row: Dict[str, Any]) -> Optional[DipSignal]:
         """Convert database row to DipSignal."""
-        return self._deserialize_signal({
-            "ticker": row["ticker"],
-            "window": row["window_days"],
-            "benchmark": row["benchmark"],
-            "as_of_date": str(row["as_of_date"]),
-            "dip_stock": float(row["dip_stock"]) if row["dip_stock"] else 0,
-            "peak_stock": float(row["peak_stock"]) if row["peak_stock"] else 0,
-            "dip_pctl": float(row["dip_pctl"]) if row["dip_pctl"] else 0,
-            "dip_vs_typical": float(row["dip_vs_typical"]) if row["dip_vs_typical"] else 0,
-            "persist_days": row["persist_days"] or 0,
-            "dip_mkt": float(row["dip_mkt"]) if row["dip_mkt"] else 0,
-            "excess_dip": float(row["excess_dip"]) if row["excess_dip"] else 0,
-            "dip_class": row["dip_class"],
-            "quality_score": float(row["quality_score"]) if row["quality_score"] else 50,
-            "stability_score": float(row["stability_score"]) if row["stability_score"] else 50,
-            "dip_score": float(row["dip_score"]) if row["dip_score"] else 0,
-            "final_score": float(row["final_score"]) if row["final_score"] else 0,
-            "alert_level": row["alert_level"],
-            "should_alert": row["should_alert"],
-            "reason": row["reason"],
-            "quality_factors": row.get("quality_factors", {}),
-            "stability_factors": row.get("stability_factors", {}),
-        })
+        return self._deserialize_signal(
+            {
+                "ticker": row["ticker"],
+                "window": row["window_days"],
+                "benchmark": row["benchmark"],
+                "as_of_date": str(row["as_of_date"]),
+                "dip_stock": float(row["dip_stock"]) if row["dip_stock"] else 0,
+                "peak_stock": float(row["peak_stock"]) if row["peak_stock"] else 0,
+                "dip_pctl": float(row["dip_pctl"]) if row["dip_pctl"] else 0,
+                "dip_vs_typical": float(row["dip_vs_typical"])
+                if row["dip_vs_typical"]
+                else 0,
+                "persist_days": row["persist_days"] or 0,
+                "dip_mkt": float(row["dip_mkt"]) if row["dip_mkt"] else 0,
+                "excess_dip": float(row["excess_dip"]) if row["excess_dip"] else 0,
+                "dip_class": row["dip_class"],
+                "quality_score": float(row["quality_score"])
+                if row["quality_score"]
+                else 50,
+                "stability_score": float(row["stability_score"])
+                if row["stability_score"]
+                else 50,
+                "dip_score": float(row["dip_score"]) if row["dip_score"] else 0,
+                "final_score": float(row["final_score"]) if row["final_score"] else 0,
+                "alert_level": row["alert_level"],
+                "should_alert": row["should_alert"],
+                "reason": row["reason"],
+                "quality_factors": row.get("quality_factors", {}),
+                "stability_factors": row.get("stability_factors", {}),
+            }
+        )
 
 
 # Singleton service instance

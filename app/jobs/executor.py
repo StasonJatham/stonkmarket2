@@ -3,30 +3,23 @@
 from __future__ import annotations
 
 import asyncio
-import sqlite3
 import time
-from datetime import datetime, timezone
-from typing import Any, Callable, Optional
+from typing import Optional
 
 from app.core.exceptions import JobError
 from app.core.logging import get_logger
-from app.database import get_db_connection
 
 from .registry import get_job
 
 logger = get_logger("jobs.executor")
 
 
-async def execute_job(
-    name: str,
-    conn: Optional[sqlite3.Connection] = None,
-) -> str:
+async def execute_job(name: str) -> str:
     """
     Execute a job by name.
 
     Args:
         name: Job name
-        conn: Optional database connection (will create one if not provided)
 
     Returns:
         Job result message
@@ -41,18 +34,10 @@ async def execute_job(
     start_time = time.monotonic()
 
     try:
-        if conn is None:
-            for db_conn in get_db_connection():
-                if asyncio.iscoroutinefunction(job_func):
-                    result = await job_func(db_conn)
-                else:
-                    result = job_func(db_conn)
-                break
+        if asyncio.iscoroutinefunction(job_func):
+            result = await job_func()
         else:
-            if asyncio.iscoroutinefunction(job_func):
-                result = await job_func(conn)
-            else:
-                result = job_func(conn)
+            result = job_func()
 
         duration = time.monotonic() - start_time
         message = str(result) if result else "Completed"
@@ -74,7 +59,6 @@ async def execute_job_with_retry(
     max_retries: int = 3,
     retry_delay: float = 1.0,
     backoff_factor: float = 2.0,
-    conn: Optional[sqlite3.Connection] = None,
 ) -> str:
     """
     Execute a job with exponential backoff retry.
@@ -84,7 +68,6 @@ async def execute_job_with_retry(
         max_retries: Maximum retry attempts
         retry_delay: Initial delay between retries (seconds)
         backoff_factor: Multiplier for delay after each retry
-        conn: Optional database connection
 
     Returns:
         Job result message
@@ -96,12 +79,12 @@ async def execute_job_with_retry(
 
     for attempt in range(max_retries + 1):
         try:
-            return await execute_job(name, conn)
+            return await execute_job(name)
         except JobError as e:
             last_error = e
 
             if attempt < max_retries:
-                delay = retry_delay * (backoff_factor ** attempt)
+                delay = retry_delay * (backoff_factor**attempt)
                 logger.warning(
                     f"Job {name} failed (attempt {attempt + 1}/{max_retries + 1}), "
                     f"retrying in {delay:.1f}s"

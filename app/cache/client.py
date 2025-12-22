@@ -32,7 +32,9 @@ async def init_valkey_pool() -> ConnectionPool:
             retry_on_timeout=True,
             health_check_interval=30,
         )
-        logger.info("Valkey connection pool initialized", extra={"url": settings.valkey_url})
+        logger.info(
+            "Valkey connection pool initialized", extra={"url": settings.valkey_url}
+        )
     return _pool
 
 

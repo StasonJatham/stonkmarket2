@@ -53,7 +53,9 @@ def create_access_token(
 ) -> str:
     """Create a signed JWT access token."""
     now = datetime.now(timezone.utc)
-    expires = now + (expires_delta or timedelta(minutes=settings.access_token_expire_minutes))
+    expires = now + (
+        expires_delta or timedelta(minutes=settings.access_token_expire_minutes)
+    )
 
     payload = {
         "sub": username,
@@ -83,16 +85,22 @@ def decode_access_token(token: str) -> TokenData:
         )
         return TokenData(
             sub=payload["sub"],
-            exp=datetime.fromisoformat(payload["exp"].isoformat()) if isinstance(payload["exp"], datetime) else datetime.fromtimestamp(payload["exp"], tz=timezone.utc),
-            iat=datetime.fromisoformat(payload["iat"].isoformat()) if isinstance(payload["iat"], datetime) else datetime.fromtimestamp(payload["iat"], tz=timezone.utc),
+            exp=datetime.fromisoformat(payload["exp"].isoformat())
+            if isinstance(payload["exp"], datetime)
+            else datetime.fromtimestamp(payload["exp"], tz=timezone.utc),
+            iat=datetime.fromisoformat(payload["iat"].isoformat())
+            if isinstance(payload["iat"], datetime)
+            else datetime.fromtimestamp(payload["iat"], tz=timezone.utc),
             iss=payload["iss"],
             aud=payload["aud"],
             jti=payload["jti"],
             is_admin=payload.get("is_admin", False),
         )
     except jwt.ExpiredSignatureError:
-        raise AuthenticationError(message="Token has expired", error_code="TOKEN_EXPIRED")
-    except jwt.InvalidTokenError as e:
+        raise AuthenticationError(
+            message="Token has expired", error_code="TOKEN_EXPIRED"
+        )
+    except jwt.InvalidTokenError:
         raise AuthenticationError(message="Invalid token", error_code="INVALID_TOKEN")
 
 
@@ -109,22 +117,25 @@ def validate_csrf_token(session_token: str, request_token: str) -> bool:
 async def validate_token_not_revoked(token_data: TokenData) -> bool:
     """
     Check if a token has been revoked.
-    
+
     Args:
         token_data: Decoded token data
-        
+
     Returns:
         True if token is valid (not revoked), False if revoked
     """
-    from app.cache.token_blacklist import is_token_blacklisted, get_user_token_invalidation_time
-    
+    from app.cache.token_blacklist import (
+        is_token_blacklisted,
+        get_user_token_invalidation_time,
+    )
+
     # Check if specific token is blacklisted
     if await is_token_blacklisted(token_data.jti):
         return False
-    
+
     # Check if all user tokens before a certain time are invalidated
     invalidation_time = await get_user_token_invalidation_time(token_data.sub)
     if invalidation_time and token_data.iat < invalidation_time:
         return False
-    
+
     return True

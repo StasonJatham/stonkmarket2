@@ -8,7 +8,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Badge } from '@/components/ui/badge';
 import { LineChart, X, Check } from 'lucide-react';
 
 interface BenchmarkSelectorProps {
@@ -32,19 +31,19 @@ export function BenchmarkSelector({ value, onChange, isLoading, className }: Ben
         <Button 
           variant={value ? 'default' : 'outline'} 
           size="sm" 
-          className={className}
+          className={`h-9 ${className || ''}`}
           disabled={isLoading}
         >
           <LineChart className="h-4 w-4 mr-2" />
           {value ? (
             <span className="flex items-center gap-2">
-              vs {selectedBenchmark?.label}
-              <Badge variant="secondary" className="h-5 px-1.5 text-xs">
-                ON
-              </Badge>
+              <span className="hidden sm:inline">vs</span> {selectedBenchmark?.label}
             </span>
           ) : (
-            'Compare Benchmark'
+            <>
+              <span className="hidden sm:inline">Compare</span>
+              <span className="sm:hidden">Benchmark</span>
+            </>
           )}
         </Button>
       </DropdownMenuTrigger>

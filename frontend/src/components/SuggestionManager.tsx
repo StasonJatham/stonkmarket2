@@ -1,0 +1,375 @@
+import { useState, useEffect, useCallback } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import {
+  getAllSuggestions,
+  approveSuggestion,
+  rejectSuggestion,
+  type Suggestion,
+  type SuggestionStatus,
+} from '@/services/api';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
+import {
+  Check,
+  X,
+  Lightbulb,
+  ThumbsUp,
+  Clock,
+  ChevronLeft,
+  ChevronRight,
+  RefreshCw,
+  Loader2,
+  AlertCircle,
+} from 'lucide-react';
+
+function getStatusBadge(status: SuggestionStatus) {
+  switch (status) {
+    case 'approved':
+      return (
+        <Badge className="bg-success/20 text-success border-success/30 hover:bg-success/30">
+          <Check className="h-3 w-3 mr-1" />
+          Approved
+        </Badge>
+      );
+    case 'rejected':
+      return (
+        <Badge variant="destructive" className="bg-danger/20 text-danger border-danger/30">
+          <X className="h-3 w-3 mr-1" />
+          Rejected
+        </Badge>
+      );
+    default:
+      return (
+        <Badge variant="outline" className="bg-chart-4/20 text-chart-4 border-chart-4/30">
+          <Clock className="h-3 w-3 mr-1" />
+          Pending
+        </Badge>
+      );
+  }
+}
+
+export function SuggestionManager() {
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<SuggestionStatus | 'all'>('pending');
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [total, setTotal] = useState(0);
+  
+  // Action states
+  const [actionLoading, setActionLoading] = useState<number | null>(null);
+  const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
+  const [rejectingId, setRejectingId] = useState<number | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
+
+  const pageSize = 15;
+
+  const loadSuggestions = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const status = statusFilter === 'all' ? undefined : statusFilter;
+      const response = await getAllSuggestions(status, page, pageSize);
+      setSuggestions(response.items);
+      setTotal(response.total);
+      setTotalPages(Math.ceil(response.total / pageSize));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load suggestions');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [statusFilter, page]);
+
+  useEffect(() => {
+    loadSuggestions();
+  }, [loadSuggestions]);
+
+  // Reset page when filter changes
+  useEffect(() => {
+    setPage(1);
+  }, [statusFilter]);
+
+  async function handleApprove(id: number) {
+    setActionLoading(id);
+    try {
+      await approveSuggestion(id);
+      await loadSuggestions();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to approve suggestion');
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  function openRejectDialog(id: number) {
+    setRejectingId(id);
+    setRejectReason('');
+    setRejectDialogOpen(true);
+  }
+
+  async function handleReject() {
+    if (!rejectingId) return;
+    
+    setActionLoading(rejectingId);
+    setRejectDialogOpen(false);
+    try {
+      await rejectSuggestion(rejectingId, rejectReason);
+      await loadSuggestions();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to reject suggestion');
+    } finally {
+      setActionLoading(null);
+      setRejectingId(null);
+      setRejectReason('');
+    }
+  }
+
+  function formatDate(dateStr: string | null): string {
+    if (!dateStr) return '—';
+    return new Date(dateStr).toLocaleDateString();
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <Lightbulb className="h-5 w-5" />
+              Stock Suggestions
+            </CardTitle>
+            <CardDescription>
+              Review and manage community-suggested stocks
+            </CardDescription>
+          </div>
+          <div className="flex items-center gap-2">
+            <Select 
+              value={statusFilter} 
+              onValueChange={(v) => setStatusFilter(v as SuggestionStatus | 'all')}
+            >
+              <SelectTrigger className="w-32">
+                <SelectValue placeholder="Status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All</SelectItem>
+                <SelectItem value="pending">Pending</SelectItem>
+                <SelectItem value="approved">Approved</SelectItem>
+                <SelectItem value="rejected">Rejected</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button variant="outline" size="icon" onClick={loadSuggestions} disabled={isLoading}>
+              <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+            </Button>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {/* Error */}
+        <AnimatePresence>
+          {error && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="flex items-center gap-2 bg-danger/10 text-danger p-3 rounded-lg mb-4"
+            >
+              <AlertCircle className="h-4 w-4" />
+              <span className="flex-1 text-sm">{error}</span>
+              <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setError(null)}>
+                <X className="h-4 w-4" />
+              </Button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Stats */}
+        <div className="flex items-center gap-4 mb-4 text-sm text-muted-foreground">
+          <span>Total: <strong className="text-foreground">{total}</strong></span>
+          {statusFilter === 'pending' && (
+            <Badge variant="outline">
+              {total} awaiting review
+            </Badge>
+          )}
+        </div>
+
+        {/* Table */}
+        {isLoading ? (
+          <div className="space-y-3">
+            {[...Array(5)].map((_, i) => (
+              <Skeleton key={i} className="h-12 w-full" />
+            ))}
+          </div>
+        ) : suggestions.length === 0 ? (
+          <div className="text-center py-12 text-muted-foreground">
+            <Lightbulb className="h-12 w-12 mx-auto mb-4 opacity-30" />
+            <p>No suggestions found</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Symbol</TableHead>
+                  <TableHead>Name</TableHead>
+                  <TableHead className="text-center">Votes</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Submitted</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                <AnimatePresence mode="popLayout">
+                  {suggestions.map((suggestion) => (
+                    <motion.tr
+                      key={suggestion.id}
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0 }}
+                      className="border-b"
+                    >
+                      <TableCell className="font-semibold">{suggestion.symbol}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {suggestion.name || '—'}
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          <ThumbsUp className="h-3 w-3 text-chart-4" />
+                          <span className="font-medium">{suggestion.vote_count}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell>{getStatusBadge(suggestion.status)}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {formatDate(suggestion.created_at)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {suggestion.status === 'pending' ? (
+                          <div className="flex items-center justify-end gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-8 text-success hover:bg-success/10"
+                              onClick={() => handleApprove(suggestion.id)}
+                              disabled={actionLoading === suggestion.id}
+                            >
+                              {actionLoading === suggestion.id ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <>
+                                  <Check className="h-4 w-4 mr-1" />
+                                  Approve
+                                </>
+                              )}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-8 text-danger hover:bg-danger/10"
+                              onClick={() => openRejectDialog(suggestion.id)}
+                              disabled={actionLoading === suggestion.id}
+                            >
+                              <X className="h-4 w-4 mr-1" />
+                              Reject
+                            </Button>
+                          </div>
+                        ) : (
+                          <span className="text-sm text-muted-foreground">
+                            {suggestion.approved_by ? `by user #${suggestion.approved_by}` : '—'}
+                          </span>
+                        )}
+                      </TableCell>
+                    </motion.tr>
+                  ))}
+                </AnimatePresence>
+              </TableBody>
+            </Table>
+          </div>
+        )}
+
+        {/* Pagination */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between mt-4">
+            <span className="text-sm text-muted-foreground">
+              Page {page} of {totalPages}
+            </span>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page === 1}
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page === totalPages}
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        )}
+      </CardContent>
+
+      {/* Reject Dialog */}
+      <Dialog open={rejectDialogOpen} onOpenChange={setRejectDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reject Suggestion</DialogTitle>
+            <DialogDescription>
+              Optionally provide a reason for rejecting this suggestion.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <Label htmlFor="reason" className="sr-only">Reason</Label>
+            <Textarea
+              id="reason"
+              placeholder="Reason for rejection (optional)"
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+              rows={3}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRejectDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleReject}>
+              Reject
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </Card>
+  );
+}
