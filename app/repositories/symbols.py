@@ -6,6 +6,37 @@ from datetime import datetime
 from typing import List, Optional
 
 from app.database.connection import fetch_all, fetch_one, execute, fetch_val
+from app.core.logging import get_logger
+
+logger = get_logger("repositories.symbols")
+
+
+async def invalidate_symbol_caches(symbol: str | None = None) -> None:
+    """Invalidate caches affected by symbol changes.
+    
+    Args:
+        symbol: If provided, invalidate caches for specific symbol.
+                If None, invalidate all ranking/chart caches.
+    """
+    from app.cache.cache import Cache
+    
+    try:
+        # Ranking cache uses "all:True" and "all:False" keys
+        ranking_cache = Cache(prefix="ranking")
+        await ranking_cache.invalidate_pattern("*")
+        
+        if symbol:
+            # Invalidate chart cache for specific symbol
+            chart_cache = Cache(prefix="chart")
+            await chart_cache.invalidate_pattern(f"{symbol}:*")
+            logger.debug(f"Invalidated caches for symbol {symbol}")
+        else:
+            # Invalidate all chart caches
+            chart_cache = Cache(prefix="chart")
+            await chart_cache.invalidate_pattern("*")
+            logger.debug("Invalidated all symbol caches")
+    except Exception as e:
+        logger.warning(f"Failed to invalidate symbol caches: {e}")
 
 
 class SymbolConfig:
@@ -85,6 +116,10 @@ async def upsert_symbol(
         float(min_dip_pct),
         int(min_days),
     )
+    
+    # Invalidate caches since symbol config changed
+    await invalidate_symbol_caches(symbol.upper())
+    
     return await get_symbol(symbol.upper())  # type: ignore
 
 
@@ -119,6 +154,10 @@ async def delete_symbol(symbol: str) -> bool:
         "DELETE FROM symbols WHERE symbol = $1",
         symbol.upper(),
     )
+    
+    # Invalidate caches since symbol was removed
+    await invalidate_symbol_caches(symbol.upper())
+    
     # Parse the result to check if any rows were affected
     return "DELETE" in result and not result.endswith(" 0")
 

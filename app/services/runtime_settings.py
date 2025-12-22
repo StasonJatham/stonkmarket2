@@ -14,6 +14,14 @@ from app.database.connection import fetch_one, fetch_all, execute
 
 logger = get_logger("runtime_settings")
 
+# Settings that affect specific caches
+CACHE_AFFECTING_SETTINGS = {
+    "benchmarks": ["ranking", "chart"],  # Changing benchmarks invalidates these caches
+    "signal_threshold_strong_buy": ["ranking"],
+    "signal_threshold_buy": ["ranking"],
+    "signal_threshold_hold": ["ranking"],
+}
+
 # Default settings (used if database is empty or unavailable)
 DEFAULT_SETTINGS: Dict[str, Any] = {
     "signal_threshold_strong_buy": 80.0,
@@ -146,15 +154,35 @@ async def save_runtime_setting(key: str, value: Any) -> None:
 async def update_runtime_settings(updates: Dict[str, Any]) -> Dict[str, Any]:
     """Update multiple runtime settings and persist to database.
     
+    Also invalidates affected caches when settings change.
+    
     Args:
         updates: Dictionary of settings to update
         
     Returns:
         The updated settings dictionary
     """
+    from app.cache.cache import Cache
+    
+    # Collect caches to invalidate
+    caches_to_invalidate: set[str] = set()
+    
     for key, value in updates.items():
         _settings_cache[key] = value
         await _save_setting_to_db(key, value)
+        
+        # Check if this setting affects any caches
+        if key in CACHE_AFFECTING_SETTINGS:
+            caches_to_invalidate.update(CACHE_AFFECTING_SETTINGS[key])
+    
+    # Invalidate affected caches
+    for cache_prefix in caches_to_invalidate:
+        try:
+            cache = Cache(prefix=cache_prefix)
+            deleted = await cache.invalidate_pattern("*")
+            logger.info(f"Invalidated {deleted} keys in cache '{cache_prefix}' due to settings change")
+        except Exception as e:
+            logger.warning(f"Failed to invalidate cache '{cache_prefix}': {e}")
     
     logger.info(f"Updated {len(updates)} runtime settings")
     return _settings_cache.copy()

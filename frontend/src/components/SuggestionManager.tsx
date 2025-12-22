@@ -6,6 +6,7 @@ import {
   rejectSuggestion,
   updateSuggestion,
   refreshSuggestionData,
+  retrySuggestionFetch,
   getRuntimeSettings,
   updateRuntimeSettings,
   type Suggestion,
@@ -16,6 +17,12 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Slider } from '@/components/ui/slider';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import {
   Table,
   TableBody,
@@ -55,6 +62,9 @@ import {
   AlertCircle,
   Pencil,
   Settings,
+  AlertTriangle,
+  CheckCircle2,
+  XCircle,
 } from 'lucide-react';
 
 function getStatusBadge(status: SuggestionStatus) {
@@ -76,6 +86,47 @@ function getStatusBadge(status: SuggestionStatus) {
     default:
       return (
         <Badge variant="outline" className="bg-chart-4/20 text-chart-4 border-chart-4/30">
+          <Clock className="h-3 w-3 mr-1" />
+          Pending
+        </Badge>
+      );
+  }
+}
+
+function getFetchStatusBadge(fetchStatus: string | null) {
+  switch (fetchStatus) {
+    case 'fetched':
+      return (
+        <Badge variant="outline" className="bg-success/10 text-success border-success/30">
+          <CheckCircle2 className="h-3 w-3 mr-1" />
+          Ready
+        </Badge>
+      );
+    case 'rate_limited':
+      return (
+        <Badge variant="outline" className="bg-chart-4/10 text-chart-4 border-chart-4/30">
+          <AlertTriangle className="h-3 w-3 mr-1" />
+          Rate Limited
+        </Badge>
+      );
+    case 'error':
+      return (
+        <Badge variant="outline" className="bg-danger/10 text-danger border-danger/30">
+          <XCircle className="h-3 w-3 mr-1" />
+          Error
+        </Badge>
+      );
+    case 'invalid':
+      return (
+        <Badge variant="outline" className="bg-danger/10 text-danger border-danger/30">
+          <XCircle className="h-3 w-3 mr-1" />
+          Invalid
+        </Badge>
+      );
+    case 'pending':
+    default:
+      return (
+        <Badge variant="outline" className="bg-muted text-muted-foreground">
           <Clock className="h-3 w-3 mr-1" />
           Pending
         </Badge>
@@ -250,12 +301,25 @@ export function SuggestionManager() {
     }
   }
 
+  async function handleRetryFetch(id: number) {
+    setActionLoading(id);
+    try {
+      await retrySuggestionFetch(id);
+      await loadSuggestions();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to retry fetch');
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
   function formatDate(dateStr: string | null): string {
     if (!dateStr) return '—';
     return new Date(dateStr).toLocaleDateString();
   }
 
   return (
+    <TooltipProvider>
     <Card>
       <CardHeader>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -367,7 +431,9 @@ export function SuggestionManager() {
                 <TableRow>
                   <TableHead>Symbol</TableHead>
                   <TableHead>Name</TableHead>
+                  <TableHead>Sector</TableHead>
                   <TableHead className="text-center">Votes</TableHead>
+                  <TableHead>Data</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Submitted</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
@@ -384,13 +450,48 @@ export function SuggestionManager() {
                       className="border-b"
                     >
                       <TableCell className="font-semibold">{suggestion.symbol}</TableCell>
-                      <TableCell className="text-muted-foreground">
+                      <TableCell className="text-muted-foreground max-w-[200px] truncate" title={suggestion.name || undefined}>
                         {suggestion.name || '—'}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground text-sm">
+                        {suggestion.sector || '—'}
                       </TableCell>
                       <TableCell className="text-center">
                         <div className="flex items-center justify-center gap-1">
                           <ThumbsUp className="h-3 w-3 text-chart-4" />
                           <span className="font-medium">{suggestion.vote_count}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          {suggestion.fetch_error ? (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                {getFetchStatusBadge(suggestion.fetch_status)}
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p className="max-w-xs">{suggestion.fetch_error}</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          ) : (
+                            getFetchStatusBadge(suggestion.fetch_status)
+                          )}
+                          {(suggestion.fetch_status === 'rate_limited' || suggestion.fetch_status === 'error' || suggestion.fetch_status === 'pending') && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-6 w-6 p-0"
+                              onClick={() => handleRetryFetch(suggestion.id)}
+                              disabled={actionLoading === suggestion.id}
+                              title="Retry fetching stock data"
+                            >
+                              {actionLoading === suggestion.id ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <RefreshCw className="h-3 w-3" />
+                              )}
+                            </Button>
+                          )}
                         </div>
                       </TableCell>
                       <TableCell>{getStatusBadge(suggestion.status)}</TableCell>
@@ -574,5 +675,6 @@ export function SuggestionManager() {
         </DialogContent>
       </Dialog>
     </Card>
+    </TooltipProvider>
   );
 }

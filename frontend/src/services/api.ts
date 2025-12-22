@@ -1,5 +1,6 @@
 import { getAuthHeaders } from './auth';
 import { apiCache, CACHE_TTL } from '@/lib/cache';
+import { getDeviceFingerprint, getDeviceFingerprintSync, recordLocalVote, hasVotedLocally } from '@/lib/fingerprint';
 
 const API_BASE = '/api';
 
@@ -903,6 +904,7 @@ export async function updateCredentials(data: UserCredentialsUpdate): Promise<{ 
 // =============================================================================
 
 export type SuggestionStatus = 'pending' | 'approved' | 'rejected';
+export type FetchStatus = 'pending' | 'fetched' | 'rate_limited' | 'error' | 'invalid';
 
 export interface Suggestion {
   id: number;
@@ -912,14 +914,16 @@ export interface Suggestion {
   name: string | null;
   sector: string | null;
   summary: string | null;
-  last_price: number | null;
-  price_change_90d: number | null;
-  created_at: string;
-  updated_at: string | null;
+  website: string | null;
+  ipo_year: number | null;
+  current_price: number | null;
+  ath_price: number | null;
+  fetch_status: FetchStatus | null;
+  fetch_error: string | null;
   fetched_at: string | null;
-  rejection_reason?: string | null;
-  approved_by?: number | null;
+  created_at: string;
   reviewed_at?: string | null;
+  approved_by?: number | null;
 }
 
 export interface SuggestionListResponse {
@@ -937,24 +941,79 @@ export interface TopSuggestion {
   summary: string | null;
   ipo_year: number | null;
   website: string | null;
+  fetch_status: FetchStatus | null;
 }
 
 // Public endpoints (no auth required)
 export async function suggestStock(symbol: string): Promise<{ message: string; symbol: string; vote_count: number; status: string }> {
-  return fetchAPI<{ message: string; symbol: string; vote_count: number; status: string }>(
+  // Get client fingerprint to send to server
+  const clientFingerprint = await getDeviceFingerprint();
+  
+  const result = await fetchAPI<{ message: string; symbol: string; vote_count: number; status: string }>(
     `/suggestions?symbol=${encodeURIComponent(symbol.toUpperCase())}`,
-    { method: 'POST' }
+    { 
+      method: 'POST',
+      headers: {
+        'X-Client-Fingerprint': clientFingerprint,
+      },
+    }
   );
+  
+  // Record local vote (suggesting also counts as voting)
+  recordLocalVote(symbol);
+  
+  return result;
 }
 
 export async function voteForSuggestion(symbol: string): Promise<{ message: string; symbol: string; auto_approved?: boolean }> {
-  return fetchAPI<{ message: string; symbol: string; auto_approved?: boolean }>(`/suggestions/${encodeURIComponent(symbol.toUpperCase())}/vote`, {
-    method: 'PUT',
-  });
+  // Check local vote record first (client-side protection)
+  if (hasVotedLocally(symbol)) {
+    throw new Error('You have already voted for this stock');
+  }
+  
+  // Get client fingerprint to send to server
+  const clientFingerprint = await getDeviceFingerprint();
+  
+  const result = await fetchAPI<{ message: string; symbol: string; auto_approved?: boolean }>(
+    `/suggestions/${encodeURIComponent(symbol.toUpperCase())}/vote`, 
+    {
+      method: 'PUT',
+      headers: {
+        'X-Client-Fingerprint': clientFingerprint,
+      },
+    }
+  );
+  
+  // Record vote locally for client-side duplicate prevention
+  recordLocalVote(symbol);
+  
+  return result;
 }
 
+// Re-export fingerprint utilities for components
+export { hasVotedLocally, getLocalVotes };
+
 export async function getTopSuggestions(limit: number = 10, excludeVoted: boolean = false): Promise<TopSuggestion[]> {
-  return fetchAPI<TopSuggestion[]>(`/suggestions/top?limit=${limit}&exclude_voted=${excludeVoted}`);
+  // Include client fingerprint sync ID for exclude_voted to work correctly
+  const clientFingerprint = getDeviceFingerprintSync();
+  const headers: Record<string, string> = {};
+  if (clientFingerprint) {
+    headers['X-Client-Fingerprint'] = clientFingerprint;
+  }
+  
+  const response = await fetch(`${API_BASE}/suggestions/top?limit=${limit}&exclude_voted=${excludeVoted}`, {
+    headers: {
+      ...getAuthHeaders(),
+      ...headers,
+    },
+  });
+  
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Request failed' }));
+    throw new Error(error.detail || `HTTP ${response.status}`);
+  }
+  
+  return response.json();
 }
 
 export async function getSuggestionSettings(): Promise<{ auto_approve_votes: number }> {
@@ -1010,6 +1069,24 @@ export async function refreshSuggestionData(
 ): Promise<{ message: string; symbol: string }> {
   return fetchAPI<{ message: string; symbol: string }>(
     `/suggestions/${suggestionId}/refresh`,
+    { method: 'POST' }
+  );
+}
+
+export async function retrySuggestionFetch(
+  suggestionId: number
+): Promise<{ message: string; symbol: string; fetch_status: FetchStatus; fetch_error: string | null }> {
+  return fetchAPI<{ message: string; symbol: string; fetch_status: FetchStatus; fetch_error: string | null }>(
+    `/suggestions/${suggestionId}/retry`,
+    { method: 'POST' }
+  );
+}
+
+export async function backfillSuggestions(
+  limit: number = 10
+): Promise<{ message: string; processed: number; total: number; errors: Array<{ symbol: string; error: string }> | null }> {
+  return fetchAPI<{ message: string; processed: number; total: number; errors: Array<{ symbol: string; error: string }> | null }>(
+    `/suggestions/backfill?limit=${limit}`,
     { method: 'POST' }
   );
 }

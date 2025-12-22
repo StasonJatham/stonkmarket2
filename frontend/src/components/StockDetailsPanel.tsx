@@ -239,7 +239,7 @@ export function StockDetailsPanel({
             )}
 
             {/* Chart */}
-            <div className="h-40 lg:h-60 w-full">
+            <div className="h-40 lg:h-64 w-full">
               {/* Show comparison chart when benchmark is selected, otherwise show main chart */}
               {benchmark ? (
                 <ComparisonChart
@@ -247,13 +247,13 @@ export function StockDetailsPanel({
                   stockSymbol={stock.symbol}
                   benchmark={benchmark}
                   isLoading={isLoadingBenchmark}
-                  height={160}
+                  height="100%"
                   compact
                 />
               ) : isLoadingChart ? (
                 <Skeleton className="h-full w-full" />
               ) : formattedChartData.length > 0 ? (
-                <ResponsiveContainer width="100%" height={160} minWidth={0}>
+                <ResponsiveContainer width="100%" height="100%" minWidth={0}>
                   <ComposedChart 
                     key={`${stock.symbol}-${chartPeriod}`}
                     data={chartDataWithTrendline}

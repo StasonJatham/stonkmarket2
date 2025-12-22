@@ -131,6 +131,7 @@ class CronJobLog:
 class AuthUser:
     """Authentication user with MFA support."""
 
+    id: int
     username: str
     password_hash: str
     is_admin: bool = False
@@ -150,6 +151,7 @@ class AuthUser:
             # asyncpg returns datetime objects directly
             updated = val if isinstance(val, datetime) else datetime.fromisoformat(val)
         return cls(
+            id=row["id"],
             username=row["username"],
             password_hash=row["password_hash"],
             is_admin=bool(row["is_admin"]) if "is_admin" in keys else False,

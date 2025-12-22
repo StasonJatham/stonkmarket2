@@ -80,10 +80,10 @@ async def cache_warmup_job() -> str:
 
     Schedule: After data_grab (Mon-Fri at 11:30pm) or on demand
     """
-    import aiohttp
     from app.database.connection import fetch_all, fetch_one
     from app.dipfinder.service import get_dipfinder_service
     from app.cache.cache import Cache
+    from app.services.runtime_settings import get_runtime_setting
     from datetime import date, timedelta
 
     logger.info("Starting cache_warmup job")
@@ -93,20 +93,20 @@ async def cache_warmup_job() -> str:
     )
 
     try:
-        # Get top 20 dips by depth
+        # Get top 20 active symbols ordered by dip percentage
         rows = await fetch_all("""
-            SELECT symbol FROM symbols 
-            WHERE is_active = TRUE 
-            ORDER BY COALESCE(
-                (SELECT depth FROM dip_signals WHERE dip_signals.symbol = symbols.symbol ORDER BY updated_at DESC LIMIT 1),
-                0
-            ) DESC
+            SELECT s.symbol 
+            FROM symbols s
+            LEFT JOIN dip_state ds ON s.symbol = ds.symbol
+            WHERE s.is_active = TRUE 
+            ORDER BY COALESCE(ds.dip_percentage, 0) DESC
             LIMIT 20
         """)
         symbols = [row["symbol"] for row in rows]
 
-        # Add benchmark symbols
-        benchmark_symbols = ["^GSPC", "SPY", "URTH"]
+        # Add benchmark symbols from runtime settings
+        benchmarks = get_runtime_setting("benchmarks", [])
+        benchmark_symbols = [b.get("symbol") for b in benchmarks if b.get("symbol")]
         
         # Chart periods to pre-cache
         periods = [90, 180, 365]
@@ -115,7 +115,9 @@ async def cache_warmup_job() -> str:
         cached_count = 0
         chart_cache = Cache(prefix="chart", default_ttl=3600)
 
-        for symbol in symbols + benchmark_symbols:
+        all_symbols = list(set(symbols + benchmark_symbols))
+        
+        for symbol in all_symbols:
             for days in periods:
                 cache_key = f"{symbol}:{days}"
                 
@@ -137,7 +139,7 @@ async def cache_warmup_job() -> str:
                         symbol_row = await fetch_one(
                             "SELECT min_dip_pct FROM symbols WHERE symbol = $1", symbol
                         )
-                        min_dip_pct = float(symbol_row["min_dip_pct"]) if symbol_row and symbol_row["min_dip_pct"] else 0.10
+                        min_dip_pct = float(symbol_row["min_dip_pct"]) if symbol_row and symbol_row.get("min_dip_pct") else 0.10
 
                         # Build chart data
                         ref_high = float(prices["Close"].max())
@@ -176,7 +178,7 @@ async def cache_warmup_job() -> str:
                     logger.warning(f"Failed to cache {symbol}:{days}: {e}")
                     continue
 
-        message = f"Warmed up {cached_count} chart caches"
+        message = f"Warmed up {cached_count} chart caches for {len(all_symbols)} symbols"
         await _broadcast_job_event("cache_warmup", WSEventType.CRONJOB_COMPLETE, message)
         logger.info(f"cache_warmup: {message}")
         return message
@@ -184,6 +186,7 @@ async def cache_warmup_job() -> str:
     except Exception as e:
         await _broadcast_job_event("cache_warmup", WSEventType.CRONJOB_ERROR, str(e))
         logger.error(f"cache_warmup failed: {e}")
+        raise
         raise
 
 

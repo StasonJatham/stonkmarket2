@@ -30,7 +30,7 @@ interface ComparisonChartProps {
   stockName?: string | null;
   benchmark: BenchmarkType;
   isLoading?: boolean;
-  height?: number;
+  height?: number | string;
   compact?: boolean; // Render without Card wrapper
 }
 
