@@ -235,8 +235,13 @@ export async function getBenchmarkChart(
   days: number = 365
 ): Promise<ChartDataPoint[]> {
   const symbol = BENCHMARK_SYMBOLS[benchmark];
+  if (!symbol) {
+    console.error(`Unknown benchmark: ${benchmark}`);
+    return [];
+  }
   // Use /chart endpoint which exists, not /history
-  return fetchAPI<ChartDataPoint[]>(`/dips/${symbol}/chart?days=${days}`);
+  // URL encode the symbol in case it contains special chars like ^
+  return fetchAPI<ChartDataPoint[]>(`/dips/${encodeURIComponent(symbol)}/chart?days=${days}`);
 }
 
 // Normalize chart data to percentage change from first value

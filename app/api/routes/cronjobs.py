@@ -143,6 +143,8 @@ async def update_cronjob(
     admin: TokenData = Depends(require_admin),
 ) -> CronJobResponse:
     """Update a cron job's schedule."""
+    from app.jobs import reschedule_job
+
     existing = await cron_repo.get_cronjob(name)
     if existing is None:
         raise NotFoundError(
@@ -151,6 +153,10 @@ async def update_cronjob(
         )
 
     updated = await cron_repo.upsert_cronjob(name, payload.cron)
+
+    # Reschedule the running job with new cron expression
+    await reschedule_job(name, payload.cron)
+
     return CronJobResponse(
         name=updated.name,
         cron=updated.cron,

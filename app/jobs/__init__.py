@@ -16,6 +16,15 @@ from .executor import (
     execute_job_with_retry,
 )
 
+
+async def reschedule_job(name: str, cron_expression: str) -> bool:
+    """Reschedule a running job with a new cron expression."""
+    scheduler = get_scheduler()
+    if scheduler is None:
+        return False
+    return await scheduler.reschedule_job(name, cron_expression)
+
+
 __all__ = [
     "JobScheduler",
     "get_scheduler",
@@ -26,4 +35,5 @@ __all__ = [
     "get_job",
     "execute_job",
     "execute_job_with_retry",
+    "reschedule_job",
 ]

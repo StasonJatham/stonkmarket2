@@ -4,7 +4,7 @@ import {
   getDipFinderSignals, 
   getSymbols,
   type DipSignal, 
-  type Symbol 
+  type Symbol,
 } from '@/services/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import {
   Select,
   SelectContent,
@@ -27,23 +28,22 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip';
 import { 
-  RefreshCw, 
   TrendingDown, 
   AlertTriangle,
   Filter,
   Search,
   BarChart3,
   Zap,
-  HelpCircle,
   ChevronLeft,
   ChevronRight,
-  Eye,
-  EyeOff
+  HelpCircle,
 } from 'lucide-react';
 import { useTheme } from '@/context/ThemeContext';
 import { useIsMobile } from '@/hooks/useIsMobile';
+import { SignalDetailsSheet } from '@/components/dipfinder/SignalDetailsSheet';
+import { DipFinderMethodology, getDipTypeBadge } from '@/components/dipfinder/DipFinderMethodology';
 
 const WINDOWS = [
   { value: 7, label: '7 days', desc: 'Short-term dips (1 week lookback)' },
@@ -53,36 +53,6 @@ const WINDOWS = [
 ];
 
 const ITEMS_PER_PAGE = 20;
-
-// Dip type badge - shows whether dip is stock-specific, mixed, or market-wide
-function getDipTypeBadge(dipType: string, colorblindMode: boolean) {
-  const config: Record<string, { color: string; colorblindColor: string; label: string; desc: string }> = {
-    STOCK_SPECIFIC: { 
-      color: 'bg-success/20 text-success border-success/30', 
-      colorblindColor: 'bg-blue-500/20 text-blue-500 border-blue-500/30',
-      label: 'Stock',
-      desc: 'This dip is specific to this stock, not market-wide' 
-    },
-    MIXED: { 
-      color: 'bg-chart-2/20 text-chart-2 border-chart-2/30', 
-      colorblindColor: 'bg-purple-500/20 text-purple-500 border-purple-500/30',
-      label: 'Mixed',
-      desc: 'Part stock-specific, part market-driven dip' 
-    },
-    MARKET_DIP: { 
-      color: 'bg-chart-4/20 text-chart-4 border-chart-4/30', 
-      colorblindColor: 'bg-orange-500/20 text-orange-500 border-orange-500/30',
-      label: 'Market',
-      desc: 'This dip is primarily driven by overall market decline' 
-    },
-  };
-  const item = config[dipType] || { color: '', colorblindColor: '', label: dipType, desc: '' };
-  return (
-    <Badge variant="outline" className={`${colorblindMode ? item.colorblindColor : item.color} font-medium`} title={item.desc}>
-      {item.label}
-    </Badge>
-  );
-}
 
 // Score badge with colorblind-safe colors
 function getScoreBadgeClass(score: number, colorblindMode: boolean): string {
@@ -107,7 +77,6 @@ function getProgressColor(colorblindMode: boolean, type: 'quality' | 'stability'
 }
 
 function formatPercent(value: number, decimals = 1): string {
-  // value is a fraction (e.g., 0.047 = 4.7%), multiply by 100 to get percentage
   const pct = value * 100;
   const sign = pct >= 0 ? '+' : '';
   return `${sign}${pct.toFixed(decimals)}%`;
@@ -118,13 +87,22 @@ function formatScore(value: number): string {
 }
 
 // Mobile card component
-function SignalCard({ signal, colorblindMode }: { signal: DipSignal; colorblindMode: boolean }) {
+function SignalCard({ 
+  signal, 
+  colorblindMode, 
+  onClick 
+}: { 
+  signal: DipSignal; 
+  colorblindMode: boolean;
+  onClick: () => void;
+}) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -10 }}
-      className="bg-card border rounded-lg p-4"
+      className="bg-card border rounded-lg p-4 cursor-pointer hover:border-primary/50 transition-colors"
+      onClick={onClick}
     >
       {/* Header row */}
       <div className="flex items-center justify-between mb-3">
@@ -210,6 +188,9 @@ export function DipFinderPage() {
   
   // Pagination
   const [page, setPage] = useState(0);
+  
+  // Selected signal for sheet
+  const [selectedSignal, setSelectedSignal] = useState<DipSignal | null>(null);
 
   // Load symbols on mount
   useEffect(() => {
@@ -237,7 +218,7 @@ export function DipFinderPage() {
         includeFactors: true 
       });
       setSignals(response.signals);
-      setPage(0); // Reset to first page when data changes
+      setPage(0);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load signals');
     } finally {
@@ -255,23 +236,19 @@ export function DipFinderPage() {
   const filteredSignals = useMemo(() => {
     let result = [...signals];
     
-    // Search filter
     if (searchQuery) {
       const query = searchQuery.toUpperCase();
       result = result.filter(s => s.ticker.includes(query));
     }
     
-    // Dip type filter
     if (dipTypeFilter !== 'all') {
       result = result.filter(s => s.dip_class === dipTypeFilter);
     }
     
-    // Active dips filter (dip >= 10%)
     if (showActiveDips) {
       result = result.filter(s => s.dip_stock >= 0.10);
     }
     
-    // Sort by final score descending
     result.sort((a, b) => b.final_score - a.final_score);
     
     return result;
@@ -297,25 +274,17 @@ export function DipFinderPage() {
     return { stockSpecific, mixed, marketDip, avgScore };
   }, [signals, filteredSignals, showActiveDips]);
 
-  const windowInfo = WINDOWS.find(w => w.value === window);
-
   return (
     <div className="container mx-auto px-4 py-8 max-w-7xl">
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
-        <div>
-          <h1 className="text-3xl font-bold flex items-center gap-3">
-            <BarChart3 className="h-8 w-8" />
-            DipFinder Signals
-          </h1>
-          <p className="text-muted-foreground mt-1">
-            AI-powered dip detection with quality and stability scoring
-          </p>
-        </div>
-        <Button onClick={loadSignals} disabled={isLoading}>
-          <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
-          Refresh
-        </Button>
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold flex items-center gap-3">
+          <BarChart3 className="h-8 w-8" />
+          DipFinder Signals
+        </h1>
+        <p className="text-muted-foreground mt-1">
+          AI-powered dip detection with quality and stability scoring
+        </p>
       </div>
 
       {/* Stats cards */}
@@ -349,112 +318,80 @@ export function DipFinderPage() {
         </Card>
         <Card>
           <CardContent className="pt-4">
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className="flex items-center gap-2 cursor-help">
-                    <BarChart3 className="w-5 h-5 text-primary" />
-                    <span className="text-sm text-muted-foreground">Avg Score</span>
-                    <HelpCircle className="w-3 h-3 text-muted-foreground" />
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent className="max-w-xs text-xs bg-popover text-popover-foreground border">
-                  <p className="font-medium mb-1">Buying Opportunity Score (0-100)</p>
-                  <p className="text-muted-foreground">Higher = better dip opportunity. Based on dip magnitude (40pts), rarity percentile (25pts), vs typical behavior (20pts), persistence (10pts), and classification (5pts).</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+            <div className="flex items-center gap-2">
+              <BarChart3 className="w-5 h-5 text-primary" />
+              <span className="text-sm text-muted-foreground">Avg Score</span>
+            </div>
             <p className="text-3xl font-bold mt-2">{stats.avgScore.toFixed(1)}</p>
           </CardContent>
         </Card>
       </div>
 
-      {/* Filters */}
+      {/* Filters - Clean layout */}
       <Card className="mb-6">
         <CardContent className="pt-6">
-          <div className="flex flex-col gap-4">
-            {/* Row 1: Search and main filters */}
-            <div className="flex flex-col md:flex-row gap-4">
-              <div className="flex-1">
-                <Label htmlFor="search" className="sr-only">Search</Label>
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                  <Input
-                    id="search"
-                    placeholder="Search by ticker..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="pl-10"
-                  />
-                </div>
-              </div>
-              
-              <div className="flex gap-3 flex-wrap">
-                {/* Window selector with tooltip */}
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <div className="w-36">
-                        <Label htmlFor="window" className="sr-only">Lookback Period</Label>
-                        <Select value={window.toString()} onValueChange={(v) => setWindow(Number(v))}>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Period" />
-                          </SelectTrigger>
-                          <SelectContent className="bg-popover text-popover-foreground border">
-                            {WINDOWS.map(w => (
-                              <SelectItem key={w.value} value={w.value.toString()}>
-                                {w.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </TooltipTrigger>
-                    <TooltipContent className="max-w-xs text-xs bg-popover text-popover-foreground border">
-                      <p className="font-medium">Lookback Period</p>
-                      <p className="text-muted-foreground">{windowInfo?.desc}</p>
-                      <p className="text-muted-foreground mt-1">Dips are measured from the peak price within this window.</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-                
-                <div className="w-36">
-                  <Label htmlFor="dipType" className="sr-only">Dip Type</Label>
-                  <Select value={dipTypeFilter} onValueChange={setDipTypeFilter}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Dip Type" />
-                    </SelectTrigger>
-                    <SelectContent className="bg-popover text-popover-foreground border">
-                      <SelectItem value="all">All Types</SelectItem>
-                      <SelectItem value="STOCK_SPECIFIC">Stock-Specific</SelectItem>
-                      <SelectItem value="MIXED">Mixed</SelectItem>
-                      <SelectItem value="MARKET_DIP">Market Dip</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                
-                {/* Active dips toggle */}
-                <Button
-                  variant={showActiveDips ? 'default' : 'outline'}
-                  size="default"
-                  onClick={() => setShowActiveDips(!showActiveDips)}
-                  className="gap-2"
-                >
-                  {showActiveDips ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
-                  {showActiveDips ? 'Active Dips' : 'All Stocks'}
-                </Button>
-              </div>
+          <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
+            {/* Search */}
+            <div className="relative flex-1 w-full sm:max-w-xs">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                placeholder="Search ticker..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-10"
+              />
             </div>
             
-            {/* Info text about active dips */}
-            <p className="text-xs text-muted-foreground">
-              {showActiveDips 
-                ? `Showing stocks with ≥10% dip from ${window}-day peak. `
-                : `Showing all stocks regardless of dip status. `
-              }
-              {filteredSignals.length} results
-            </p>
+            {/* Filter controls */}
+            <div className="flex items-center gap-4 flex-wrap">
+              {/* Lookback period */}
+              <Select value={window.toString()} onValueChange={(v) => setWindow(Number(v))}>
+                <SelectTrigger className="w-32">
+                  <SelectValue placeholder="Period" />
+                </SelectTrigger>
+                <SelectContent>
+                  {WINDOWS.map(w => (
+                    <SelectItem key={w.value} value={w.value.toString()}>
+                      {w.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              
+              {/* Dip type */}
+              <Select value={dipTypeFilter} onValueChange={setDipTypeFilter}>
+                <SelectTrigger className="w-36">
+                  <SelectValue placeholder="Dip Type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Types</SelectItem>
+                  <SelectItem value="STOCK_SPECIFIC">Stock-Specific</SelectItem>
+                  <SelectItem value="MIXED">Mixed</SelectItem>
+                  <SelectItem value="MARKET_DIP">Market Dip</SelectItem>
+                </SelectContent>
+              </Select>
+
+              {/* Active dips toggle with Switch */}
+              <div className="flex items-center gap-2">
+                <Switch
+                  id="active-dips"
+                  checked={showActiveDips}
+                  onCheckedChange={setShowActiveDips}
+                />
+                <Label htmlFor="active-dips" className="text-sm cursor-pointer whitespace-nowrap">
+                  {showActiveDips ? 'Active Dips' : 'All Stocks'}
+                </Label>
+              </div>
+            </div>
           </div>
+          
+          {/* Results count */}
+          <p className="text-xs text-muted-foreground mt-3">
+            {showActiveDips 
+              ? `Showing stocks with ≥10% dip from ${window}-day peak`
+              : 'Showing all stocks regardless of dip status'
+            } • {filteredSignals.length} results
+          </p>
         </CardContent>
       </Card>
 
@@ -470,39 +407,27 @@ export function DipFinderPage() {
         </Card>
       )}
 
-      {/* Signals */}
+      {/* Signals Table */}
       <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center justify-between">
-            <span>Signals ({filteredSignals.length})</span>
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Badge variant="outline" className="cursor-help">
-                    {window}-day lookback
-                    <HelpCircle className="w-3 h-3 ml-1" />
-                  </Badge>
-                </TooltipTrigger>
-                <TooltipContent className="max-w-xs text-xs bg-popover text-popover-foreground border">
-                  <p>{windowInfo?.desc}</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          </CardTitle>
-          {/* Score Legend - colorblind aware */}
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <CardTitle>Signals ({filteredSignals.length})</CardTitle>
+            <Badge variant="outline">{window}-day lookback</Badge>
+          </div>
+          {/* Score Legend */}
           <div className="flex items-center gap-4 text-xs text-muted-foreground mt-2 flex-wrap">
-            <span className="font-medium">Score Guide:</span>
+            <span className="font-medium">Score:</span>
             <span className="flex items-center gap-1">
-              <span className={`w-3 h-3 rounded ${colorblindMode ? 'bg-blue-500/30' : 'bg-success/20'}`} /> 70+ Strong
+              <span className={`w-2 h-2 rounded-full ${colorblindMode ? 'bg-blue-500' : 'bg-success'}`} /> 70+ Strong
             </span>
             <span className="flex items-center gap-1">
-              <span className={`w-3 h-3 rounded ${colorblindMode ? 'bg-purple-500/30' : 'bg-chart-4/20'}`} /> 50-69 Good
+              <span className={`w-2 h-2 rounded-full ${colorblindMode ? 'bg-purple-500' : 'bg-chart-4'}`} /> 50-69 Good
             </span>
             <span className="flex items-center gap-1">
-              <span className={`w-3 h-3 rounded ${colorblindMode ? 'bg-orange-500/30' : 'bg-chart-2/20'}`} /> 30-49 Moderate
+              <span className={`w-2 h-2 rounded-full ${colorblindMode ? 'bg-orange-500' : 'bg-chart-2'}`} /> 30-49 Mod
             </span>
             <span className="flex items-center gap-1">
-              <span className="w-3 h-3 rounded bg-muted" /> &lt;30 Weak
+              <span className="w-2 h-2 rounded-full bg-muted-foreground" /> &lt;30 Weak
             </span>
           </div>
         </CardHeader>
@@ -528,7 +453,12 @@ export function DipFinderPage() {
             <div className="space-y-3">
               <AnimatePresence mode="popLayout">
                 {paginatedSignals.map((signal) => (
-                  <SignalCard key={signal.ticker} signal={signal} colorblindMode={colorblindMode} />
+                  <SignalCard 
+                    key={signal.ticker} 
+                    signal={signal} 
+                    colorblindMode={colorblindMode}
+                    onClick={() => setSelectedSignal(signal)}
+                  />
                 ))}
               </AnimatePresence>
             </div>
@@ -539,75 +469,96 @@ export function DipFinderPage() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Ticker</TableHead>
-                    <TableHead>Dip %</TableHead>
                     <TableHead>
-                      <Tooltip>
-                        <TooltipTrigger className="flex items-center gap-1 cursor-help">
-                          Excess Dip
-                          <HelpCircle className="w-3 h-3 text-muted-foreground" />
-                        </TooltipTrigger>
-                        <TooltipContent className="max-w-xs text-xs bg-popover text-popover-foreground border">
-                          How much deeper than typical market dip. Positive = stock fell more than market.
-                        </TooltipContent>
-                      </Tooltip>
+                      <div className="flex items-center gap-1">
+                        Dip %
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <HelpCircle className="h-3.5 w-3.5 text-muted-foreground/50 cursor-help" />
+                          </TooltipTrigger>
+                          <TooltipContent side="top" className="max-w-[200px]">
+                            <p>How much the stock has dropped from its recent high.</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </div>
                     </TableHead>
                     <TableHead>
-                      <Tooltip>
-                        <TooltipTrigger className="flex items-center gap-1 cursor-help">
-                          Dip Type
-                          <HelpCircle className="w-3 h-3 text-muted-foreground" />
-                        </TooltipTrigger>
-                        <TooltipContent className="max-w-xs text-xs bg-popover text-popover-foreground border">
-                          <p><b>Stock:</b> Dip is specific to this stock</p>
-                          <p><b>Mixed:</b> Part stock, part market-driven</p>
-                          <p><b>Market:</b> Primarily market-wide decline</p>
-                        </TooltipContent>
-                      </Tooltip>
+                      <div className="flex items-center gap-1">
+                        Excess Dip
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <HelpCircle className="h-3.5 w-3.5 text-muted-foreground/50 cursor-help" />
+                          </TooltipTrigger>
+                          <TooltipContent side="top" className="max-w-[200px]">
+                            <p>Stock's dip minus market's dip. Higher means the stock fell more than the market.</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </div>
+                    </TableHead>
+                    <TableHead>
+                      <div className="flex items-center gap-1">
+                        Type
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <HelpCircle className="h-3.5 w-3.5 text-muted-foreground/50 cursor-help" />
+                          </TooltipTrigger>
+                          <TooltipContent side="top" className="max-w-[200px]">
+                            <p>Dip classification based on magnitude: Big Dip (&gt;25%), Normal (10-25%), or None.</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </div>
                     </TableHead>
                     <TableHead className="text-center">
-                      <Tooltip>
-                        <TooltipTrigger className="flex items-center gap-1 cursor-help">
-                          Days
-                          <HelpCircle className="w-3 h-3 text-muted-foreground" />
-                        </TooltipTrigger>
-                        <TooltipContent className="max-w-xs text-xs bg-popover text-popover-foreground border">
-                          Consecutive days the stock has been in dip territory. "—" means just started.
-                        </TooltipContent>
-                      </Tooltip>
+                      <div className="flex items-center justify-center gap-1">
+                        Days
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <HelpCircle className="h-3.5 w-3.5 text-muted-foreground/50 cursor-help" />
+                          </TooltipTrigger>
+                          <TooltipContent side="top" className="max-w-[200px]">
+                            <p>Consecutive days in dip territory (&gt;10% below peak).</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </div>
                     </TableHead>
                     <TableHead>
-                      <Tooltip>
-                        <TooltipTrigger className="flex items-center gap-1 cursor-help">
-                          Quality
-                          <HelpCircle className="w-3 h-3 text-muted-foreground" />
-                        </TooltipTrigger>
-                        <TooltipContent className="max-w-xs text-xs bg-popover text-popover-foreground border">
-                          Company quality score (0-100) based on profitability, balance sheet, cash flow, and growth.
-                        </TooltipContent>
-                      </Tooltip>
+                      <div className="flex items-center gap-1">
+                        Quality
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <HelpCircle className="h-3.5 w-3.5 text-muted-foreground/50 cursor-help" />
+                          </TooltipTrigger>
+                          <TooltipContent side="top" className="max-w-[200px]">
+                            <p>Company fundamentals score based on profitability, dividend history, and P/E ratio.</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </div>
                     </TableHead>
                     <TableHead>
-                      <Tooltip>
-                        <TooltipTrigger className="flex items-center gap-1 cursor-help">
-                          Stability
-                          <HelpCircle className="w-3 h-3 text-muted-foreground" />
-                        </TooltipTrigger>
-                        <TooltipContent className="max-w-xs text-xs bg-popover text-popover-foreground border">
-                          Price stability score (0-100). Higher = more stable, lower volatility/beta.
-                        </TooltipContent>
-                      </Tooltip>
+                      <div className="flex items-center gap-1">
+                        Stability
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <HelpCircle className="h-3.5 w-3.5 text-muted-foreground/50 cursor-help" />
+                          </TooltipTrigger>
+                          <TooltipContent side="top" className="max-w-[200px]">
+                            <p>Price stability score based on 52-week volatility. Lower volatility = higher stability.</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </div>
                     </TableHead>
                     <TableHead>
-                      <Tooltip>
-                        <TooltipTrigger className="flex items-center gap-1 cursor-help">
-                          Score
-                          <HelpCircle className="w-3 h-3 text-muted-foreground" />
-                        </TooltipTrigger>
-                        <TooltipContent className="max-w-xs text-xs bg-popover text-popover-foreground border">
-                          <p className="font-medium mb-1">Buying Opportunity Score (0-100)</p>
-                          <p>Higher = better dip. Combines dip magnitude, rarity, persistence, and classification.</p>
-                        </TooltipContent>
-                      </Tooltip>
+                      <div className="flex items-center gap-1">
+                        Score
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <HelpCircle className="h-3.5 w-3.5 text-muted-foreground/50 cursor-help" />
+                          </TooltipTrigger>
+                          <TooltipContent side="top" className="max-w-[200px]">
+                            <p>Overall dip opportunity score combining excess dip, quality, and stability metrics.</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </div>
                     </TableHead>
                   </TableRow>
                 </TableHeader>
@@ -619,7 +570,8 @@ export function DipFinderPage() {
                         initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, y: -10 }}
-                        className="hover:bg-muted/50 transition-colors border-b"
+                        className="hover:bg-muted/50 transition-colors border-b cursor-pointer"
+                        onClick={() => setSelectedSignal(signal)}
                       >
                         <TableCell className="font-semibold">{signal.ticker}</TableCell>
                         <TableCell>
@@ -640,7 +592,7 @@ export function DipFinderPage() {
                           {signal.persist_days > 0 ? (
                             <span className="font-medium">{signal.persist_days}</span>
                           ) : (
-                            <span className="text-muted-foreground" title="Dip just started or threshold not met">—</span>
+                            <span className="text-muted-foreground">—</span>
                           )}
                         </TableCell>
                         <TableCell>
@@ -670,24 +622,9 @@ export function DipFinderPage() {
                           </div>
                         </TableCell>
                         <TableCell>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <div className={`font-bold text-lg px-2 py-1 rounded cursor-help ${getScoreBadgeClass(signal.final_score, colorblindMode)}`}>
-                                {formatScore(signal.final_score)}
-                              </div>
-                            </TooltipTrigger>
-                            <TooltipContent className="max-w-xs text-xs bg-popover text-popover-foreground border">
-                              <p className="font-medium mb-1">
-                                {signal.final_score >= 70 ? '🔥 Strong Opportunity' :
-                                 signal.final_score >= 50 ? '👍 Good Opportunity' :
-                                 signal.final_score >= 30 ? '🤔 Moderate Opportunity' :
-                                 '😐 Weak Opportunity'}
-                              </p>
-                              <p className="text-muted-foreground">
-                                Score: {formatScore(signal.final_score)}/100
-                              </p>
-                            </TooltipContent>
-                          </Tooltip>
+                          <div className={`font-bold text-lg px-2 py-1 rounded inline-block ${getScoreBadgeClass(signal.final_score, colorblindMode)}`}>
+                            {formatScore(signal.final_score)}
+                          </div>
                         </TableCell>
                       </motion.tr>
                     ))}
@@ -701,7 +638,7 @@ export function DipFinderPage() {
           {totalPages > 1 && (
             <div className="flex items-center justify-between mt-6 pt-4 border-t">
               <p className="text-sm text-muted-foreground">
-                Showing {page * ITEMS_PER_PAGE + 1}-{Math.min((page + 1) * ITEMS_PER_PAGE, filteredSignals.length)} of {filteredSignals.length}
+                {page * ITEMS_PER_PAGE + 1}-{Math.min((page + 1) * ITEMS_PER_PAGE, filteredSignals.length)} of {filteredSignals.length}
               </p>
               <div className="flex items-center gap-2">
                 <Button
@@ -711,10 +648,9 @@ export function DipFinderPage() {
                   disabled={page === 0}
                 >
                   <ChevronLeft className="w-4 h-4" />
-                  Previous
                 </Button>
                 <span className="text-sm text-muted-foreground px-2">
-                  Page {page + 1} of {totalPages}
+                  {page + 1} / {totalPages}
                 </span>
                 <Button
                   variant="outline"
@@ -722,7 +658,6 @@ export function DipFinderPage() {
                   onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
                   disabled={page >= totalPages - 1}
                 >
-                  Next
                   <ChevronRight className="w-4 h-4" />
                 </Button>
               </div>
@@ -730,6 +665,17 @@ export function DipFinderPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Methodology Section */}
+      <DipFinderMethodology colorblindMode={colorblindMode} />
+
+      {/* Signal Details Sheet */}
+      <SignalDetailsSheet
+        signal={selectedSignal}
+        isOpen={!!selectedSignal}
+        onClose={() => setSelectedSignal(null)}
+        colorblindMode={colorblindMode}
+      />
     </div>
   );
 }

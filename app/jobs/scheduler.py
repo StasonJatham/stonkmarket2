@@ -191,6 +191,37 @@ class JobScheduler:
             return job.next_run_time
         return None
 
+    async def reschedule_job(self, name: str, cron_expression: str) -> bool:
+        """Reschedule a job with a new cron expression."""
+        job_func = get_job(name)
+        if job_func is None:
+            logger.warning(f"Cannot reschedule unknown job: {name}")
+            return False
+
+        try:
+            trigger = CronTrigger.from_crontab(cron_expression)
+            
+            # Check if job exists
+            existing_job = self._scheduler.get_job(name)
+            if existing_job:
+                # Reschedule existing job
+                self._scheduler.reschedule_job(name, trigger=trigger)
+                logger.info(f"Rescheduled job: {name} with cron: {cron_expression}")
+            else:
+                # Add new job
+                self._scheduler.add_job(
+                    self._wrap_job(name, job_func),
+                    trigger=trigger,
+                    id=name,
+                    name=name,
+                    replace_existing=True,
+                )
+                logger.info(f"Added job: {name} with cron: {cron_expression}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to reschedule job {name}: {e}")
+            return False
+
     def get_jobs_status(self) -> list:
         """Get status of all scheduled jobs."""
         jobs = []

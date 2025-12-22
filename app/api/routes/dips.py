@@ -313,7 +313,7 @@ async def get_symbol_state(
 async def get_chart(
     symbol: str = Depends(_validate_symbol_path),
     days: int = Query(
-        default=180, ge=7, le=365, description="Number of days of history"
+        default=180, ge=7, le=1825, description="Number of days of history (max 5 years)"
     ),
 ) -> List[ChartPoint]:
     """Get chart data for a symbol (works for tracked symbols and benchmarks)."""

@@ -76,7 +76,7 @@ export function ComparisonChart({
 
   if (isLoading) {
     if (compact) {
-      return <Skeleton className={`h-[${height}px] w-full rounded-lg`} />;
+      return <Skeleton className="h-full w-full rounded-lg" />;
     }
     return (
       <Card>
@@ -85,7 +85,7 @@ export function ComparisonChart({
           <Skeleton className="h-4 w-32 mt-1" />
         </CardHeader>
         <CardContent>
-          <Skeleton className={`h-[${height}px] w-full`} />
+          <Skeleton className="h-[200px] w-full" />
         </CardContent>
       </Card>
     );
@@ -94,14 +94,14 @@ export function ComparisonChart({
   if (data.length === 0) {
     if (compact) {
       return (
-        <div className={`flex items-center justify-center h-[${height}px] text-muted-foreground text-sm`}>
+        <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
           Loading comparison...
         </div>
       );
     }
     return (
       <Card>
-        <CardContent className={`flex items-center justify-center h-[${height}px] text-muted-foreground`}>
+        <CardContent className="flex items-center justify-center h-[200px] text-muted-foreground">
           No chart data available
         </CardContent>
       </Card>
@@ -113,9 +113,9 @@ export function ComparisonChart({
   // Compact mode: render without Card wrapper
   if (compact) {
     return (
-      <div className="space-y-2">
+      <div className="flex flex-col h-full">
         {/* Compact header */}
-        <div className="flex items-center justify-between text-sm">
+        <div className="flex items-center justify-between text-sm shrink-0 pb-2">
           <span className="text-muted-foreground">
             {stockSymbol} vs {getBenchmarkName(benchmark)}
           </span>
@@ -138,8 +138,9 @@ export function ComparisonChart({
           )}
         </div>
         {/* Chart */}
-        <ResponsiveContainer width="100%" height={height} minWidth={0} debounce={50}>
-          <LineChart data={data} margin={{ top: 5, right: 5, left: 0, bottom: 0 }}>
+        <div className="flex-1 min-h-0">
+          <ResponsiveContainer width="100%" height="100%" minWidth={0} debounce={50}>
+            <LineChart data={data} margin={{ top: 5, right: 5, left: 0, bottom: 0 }}>
             <XAxis
               dataKey="displayDate"
               axisLine={false}
@@ -159,11 +160,13 @@ export function ComparisonChart({
             <ReferenceLine y={0} stroke="hsl(var(--muted-foreground))" strokeDasharray="3 3" strokeOpacity={0.3} />
             <Tooltip
               contentStyle={{
-                backgroundColor: 'hsl(var(--background))',
+                backgroundColor: 'hsl(var(--background) / 0.95)',
+                backdropFilter: 'blur(8px)',
                 border: '1px solid hsl(var(--border))',
                 borderRadius: '6px',
                 fontSize: '11px',
                 padding: '6px 10px',
+                boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)',
               }}
               formatter={(value: number, name: string) => {
                 const label = name === 'stockNormalized' ? stockSymbol : getBenchmarkName(benchmark);
@@ -190,6 +193,7 @@ export function ComparisonChart({
             )}
           </LineChart>
         </ResponsiveContainer>
+        </div>
       </div>
     );
   }
