@@ -147,8 +147,8 @@ async def schedule_batch_suggestion_bios() -> Optional[str]:
     return batch_id
 
 
-# Alias for tinder bios
-schedule_batch_tinder_bios = schedule_batch_suggestion_bios
+# Alias for swipe bios
+schedule_batch_swipe_bios = schedule_batch_suggestion_bios
 
 
 async def process_completed_batch_jobs() -> int:
@@ -276,12 +276,12 @@ async def _store_dip_analysis(symbol: str, content: str, batch_id: str) -> None:
     await execute(
         """
         INSERT INTO dip_ai_analysis (
-            symbol, tinder_bio, ai_rating, rating_reasoning,
+            symbol, swipe_bio, ai_rating, rating_reasoning,
             model_used, is_batch_generated, batch_job_id, generated_at, expires_at
         )
         VALUES ($1, $2, $3, $4, 'gpt-5-mini', TRUE, $5, NOW(), $6)
         ON CONFLICT (symbol) DO UPDATE SET
-            tinder_bio = EXCLUDED.tinder_bio,
+            swipe_bio = EXCLUDED.swipe_bio,
             ai_rating = EXCLUDED.ai_rating,
             rating_reasoning = EXCLUDED.rating_reasoning,
             is_batch_generated = TRUE,
@@ -349,12 +349,12 @@ async def run_realtime_analysis_for_new_stock(
         await execute(
             """
             INSERT INTO dip_ai_analysis (
-                symbol, tinder_bio, ai_rating, rating_reasoning,
+                symbol, swipe_bio, ai_rating, rating_reasoning,
                 model_used, is_batch_generated, generated_at, expires_at
             )
             VALUES ($1, $2, $3, $4, 'gpt-5-mini', FALSE, NOW(), $5)
             ON CONFLICT (symbol) DO UPDATE SET
-                tinder_bio = EXCLUDED.tinder_bio,
+                swipe_bio = EXCLUDED.swipe_bio,
                 ai_rating = EXCLUDED.ai_rating,
                 rating_reasoning = EXCLUDED.rating_reasoning,
                 is_batch_generated = FALSE,

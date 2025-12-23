@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -63,11 +63,7 @@ export function MFASetup({ onError, onSuccess }: MFASetupProps) {
   const [copiedSecret, setCopiedSecret] = useState(false);
   const [copiedCodes, setCopiedCodes] = useState(false);
 
-  useEffect(() => {
-    loadStatus();
-  }, []);
-
-  async function loadStatus() {
+  const loadStatus = useCallback(async () => {
     setIsLoading(true);
     try {
       const data = await getMFAStatus();
@@ -77,7 +73,11 @@ export function MFASetup({ onError, onSuccess }: MFASetupProps) {
     } finally {
       setIsLoading(false);
     }
-  }
+  }, [onError]);
+
+  useEffect(() => {
+    loadStatus();
+  }, [loadStatus]);
 
   async function handleStartSetup() {
     setIsSettingUp(true);

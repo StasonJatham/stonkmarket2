@@ -49,6 +49,7 @@ from openai import AsyncOpenAI, APITimeoutError, RateLimitError
 from app.core.logging import get_logger
 from app.repositories import api_keys as api_keys_repo
 from app.repositories import api_usage as api_usage_repo
+from app.services.text_cleaner import clean_ai_text
 
 logger = get_logger("openai")
 
@@ -68,7 +69,7 @@ GPT5_PREFIXES = ("gpt-5",)
 
 class TaskType(str, Enum):
     """Supported AI tasks."""
-    BIO = "bio"              # Tinder-style stock bio
+    BIO = "bio"              # Dating-app style stock bio
     DIP_BIO = "dip_bio"      # Bio emphasizing the dip
     RATING = "rating"        # Buy/hold/sell rating with reasoning
     SUMMARY = "summary"      # Company description summary
@@ -79,7 +80,7 @@ class TaskType(str, Enum):
 # =============================================================================
 
 INSTRUCTIONS: dict[TaskType, str] = {
-    TaskType.BIO: """You write Tinder bios for stocks. The stock is the person looking for a match.
+    TaskType.BIO: """You write dating-app bios for stocks. The stock is the person looking for a match.
 
 RULES:
 - First person, BE THE STOCK's personality
@@ -87,9 +88,9 @@ RULES:
 - Flirty, confident, maybe a little unhinged
 - Make investors LAUGH then think "maybe I should buy this"
 - Max 2-3 sentences, include 1-2 emojis
-- NO investor jargon - this is Tinder not CNBC""",
+- NO investor jargon - this is a dating app not CNBC""",
 
-    TaskType.DIP_BIO: """You write Tinder bios for stocks going through a dip.
+    TaskType.DIP_BIO: """You write dating-app bios for stocks going through a dip.
 
 RULES:
 - First person, self-aware about being down
@@ -117,7 +118,7 @@ BE DECISIVE - take a stance. Always respond with valid JSON.""",
     TaskType.SUMMARY: """You explain complex businesses in simple terms.
 
 RULES:
-- Maximum 350 characters
+- Maximum 400 characters
 - Simple language anyone can understand
 - Focus on what the company actually does
 - No jargon or complex terms
@@ -362,11 +363,18 @@ async def generate(
             
             logger.info(f"{task.value} for {context.get('symbol', 'unknown')}: {metrics.total_tokens} tokens, ${metrics.cost_usd:.4f}")
             
-            # Parse and return
+            # Parse, clean, and return
             output = output.strip()
             if json_output:
-                return json.loads(output)
-            return output.strip('"\'')
+                result = json.loads(output)
+                # Clean string values in JSON response
+                if isinstance(result, dict):
+                    for key, value in result.items():
+                        if isinstance(value, str):
+                            result[key] = clean_ai_text(value)
+                return result
+            # Clean text output and remove quotes
+            return clean_ai_text(output.strip('"\''))
             
         except RateLimitError as e:
             last_error = e
@@ -406,7 +414,7 @@ async def generate_bio(
     summary: Optional[str] = None,
     dip_pct: Optional[float] = None,
 ) -> Optional[str]:
-    """Generate a Tinder-style bio for a stock."""
+    """Generate a dating-app style bio for a stock."""
     task = TaskType.DIP_BIO if dip_pct else TaskType.BIO
     return await generate(
         task=task,
@@ -448,7 +456,7 @@ async def summarize_company(
     name: Optional[str] = None,
     description: str = "",
 ) -> Optional[str]:
-    """Summarize a company description to ~350 characters."""
+    """Summarize a company description to ~400 characters."""
     if not description or len(description) < 50:
         return description
     
@@ -459,7 +467,7 @@ async def summarize_company(
             "name": name,
             "description": description,
         },
-        max_tokens=120,
+        max_tokens=140,
     )
 
 

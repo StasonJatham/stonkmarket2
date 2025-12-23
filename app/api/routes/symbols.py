@@ -301,3 +301,66 @@ async def _process_new_symbol(symbol: str) -> None:
             
     except Exception as e:
         logger.error(f"Error processing new symbol {symbol}: {e}")
+
+
+# =============================================================================
+# AI Summary Management
+# =============================================================================
+
+class AISummaryResponse(BaseModel):
+    """Response for AI summary regeneration."""
+    symbol: str
+    summary_ai: str | None
+
+
+@router.post(
+    "/{symbol}/ai/summary",
+    response_model=AISummaryResponse,
+    summary="Regenerate AI summary",
+    description="Regenerate the AI-generated summary for a symbol. Requires authentication.",
+    dependencies=[Depends(require_user)],
+)
+async def regenerate_ai_summary(
+    symbol: str = Depends(_validate_symbol_path),
+) -> AISummaryResponse:
+    """Regenerate the AI summary for a symbol from its Yahoo Finance description."""
+    from app.database.connection import execute, fetch_one
+    from app.services.stock_info import get_stock_info_async
+    from app.services.openai_client import summarize_company
+    from app.api.routes.dips import invalidate_stock_info_cache
+    
+    # Verify symbol exists
+    sym = await symbol_repo.get_symbol(symbol)
+    if not sym:
+        raise NotFoundError(f"Symbol {symbol} not found")
+    
+    # Fetch stock info from Yahoo
+    info = await get_stock_info_async(symbol)
+    if not info:
+        raise NotFoundError(f"Could not fetch info for {symbol} from Yahoo Finance")
+    
+    description = info.get("summary")
+    if not description or len(description) < 100:
+        raise NotFoundError(f"No description available for {symbol}")
+    
+    # Generate new AI summary
+    new_summary = await summarize_company(
+        symbol=symbol,
+        name=info.get("name"),
+        description=description,
+    )
+    
+    if new_summary:
+        # Persist to database
+        await execute(
+            "UPDATE symbols SET summary_ai = $2, updated_at = NOW() WHERE symbol = $1",
+            symbol.upper(),
+            new_summary,
+        )
+        
+        # Invalidate caches
+        await invalidate_stock_info_cache(symbol)
+        
+        logger.info(f"Regenerated AI summary for {symbol}: {len(new_summary)} chars")
+    
+    return AISummaryResponse(symbol=symbol, summary_ai=new_summary)

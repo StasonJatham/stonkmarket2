@@ -320,13 +320,13 @@ class DipAIAnalysis:
     """Cached AI analysis for a dip.
     
     Maps to: dip_ai_analysis table
-    Columns: id, symbol, tinder_bio, ai_rating, rating_reasoning, model_used,
+    Columns: id, symbol, swipe_bio, ai_rating, rating_reasoning, model_used,
              tokens_used, is_batch_generated, batch_job_id, generated_at, expires_at
     """
 
     id: int
     symbol: str
-    tinder_bio: Optional[str] = None
+    swipe_bio: Optional[str] = None
     ai_rating: Optional[str] = None  # 'strong_buy', 'buy', 'hold', 'sell', 'strong_sell'
     rating_reasoning: Optional[str] = None
     model_used: Optional[str] = None
@@ -353,7 +353,7 @@ class DipAIAnalysis:
         return cls(
             id=row["id"],
             symbol=row["symbol"],
-            tinder_bio=get_val("tinder_bio"),
+            swipe_bio=get_val("swipe_bio"),
             ai_rating=get_val("ai_rating"),
             rating_reasoning=get_val("rating_reasoning"),
             model_used=get_val("model_used"),

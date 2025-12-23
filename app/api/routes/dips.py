@@ -38,6 +38,11 @@ _chart_cache = Cache(prefix="chart", default_ttl=3600)  # 1 hour
 _info_cache = Cache(prefix="stockinfo", default_ttl=3600)  # 1 hour
 
 
+async def invalidate_stock_info_cache(symbol: str) -> None:
+    """Invalidate the stock info cache for a symbol."""
+    await _info_cache.delete(symbol.upper())
+
+
 def _validate_symbol_path(symbol: str = Path(..., min_length=1, max_length=10)) -> str:
     """Validate and normalize symbol from path parameter."""
     return symbol.strip().upper()

@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- Exports utility functions alongside components */
 import { 
   TrendingDown, 
   BarChart3, 

@@ -164,7 +164,7 @@ export function SignalDetailsSheet({
     }
 
     loadInfo();
-  }, [signal?.ticker, isOpen]);
+  }, [signal, isOpen]);
 
   // Load chart data when signal or timeframe changes
   useEffect(() => {
@@ -190,7 +190,7 @@ export function SignalDetailsSheet({
     }
 
     loadChart();
-  }, [signal?.ticker, isOpen, chartTimeframe]);
+  }, [signal, isOpen, chartTimeframe]);
 
   if (!signal) return null;
 

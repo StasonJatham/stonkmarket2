@@ -167,7 +167,7 @@ export function AIManager() {
   }
 
   // Count cards with/without AI
-  const cardsWithAI = dipCards.filter(c => c.tinder_bio).length;
+  const cardsWithAI = dipCards.filter(c => c.swipe_bio).length;
   const cardsWithRating = dipCards.filter(c => c.ai_rating).length;
 
   return (
@@ -244,7 +244,7 @@ export function AIManager() {
                   <TableHead>Name</TableHead>
                   <TableHead>Dip %</TableHead>
                   <TableHead>AI Rating</TableHead>
-                  <TableHead>Tinder Bio</TableHead>
+                  <TableHead>Swipe Bio</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -271,9 +271,9 @@ export function AIManager() {
                         {getRatingBadge(card.ai_rating)}
                       </TableCell>
                       <TableCell className="max-w-[200px]">
-                        {card.tinder_bio ? (
+                        {card.swipe_bio ? (
                           <span className="text-sm text-muted-foreground line-clamp-1">
-                            {card.tinder_bio.replace(/^"|"$/g, '')}
+                            {card.swipe_bio.replace(/^"|"$/g, '')}
                           </span>
                         ) : (
                           <span className="text-sm text-muted-foreground italic">Not generated</span>
@@ -374,12 +374,12 @@ export function AIManager() {
                   </div>
                 </div>
 
-                {/* Tinder Bio Section */}
+                {/* Swipe Bio Section */}
                 <div>
                   <div className="flex items-center justify-between mb-2">
                     <h4 className="text-sm font-medium flex items-center gap-2">
                       <MessageSquare className="h-4 w-4 text-chart-4" />
-                      Tinder Bio
+                      Swipe Bio
                     </h4>
                     <Button
                       variant="ghost"
@@ -395,9 +395,9 @@ export function AIManager() {
                     </Button>
                   </div>
                   <div className="bg-muted/30 rounded-lg p-4">
-                    {selectedCard.tinder_bio ? (
+                    {selectedCard.swipe_bio ? (
                       <p className="text-sm leading-relaxed">
-                        {selectedCard.tinder_bio.replace(/^"|"$/g, '')}
+                        {selectedCard.swipe_bio.replace(/^"|"$/g, '')}
                       </p>
                     ) : (
                       <p className="text-sm text-muted-foreground italic">

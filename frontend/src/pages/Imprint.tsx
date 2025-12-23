@@ -1,9 +1,22 @@
 import { motion } from 'framer-motion';
 import { useObfuscatedContact } from '@/lib/obfuscate';
+import { useSEO, generateBreadcrumbJsonLd } from '@/lib/seo';
 import { AlertTriangle } from 'lucide-react';
 
 export function ImprintPage() {
   const { decodedEmail, decode, decoded } = useObfuscatedContact();
+
+  // SEO for Imprint/Legal Notice (required for E-E-A-T and German law)
+  useSEO({
+    title: 'Impressum - Legal Notice',
+    description: 'Legal notice (Impressum) for StonkMarket according to German TMG § 5. Contact information and editorial responsibility.',
+    keywords: 'impressum, legal notice, contact, TMG, editorial responsibility',
+    canonical: '/imprint',
+    jsonLd: generateBreadcrumbJsonLd([
+      { name: 'Home', url: '/' },
+      { name: 'Imprint', url: '/imprint' },
+    ]),
+  });
 
   return (
     <motion.div

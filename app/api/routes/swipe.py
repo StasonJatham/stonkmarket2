@@ -1,4 +1,4 @@
-"""Stock Tinder routes - dip voting and AI analysis."""
+"""Swipe routes - dip voting and AI analysis."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from app.core.client_identity import (
 )
 from app.repositories import user_api_keys
 from app.repositories import dip_votes as dip_votes_repo
-from app.schemas.stock_tinder import (
+from app.schemas.swipe import (
     DipCard,
     DipCardList,
     DipVoteRequest,
@@ -24,7 +24,7 @@ from app.schemas.stock_tinder import (
     DipStats,
     VoteCounts,
 )
-from app.services import stock_tinder
+from app.services import swipe
 
 router = APIRouter()
 
@@ -33,7 +33,7 @@ router = APIRouter()
     "/cards",
     response_model=DipCardList,
     summary="Get all dip cards",
-    description="Get all current dips as tinder-style cards.",
+    description="Get all current dips as swipe-style cards.",
 )
 async def get_dip_cards(
     request: Request,
@@ -45,7 +45,7 @@ async def get_dip_cards(
     ),
 ) -> DipCardList:
     """Get all current dips as swipeable cards."""
-    cards = await stock_tinder.get_all_dip_cards(include_ai=include_ai)
+    cards = await swipe.get_all_dip_cards(include_ai=include_ai)
 
     # If exclude_voted, filter out cards the user has already voted on
     if exclude_voted:
@@ -76,9 +76,9 @@ async def get_dip_card(
 ) -> DipCard:
     """Get a single dip card with full details."""
     if refresh_ai:
-        card = await stock_tinder.get_dip_card_with_fresh_ai(symbol.upper())
+        card = await swipe.get_dip_card_with_fresh_ai(symbol.upper())
     else:
-        card = await stock_tinder.get_dip_card(symbol.upper())
+        card = await swipe.get_dip_card(symbol.upper())
 
     if not card:
         raise NotFoundError(f"Symbol {symbol.upper()} is not currently in a dip")
@@ -133,7 +133,7 @@ async def vote_on_dip(
     if check.reduce_weight:
         vote_weight = max(1, vote_weight // 2)
 
-    success, error = await stock_tinder.vote_on_dip(
+    success, error = await swipe.vote_on_dip(
         symbol=symbol,
         voter_identifier=vote_id,
         vote_type=payload.vote_type,
@@ -164,17 +164,7 @@ async def vote_on_dip(
 )
 async def get_dip_stats(symbol: str) -> DipStats:
     """Get voting statistics for a dip."""
-    stats = await stock_tinder.get_vote_stats(symbol.upper())
-
-    return DipStats(
-        symbol=stats["symbol"],
-        vote_counts=VoteCounts(**stats["vote_counts"]),
-        total_votes=stats["total_votes"],
-        weighted_total=stats.get("weighted_total", 0),
-        buy_pct=stats["buy_pct"],
-        sell_pct=stats["sell_pct"],
-        sentiment=stats["sentiment"],
-    )
+    return await swipe.get_vote_stats(symbol.upper())
 
 
 @router.post(
@@ -185,7 +175,7 @@ async def get_dip_stats(symbol: str) -> DipStats:
 )
 async def refresh_ai_analysis(symbol: str) -> DipCard:
     """Force refresh AI analysis for a dip."""
-    card = await stock_tinder.get_dip_card_with_fresh_ai(symbol.upper(), force_refresh=True)
+    card = await swipe.get_dip_card_with_fresh_ai(symbol.upper(), force_refresh=True)
 
     if not card:
         raise NotFoundError(f"Symbol {symbol.upper()} is not currently in a dip")
@@ -197,14 +187,14 @@ async def refresh_ai_analysis(symbol: str) -> DipCard:
     "/cards/{symbol}/refresh-ai/{field}",
     response_model=DipCard,
     summary="Refresh specific AI field",
-    description="Regenerate a specific AI field: rating, bio, or summary.",
+    description="Regenerate a swipe-specific AI field: rating or bio. For summary, use /symbols/{symbol}/ai/summary.",
 )
 async def refresh_ai_field(
     symbol: str,
-    field: Literal["rating", "bio", "summary"],
+    field: Literal["rating", "bio"],
 ) -> DipCard:
-    """Regenerate a specific AI field for a dip."""
-    card = await stock_tinder.regenerate_ai_field(symbol.upper(), field)
+    """Regenerate a swipe-specific AI field for a dip (rating or bio)."""
+    card = await swipe.regenerate_ai_field(symbol.upper(), field)
 
     if not card:
         raise NotFoundError(f"Symbol {symbol.upper()} is not currently in a dip")

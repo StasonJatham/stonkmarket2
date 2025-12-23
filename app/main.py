@@ -23,7 +23,7 @@ async def run_migrations() -> None:
     # Add summary_ai column to symbols table if it doesn't exist
     try:
         await execute("""
-            ALTER TABLE symbols ADD COLUMN IF NOT EXISTS summary_ai VARCHAR(350);
+            ALTER TABLE symbols ADD COLUMN IF NOT EXISTS summary_ai VARCHAR(400);
         """)
         logger.info("Database migrations completed")
     except Exception as e:

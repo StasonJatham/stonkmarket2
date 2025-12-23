@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- Context module exports hook alongside provider */
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
 import { getRanking } from '@/services/api';
 import type { DipStock } from '@/services/api';

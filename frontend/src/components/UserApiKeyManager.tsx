@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -93,11 +93,7 @@ export function UserApiKeyManager({ onError, onSuccess }: UserApiKeyManagerProps
   // Toggle loading
   const [togglingId, setTogglingId] = useState<number | null>(null);
 
-  useEffect(() => {
-    loadData();
-  }, [showInactive]);
-
-  async function loadData() {
+  const loadData = useCallback(async () => {
     setIsLoading(true);
     try {
       const [keysData, statsData] = await Promise.all([
@@ -111,7 +107,11 @@ export function UserApiKeyManager({ onError, onSuccess }: UserApiKeyManagerProps
     } finally {
       setIsLoading(false);
     }
-  }
+  }, [showInactive, onError]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   async function handleCreate() {
     if (!newKeyName.trim()) return;

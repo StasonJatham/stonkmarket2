@@ -92,15 +92,7 @@ export function AdminPage() {
   const [newCronValue, setNewCronValue] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
-  useEffect(() => {
-    loadCronJobs();
-  }, []);
-
-  useEffect(() => {
-    loadCronLogs();
-  }, [logSearch, logStatus, logPage]);
-
-  async function loadCronJobs() {
+  const loadCronJobs = useCallback(async () => {
     setIsLoadingJobs(true);
     try {
       const jobs = await getCronJobs();
@@ -110,9 +102,9 @@ export function AdminPage() {
     } finally {
       setIsLoadingJobs(false);
     }
-  }
+  }, []);
 
-  async function loadCronLogs() {
+  const loadCronLogs = useCallback(async () => {
     setIsLoadingLogs(true);
     try {
       const response = await getCronLogs(
@@ -128,7 +120,15 @@ export function AdminPage() {
     } finally {
       setIsLoadingLogs(false);
     }
-  }
+  }, [logPage, logSearch, logStatus]);
+
+  useEffect(() => {
+    loadCronJobs();
+  }, [loadCronJobs]);
+
+  useEffect(() => {
+    loadCronLogs();
+  }, [loadCronLogs]);
 
   async function handleRunNow(name: string) {
     setRunningJob(name);

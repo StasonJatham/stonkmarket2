@@ -37,7 +37,7 @@ async function fetchAPI<T>(endpoint: string, options: FetchOptions = {}): Promis
     const cacheKey = `api:${endpoint}`;
     const cached = apiCache.get<T>(cacheKey);
     if (cached) {
-      return cached;
+      return cached.data;
     }
     // If no cache, fall through to error (shouldn't happen normally)
     throw new Error('Received 304 but no cached data available');
@@ -407,7 +407,7 @@ export function aggregatePortfolioPerformance(
 }
 
 // =============================================================================
-// STOCK TINDER TYPES & API
+// SWIPE VOTING TYPES & API
 // =============================================================================
 
 export interface VoteCounts {
@@ -430,7 +430,7 @@ export interface DipCard {
   days_below: number;
   min_dip_pct: number | null;
   summary_ai: string | null;
-  tinder_bio: string | null;
+  swipe_bio: string | null;
   ai_rating: 'strong_buy' | 'buy' | 'hold' | 'sell' | 'strong_sell' | null;
   ai_reasoning: string | null;
   ai_confidence: number | null;
@@ -456,42 +456,76 @@ export interface DipStats {
 export type VoteType = 'buy' | 'sell';
 
 export async function getDipCards(includeAi: boolean = false, excludeVoted: boolean = false): Promise<DipCardList> {
-  const cacheKey = `tinder:cards:${includeAi}:${excludeVoted}`;
+  const cacheKey = `swipe:cards:${includeAi}:${excludeVoted}`;
   
   return apiCache.fetch(
     cacheKey,
-    () => fetchAPI<DipCardList>(`/tinder/cards?include_ai=${includeAi}&exclude_voted=${excludeVoted}`),
+    () => fetchAPI<DipCardList>(`/swipe/cards?include_ai=${includeAi}&exclude_voted=${excludeVoted}`),
     { ttl: CACHE_TTL.RANKING }
   );
 }
 
 export async function getDipCard(symbol: string, refreshAi: boolean = false): Promise<DipCard> {
-  return fetchAPI<DipCard>(`/tinder/cards/${symbol}?refresh_ai=${refreshAi}`);
+  return fetchAPI<DipCard>(`/swipe/cards/${symbol}?refresh_ai=${refreshAi}`);
 }
 
 export async function voteDip(symbol: string, voteType: VoteType): Promise<{ symbol: string; vote_type: string; message: string }> {
-  return fetchAPI(`/tinder/cards/${symbol}/vote`, {
+  return fetchAPI(`/swipe/cards/${symbol}/vote`, {
     method: 'PUT',
     body: JSON.stringify({ vote_type: voteType }),
   });
 }
 
 export async function getDipStats(symbol: string): Promise<DipStats> {
-  return fetchAPI<DipStats>(`/tinder/cards/${symbol}/stats`);
+  return fetchAPI<DipStats>(`/swipe/cards/${symbol}/stats`);
 }
 
 export async function refreshAiAnalysis(symbol: string): Promise<DipCard> {
-  return fetchAPI<DipCard>(`/tinder/cards/${symbol}/refresh-ai`, {
+  return fetchAPI<DipCard>(`/swipe/cards/${symbol}/refresh-ai`, {
     method: 'POST',
   });
 }
 
 export type AiFieldType = 'rating' | 'bio' | 'summary';
+export type SwipeAiFieldType = 'rating' | 'bio';
 
+/**
+ * Regenerate AI field for a dip card.
+ * Use for swipe-specific fields: rating and bio.
+ * For summary, use regenerateSymbolAiSummary instead.
+ */
 export async function refreshAiField(symbol: string, field: AiFieldType): Promise<DipCard> {
-  return fetchAPI<DipCard>(`/tinder/cards/${symbol}/refresh-ai/${field}`, {
+  // Route summary to the proper symbols endpoint
+  if (field === 'summary') {
+    await regenerateSymbolAiSummary(symbol);
+    // Fetch the updated card to return consistent type
+    return getDipCard(symbol);
+  }
+  
+  const result = await fetchAPI<DipCard>(`/swipe/cards/${symbol}/refresh-ai/${field}`, {
     method: 'POST',
   });
+  
+  return result;
+}
+
+/**
+ * Regenerate AI summary for a symbol.
+ * This is a symbol property, not swipe-specific.
+ */
+export async function regenerateSymbolAiSummary(symbol: string): Promise<{ symbol: string; summary_ai: string | null }> {
+  const result = await fetchAPI<{ symbol: string; summary_ai: string | null }>(`/symbols/${symbol}/ai/summary`, {
+    method: 'POST',
+  });
+  
+  // Invalidate relevant caches
+  apiCache.invalidate(`info:${symbol}`);
+  apiCache.invalidate(`swipe:cards:true:false`);
+  apiCache.invalidate(`swipe:cards:true:true`);
+  apiCache.invalidate(`swipe:cards:false:false`);
+  apiCache.invalidate(`swipe:cards:false:true`);
+  
+  return result;
 }
 
 // =============================================================================

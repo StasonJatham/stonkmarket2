@@ -1,4 +1,4 @@
-"""Stock tinder schemas for dip voting and AI analysis."""
+"""Swipe schemas for dip voting and AI analysis."""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ class VoteCounts(BaseModel):
 
 
 class DipCard(BaseModel):
-    """A stock dip card for the tinder interface."""
+    """A stock dip card for the swipe interface."""
 
     symbol: str
     name: Optional[str] = None
@@ -56,7 +56,7 @@ class DipCard(BaseModel):
 
     # AI content
     summary_ai: Optional[str] = Field(None, description="AI-generated company summary from finance description")
-    tinder_bio: Optional[str] = Field(None, description="AI-generated tinder-style bio")
+    swipe_bio: Optional[str] = Field(None, description="AI-generated swipe-style bio")
     ai_rating: Optional[str] = Field(
         None, description="AI rating: strong_buy, buy, hold, sell, strong_sell"
     )
@@ -80,7 +80,7 @@ class DipCard(BaseModel):
                 "dip_pct": 11.47,
                 "days_below": 5,
                 "min_dip_pct": 10.0,
-                "tinder_bio": "Tech giant going through a rough patch. Looking for patient investors who appreciate my services ecosystem. Swipe right if you believe in the long game 📱💪",
+                "swipe_bio": "Tech giant going through a rough patch. Looking for patient investors who appreciate my services ecosystem. Swipe right if you believe in the long game 📱💪",
                 "ai_rating": "buy",
                 "ai_reasoning": "Strong fundamentals despite short-term weakness. Services revenue growing. Good entry point.",
                 "ai_confidence": 7,

@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- This module exports utility functions and hooks */
 import { useState, useCallback } from 'react';
 
 /**

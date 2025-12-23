@@ -1,4 +1,4 @@
-"""Stock Tinder service - combines dips with AI analysis and voting (PostgreSQL)."""
+"""Swipe service - combines dips with AI analysis and voting (PostgreSQL)."""
 
 from __future__ import annotations
 
@@ -8,11 +8,11 @@ from typing import Optional
 from app.core.logging import get_logger
 from app.database.connection import fetch_all, fetch_one
 from app.repositories import dip_votes as dip_votes_repo
-from app.schemas.stock_tinder import DipCard, DipStats, VoteCounts
+from app.schemas.swipe import DipCard, DipStats, VoteCounts
 from app.services.openai_client import generate_bio, rate_dip
 from app.services import stock_info
 
-logger = get_logger("stock_tinder")
+logger = get_logger("swipe")
 
 
 async def get_dip_card(symbol: str) -> Optional[DipCard]:
@@ -65,7 +65,7 @@ async def get_dip_card(symbol: str) -> Optional[DipCard]:
         days_below=days_below,
         vote_counts=vote_counts,
         summary_ai=dip_row.get("summary_ai"),
-        tinder_bio=ai_analysis.get("tinder_bio") if ai_analysis else None,
+        swipe_bio=ai_analysis.get("swipe_bio") if ai_analysis else None,
         ai_rating=ai_analysis.get("ai_rating") if ai_analysis else None,
         ai_reasoning=ai_analysis.get("ai_reasoning") if ai_analysis else None,
     )
@@ -92,7 +92,7 @@ async def get_dip_card_with_fresh_ai(symbol: str, force_refresh: bool = False) -
         return None
 
     # If AI analysis already cached and not forcing refresh, return as-is
-    if card.tinder_bio and not force_refresh:
+    if card.swipe_bio and not force_refresh:
         return card
 
     # Fetch stock info for AI generation
@@ -121,7 +121,7 @@ async def get_dip_card_with_fresh_ai(symbol: str, force_refresh: bool = False) -
     if bio or rating_result:
         await dip_votes_repo.upsert_ai_analysis(
             symbol=symbol,
-            tinder_bio=bio,
+            swipe_bio=bio,
             ai_rating=rating_result.get("rating") if rating_result else None,
             ai_reasoning=rating_result.get("reasoning") if rating_result else None,
             is_batch=False,
@@ -138,7 +138,7 @@ async def get_dip_card_with_fresh_ai(symbol: str, force_refresh: bool = False) -
         })
     
     card = card.model_copy(update={
-        "tinder_bio": bio,
+        "swipe_bio": bio,
         "ai_rating": rating_result.get("rating") if rating_result else None,
         "ai_reasoning": rating_result.get("reasoning") if rating_result else None,
         "ai_confidence": rating_result.get("confidence") if rating_result else None,
@@ -152,19 +152,17 @@ async def regenerate_ai_field(
     field: str,
 ) -> Optional[DipCard]:
     """
-    Regenerate a specific AI field for a dip card.
+    Regenerate a swipe-specific AI field for a dip card.
 
     Args:
         symbol: Stock symbol
-        field: Field to regenerate: 'rating', 'bio', or 'summary'
+        field: Field to regenerate: 'rating' or 'bio'
+               Note: 'summary' should use /symbols/{symbol}/ai/summary endpoint
 
     Returns:
         Updated DipCard with the regenerated field.
         None if symbol not found in dip state.
     """
-    from app.database.connection import execute
-    from app.services.openai_client import summarize_company
-
     card = await get_dip_card(symbol)
     if not card:
         return None
@@ -173,7 +171,7 @@ async def regenerate_ai_field(
     info = await stock_info.get_stock_info_async(symbol)
 
     if field == "bio":
-        # Regenerate Tinder bio
+        # Regenerate Swipe bio
         bio = await generate_bio(
             symbol=symbol,
             name=info.get("name") if info else None,
@@ -184,12 +182,12 @@ async def regenerate_ai_field(
         if bio:
             await dip_votes_repo.upsert_ai_analysis(
                 symbol=symbol,
-                tinder_bio=bio,
+                swipe_bio=bio,
                 ai_rating=None,  # Don't update rating
                 ai_reasoning=None,
                 is_batch=False,
             )
-            card = card.model_copy(update={"tinder_bio": bio})
+            card = card.model_copy(update={"swipe_bio": bio})
 
     elif field == "rating":
         # Regenerate AI rating
@@ -205,7 +203,7 @@ async def regenerate_ai_field(
         if rating_result:
             await dip_votes_repo.upsert_ai_analysis(
                 symbol=symbol,
-                tinder_bio=None,  # Don't update bio
+                swipe_bio=None,  # Don't update bio
                 ai_rating=rating_result.get("rating"),
                 ai_reasoning=rating_result.get("reasoning"),
                 is_batch=False,
@@ -215,25 +213,6 @@ async def regenerate_ai_field(
                 "ai_reasoning": rating_result.get("reasoning"),
                 "ai_confidence": rating_result.get("confidence"),
             })
-
-    elif field == "summary":
-        # Regenerate summary_ai
-        description = info.get("summary") if info else None
-        if description:
-            new_summary = await summarize_company(
-                symbol=symbol,
-                name=info.get("name") if info else None,
-                description=description,
-            )
-            if new_summary:
-                await execute(
-                    """
-                    UPDATE symbols SET summary_ai = $2 WHERE symbol = $1
-                    """,
-                    symbol.upper(),
-                    new_summary,
-                )
-                card = card.model_copy(update={"summary_ai": new_summary})
 
     # Update card with stock info
     if info:
@@ -263,7 +242,7 @@ async def get_all_dip_cards(include_ai: bool = False) -> list[DipCard]:
         """
         SELECT ds.symbol, ds.current_price, ds.ath_price, ds.dip_percentage, 
                ds.first_seen, ds.last_updated,
-               s.name, s.sector
+               s.name, s.sector, s.summary_ai
         FROM dip_state ds
         JOIN symbols s ON s.symbol = ds.symbol
         ORDER BY ds.dip_percentage DESC
@@ -276,7 +255,7 @@ async def get_all_dip_cards(include_ai: bool = False) -> list[DipCard]:
     # Get all AI analyses
     ai_rows = await fetch_all(
         """
-        SELECT symbol, tinder_bio, ai_rating, rating_reasoning
+        SELECT symbol, swipe_bio, ai_rating, rating_reasoning
         FROM dip_ai_analysis
         WHERE expires_at IS NULL OR expires_at > NOW()
         """
@@ -315,7 +294,8 @@ async def get_all_dip_cards(include_ai: bool = False) -> list[DipCard]:
             dip_pct=float(dip["dip_percentage"]) if dip["dip_percentage"] else 0,
             days_below=days_below,
             vote_counts=vote_counts,
-            tinder_bio=ai.get("tinder_bio"),
+            summary_ai=dip.get("summary_ai"),
+            swipe_bio=ai.get("swipe_bio"),
             ai_rating=ai.get("ai_rating"),
             ai_reasoning=ai.get("rating_reasoning"),
         )

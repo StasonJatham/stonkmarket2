@@ -72,7 +72,7 @@ class JobScheduler:
         # Define default schedules for registered jobs (exactly 5)
         default_schedules = {
             "data_grab": ("0 23 * * 1-5", "Fetch stock data Mon-Fri 11pm"),
-            "batch_ai_tinder": ("0 3 * * 0", "Generate tinder bios weekly Sunday 3am"),
+            "batch_ai_swipe": ("0 3 * * 0", "Generate swipe bios weekly Sunday 3am"),
             "batch_ai_analysis": (
                 "0 4 * * 0",
                 "Generate dip analysis weekly Sunday 4am",

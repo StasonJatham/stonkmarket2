@@ -88,7 +88,6 @@ export function LoginPage() {
       await handleMfaSubmit(mfaCode);
     }
   };
-  };
 
   const handleBackToLogin = () => {
     setShowMfa(false);
@@ -212,3 +211,4 @@ export function LoginPage() {
     </div>
   );
 }
+

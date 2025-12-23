@@ -20,12 +20,13 @@ from .routes import (
     suggestions,
     mfa,
     api_keys,
-    stock_tinder,
+    swipe,
     dip_changes,
     user_api_keys,
     dipfinder,
     admin_settings,
     metrics,
+    seo,
 )
 
 logger = get_logger("api")
@@ -162,10 +163,11 @@ def create_api_app() -> FastAPI:
     app.include_router(symbols.router, prefix="/symbols", tags=["Symbols"])
     app.include_router(dips.router, prefix="/dips", tags=["Dips"])
     app.include_router(dip_changes.router, tags=["Dip Changes"])
-    app.include_router(stock_tinder.router, prefix="/tinder", tags=["Stock Tinder"])
+    app.include_router(swipe.router, prefix="/swipe", tags=["Swipe"])
     app.include_router(dipfinder.router, prefix="/dipfinder", tags=["DipFinder"])
     app.include_router(cronjobs.router, prefix="/cronjobs", tags=["CronJobs"])
     app.include_router(suggestions.router, tags=["Suggestions"])
-    app.include_router(metrics.router, prefix="/metrics", tags=["Metrics"])
+    app.include_router(metrics.router, tags=["Metrics"])
+    app.include_router(seo.router, tags=["SEO"])  # No prefix - serves at root for crawlers
 
     return app

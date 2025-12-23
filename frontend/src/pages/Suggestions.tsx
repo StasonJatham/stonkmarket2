@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -94,11 +94,7 @@ function GuestSuggestionsView() {
   const [votingSymbol, setVotingSymbol] = useState<string | null>(null);
   const [voteSuccess, setVoteSuccess] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadSuggestions();
-  }, []);
-
-  async function loadSuggestions() {
+  const loadSuggestions = useCallback(async () => {
     if (!hasLoaded) setIsLoading(true);
     try {
       const data = await getTopSuggestions(20);
@@ -109,7 +105,11 @@ function GuestSuggestionsView() {
     } finally {
       setIsLoading(false);
     }
-  }
+  }, [hasLoaded]);
+
+  useEffect(() => {
+    loadSuggestions();
+  }, [loadSuggestions]);
 
   async function handleValidate() {
     if (!symbol.trim()) return;
@@ -357,11 +357,7 @@ function AdminSuggestionsView() {
   
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadSuggestions();
-  }, [activeTab, page]);
-
-  async function loadSuggestions() {
+  const loadSuggestions = useCallback(async () => {
     setIsLoading(true);
     try {
       const data = await getAllSuggestions(activeTab, page, pageSize);
@@ -372,7 +368,11 @@ function AdminSuggestionsView() {
     } finally {
       setIsLoading(false);
     }
-  }
+  }, [activeTab, page]);
+
+  useEffect(() => {
+    loadSuggestions();
+  }, [loadSuggestions]);
 
   async function handleApprove(id: number) {
     setApprovingId(id);

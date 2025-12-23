@@ -62,6 +62,7 @@ function reportMetric(metric: WebVitalsMetric): void {
   // Log in development
   if (import.meta.env.DEV) {
     const color = metric.rating === 'good' ? 'green' : metric.rating === 'poor' ? 'red' : 'orange';
+    // eslint-disable-next-line no-console
     console.log(
       `%c[Web Vitals] ${metric.name}: ${metric.value.toFixed(2)} (${metric.rating})`,
       `color: ${color}; font-weight: bold;`
@@ -95,7 +96,7 @@ export function initWebVitals(): void {
       }
     });
     lcpObserver.observe({ type: 'largest-contentful-paint', buffered: true });
-  } catch (e) {
+  } catch {
     // LCP not supported
   }
 
@@ -116,7 +117,7 @@ export function initWebVitals(): void {
       }
     });
     fcpObserver.observe({ type: 'paint', buffered: true });
-  } catch (e) {
+  } catch {
     // FCP not supported
   }
 
@@ -146,7 +147,7 @@ export function initWebVitals(): void {
         });
       }
     });
-  } catch (e) {
+  } catch {
     // CLS not supported
   }
 
@@ -164,7 +165,7 @@ export function initWebVitals(): void {
         navigationType: 'navigate',
       });
     }
-  } catch (e) {
+  } catch {
     // TTFB not supported
   }
 
@@ -195,7 +196,7 @@ export function initWebVitals(): void {
         });
       }
     });
-  } catch (e) {
+  } catch {
     // INP not supported
   }
 }

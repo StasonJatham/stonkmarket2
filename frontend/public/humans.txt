@@ -1,0 +1,14 @@
+/* TEAM */
+Name: Stonkmarket Team
+Site: https://stonkmarket.de
+Location: Germany
+
+/* THANKS */
+Thanks to all contributors and the open source community.
+
+/* SITE */
+Last update: 2025-12-23
+Language: English / German
+Standards: HTML5, CSS3, TypeScript
+Components: React, Vite, Tailwind CSS, shadcn/ui
+Backend: FastAPI, Python

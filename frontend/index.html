@@ -14,18 +14,20 @@
     
     <!-- Open Graph / Facebook -->
     <meta property="og:type" content="website" />
-    <meta property="og:url" content="https://stonkmarket.app/" />
+    <meta property="og:url" content="https://stonkmarket.de/" />
     <meta property="og:title" content="StonkMarket - Discover Stock Dips with Recovery Potential" />
     <meta property="og:description" content="Track market dips and identify stocks with high recovery potential. Real-time analysis of S&P 500 and MSCI World Index benchmarks." />
-    <meta property="og:image" content="/og-image.png" />
+    <meta property="og:image" content="https://stonkmarket.de/og-image.png" />
+    <meta property="og:image:width" content="2634" />
+    <meta property="og:image:height" content="1874" />
     <meta property="og:site_name" content="StonkMarket" />
     
     <!-- Twitter -->
     <meta property="twitter:card" content="summary_large_image" />
-    <meta property="twitter:url" content="https://stonkmarket.app/" />
+    <meta property="twitter:url" content="https://stonkmarket.de/" />
     <meta property="twitter:title" content="StonkMarket - Discover Stock Dips with Recovery Potential" />
     <meta property="twitter:description" content="Track market dips and identify stocks with high recovery potential." />
-    <meta property="twitter:image" content="/og-image.png" />
+    <meta property="twitter:image" content="https://stonkmarket.de/og-image.png" />
     
     <!-- Performance & PWA -->
     <meta name="theme-color" content="#0a0a0a" media="(prefers-color-scheme: dark)" />
@@ -34,9 +36,12 @@
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/manifest.json" />
     
-    <!-- Preconnect to API -->
-    <link rel="preconnect" href="/api" />
-    <link rel="dns-prefetch" href="/api" />
+    <!-- Preconnect to external resources -->
+    <link rel="preconnect" href="https://umami.karlcom.de" crossorigin />
+    <link rel="dns-prefetch" href="https://umami.karlcom.de" />
+    
+    <!-- Preload critical assets -->
+    <link rel="preload" href="/favicon.svg" as="image" type="image/svg+xml" />
     
     <!-- Privacy-focused Analytics (Self-hosted Umami) -->
     <script defer src="https://umami.karlcom.de/script.js" data-website-id="323100e9-88f4-4f06-b09a-2e94cb7f7e9e" data-do-not-track="true"></script>

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import type { DipStock } from '@/services/api';
 import { TrendingDown, TrendingUp } from 'lucide-react';
 import { useTheme } from '@/context/ThemeContext';
@@ -17,7 +17,13 @@ export function DipTicker({ stocks, onSelectStock, isLoading }: DipTickerProps) 
   const animationRef = useRef<number | null>(null);
   const lastTimeRef = useRef<number>(0);
   const pausedOffsetRef = useRef<number>(0);
+  const isPausedRef = useRef(isPaused);
   const { colorblindMode, customColors } = useTheme();
+  
+  // Keep ref in sync with state (in effect to avoid render-time ref access)
+  useEffect(() => {
+    isPausedRef.current = isPaused;
+  }, [isPaused]);
   
   // Get colors - use colorblind colors if enabled, otherwise custom colors
   const upColor = colorblindMode ? '#3b82f6' : customColors.up;
@@ -29,29 +35,29 @@ export function DipTicker({ stocks, onSelectStock, isLoading }: DipTickerProps) 
   // Speed in pixels per second (slower for readability)
   const speed = 20;
 
-  const animate = useCallback((timestamp: number) => {
-    if (!lastTimeRef.current) {
-      lastTimeRef.current = timestamp;
-    }
-    
-    const delta = timestamp - lastTimeRef.current;
-    lastTimeRef.current = timestamp;
-    
-    if (!isPaused && contentRef.current) {
-      const contentWidth = contentRef.current.scrollWidth / 2;
-      
-      setOffset(prev => {
-        const newOffset = prev + (speed * delta) / 1000;
-        // Reset when we've scrolled through one full set
-        return newOffset >= contentWidth ? 0 : newOffset;
-      });
-    }
-    
-    animationRef.current = requestAnimationFrame(animate);
-  }, [isPaused]);
-
   useEffect(() => {
     if (tickerStocks.length === 0) return;
+    
+    const animate = (timestamp: number) => {
+      if (!lastTimeRef.current) {
+        lastTimeRef.current = timestamp;
+      }
+      
+      const delta = timestamp - lastTimeRef.current;
+      lastTimeRef.current = timestamp;
+      
+      if (!isPausedRef.current && contentRef.current) {
+        const contentWidth = contentRef.current.scrollWidth / 2;
+        
+        setOffset(prev => {
+          const newOffset = prev + (speed * delta) / 1000;
+          // Reset when we've scrolled through one full set
+          return newOffset >= contentWidth ? 0 : newOffset;
+        });
+      }
+      
+      animationRef.current = requestAnimationFrame(animate);
+    };
     
     animationRef.current = requestAnimationFrame(animate);
     
@@ -60,7 +66,7 @@ export function DipTicker({ stocks, onSelectStock, isLoading }: DipTickerProps) 
         cancelAnimationFrame(animationRef.current);
       }
     };
-  }, [animate, tickerStocks.length]);
+  }, [tickerStocks.length]);
 
   const handleMouseEnter = () => {
     pausedOffsetRef.current = offset;

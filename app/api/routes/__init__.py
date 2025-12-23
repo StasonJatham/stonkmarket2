@@ -8,12 +8,13 @@ from . import health
 from . import suggestions
 from . import mfa
 from . import api_keys
-from . import stock_tinder
+from . import swipe
 from . import dip_changes
 from . import user_api_keys
 from . import dipfinder
 from . import admin_settings
 from . import metrics
+from . import seo
 
 __all__ = [
     "auth",
@@ -24,10 +25,11 @@ __all__ = [
     "suggestions",
     "mfa",
     "api_keys",
-    "stock_tinder",
+    "swipe",
     "dip_changes",
     "user_api_keys",
     "dipfinder",
     "admin_settings",
     "metrics",
+    "seo",
 ]

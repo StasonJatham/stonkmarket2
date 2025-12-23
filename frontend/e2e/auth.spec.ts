@@ -56,7 +56,7 @@ test.describe('Authentication', () => {
 test.describe('Protected Routes', () => {
   test('admin page requires authentication', async ({ page }) => {
     // Try to access admin without login
-    const response = await page.goto('/admin');
+    const _response = await page.goto('/admin');
     
     // Should redirect or show error
     const url = page.url();

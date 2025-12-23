@@ -901,7 +901,7 @@ async def _process_approved_symbol(symbol: str) -> None:
         if bio or rating_data:
             await dip_votes_repo.upsert_ai_analysis(
                 symbol=symbol,
-                tinder_bio=bio,
+                swipe_bio=bio,
                 ai_rating=rating_data.get("rating") if rating_data else None,
                 ai_reasoning=rating_data.get("reasoning") if rating_data else None,
                 is_batch=False,

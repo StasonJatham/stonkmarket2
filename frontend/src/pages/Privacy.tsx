@@ -1,9 +1,22 @@
 import { motion } from 'framer-motion';
 import { Shield, Cookie, Server, Eye, Globe, CreditCard, Scale, AlertTriangle } from 'lucide-react';
 import { useObfuscatedContact } from '@/lib/obfuscate';
+import { useSEO, generateBreadcrumbJsonLd } from '@/lib/seo';
 
 export function PrivacyPage() {
   const { decodedEmail, decode, decoded } = useObfuscatedContact();
+
+  // SEO for Privacy page (important for E-E-A-T)
+  useSEO({
+    title: 'Privacy Policy (GDPR/DSGVO)',
+    description: 'Privacy policy and data protection information for StonkMarket. Learn how we protect your data, what we collect, and your rights under GDPR.',
+    keywords: 'privacy policy, GDPR, data protection, DSGVO, cookies, analytics',
+    canonical: '/privacy',
+    jsonLd: generateBreadcrumbJsonLd([
+      { name: 'Home', url: '/' },
+      { name: 'Privacy Policy', url: '/privacy' },
+    ]),
+  });
 
   return (
     <motion.div

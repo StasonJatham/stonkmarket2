@@ -159,33 +159,33 @@ async def cache_warmup_job() -> str:
         raise
 
 
-@register_job("batch_ai_tinder")
-async def batch_ai_tinder_job() -> str:
+@register_job("batch_ai_swipe")
+async def batch_ai_swipe_job() -> str:
     """
-    Generate tinder-style bios for dips using OpenAI Batch API.
+    Generate swipe-style bios for dips using OpenAI Batch API.
 
     Schedule: Weekly Sunday 3am
     """
     from app.services.batch_scheduler import (
-        schedule_batch_tinder_bios,
+        schedule_batch_swipe_bios,
         process_completed_batch_jobs,
     )
 
-    logger.info("Starting batch_ai_tinder job")
+    logger.info("Starting batch_ai_swipe job")
 
     try:
         # Process any completed batches first
         processed = await process_completed_batch_jobs()
 
         # Schedule new batch
-        batch_id = await schedule_batch_tinder_bios()
+        batch_id = await schedule_batch_swipe_bios()
 
         message = f"Batch: {batch_id or 'none needed'}, processed: {processed}"
-        logger.info(f"batch_ai_tinder: {message}")
+        logger.info(f"batch_ai_swipe: {message}")
         return message
 
     except Exception as e:
-        logger.error(f"batch_ai_tinder failed: {e}")
+        logger.error(f"batch_ai_swipe failed: {e}")
         raise
 
 

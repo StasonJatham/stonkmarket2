@@ -7,6 +7,7 @@ import { Layout } from '@/components/layout/Layout';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { UmamiAnalytics } from '@/lib/analytics';
+import { BaseStructuredData } from '@/lib/structuredData';
 
 // Lazy load pages for code splitting
 const Dashboard = lazy(() => import('@/pages/Dashboard').then(m => ({ default: m.Dashboard })));
@@ -18,6 +19,7 @@ const SuggestionsPage = lazy(() => import('@/pages/Suggestions').then(m => ({ de
 const PrivacyPage = lazy(() => import('@/pages/Privacy').then(m => ({ default: m.PrivacyPage })));
 const ImprintPage = lazy(() => import('@/pages/Imprint').then(m => ({ default: m.ImprintPage })));
 const ContactPage = lazy(() => import('@/pages/Contact').then(m => ({ default: m.ContactPage })));
+const AboutPage = lazy(() => import('@/pages/About').then(m => ({ default: m.AboutPage })));
 
 // Loading fallback component - minimal to avoid layout shift
 const PageLoader = memo(function PageLoader() {
@@ -33,6 +35,7 @@ function App() {
         <DipProvider>
           <BrowserRouter>
             <UmamiAnalytics />
+            <BaseStructuredData />
           <ErrorBoundary>
           <Suspense fallback={<PageLoader />}>
             <Routes>
@@ -41,6 +44,7 @@ function App() {
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/swipe" element={<DipSwipePage />} />
                 <Route path="/suggest" element={<SuggestionsPage />} />
+                <Route path="/about" element={<AboutPage />} />
                 <Route path="/privacy" element={<PrivacyPage />} />
                 <Route path="/imprint" element={<ImprintPage />} />
                 <Route path="/contact" element={<ContactPage />} />

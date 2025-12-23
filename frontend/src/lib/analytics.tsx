@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- This module exports hooks and utility functions */
 import { useEffect } from 'react';
 
 /**

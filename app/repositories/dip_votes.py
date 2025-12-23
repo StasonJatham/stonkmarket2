@@ -220,7 +220,7 @@ async def get_ai_analysis(symbol: str) -> Optional[dict]:
     """Get cached AI analysis for a symbol."""
     row = await fetch_one(
         """
-        SELECT symbol, tinder_bio, ai_rating, rating_reasoning as ai_reasoning,
+        SELECT symbol, swipe_bio, ai_rating, rating_reasoning as ai_reasoning,
                model_used, is_batch_generated, generated_at, expires_at
         FROM dip_ai_analysis
         WHERE symbol = $1 AND (expires_at IS NULL OR expires_at > NOW())
@@ -232,7 +232,7 @@ async def get_ai_analysis(symbol: str) -> Optional[dict]:
 
 async def upsert_ai_analysis(
     symbol: str,
-    tinder_bio: Optional[str] = None,
+    swipe_bio: Optional[str] = None,
     ai_rating: Optional[str] = None,
     ai_reasoning: Optional[str] = None,
     model_used: str = "gpt-5-mini",
@@ -246,23 +246,23 @@ async def upsert_ai_analysis(
         row = await conn.fetchrow(
             """
             INSERT INTO dip_ai_analysis (
-                symbol, tinder_bio, ai_rating, rating_reasoning,
+                symbol, swipe_bio, ai_rating, rating_reasoning,
                 model_used, is_batch_generated, generated_at, expires_at
             )
             VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7)
             ON CONFLICT (symbol) DO UPDATE SET
-                tinder_bio = EXCLUDED.tinder_bio,
+                swipe_bio = EXCLUDED.swipe_bio,
                 ai_rating = EXCLUDED.ai_rating,
                 rating_reasoning = EXCLUDED.rating_reasoning,
                 model_used = EXCLUDED.model_used,
                 is_batch_generated = EXCLUDED.is_batch_generated,
                 generated_at = NOW(),
                 expires_at = EXCLUDED.expires_at
-            RETURNING symbol, tinder_bio, ai_rating, rating_reasoning as ai_reasoning,
+            RETURNING symbol, swipe_bio, ai_rating, rating_reasoning as ai_reasoning,
                       model_used, is_batch_generated, generated_at, expires_at
             """,
             symbol.upper(),
-            tinder_bio,
+            swipe_bio,
             ai_rating,
             ai_reasoning,
             model_used,

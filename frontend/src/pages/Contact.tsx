@@ -3,9 +3,22 @@ import { Mail, Heart, MessageCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useObfuscatedContact } from '@/lib/obfuscate';
+import { useSEO, generateBreadcrumbJsonLd } from '@/lib/seo';
 
 export function ContactPage() {
   const { decoded, decode, decodedPayPal, getPayPalLink } = useObfuscatedContact();
+
+  // SEO for Contact page
+  useSEO({
+    title: 'Contact Us',
+    description: 'Get in touch with the StonkMarket team. We welcome feedback, bug reports, and feature suggestions.',
+    keywords: 'contact, feedback, support, bug report, feature request',
+    canonical: '/contact',
+    jsonLd: generateBreadcrumbJsonLd([
+      { name: 'Home', url: '/' },
+      { name: 'Contact', url: '/contact' },
+    ]),
+  });
 
   return (
     <motion.div

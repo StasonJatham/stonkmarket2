@@ -21,6 +21,7 @@ import type {
   DipCard,
 } from '@/services/api';
 import { useDips } from '@/context/DipContext';
+import { useSEO, generateBreadcrumbJsonLd } from '@/lib/seo';
 import { StockCard } from '@/components/StockCard';
 import { StockDetailsPanel } from '@/components/StockDetailsPanel';
 import { BenchmarkSelector } from '@/components/BenchmarkSelector';
@@ -97,6 +98,24 @@ export function Dashboard() {
   const [visibleCount, setVisibleCount] = useState(20);
   const loadMoreRef = useRef<HTMLDivElement>(null);
 
+  // SEO - Dynamic meta tags based on selected stock
+  useSEO({
+    title: selectedStock 
+      ? `${selectedStock.symbol} Stock Analysis - ${selectedStock.depth?.toFixed(0)}% from High`
+      : 'Stock Dip Tracker Dashboard',
+    description: selectedStock
+      ? `Analyze ${selectedStock.symbol} stock dip: ${selectedStock.depth?.toFixed(1)}% below 52-week high. Track recovery potential with AI-powered analysis.`
+      : 'Track market dips and identify stocks with high recovery potential. Real-time analysis with S&P 500 and MSCI World Index benchmarks.',
+    keywords: selectedStock
+      ? `${selectedStock.symbol}, stock analysis, dip buying, recovery potential, ${selectedStock.symbol} price`
+      : 'stock dips, market analysis, recovery potential, S&P 500, value investing, dip buying',
+    canonical: '/',
+    jsonLd: generateBreadcrumbJsonLd([
+      { name: 'Home', url: '/' },
+      { name: 'Dashboard', url: '/' },
+    ]),
+  });
+
   // Fetch available benchmarks on mount
   useEffect(() => {
     getAvailableBenchmarks()
@@ -104,7 +123,7 @@ export function Dashboard() {
       .catch(() => setAvailableBenchmarks([]));
   }, []);
 
-  // Sync URL params to state on mount and URL changes
+  // Sync URL params to state on mount
   useEffect(() => {
     const urlSearch = searchParams.get('search');
     const urlSort = searchParams.get('sort') as SortBy | null;
@@ -115,7 +134,7 @@ export function Dashboard() {
     if (urlSort && ['score', 'depth', 'recovery', 'name'].includes(urlSort)) setSortBy(urlSort);
     if (urlView && ['grid', 'list'].includes(urlView)) setViewMode(urlView);
     if (urlShowAll === 'true') setShowAllStocks(true);
-  }, []);
+  }, [searchParams, setShowAllStocks]);
 
   // Update URL when filters change (debounced to avoid too many updates)
   const updateUrlParams = useCallback((updates: Record<string, string | null>) => {
@@ -152,7 +171,7 @@ export function Dashboard() {
     const stockSymbol = searchParams.get('stock');
     if (stockSymbol && stocks.length > 0) {
       // First check if stock is in current view
-      let stock = stocks.find(s => s.symbol.toUpperCase() === stockSymbol.toUpperCase());
+      const stock = stocks.find(s => s.symbol.toUpperCase() === stockSymbol.toUpperCase());
       
       // If not found and not showing all stocks, switch to all stocks view
       if (!stock && !showAllStocks) {
@@ -270,7 +289,7 @@ export function Dashboard() {
     } else {
       setAiData(null);
     }
-  }, [selectedStock?.symbol, calculateOptimalPeriod]);
+  }, [selectedStock, calculateOptimalPeriod]);
 
   // Consolidated chart loading - load both stock and benchmark chart together
   useEffect(() => {
@@ -323,18 +342,9 @@ export function Dashboard() {
     }
 
     loadAllChartData();
-  }, [selectedStock?.symbol, chartPeriod, benchmark]);
+  }, [selectedStock, chartPeriod, benchmark]);
 
-  // Calculate aggregated portfolio performance when stocks or benchmark changes
-  useEffect(() => {
-    if (stocks.length > 0 && benchmarkData.length > 0 && benchmark) {
-      calculateAggregatedPerformance();
-    } else {
-      setAggregatedData([]);
-    }
-  }, [stocks, benchmarkData, benchmark]);
-
-  async function calculateAggregatedPerformance() {
+  const calculateAggregatedPerformance = useCallback(async () => {
     if (!benchmark || stocks.length === 0) return;
     try {
       // Load chart data for all stocks in parallel (limit to first 20)
@@ -361,7 +371,16 @@ export function Dashboard() {
     } catch (err) {
       console.error('Failed to calculate aggregated performance:', err);
     }
-  }
+  }, [benchmark, stocks, chartPeriod, benchmarkData]);
+
+  // Calculate aggregated portfolio performance when stocks or benchmark changes
+  useEffect(() => {
+    if (stocks.length > 0 && benchmarkData.length > 0 && benchmark) {
+      calculateAggregatedPerformance();
+    } else {
+      setAggregatedData([]);
+    }
+  }, [stocks, benchmarkData, benchmark, calculateAggregatedPerformance]);
 
   async function loadStockInfo(symbol: string) {
     setIsLoadingInfo(true);

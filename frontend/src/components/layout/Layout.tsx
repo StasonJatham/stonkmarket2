@@ -74,6 +74,7 @@ export function Layout() {
               
               {/* Links group - Desktop only (mobile shows above) */}
               <div className="hidden sm:flex items-center gap-3">
+                <Link to="/about" className="hover:text-foreground transition-colors">About</Link>
                 <Link to="/privacy" className="hover:text-foreground transition-colors">Privacy</Link>
                 <Link to="/imprint" className="hover:text-foreground transition-colors">Imprint</Link>
                 <Link to="/contact" className="inline-flex items-center gap-1 hover:text-foreground transition-colors">

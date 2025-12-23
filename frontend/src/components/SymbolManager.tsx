@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -65,11 +65,7 @@ export function SymbolManager({ onError }: SymbolManagerProps) {
   const [deletingSymbol, setDeletingSymbol] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  useEffect(() => {
-    loadSymbols();
-  }, []);
-
-  async function loadSymbols() {
+  const loadSymbols = useCallback(async () => {
     setIsLoading(true);
     try {
       const data = await getSymbols();
@@ -79,7 +75,11 @@ export function SymbolManager({ onError }: SymbolManagerProps) {
     } finally {
       setIsLoading(false);
     }
-  }
+  }, [onError]);
+
+  useEffect(() => {
+    loadSymbols();
+  }, [loadSymbols]);
 
   async function handleValidateSymbol() {
     if (!formSymbol.trim()) return;

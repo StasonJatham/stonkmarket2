@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -65,11 +65,7 @@ export function ApiKeyManager({ onError, onSuccess }: ApiKeyManagerProps) {
   
   const [copied, setCopied] = useState(false);
 
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  async function loadData() {
+  const loadData = useCallback(async () => {
     setIsLoading(true);
     try {
       const [keysData, mfaStatus] = await Promise.all([
@@ -83,7 +79,11 @@ export function ApiKeyManager({ onError, onSuccess }: ApiKeyManagerProps) {
     } finally {
       setIsLoading(false);
     }
-  }
+  }, [onError]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   async function handleAdd() {
     if (!keyName || !keyValue || mfaCode.length !== 6) return;

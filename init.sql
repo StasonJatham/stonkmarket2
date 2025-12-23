@@ -167,7 +167,7 @@ CREATE INDEX idx_dip_votes_created ON dip_votes(created_at DESC);
 CREATE TABLE IF NOT EXISTS dip_ai_analysis (
     id SERIAL PRIMARY KEY,
     symbol VARCHAR(20) UNIQUE NOT NULL,
-    tinder_bio TEXT,
+    swipe_bio TEXT,
     ai_rating DECIMAL(3, 1) CHECK (ai_rating >= 0 AND ai_rating <= 10),
     rating_reasoning TEXT,
     model_used VARCHAR(50),
@@ -364,7 +364,7 @@ FROM dip_votes
 GROUP BY symbol;
 
 -- Full dip card data for tinder
-CREATE OR REPLACE VIEW tinder_cards AS
+CREATE OR REPLACE VIEW swipe_cards AS
 SELECT 
     ds.symbol,
     ds.current_price,
@@ -372,7 +372,7 @@ SELECT
     ds.dip_percentage,
     ds.first_seen,
     ds.last_updated,
-    ai.tinder_bio,
+    ai.swipe_bio,
     ai.ai_rating,
     ai.rating_reasoning,
     ai.generated_at as ai_generated_at,

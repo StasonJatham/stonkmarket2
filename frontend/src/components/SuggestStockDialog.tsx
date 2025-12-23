@@ -117,7 +117,7 @@ export function SuggestStockDialog() {
       } else {
         setValidationError(result.error || 'Symbol not found');
       }
-    } catch (err) {
+    } catch {
       setValidationError('Failed to validate symbol');
     } finally {
       setIsValidating(false);

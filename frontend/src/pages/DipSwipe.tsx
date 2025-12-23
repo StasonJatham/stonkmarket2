@@ -16,6 +16,7 @@ import {
   type TopSuggestion,
   type ChartDataPoint
 } from '@/services/api';
+import { useSEO, generateBreadcrumbJsonLd } from '@/lib/seo';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -194,7 +195,7 @@ function getChartColors(isColorblind: boolean, customColors?: { up: string; down
   };
 }
 
-// Individual swipeable card - Tinder-style!
+// Individual swipeable card - Swipe-style!
 function SwipeableCard({ 
   card, 
   onVote, 
@@ -339,7 +340,7 @@ function SwipeableCard({
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={miniChartData} margin={{ top: 5, right: 5, left: 5, bottom: 5 }}>
                 <defs>
-                  <linearGradient id={`tinder-gradient-${card.symbol}`} x1="0" y1="0" x2="0" y2="1">
+                  <linearGradient id={`swipe-gradient-${card.symbol}`} x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor={getChartColors(colorblindMode, customColors).gradientStart} />
                     <stop offset="100%" stopColor={getChartColors(colorblindMode, customColors).gradientEnd} />
                   </linearGradient>
@@ -363,7 +364,7 @@ function SwipeableCard({
                   dataKey="y"
                   stroke={getChartColors(colorblindMode, customColors).stroke}
                   strokeWidth={2}
-                  fill={`url(#tinder-gradient-${card.symbol})`}
+                  fill={`url(#swipe-gradient-${card.symbol})`}
                   isAnimationActive={true}
                   animationDuration={600}
                 />
@@ -416,8 +417,8 @@ function SwipeableCard({
         {/* Bio - flex-1 to take remaining space, larger text */}
         <div className="flex-1 px-4 py-3 border-t border-border/30 overflow-y-auto min-h-0">
           <p className="text-base leading-relaxed text-foreground whitespace-pre-wrap">
-            {formatBioText(card.tinder_bio 
-              ? card.tinder_bio.replace(/^"|"$/g, '')
+            {formatBioText(card.swipe_bio 
+              ? card.swipe_bio.replace(/^"|"$/g, '')
               : `Looking for investors who appreciate a good dip. 📉 Currently ${formatDipPct(card.dip_pct)} off my peak. Swipe right if you see my potential! 💸`
             )}
           </p>
@@ -464,7 +465,7 @@ function SwipeableCard({
   );
 }
 
-// Suggestion card for voting mode - Tinder-style!
+// Suggestion card for voting mode - Swipe-style!
 function SuggestionSwipeCard({ 
   suggestion, 
   onVote, 
@@ -631,6 +632,25 @@ export function DipSwipePage() {
   const [chartDataMap, setChartDataMap] = useState<Record<string, ChartDataPoint[]>>({});
   const [autoApproveVotes, setAutoApproveVotes] = useState(10);
 
+  // Get current card for dynamic SEO
+  const currentCard = mode === 'dips' ? cards[currentIndex] : null;
+
+  // SEO - Dynamic meta based on current card
+  useSEO({
+    title: currentCard 
+      ? `${currentCard.symbol} - Vote: Buy or Sell the Dip?`
+      : 'DipSwipe - Swipe on Stock Dips',
+    description: currentCard
+      ? `${currentCard.symbol} is ${currentCard.dip_pct?.toFixed(0)}% below its high. AI says: ${currentCard.ai_rating}. Swipe right to buy, left to pass.`
+      : 'Swipe through stock dips like a dating app. Vote on whether to buy or sell stocks that have dipped. Community-powered stock sentiment.',
+    keywords: 'stock voting, dip buying, stock sentiment, community investing, swipe stocks',
+    canonical: '/swipe',
+    jsonLd: generateBreadcrumbJsonLd([
+      { name: 'Home', url: '/' },
+      { name: 'DipSwipe', url: '/swipe' },
+    ]),
+  });
+
   // Fetch suggestion settings
   useEffect(() => {
     getSuggestionSettings()
@@ -669,7 +689,6 @@ export function DipSwipePage() {
     setVotedCards(new Set());
   }, [mode]);
 
-  const currentCard = useMemo(() => cards[currentIndex], [cards, currentIndex]);
   const nextCard = useMemo(() => cards[currentIndex + 1], [cards, currentIndex]);
   const currentSuggestion = useMemo(() => suggestions[currentIndex], [suggestions, currentIndex]);
   const totalItems = mode === 'dips' ? cards.length : suggestions.length;
