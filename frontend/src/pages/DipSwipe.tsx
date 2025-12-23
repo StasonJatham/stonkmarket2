@@ -43,21 +43,30 @@ import {
 import { StockLogo } from '@/components/StockLogo';
 
 // Dynamic swipe threshold based on screen width
-// Mobile: ~35% of screen width (prevents accidental swipes with thumbs)
-// Desktop: ~20% of card width (feels natural with mouse/trackpad)
+// Mobile: ~25% of screen width (responsive to quick gestures)
+// Desktop: ~15% of card width (feels natural with mouse/trackpad)
 const getSwipeThreshold = (screenWidth: number): number => {
-  if (screenWidth < 480) return Math.max(120, screenWidth * 0.35);  // Small phones
-  if (screenWidth < 768) return Math.max(100, screenWidth * 0.28);  // Large phones/small tablets
-  if (screenWidth < 1024) return Math.max(90, screenWidth * 0.15);  // Tablets
-  return Math.min(150, Math.max(80, screenWidth * 0.08));           // Desktop
+  if (screenWidth < 480) return Math.max(80, screenWidth * 0.22);   // Small phones - more responsive
+  if (screenWidth < 768) return Math.max(70, screenWidth * 0.18);   // Large phones/small tablets
+  if (screenWidth < 1024) return Math.max(60, screenWidth * 0.12);  // Tablets
+  return Math.min(120, Math.max(60, screenWidth * 0.06));           // Desktop
 };
-const VELOCITY_THRESHOLD = 500;  // Minimum velocity (px/s) for intentional quick swipes
+const VELOCITY_THRESHOLD = 300;  // Lower threshold for more responsive quick swipes
 
-// Spring transition for smooth animations
+// Tinder-like spring physics - snappy but smooth
 const springTransition = {
   type: "spring" as const,
-  stiffness: 300,
-  damping: 25,
+  stiffness: 500,  // Higher = snappier response
+  damping: 30,     // Balanced damping for natural feel
+  mass: 0.5,       // Lower mass = faster acceleration
+};
+
+// Exit spring - fast throw off screen
+const exitSpring = {
+  type: "spring" as const,
+  stiffness: 400,
+  damping: 30,
+  mass: 0.8,
 };
 
 // Exit animation variants based on direction - not used, removing to avoid lint errors
@@ -169,6 +178,9 @@ function SwipeableCard({
     typeof window !== 'undefined' ? getSwipeThreshold(window.innerWidth) : 100
   );
   
+  // Track exit velocity for natural throw animation
+  const [exitVelocity, setExitVelocity] = useState(0);
+  
   // Update threshold on resize
   useEffect(() => {
     const handleResize = () => setSwipeThreshold(getSwipeThreshold(window.innerWidth));
@@ -177,23 +189,31 @@ function SwipeableCard({
   }, []);
   
   const x = useMotionValue(0);
-  const rotate = useTransform(x, [-200, 200], [-15, 15]);
-  const buyOpacity = useTransform(x, [0, swipeThreshold], [0, 1]);
-  const sellOpacity = useTransform(x, [-swipeThreshold, 0], [1, 0]);
+  // More dramatic rotation that responds to velocity feel
+  const rotate = useTransform(x, [-200, 0, 200], [-25, 0, 25]);
+  // Scale down slightly as card moves away (depth effect)
+  const scale = useTransform(x, [-300, 0, 300], [0.95, 1, 0.95]);
+  const buyOpacity = useTransform(x, [0, swipeThreshold * 0.6], [0, 1]);
+  const sellOpacity = useTransform(x, [-swipeThreshold * 0.6, 0], [1, 0]);
   
   const handleDragEnd = (_: unknown, info: PanInfo) => {
     const offset = info.offset.x;
-    const velocity = Math.abs(info.velocity.x);
+    const velocity = info.velocity.x;
+    const absVelocity = Math.abs(velocity);
     
-    // Require either: enough distance OR (moderate distance + high velocity)
-    // This prevents accidental quick flicks on mobile
+    // More responsive detection - velocity is key for natural feel
     const hasEnoughDistance = Math.abs(offset) > swipeThreshold;
-    const hasIntentionalSwipe = Math.abs(offset) > swipeThreshold * 0.5 && velocity > VELOCITY_THRESHOLD;
+    const hasQuickSwipe = Math.abs(offset) > swipeThreshold * 0.3 && absVelocity > VELOCITY_THRESHOLD;
+    const hasStrongThrow = absVelocity > VELOCITY_THRESHOLD * 2; // Very fast swipe regardless of distance
     
-    if ((hasEnoughDistance || hasIntentionalSwipe) && offset > 0) {
-      onVote('buy');
-    } else if ((hasEnoughDistance || hasIntentionalSwipe) && offset < 0) {
-      onVote('sell');
+    if (hasEnoughDistance || hasQuickSwipe || hasStrongThrow) {
+      // Store velocity for exit animation
+      setExitVelocity(velocity);
+      if (offset > 0 || velocity > VELOCITY_THRESHOLD) {
+        onVote('buy');
+      } else {
+        onVote('sell');
+      }
     }
   };
 
@@ -209,28 +229,42 @@ function SwipeableCard({
 
   // Days in dip (like "age")
   const daysInDip = card.days_below || 0;
+  
+  // Calculate exit distance based on velocity (faster = further)
+  const getExitX = () => {
+    const direction = x.get() > 0 || exitVelocity > 0 ? 1 : -1;
+    const baseDistance = 500;
+    const velocityBonus = Math.min(Math.abs(exitVelocity) * 0.3, 300);
+    return direction * (baseDistance + velocityBonus);
+  };
 
   return (
     <motion.div
-      className="absolute inset-0 cursor-grab active:cursor-grabbing touch-none"
-      style={{ x, rotate, zIndex: isTop ? 10 : 0 }}
+      className="absolute inset-0 cursor-grab active:cursor-grabbing touch-none will-change-transform"
+      style={{ x, rotate, scale, zIndex: isTop ? 10 : 0 }}
       drag={isTop ? 'x' : false}
       dragConstraints={{ left: 0, right: 0 }}
-      dragElastic={0.7}
-      dragTransition={{ bounceStiffness: 300, bounceDamping: 20 }}
+      dragElastic={0.5}
+      dragMomentum={true}
+      dragTransition={{ 
+        bounceStiffness: 600, 
+        bounceDamping: 20,
+        power: 0.3,
+        timeConstant: 200,
+      }}
       onDragEnd={handleDragEnd}
-      initial={{ scale: 0.95, opacity: 0, y: 30 }}
+      initial={{ scale: 0.92, opacity: 0, y: 50 }}
       animate={{ 
         scale: 1, 
-        opacity: isTop ? 1 : 0, // Hide non-top cards completely
+        opacity: isTop ? 1 : 0,
         y: 0,
       }}
       transition={springTransition}
       exit={{ 
-        x: x.get() > 0 ? 400 : -400, 
+        x: getExitX(),
         opacity: 0,
-        rotate: x.get() > 0 ? 15 : -15,
-        transition: { duration: 0.3 }
+        rotate: (x.get() > 0 || exitVelocity > 0) ? 30 : -30,
+        transition: exitSpring,
       }}
       onAnimationComplete={(def) => {
         if (def === 'exit' && onSwipeComplete) {
@@ -440,6 +474,9 @@ function SuggestionSwipeCard({
     typeof window !== 'undefined' ? getSwipeThreshold(window.innerWidth) : 100
   );
   
+  // Track exit velocity for natural throw animation
+  const [exitVelocity, setExitVelocity] = useState(0);
+  
   // Update threshold on resize
   useEffect(() => {
     const handleResize = () => setSwipeThreshold(getSwipeThreshold(window.innerWidth));
@@ -448,28 +485,57 @@ function SuggestionSwipeCard({
   }, []);
 
   const x = useMotionValue(0);
-  const rotate = useTransform(x, [-200, 200], [-15, 15]);
-  const approveOpacity = useTransform(x, [0, swipeThreshold], [0, 1]);
-  const skipOpacity = useTransform(x, [-swipeThreshold, 0], [1, 0]);
+  // More dramatic rotation
+  const rotate = useTransform(x, [-200, 0, 200], [-25, 0, 25]);
+  // Scale down slightly as card moves away
+  const scale = useTransform(x, [-300, 0, 300], [0.95, 1, 0.95]);
+  const approveOpacity = useTransform(x, [0, swipeThreshold * 0.6], [0, 1]);
+  const skipOpacity = useTransform(x, [-swipeThreshold * 0.6, 0], [1, 0]);
   
   const handleDragEnd = (_: unknown, info: PanInfo) => {
-    if (info.offset.x > swipeThreshold) {
-      onVote(true);
-    } else if (info.offset.x < -swipeThreshold) {
-      onVote(false);
+    const offset = info.offset.x;
+    const velocity = info.velocity.x;
+    const absVelocity = Math.abs(velocity);
+    
+    // More responsive detection
+    const hasEnoughDistance = Math.abs(offset) > swipeThreshold;
+    const hasQuickSwipe = Math.abs(offset) > swipeThreshold * 0.3 && absVelocity > VELOCITY_THRESHOLD;
+    const hasStrongThrow = absVelocity > VELOCITY_THRESHOLD * 2;
+    
+    if (hasEnoughDistance || hasQuickSwipe || hasStrongThrow) {
+      setExitVelocity(velocity);
+      if (offset > 0 || velocity > VELOCITY_THRESHOLD) {
+        onVote(true);
+      } else {
+        onVote(false);
+      }
     }
+  };
+  
+  // Calculate exit distance based on velocity
+  const getExitX = () => {
+    const direction = x.get() > 0 || exitVelocity > 0 ? 1 : -1;
+    const baseDistance = 500;
+    const velocityBonus = Math.min(Math.abs(exitVelocity) * 0.3, 300);
+    return direction * (baseDistance + velocityBonus);
   };
 
   return (
     <motion.div
-      className="absolute inset-0 cursor-grab active:cursor-grabbing touch-none"
-      style={{ x, rotate, zIndex: isTop ? 10 : 0 }}
+      className="absolute inset-0 cursor-grab active:cursor-grabbing touch-none will-change-transform"
+      style={{ x, rotate, scale, zIndex: isTop ? 10 : 0 }}
       drag={isTop ? 'x' : false}
       dragConstraints={{ left: 0, right: 0 }}
-      dragElastic={0.7}
-      dragTransition={{ bounceStiffness: 300, bounceDamping: 20 }}
+      dragElastic={0.5}
+      dragMomentum={true}
+      dragTransition={{ 
+        bounceStiffness: 600, 
+        bounceDamping: 20,
+        power: 0.3,
+        timeConstant: 200,
+      }}
       onDragEnd={handleDragEnd}
-      initial={{ scale: 0.95, opacity: 0, y: 30 }}
+      initial={{ scale: 0.92, opacity: 0, y: 50 }}
       animate={{ 
         scale: 1, 
         opacity: isTop ? 1 : 0,
@@ -477,10 +543,10 @@ function SuggestionSwipeCard({
       }}
       transition={springTransition}
       exit={{ 
-        x: x.get() > 0 ? 400 : -400, 
+        x: getExitX(),
         opacity: 0,
-        rotate: x.get() > 0 ? 15 : -15,
-        transition: { duration: 0.3 }
+        rotate: (x.get() > 0 || exitVelocity > 0) ? 30 : -30,
+        transition: exitSpring,
       }}
     >
       {/* Swipe indicators - SKIP/VOTE overlay */}
