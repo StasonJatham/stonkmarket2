@@ -151,12 +151,17 @@ class Settings(BaseSettings):
         default=3, ge=0, le=5, description="External API retry count"
     )
 
+    # OpenAI API settings
+    openai_api_key: str = Field(
+        default="", description="OpenAI API key for AI-powered analysis"
+    )
+
     # Logo.dev API settings
     logo_dev_public_key: str = Field(
-        default="pk_D27n9b3FSs24Q1yRf4_PHg", description="Logo.dev API public key"
+        default="", description="Logo.dev API public key"
     )
     logo_dev_secret_key: str = Field(
-        default="", description="Logo.dev API secret key (not currently used)"
+        default="", description="Logo.dev API secret key"
     )
     logo_cache_days: int = Field(
         default=90, ge=1, le=365, description="Days to cache logos before refetching"

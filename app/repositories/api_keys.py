@@ -108,6 +108,13 @@ async def seed_api_keys_from_env() -> None:
     
     logger = get_logger("api_keys.seed")
     
+    # Seed OpenAI API key if set in env and not in db
+    if settings.openai_api_key:
+        existing = await get_key(OPENAI_API_KEY)
+        if not existing:
+            await upsert_key(OPENAI_API_KEY, settings.openai_api_key)
+            logger.info("Seeded OpenAI API key from environment")
+
     # Seed Logo.dev public key if set in env and not in db
     if settings.logo_dev_public_key:
         existing = await get_key(LOGO_DEV_PUBLIC_KEY)

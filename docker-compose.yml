@@ -56,6 +56,10 @@ services:
       - SCHEDULER_ENABLED=${SCHEDULER_ENABLED:-true}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-https://stonkmarket.de}
+      # API keys (seeded to DB on first startup)
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - LOGO_DEV_PUBLIC_KEY=${LOGO_DEV_PUBLIC_KEY:-}
+      - LOGO_DEV_SECRET_KEY=${LOGO_DEV_SECRET_KEY:-}
     expose:
       - "8000"
     depends_on:
