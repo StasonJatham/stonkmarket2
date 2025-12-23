@@ -55,6 +55,7 @@ class DipCard(BaseModel):
     min_dip_pct: Optional[float] = Field(None, description="Configured dip threshold")
 
     # AI content
+    summary_ai: Optional[str] = Field(None, description="AI-generated company summary from finance description")
     tinder_bio: Optional[str] = Field(None, description="AI-generated tinder-style bio")
     ai_rating: Optional[str] = Field(
         None, description="AI rating: strong_buy, buy, hold, sell, strong_sell"

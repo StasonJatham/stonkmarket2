@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -11,7 +11,7 @@ import {
   InputOTPSeparator,
   InputOTPSlot,
 } from '@/components/ui/input-otp';
-import { TrendingUp, AlertCircle, ShieldCheck, ArrowLeft } from 'lucide-react';
+import { TrendingUp, AlertCircle, ShieldCheck, ArrowLeft, Loader2 } from 'lucide-react';
 
 export function LoginPage() {
   const [username, setUsername] = useState('');
@@ -20,6 +20,11 @@ export function LoginPage() {
   const [showMfa, setShowMfa] = useState(false);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [mfaSubmitting, setMfaSubmitting] = useState(false);
+  
+  // Debounce ref to prevent rapid MFA submissions
+  const lastMfaSubmitRef = useRef<number>(0);
+  const MFA_DEBOUNCE_MS = 1000; // 1 second between submissions
   
   const { login } = useAuth();
   const navigate = useNavigate();
@@ -48,26 +53,41 @@ export function LoginPage() {
     }
   };
 
+  const handleMfaSubmit = useCallback(async (code: string) => {
+    // Debounce to prevent rapid submissions
+    const now = Date.now();
+    if (now - lastMfaSubmitRef.current < MFA_DEBOUNCE_MS) {
+      return;
+    }
+    lastMfaSubmitRef.current = now;
+    
+    setError('');
+    setMfaSubmitting(true);
+    try {
+      await login(username, password, code);
+      navigate(from, { replace: true });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Invalid code';
+      setError(message);
+      setMfaCode('');
+    } finally {
+      setMfaSubmitting(false);
+    }
+  }, [username, password, login, navigate, from]);
+
   const handleMfaComplete = (value: string) => {
     setMfaCode(value);
-    // Auto-submit when 6 digits entered
-    if (value.length === 6) {
+    // Auto-submit when 6 digits entered (with debouncing)
+    if (value.length === 6 && !mfaSubmitting) {
       handleMfaSubmit(value);
     }
   };
 
-  const handleMfaSubmit = async (code?: string) => {
-    setError('');
-    setIsLoading(true);
-    try {
-      await login(username, password, code || mfaCode);
-      navigate(from, { replace: true });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Invalid code');
-      setMfaCode('');
-    } finally {
-      setIsLoading(false);
+  const handleManualMfaSubmit = async () => {
+    if (mfaCode.length === 6) {
+      await handleMfaSubmit(mfaCode);
     }
+  };
   };
 
   const handleBackToLogin = () => {
@@ -112,7 +132,8 @@ export function LoginPage() {
                   maxLength={6}
                   value={mfaCode}
                   onChange={handleMfaComplete}
-                  disabled={isLoading}
+                  disabled={isLoading || mfaSubmitting}
+                  autoFocus
                 >
                   <InputOTPGroup>
                     <InputOTPSlot index={0} />
@@ -128,19 +149,27 @@ export function LoginPage() {
                 </InputOTP>
               </div>
               
+              {/* Show loading indicator during auto-submit */}
+              {mfaSubmitting && (
+                <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Verifying...
+                </div>
+              )}
+              
               <Button 
-                onClick={() => handleMfaSubmit()} 
+                onClick={handleManualMfaSubmit} 
                 className="w-full" 
-                disabled={isLoading || mfaCode.length !== 6}
+                disabled={isLoading || mfaSubmitting || mfaCode.length !== 6}
               >
-                {isLoading ? 'Verifying...' : 'Verify Code'}
+                {isLoading || mfaSubmitting ? 'Verifying...' : 'Verify Code'}
               </Button>
               
               <Button 
                 variant="ghost" 
                 onClick={handleBackToLogin}
                 className="w-full"
-                disabled={isLoading}
+                disabled={isLoading || mfaSubmitting}
               >
                 <ArrowLeft className="h-4 w-4 mr-2" />
                 Back to Login

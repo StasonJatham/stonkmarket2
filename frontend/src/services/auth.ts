@@ -10,6 +10,7 @@ export interface AuthResponse {
   token_type: string;
   username: string;
   is_admin: boolean;
+  mfa_required?: boolean;
 }
 
 export interface User {
@@ -126,15 +127,20 @@ export async function login(username: string, password: string, mfaCode?: string
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: 'Login failed' }));
-    // Check for MFA required response
-    if (error.mfa_required) {
-      throw new Error('MFA_REQUIRED');
-    }
     throw new Error(error.message || error.detail || 'Login failed');
   }
 
   const data: AuthResponse = await response.json();
-  setToken(data.access_token);
+  
+  // Check if MFA is required (successful password, but need MFA code)
+  if (data.mfa_required) {
+    throw new Error('MFA_REQUIRED');
+  }
+  
+  // Only set token if we got one (not MFA required)
+  if (data.access_token) {
+    setToken(data.access_token);
+  }
   return data;
 }
 

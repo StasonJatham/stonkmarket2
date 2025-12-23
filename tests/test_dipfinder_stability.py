@@ -8,9 +8,9 @@ import pytest
 from app.dipfinder.stability import (
     compute_volatility,
     compute_max_drawdown,
-    score_beta,
-    score_volatility,
-    score_max_drawdown,
+    _score_beta as score_beta,
+    _score_volatility as score_volatility,
+    _score_max_drawdown as score_max_drawdown,
     StabilityMetrics,
 )
 

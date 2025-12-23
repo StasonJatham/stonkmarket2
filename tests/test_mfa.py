@@ -39,11 +39,11 @@ class TestMFAVerifyEndpoint:
 
 
 class TestMFADisableEndpoint:
-    """Tests for DELETE /auth/mfa."""
+    """Tests for POST /auth/mfa/disable."""
 
     def test_mfa_disable_without_auth_returns_401(self, client: TestClient):
-        """DELETE /auth/mfa without auth returns 401."""
-        response = client.delete("/auth/mfa", json={"code": "123456"})
+        """POST /auth/mfa/disable without auth returns 401."""
+        response = client.post("/auth/mfa/disable", json={"code": "123456"})
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
 

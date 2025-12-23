@@ -3,7 +3,9 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   getDipCards,
   refreshAiAnalysis,
+  refreshAiField,
   type DipCard,
+  type AiFieldType,
 } from '@/services/api';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -37,6 +39,7 @@ import {
   TrendingDown,
   Minus,
   Eye,
+  FileText,
 } from 'lucide-react';
 
 function getRatingBadge(rating: string | null) {
@@ -97,6 +100,7 @@ export function AIManager() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [regeneratingSymbol, setRegeneratingSymbol] = useState<string | null>(null);
+  const [regeneratingField, setRegeneratingField] = useState<AiFieldType | null>(null);
   
   // Detail dialog
   const [selectedCard, setSelectedCard] = useState<DipCard | null>(null);
@@ -141,6 +145,25 @@ export function AIManager() {
   function openDetailDialog(card: DipCard) {
     setSelectedCard(card);
     setDetailDialogOpen(true);
+  }
+
+  async function handleRegenerateField(symbol: string, field: AiFieldType) {
+    setRegeneratingField(field);
+    try {
+      const updatedCard = await refreshAiField(symbol, field);
+      // Update the card in the list
+      setDipCards(prev => 
+        prev.map(card => card.symbol === symbol ? updatedCard : card)
+      );
+      // If we were viewing this card's details, update it
+      if (selectedCard?.symbol === symbol) {
+        setSelectedCard(updatedCard);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : `Failed to regenerate ${field} for ${symbol}`);
+    } finally {
+      setRegeneratingField(null);
+    }
   }
 
   // Count cards with/without AI
@@ -312,10 +335,24 @@ export function AIManager() {
               <div className="space-y-6 py-4">
                 {/* Rating Section */}
                 <div>
-                  <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
-                    <Sparkles className="h-4 w-4 text-chart-4" />
-                    AI Rating (Serious Analysis)
-                  </h4>
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="text-sm font-medium flex items-center gap-2">
+                      <Sparkles className="h-4 w-4 text-chart-4" />
+                      AI Rating (Serious Analysis)
+                    </h4>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleRegenerateField(selectedCard.symbol, 'rating')}
+                      disabled={regeneratingField === 'rating'}
+                    >
+                      {regeneratingField === 'rating' ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <RefreshCw className="h-3 w-3" />
+                      )}
+                    </Button>
+                  </div>
                   <div className="bg-muted/30 rounded-lg p-4">
                     <div className="flex items-center gap-3 mb-3">
                       {getRatingBadge(selectedCard.ai_rating)}
@@ -331,7 +368,7 @@ export function AIManager() {
                       </p>
                     ) : (
                       <p className="text-sm text-muted-foreground italic">
-                        No analysis available. Click "Regenerate" to generate.
+                        No analysis available. Click refresh to generate.
                       </p>
                     )}
                   </div>
@@ -339,10 +376,24 @@ export function AIManager() {
 
                 {/* Tinder Bio Section */}
                 <div>
-                  <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
-                    <MessageSquare className="h-4 w-4 text-chart-4" />
-                    Tinder Bio
-                  </h4>
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="text-sm font-medium flex items-center gap-2">
+                      <MessageSquare className="h-4 w-4 text-chart-4" />
+                      Tinder Bio
+                    </h4>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleRegenerateField(selectedCard.symbol, 'bio')}
+                      disabled={regeneratingField === 'bio'}
+                    >
+                      {regeneratingField === 'bio' ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <RefreshCw className="h-3 w-3" />
+                      )}
+                    </Button>
+                  </div>
                   <div className="bg-muted/30 rounded-lg p-4">
                     {selectedCard.tinder_bio ? (
                       <p className="text-sm leading-relaxed">
@@ -350,7 +401,40 @@ export function AIManager() {
                       </p>
                     ) : (
                       <p className="text-sm text-muted-foreground italic">
-                        No bio available. Click "Regenerate" to generate.
+                        No bio available. Click refresh to generate.
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                {/* AI Summary Section */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="text-sm font-medium flex items-center gap-2">
+                      <FileText className="h-4 w-4 text-chart-4" />
+                      AI Summary
+                    </h4>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleRegenerateField(selectedCard.symbol, 'summary')}
+                      disabled={regeneratingField === 'summary'}
+                    >
+                      {regeneratingField === 'summary' ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <RefreshCw className="h-3 w-3" />
+                      )}
+                    </Button>
+                  </div>
+                  <div className="bg-muted/30 rounded-lg p-4">
+                    {selectedCard.summary_ai ? (
+                      <p className="text-sm leading-relaxed">
+                        {selectedCard.summary_ai}
+                      </p>
+                    ) : (
+                      <p className="text-sm text-muted-foreground italic">
+                        No AI summary available. Click refresh to generate from company description.
                       </p>
                     )}
                   </div>
@@ -379,21 +463,21 @@ export function AIManager() {
                   </div>
                 </div>
 
-                {/* Regenerate Button */}
+                {/* Regenerate All Button */}
                 <div className="flex justify-end pt-4 border-t">
                   <Button
                     onClick={() => handleRegenerateAI(selectedCard.symbol)}
-                    disabled={regeneratingSymbol === selectedCard.symbol}
+                    disabled={regeneratingSymbol === selectedCard.symbol || regeneratingField !== null}
                   >
                     {regeneratingSymbol === selectedCard.symbol ? (
                       <>
                         <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        Regenerating...
+                        Regenerating All...
                       </>
                     ) : (
                       <>
                         <Sparkles className="h-4 w-4 mr-2" />
-                        Regenerate AI Content
+                        Regenerate All
                       </>
                     )}
                   </Button>

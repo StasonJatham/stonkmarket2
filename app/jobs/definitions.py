@@ -3,28 +3,10 @@
 from __future__ import annotations
 
 from app.core.logging import get_logger
-from app.websocket import get_connection_manager, WSEvent, WSEventType
 
 from .registry import register_job
 
 logger = get_logger("jobs.definitions")
-
-
-async def _broadcast_job_event(
-    job_name: str,
-    event_type: WSEventType,
-    message: str,
-    data: dict = None,
-) -> None:
-    """Broadcast job status via WebSocket."""
-    manager = get_connection_manager()
-    await manager.broadcast_to_admins(
-        WSEvent(
-            type=event_type,
-            message=message,
-            data={"job_name": job_name, **(data or {})},
-        )
-    )
 
 
 @register_job("data_grab")
@@ -39,10 +21,6 @@ async def data_grab_job() -> str:
     from app.cache.cache import Cache
 
     logger.info("Starting data_grab job")
-
-    await _broadcast_job_event(
-        "data_grab", WSEventType.CRONJOB_STARTED, "Fetching stock data"
-    )
 
     try:
         rows = await fetch_all("SELECT symbol FROM symbols WHERE is_active = TRUE")
@@ -63,12 +41,10 @@ async def data_grab_job() -> str:
         logger.info("Invalidated ranking and chart caches")
 
         message = f"Fetched {len(signals)} symbols, {dips} dips"
-        await _broadcast_job_event("data_grab", WSEventType.CRONJOB_COMPLETE, message)
         logger.info(f"data_grab: {message}")
         return message
 
     except Exception as e:
-        await _broadcast_job_event("data_grab", WSEventType.CRONJOB_ERROR, str(e))
         logger.error(f"data_grab failed: {e}")
         raise
 
@@ -87,10 +63,6 @@ async def cache_warmup_job() -> str:
     from datetime import date, timedelta
 
     logger.info("Starting cache_warmup job")
-
-    await _broadcast_job_event(
-        "cache_warmup", WSEventType.CRONJOB_STARTED, "Warming up caches"
-    )
 
     try:
         # Get top 20 active symbols ordered by dip percentage
@@ -179,14 +151,11 @@ async def cache_warmup_job() -> str:
                     continue
 
         message = f"Warmed up {cached_count} chart caches for {len(all_symbols)} symbols"
-        await _broadcast_job_event("cache_warmup", WSEventType.CRONJOB_COMPLETE, message)
         logger.info(f"cache_warmup: {message}")
         return message
 
     except Exception as e:
-        await _broadcast_job_event("cache_warmup", WSEventType.CRONJOB_ERROR, str(e))
         logger.error(f"cache_warmup failed: {e}")
-        raise
         raise
 
 
@@ -266,13 +235,6 @@ async def batch_poll_job() -> str:
 
     try:
         processed = await process_completed_batch_jobs()
-
-        if processed > 0:
-            await _broadcast_job_event(
-                "batch_poll",
-                WSEventType.CRONJOB_COMPLETE,
-                f"Processed {processed} completed batch jobs",
-            )
 
         message = f"Polled batches, processed: {processed}"
         logger.info(f"batch_poll: {message}")

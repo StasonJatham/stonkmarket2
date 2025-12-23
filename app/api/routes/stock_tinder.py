@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Query, Request, Header
 
@@ -190,21 +190,23 @@ async def refresh_ai_analysis(symbol: str) -> DipCard:
     if not card:
         raise NotFoundError(f"Symbol {symbol.upper()} is not currently in a dip")
 
-    return DipCard(
-        symbol=card["symbol"],
-        name=card.get("name"),
-        sector=card.get("sector"),
-        industry=card.get("industry"),
-        website=card.get("website"),
-        ipo_year=card.get("ipo_year"),
-        current_price=card["current_price"],
-        ref_high=card["ref_high"],
-        dip_pct=card["dip_pct"],
-        days_below=card["days_below"],
-        min_dip_pct=card.get("min_dip_pct"),
-        tinder_bio=card.get("tinder_bio"),
-        ai_rating=card.get("ai_rating"),
-        ai_reasoning=card.get("ai_reasoning"),
-        ai_confidence=card.get("ai_confidence"),
-        vote_counts=VoteCounts(**card["vote_counts"]),
-    )
+    return card
+
+
+@router.post(
+    "/cards/{symbol}/refresh-ai/{field}",
+    response_model=DipCard,
+    summary="Refresh specific AI field",
+    description="Regenerate a specific AI field: rating, bio, or summary.",
+)
+async def refresh_ai_field(
+    symbol: str,
+    field: Literal["rating", "bio", "summary"],
+) -> DipCard:
+    """Regenerate a specific AI field for a dip."""
+    card = await stock_tinder.regenerate_ai_field(symbol.upper(), field)
+
+    if not card:
+        raise NotFoundError(f"Symbol {symbol.upper()} is not currently in a dip")
+
+    return card

@@ -8,6 +8,7 @@ from app.api.dependencies import get_client_ip, require_user, require_admin
 from app.cache.rate_limit import check_rate_limit
 from app.core.config import settings
 from app.core.exceptions import AuthenticationError
+from app.core.mfa import verify_totp, verify_backup_code
 from app.core.security import (
     TokenData,
     create_access_token,
@@ -65,6 +66,40 @@ async def login(
             message="Invalid credentials",
             error_code="INVALID_CREDENTIALS",
         )
+
+    # Check if MFA is enabled
+    if user.mfa_enabled:
+        # MFA is required - check if code was provided
+        if not payload.mfa_code:
+            # Return response indicating MFA is required (no token issued yet)
+            return LoginResponse(
+                username=user.username,
+                is_admin=user.is_admin,
+                access_token="",
+                token_type="bearer",
+                mfa_required=True,
+            )
+
+        # Verify MFA code
+        mfa_valid = False
+
+        # Try TOTP first
+        if user.mfa_secret and verify_totp(user.mfa_secret, payload.mfa_code):
+            mfa_valid = True
+
+        # Try backup code if TOTP failed
+        if not mfa_valid and user.mfa_backup_codes:
+            valid, updated_codes = verify_backup_code(payload.mfa_code, user.mfa_backup_codes)
+            if valid:
+                mfa_valid = True
+                # Update backup codes (one was consumed)
+                await auth_repo.update_backup_codes(user.username, updated_codes)
+
+        if not mfa_valid:
+            raise AuthenticationError(
+                message="Invalid MFA code",
+                error_code="INVALID_MFA_CODE",
+            )
 
     # Get admin status from database (not just username comparison)
     is_admin = user.is_admin

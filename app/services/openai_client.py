@@ -117,11 +117,11 @@ BE DECISIVE - take a stance. Always respond with valid JSON.""",
     TaskType.SUMMARY: """You explain complex businesses in simple terms.
 
 RULES:
-- Maximum 280 characters
+- Maximum 350 characters
 - Simple language anyone can understand
 - Focus on what the company actually does
 - No jargon or complex terms
-- One or two sentences max""",
+- Two or three sentences max""",
 }
 
 
@@ -448,7 +448,7 @@ async def summarize_company(
     name: Optional[str] = None,
     description: str = "",
 ) -> Optional[str]:
-    """Summarize a company description to ~280 characters."""
+    """Summarize a company description to ~350 characters."""
     if not description or len(description) < 50:
         return description
     
@@ -459,7 +459,7 @@ async def summarize_company(
             "name": name,
             "description": description,
         },
-        max_tokens=100,
+        max_tokens=120,
     )
 
 

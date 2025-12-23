@@ -6,7 +6,6 @@ from . import dips
 from . import cronjobs
 from . import health
 from . import suggestions
-from . import ws
 from . import mfa
 from . import api_keys
 from . import stock_tinder
@@ -23,7 +22,6 @@ __all__ = [
     "cronjobs",
     "health",
     "suggestions",
-    "ws",
     "mfa",
     "api_keys",
     "stock_tinder",

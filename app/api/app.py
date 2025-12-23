@@ -18,7 +18,6 @@ from .routes import (
     health,
     symbols,
     suggestions,
-    ws,
     mfa,
     api_keys,
     stock_tinder,
@@ -95,8 +94,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
         duration = time.monotonic() - start_time
 
-        # Log path only (not query params which may contain tokens)
-        # This prevents WebSocket ?token=xxx from appearing in logs
+        # Log path only (not query params which may contain sensitive data)
         path = request.url.path
 
         logger.info(
@@ -168,7 +166,6 @@ def create_api_app() -> FastAPI:
     app.include_router(dipfinder.router, prefix="/dipfinder", tags=["DipFinder"])
     app.include_router(cronjobs.router, prefix="/cronjobs", tags=["CronJobs"])
     app.include_router(suggestions.router, tags=["Suggestions"])
-    app.include_router(ws.router, tags=["WebSocket"])
     app.include_router(metrics.router, prefix="/metrics", tags=["Metrics"])
 
     return app

@@ -11,7 +11,6 @@ from app.dipfinder.signal import (
     DipSignal,
     classify_dip,
     compute_dip_score,
-    compute_final_score,
 )
 from app.dipfinder.dip import DipMetrics
 from app.dipfinder.fundamentals import QualityMetrics
@@ -122,37 +121,6 @@ class TestComputeDipScore:
         assert score < 40
 
 
-class TestComputeFinalScore:
-    """Tests for compute_final_score."""
-    
-    def test_weighted_average(self, config):
-        """Final score is weighted average of components."""
-        final = compute_final_score(
-            dip_score=80.0,
-            quality_score=70.0,
-            stability_score=60.0,
-            config=config,
-        )
-        
-        # Check it's between min and max of components
-        assert 60.0 <= final <= 80.0
-        
-        # Check approximate value based on default weights
-        # Default: 0.45*dip + 0.30*quality + 0.25*stability
-        expected = 0.45 * 80 + 0.30 * 70 + 0.25 * 60
-        assert abs(final - expected) < 1.0
-    
-    def test_all_high_scores(self, config):
-        """All high component scores give high final score."""
-        final = compute_final_score(90.0, 90.0, 90.0, config)
-        assert final == 90.0
-    
-    def test_all_low_scores(self, config):
-        """All low component scores give low final score."""
-        final = compute_final_score(20.0, 20.0, 20.0, config)
-        assert final == 20.0
-
-
 class TestDipSignal:
     """Tests for DipSignal dataclass."""
     
@@ -227,7 +195,12 @@ class TestAlertDecision:
         stability_score = 70.0
         is_meaningful = True
         
-        final_score = compute_final_score(dip_score, quality_score, stability_score, config)
+        # Compute weighted final score (inline since compute_final_score was removed)
+        final_score = (
+            config.weight_dip * dip_score
+            + config.weight_quality * quality_score
+            + config.weight_stability * stability_score
+        )
         
         should_alert = (
             final_score >= config.alert_good

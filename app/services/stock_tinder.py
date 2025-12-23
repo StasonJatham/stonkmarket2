@@ -23,12 +23,14 @@ async def get_dip_card(symbol: str) -> Optional[DipCard]:
         DipCard with symbol, prices, AI analysis, and vote counts.
         None if symbol not found in dip state.
     """
-    # Get dip state from PostgreSQL
+    # Get dip state and symbol info from PostgreSQL
     dip_row = await fetch_one(
         """
         SELECT ds.symbol, ds.current_price, ds.ath_price, ds.dip_percentage,
-               ds.first_seen, ds.last_updated
+               ds.first_seen, ds.last_updated,
+               s.name, s.sector, s.summary_ai
         FROM dip_state ds
+        LEFT JOIN symbols s ON s.symbol = ds.symbol
         WHERE ds.symbol = $1
         """,
         symbol.upper(),
@@ -55,11 +57,14 @@ async def get_dip_card(symbol: str) -> Optional[DipCard]:
     # Build card with Pydantic model
     card = DipCard(
         symbol=symbol.upper(),
+        name=dip_row.get("name"),
+        sector=dip_row.get("sector"),
         current_price=float(dip_row["current_price"]) if dip_row["current_price"] else 0,
         ref_high=float(dip_row["ath_price"]) if dip_row["ath_price"] else 0,
         dip_pct=float(dip_row["dip_percentage"]) if dip_row["dip_percentage"] else 0,
         days_below=days_below,
         vote_counts=vote_counts,
+        summary_ai=dip_row.get("summary_ai"),
         tinder_bio=ai_analysis.get("tinder_bio") if ai_analysis else None,
         ai_rating=ai_analysis.get("ai_rating") if ai_analysis else None,
         ai_reasoning=ai_analysis.get("ai_reasoning") if ai_analysis else None,
@@ -138,6 +143,107 @@ async def get_dip_card_with_fresh_ai(symbol: str, force_refresh: bool = False) -
         "ai_reasoning": rating_result.get("reasoning") if rating_result else None,
         "ai_confidence": rating_result.get("confidence") if rating_result else None,
     })
+
+    return card
+
+
+async def regenerate_ai_field(
+    symbol: str,
+    field: str,
+) -> Optional[DipCard]:
+    """
+    Regenerate a specific AI field for a dip card.
+
+    Args:
+        symbol: Stock symbol
+        field: Field to regenerate: 'rating', 'bio', or 'summary'
+
+    Returns:
+        Updated DipCard with the regenerated field.
+        None if symbol not found in dip state.
+    """
+    from app.database.connection import execute
+    from app.services.openai_client import summarize_company
+
+    card = await get_dip_card(symbol)
+    if not card:
+        return None
+
+    # Fetch stock info for AI generation
+    info = await stock_info.get_stock_info_async(symbol)
+
+    if field == "bio":
+        # Regenerate Tinder bio
+        bio = await generate_bio(
+            symbol=symbol,
+            name=info.get("name") if info else None,
+            sector=info.get("sector") if info else None,
+            summary=info.get("summary") if info else None,
+            dip_pct=card.dip_pct,
+        )
+        if bio:
+            await dip_votes_repo.upsert_ai_analysis(
+                symbol=symbol,
+                tinder_bio=bio,
+                ai_rating=None,  # Don't update rating
+                ai_reasoning=None,
+                is_batch=False,
+            )
+            card = card.model_copy(update={"tinder_bio": bio})
+
+    elif field == "rating":
+        # Regenerate AI rating
+        rating_result = await rate_dip(
+            symbol=symbol,
+            current_price=card.current_price,
+            ref_high=card.ref_high,
+            dip_pct=card.dip_pct,
+            name=info.get("name") if info else None,
+            sector=info.get("sector") if info else None,
+            summary=info.get("summary") if info else None,
+        )
+        if rating_result:
+            await dip_votes_repo.upsert_ai_analysis(
+                symbol=symbol,
+                tinder_bio=None,  # Don't update bio
+                ai_rating=rating_result.get("rating"),
+                ai_reasoning=rating_result.get("reasoning"),
+                is_batch=False,
+            )
+            card = card.model_copy(update={
+                "ai_rating": rating_result.get("rating"),
+                "ai_reasoning": rating_result.get("reasoning"),
+                "ai_confidence": rating_result.get("confidence"),
+            })
+
+    elif field == "summary":
+        # Regenerate summary_ai
+        description = info.get("summary") if info else None
+        if description:
+            new_summary = await summarize_company(
+                symbol=symbol,
+                name=info.get("name") if info else None,
+                description=description,
+            )
+            if new_summary:
+                await execute(
+                    """
+                    UPDATE symbols SET summary_ai = $2 WHERE symbol = $1
+                    """,
+                    symbol.upper(),
+                    new_summary,
+                )
+                card = card.model_copy(update={"summary_ai": new_summary})
+
+    # Update card with stock info
+    if info:
+        card = card.model_copy(update={
+            "name": info.get("name"),
+            "sector": info.get("sector"),
+            "industry": info.get("industry"),
+            "website": info.get("website"),
+            "ipo_year": info.get("ipo_year"),
+        })
 
     return card
 

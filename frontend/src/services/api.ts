@@ -429,6 +429,7 @@ export interface DipCard {
   dip_pct: number;
   days_below: number;
   min_dip_pct: number | null;
+  summary_ai: string | null;
   tinder_bio: string | null;
   ai_rating: 'strong_buy' | 'buy' | 'hold' | 'sell' | 'strong_sell' | null;
   ai_reasoning: string | null;
@@ -481,6 +482,14 @@ export async function getDipStats(symbol: string): Promise<DipStats> {
 
 export async function refreshAiAnalysis(symbol: string): Promise<DipCard> {
   return fetchAPI<DipCard>(`/tinder/cards/${symbol}/refresh-ai`, {
+    method: 'POST',
+  });
+}
+
+export type AiFieldType = 'rating' | 'bio' | 'summary';
+
+export async function refreshAiField(symbol: string, field: AiFieldType): Promise<DipCard> {
+  return fetchAPI<DipCard>(`/tinder/cards/${symbol}/refresh-ai/${field}`, {
     method: 'POST',
   });
 }

@@ -8,44 +8,44 @@ from fastapi.testclient import TestClient
 
 
 class TestListAPIKeysEndpoint:
-    """Tests for GET /api-keys."""
+    """Tests for GET /admin/user-keys (admin only)."""
 
     def test_list_api_keys_without_auth_returns_401(self, client: TestClient):
-        """GET /api-keys without auth returns 401."""
-        response = client.get("/api-keys")
+        """GET /admin/user-keys without auth returns 401."""
+        response = client.get("/admin/user-keys")
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
     def test_list_api_keys_with_invalid_token_returns_401(self, client: TestClient):
-        """GET /api-keys with invalid token returns 401."""
+        """GET /admin/user-keys with invalid token returns 401."""
         response = client.get(
-            "/api-keys",
+            "/admin/user-keys",
             headers={"Authorization": "Bearer invalid_token"},
         )
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
 
 class TestCreateAPIKeyEndpoint:
-    """Tests for POST /api-keys."""
+    """Tests for POST /admin/user-keys."""
 
     def test_create_api_key_without_auth_returns_401(self, client: TestClient):
-        """POST /api-keys without auth returns 401."""
-        response = client.post("/api-keys", json={"name": "test-key"})
+        """POST /admin/user-keys without auth returns 401."""
+        response = client.post("/admin/user-keys", json={"name": "test-key"})
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
     def test_create_api_key_without_body_returns_422(
-        self, client: TestClient, auth_headers: dict
+        self, client: TestClient, admin_headers: dict
     ):
-        """POST /api-keys without body returns validation error."""
-        response = client.post("/api-keys", headers=auth_headers)
+        """POST /admin/user-keys without body returns validation error."""
+        response = client.post("/admin/user-keys", headers=admin_headers)
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
 
 class TestRevokeAPIKeyEndpoint:
-    """Tests for DELETE /api-keys/{key_id}."""
+    """Tests for DELETE /admin/user-keys/{key_id}."""
 
     def test_revoke_api_key_without_auth_returns_401(self, client: TestClient):
-        """DELETE /api-keys/{key_id} without auth returns 401."""
-        response = client.delete("/api-keys/some-key-id")
+        """DELETE /admin/user-keys/{key_id} without auth returns 401."""
+        response = client.delete("/admin/user-keys/1")
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
 

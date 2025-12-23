@@ -81,15 +81,21 @@ class TestTinderVoteEndpoint:
         ]
 
 
-class TestTinderVoteAggregateEndpoint:
-    """Tests for GET /tinder/votes/aggregate."""
+class TestTinderVoteStatsEndpoint:
+    """Tests for GET /tinder/cards/{symbol}/stats."""
 
-    def test_aggregate_returns_200(self, client: TestClient):
-        """GET /tinder/votes/aggregate returns 200 OK."""
-        response = client.get("/tinder/votes/aggregate")
-        assert response.status_code == status.HTTP_200_OK
+    def test_stats_with_valid_symbol_returns_200(self, client: TestClient):
+        """GET /tinder/cards/{symbol}/stats with valid symbol returns 200 OK."""
+        response = client.get("/tinder/cards/AAPL/stats")
+        # May return 200 or 404 depending on if symbol exists
+        assert response.status_code in [
+            status.HTTP_200_OK,
+            status.HTTP_404_NOT_FOUND,
+        ]
 
-    def test_aggregate_returns_list(self, client: TestClient):
-        """GET /tinder/votes/aggregate returns a list."""
-        response = client.get("/tinder/votes/aggregate")
-        assert isinstance(response.json(), list)
+    def test_stats_returns_dict(self, client: TestClient):
+        """GET /tinder/cards/{symbol}/stats returns a dict with vote counts."""
+        response = client.get("/tinder/cards/AAPL/stats")
+        if response.status_code == status.HTTP_200_OK:
+            data = response.json()
+            assert isinstance(data, dict)

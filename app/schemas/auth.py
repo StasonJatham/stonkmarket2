@@ -24,6 +24,13 @@ class LoginRequest(BaseModel):
         max_length=128,
         description="Password",
     )
+    mfa_code: Optional[str] = Field(
+        default=None,
+        min_length=6,
+        max_length=6,
+        pattern=r"^\d{6}$",
+        description="6-digit MFA code (required if MFA is enabled)",
+    )
 
     @field_validator("username")
     @classmethod
@@ -42,8 +49,9 @@ class LoginResponse(BaseModel):
 
     username: str = Field(..., description="Authenticated username")
     is_admin: bool = Field(..., description="Whether user is admin")
-    access_token: str = Field(..., description="JWT access token")
+    access_token: str = Field(default="", description="JWT access token (empty if mfa_required)")
     token_type: str = Field(default="bearer", description="Token type")
+    mfa_required: bool = Field(default=False, description="Whether MFA code is required")
 
 
 class UserResponse(BaseModel):
