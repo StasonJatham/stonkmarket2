@@ -96,12 +96,10 @@ async def validate_symbol(
     "",
     response_model=List[SymbolResponse],
     summary="List all symbols",
-    description="Get all tracked stock symbols.",
+    description="Get all tracked stock symbols. Public endpoint.",
 )
-async def list_symbols(
-    user: TokenData = Depends(require_user),
-) -> List[SymbolResponse]:
-    """List all tracked symbols."""
+async def list_symbols() -> List[SymbolResponse]:
+    """List all tracked symbols (public endpoint for signals page)."""
     symbols = await symbol_repo.list_symbols()
     return [
         SymbolResponse(

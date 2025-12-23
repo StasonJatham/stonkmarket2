@@ -261,9 +261,9 @@ test.describe('Crawlability', () => {
     const faviconHref = await favicon.getAttribute('href');
     expect(faviconHref).toBeTruthy();
     
-    // Verify favicon loads
+    // Verify favicon loads (200 OK or 304 Not Modified are both valid)
     const response = await page.goto(faviconHref!);
-    expect(response?.status()).toBe(200);
+    expect([200, 304]).toContain(response?.status());
   });
 
   test('should have og-image that loads', async ({ page }) => {
