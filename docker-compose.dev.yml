@@ -33,6 +33,8 @@ services:
     volumes:
       # Mount source code for hot reloading
       - ./app:/app/app:ro
+      - ./migrations:/app/migrations:ro
+      - ./tests:/app/tests:ro
     depends_on:
       postgres:
         condition: service_healthy

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -31,6 +33,29 @@ from .routes import (
 )
 
 logger = get_logger("api")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manage application lifecycle - initialize and cleanup resources."""
+    from app.database.connection import init_pg_pool, close_pg_pool
+    from app.cache.client import init_valkey_pool, close_valkey_client
+    
+    # Initialize resources on startup
+    try:
+        await init_pg_pool()
+        await init_valkey_pool()
+    except Exception as e:
+        logger.warning(f"Resource initialization failed (may be ok in tests): {e}")
+    
+    yield
+    
+    # Cleanup resources on shutdown
+    try:
+        await close_pg_pool()
+        await close_valkey_client()
+    except Exception as e:
+        logger.warning(f"Resource cleanup failed: {e}")
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -122,6 +147,7 @@ def create_api_app() -> FastAPI:
         docs_url="/docs" if settings.debug else None,
         redoc_url="/redoc" if settings.debug else None,
         openapi_url="/openapi.json" if settings.debug else None,
+        lifespan=lifespan,
         responses={
             400: {"model": ErrorResponse, "description": "Bad Request"},
             401: {"model": ErrorResponse, "description": "Unauthorized"},

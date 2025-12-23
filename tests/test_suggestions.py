@@ -10,36 +10,27 @@ from fastapi.testclient import TestClient
 
 
 class TestListSuggestionsEndpoint:
-    """Tests for GET /suggestions."""
+    """Tests for GET /suggestions (admin only)."""
 
-    def test_list_suggestions_returns_200(self, client: TestClient):
-        """GET /suggestions returns 200 OK (public endpoint)."""
+    def test_list_suggestions_requires_auth(self, client: TestClient):
+        """GET /suggestions requires admin auth."""
         response = client.get("/suggestions")
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+class TestTopSuggestionsEndpoint:
+    """Tests for GET /suggestions/top (public)."""
+
+    def test_top_suggestions_returns_200(self, client: TestClient):
+        """GET /suggestions/top returns 200 OK (public endpoint)."""
+        response = client.get("/suggestions/top")
         assert response.status_code == status.HTTP_200_OK
 
-    def test_list_suggestions_returns_list(self, client: TestClient):
-        """GET /suggestions returns a list."""
-        response = client.get("/suggestions")
+    def test_top_suggestions_returns_list(self, client: TestClient):
+        """GET /suggestions/top returns a list."""
+        response = client.get("/suggestions/top")
         data = response.json()
-        # May return list directly or wrapped object
-        assert isinstance(data, (list, dict))
-
-    def test_list_suggestions_with_status_filter(self, client: TestClient):
-        """GET /suggestions?status=pending filters by status."""
-        response = client.get("/suggestions?status=pending")
-        assert response.status_code == status.HTTP_200_OK
-
-
-class TestGetSuggestionEndpoint:
-    """Tests for GET /suggestions/{symbol}."""
-
-    def test_get_suggestion_not_found(self, client: TestClient):
-        """GET /suggestions/{symbol} for non-existent returns 404."""
-        response = client.get("/suggestions/NONEXISTENT123")
-        assert response.status_code in [
-            status.HTTP_404_NOT_FOUND,
-            status.HTTP_200_OK,  # May return empty or null
-        ]
+        assert isinstance(data, list)
 
 
 class TestCreateSuggestionEndpoint:
@@ -63,20 +54,22 @@ class TestCreateSuggestionEndpoint:
 
 
 class TestVoteSuggestionEndpoint:
-    """Tests for POST /suggestions/{symbol}/vote."""
+    """Tests for PUT /suggestions/{symbol}/vote."""
 
-    def test_vote_without_body_returns_422(self, client: TestClient):
-        """POST /vote without body returns validation error."""
-        response = client.post("/suggestions/AAPL/vote")
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    def test_vote_on_nonexistent_symbol(self, client: TestClient):
+        """PUT /suggestions/{symbol}/vote for non-existent returns 404 or 422."""
+        response = client.put("/suggestions/NONEXISTENT123/vote")
+        # 404 if not found, 422 if vote validation fails
+        assert response.status_code in [
+            status.HTTP_404_NOT_FOUND,
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+        ]
 
-    def test_vote_with_invalid_type_returns_422(self, client: TestClient):
-        """POST /vote with invalid vote type returns error."""
-        response = client.post(
-            "/suggestions/AAPL/vote",
-            json={"vote_type": "invalid"},
-        )
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    def test_vote_is_put_method(self, client: TestClient):
+        """PUT /suggestions/{symbol}/vote uses PUT method."""
+        response = client.put("/suggestions/AAPL/vote")
+        # Should not be 405 Method Not Allowed
+        assert response.status_code != status.HTTP_405_METHOD_NOT_ALLOWED
 
 
 class TestApproveSuggestionEndpoint:

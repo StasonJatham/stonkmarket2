@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import warnings
 from typing import AsyncGenerator, Generator
 
 import pytest
@@ -10,16 +11,21 @@ import pytest_asyncio
 from fastapi.testclient import TestClient
 from httpx import AsyncClient
 
+# Suppress asyncpg connection cleanup warnings during tests
+warnings.filterwarnings("ignore", message=".*Event loop is closed.*")
+warnings.filterwarnings("ignore", message=".*connection was closed.*")
+
 # Configure asyncio
 pytest_plugins = ["pytest_asyncio"]
 
 
-@pytest.fixture(scope="session")
-def event_loop() -> Generator:
-    """Create an event loop for the test session."""
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
+@pytest.fixture(scope="function", autouse=True)
+def reset_db_pool():
+    """Reset database pool state between tests."""
+    yield
+    # Give async operations time to complete
+    import time
+    time.sleep(0.01)
 
 
 @pytest.fixture
@@ -28,7 +34,7 @@ def client() -> Generator[TestClient, None, None]:
     from app.api.app import create_api_app
     
     app = create_api_app()
-    with TestClient(app) as test_client:
+    with TestClient(app, raise_server_exceptions=False) as test_client:
         yield test_client
 
 

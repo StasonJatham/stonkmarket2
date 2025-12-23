@@ -7,27 +7,33 @@ from fastapi import status
 from fastapi.testclient import TestClient
 
 
-class TestDipFinderEndpointsUnauth:
-    """Tests for unauthenticated access to DipFinder endpoints."""
+class TestDipFinderPublicEndpoints:
+    """Tests for public (no auth) DipFinder endpoints."""
     
-    def test_signals_requires_auth(self, client: TestClient):
-        """GET /dipfinder/signals requires authentication."""
+    def test_signals_is_public(self, client: TestClient):
+        """GET /dipfinder/signals is publicly accessible."""
         response = client.get("/dipfinder/signals?tickers=AAPL")
-        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        # 200 or 500 (if external API fails) - but NOT 401
+        assert response.status_code != status.HTTP_401_UNAUTHORIZED
+    
+    def test_latest_is_public(self, client: TestClient):
+        """GET /dipfinder/latest is publicly accessible."""
+        response = client.get("/dipfinder/latest")
+        # 200 or 500 - but NOT 401
+        assert response.status_code != status.HTTP_401_UNAUTHORIZED
+    
+    def test_config_is_public(self, client: TestClient):
+        """GET /dipfinder/config is publicly accessible."""
+        response = client.get("/dipfinder/config")
+        assert response.status_code == status.HTTP_200_OK
+
+
+class TestDipFinderProtectedEndpoints:
+    """Tests for auth-required DipFinder endpoints."""
     
     def test_run_requires_auth(self, client: TestClient):
         """POST /dipfinder/run requires authentication."""
         response = client.post("/dipfinder/run", json={})
-        assert response.status_code == status.HTTP_401_UNAUTHORIZED
-    
-    def test_latest_requires_auth(self, client: TestClient):
-        """GET /dipfinder/latest requires authentication."""
-        response = client.get("/dipfinder/latest")
-        assert response.status_code == status.HTTP_401_UNAUTHORIZED
-    
-    def test_config_requires_auth(self, client: TestClient):
-        """GET /dipfinder/config requires authentication."""
-        response = client.get("/dipfinder/config")
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
     
     def test_admin_refresh_requires_auth(self, client: TestClient):

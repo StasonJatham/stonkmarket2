@@ -138,9 +138,10 @@ class TestRankingCache:
 
     def test_ranking_cache_key_format(self):
         """Verify ranking cache uses correct key format."""
-        # Cache key format: "all:{show_all}"
+        # Cache key format sanitizes colons to underscores
         from app.cache.cache import cache_key
         
         key = cache_key("all:True", prefix="ranking")
         assert "ranking" in key
-        assert "all:True" in key
+        # Colons are sanitized to underscores in cache keys
+        assert "all_True" in key

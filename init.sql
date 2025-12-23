@@ -6,6 +6,15 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pg_trgm";
 
 -- ============================================================================
+-- SCHEMA MIGRATIONS TRACKING
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    version VARCHAR(50) PRIMARY KEY,
+    applied_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ============================================================================
 -- AUTH & SECURITY TABLES
 -- ============================================================================
 
@@ -13,6 +22,7 @@ CREATE TABLE IF NOT EXISTS auth_user (
     id SERIAL PRIMARY KEY,
     username VARCHAR(255) UNIQUE NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
+    is_admin BOOLEAN DEFAULT FALSE,
     mfa_secret VARCHAR(64),
     mfa_enabled BOOLEAN DEFAULT FALSE,
     mfa_backup_codes TEXT,  -- JSON array of hashed backup codes
@@ -66,15 +76,23 @@ CREATE TABLE IF NOT EXISTS symbols (
     sector VARCHAR(100),
     market_cap BIGINT,
     summary_ai VARCHAR(350),  -- AI-generated short company description (~300 chars)
+    symbol_type VARCHAR(20) DEFAULT 'stock',  -- 'stock', 'etf', 'index'
     min_dip_pct DECIMAL(5, 4) DEFAULT 0.15,
     min_days INTEGER DEFAULT 5,
     is_active BOOLEAN DEFAULT TRUE,
+    -- Logo caching from Logo.dev API
+    logo_light BYTEA,  -- WebP logo for light theme
+    logo_dark BYTEA,   -- WebP logo for dark theme
+    logo_fetched_at TIMESTAMPTZ,
+    logo_source VARCHAR(50),  -- 'logo.dev' or 'favicon'
     added_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE INDEX idx_symbols_symbol ON symbols(symbol);
 CREATE INDEX idx_symbols_sector ON symbols(sector);
+CREATE INDEX idx_symbols_type ON symbols(symbol_type);
+CREATE INDEX idx_symbols_logo_fetched_at ON symbols(logo_fetched_at);
 
 -- Current dip state (actively tracked dips)
 CREATE TABLE IF NOT EXISTS dip_state (
@@ -83,14 +101,21 @@ CREATE TABLE IF NOT EXISTS dip_state (
     current_price DECIMAL(12, 4),
     ath_price DECIMAL(12, 4),
     dip_percentage DECIMAL(8, 4),
+    dip_start_date DATE,  -- When stock first entered dip territory
+    -- Legacy columns for compatibility
+    ref_high DECIMAL(12, 4),
+    last_price DECIMAL(12, 4),
+    days_below INTEGER DEFAULT 0,
     first_seen TIMESTAMPTZ DEFAULT NOW(),
     last_updated TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),  -- Alias for last_updated
     UNIQUE(symbol)
 );
 
 CREATE INDEX idx_dip_state_symbol ON dip_state(symbol);
 CREATE INDEX idx_dip_state_percentage ON dip_state(dip_percentage DESC);
 CREATE INDEX idx_dip_state_updated ON dip_state(last_updated DESC);
+CREATE INDEX idx_dip_state_start_date ON dip_state(dip_start_date);
 
 -- Dip history for tracking changes over time
 CREATE TABLE IF NOT EXISTS dip_history (
@@ -116,10 +141,15 @@ CREATE TABLE IF NOT EXISTS stock_suggestions (
     id SERIAL PRIMARY KEY,
     symbol VARCHAR(20) UNIQUE NOT NULL,
     company_name VARCHAR(255),
+    sector VARCHAR(100),
+    summary TEXT,
+    website VARCHAR(255),
+    ipo_year INTEGER,
     reason TEXT,
     fingerprint VARCHAR(64) NOT NULL,  -- Submitter fingerprint
     status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
     vote_score INTEGER DEFAULT 0,
+    fetch_status VARCHAR(20) DEFAULT 'pending',  -- pending, fetched, failed
     approved_by INTEGER REFERENCES auth_user(id),
     created_at TIMESTAMPTZ DEFAULT NOW(),
     reviewed_at TIMESTAMPTZ
@@ -406,7 +436,7 @@ ORDER BY date DESC, service;
 -- Insert default cron jobs (exactly 4)
 INSERT INTO cronjobs (name, cron_expression, is_active, config) VALUES
     ('data_grab', '0 23 * * 1-5', TRUE, '{"description": "Fetch stock data from yfinance Mon-Fri 11pm"}'),
-    ('batch_ai_tinder', '0 3 * * 0', TRUE, '{"description": "Generate tinder bios weekly Sunday 3am"}'),
+    ('batch_ai_swipe', '0 3 * * 0', TRUE, '{"description": "Generate swipe bios weekly Sunday 3am"}'),
     ('batch_ai_analysis', '0 4 * * 0', TRUE, '{"description": "Generate dip analysis weekly Sunday 4am"}'),
     ('cleanup', '0 0 * * *', TRUE, '{"description": "Clean up expired data daily midnight"}')
 ON CONFLICT (name) DO NOTHING;
