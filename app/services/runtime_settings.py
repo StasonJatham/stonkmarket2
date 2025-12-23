@@ -214,3 +214,20 @@ async def check_openai_configured() -> bool:
         return key is not None and key.get("encrypted_key")
     except Exception:
         return False
+
+
+async def check_logo_dev_configured() -> bool:
+    """Check if Logo.dev API key is configured (env or database)."""
+    from app.core.config import settings
+    from app.repositories import api_keys as api_keys_repo
+    
+    # Check environment variable first
+    if settings.logo_dev_public_key:
+        return True
+    
+    # Check database
+    try:
+        key = await api_keys_repo.get_key(api_keys_repo.LOGO_DEV_PUBLIC_KEY)
+        return key is not None and key.get("encrypted_key")
+    except Exception:
+        return False

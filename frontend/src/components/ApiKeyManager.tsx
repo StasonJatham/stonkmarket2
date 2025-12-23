@@ -150,6 +150,7 @@ export function ApiKeyManager({ onError, onSuccess }: ApiKeyManagerProps) {
   }
 
   const openAiKey = keys.find(k => k.key_name === 'OPENAI_API_KEY');
+  const logoDevKey = keys.find(k => k.key_name === 'LOGO_DEV_PUBLIC_KEY');
 
   if (isLoading) {
     return (
@@ -219,7 +220,7 @@ export function ApiKeyManager({ onError, onSuccess }: ApiKeyManagerProps) {
                 Service Keys
               </CardTitle>
               <CardDescription>
-                Configure API keys for backend services (OpenAI for AI features). MFA required.
+                Configure API keys for backend services (OpenAI for AI features, Logo.dev for company logos). MFA required.
               </CardDescription>
             </div>
           </div>
@@ -307,6 +308,89 @@ export function ApiKeyManager({ onError, onSuccess }: ApiKeyManagerProps) {
             </div>
           </div>
         </motion.div>
+
+          {/* Logo.dev Key Status */}
+          <motion.div 
+            className="p-4 bg-muted/50 rounded-lg"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.15 }}
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-background rounded-lg">
+                  <Key className="h-5 w-5" />
+                </div>
+                <div>
+                  <div className="font-medium">Logo.dev API Key</div>
+                  <div className="text-sm text-muted-foreground">
+                    {logoDevKey ? (
+                      <>
+                        <span className="font-mono">{logoDevKey.key_hint}</span>
+                        <span className="ml-2 text-xs">
+                          Updated {new Date(logoDevKey.updated_at).toLocaleDateString()}
+                        </span>
+                      </>
+                    ) : (
+                      'Not configured – company logos will show fallback icons'
+                    )}
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                {logoDevKey ? (
+                  <>
+                    <Badge variant="default" className="bg-success/20 text-success">
+                      Configured
+                    </Badge>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setKeyName('LOGO_DEV_PUBLIC_KEY');
+                        setKeyValue('');
+                        setAddDialogOpen(true);
+                      }}
+                    >
+                      Update
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => {
+                        setRevealingKey('LOGO_DEV_PUBLIC_KEY');
+                        setRevealDialogOpen(true);
+                      }}
+                    >
+                      <Eye className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => {
+                        setDeletingKey('LOGO_DEV_PUBLIC_KEY');
+                        setDeleteDialogOpen(true);
+                      }}
+                    >
+                      <Trash2 className="h-4 w-4 text-danger" />
+                    </Button>
+                  </>
+                ) : (
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      setKeyName('LOGO_DEV_PUBLIC_KEY');
+                      setKeyValue('');
+                      setAddDialogOpen(true);
+                    }}
+                  >
+                    <Plus className="h-4 w-4 mr-1" />
+                    Configure
+                  </Button>
+                )}
+              </div>
+            </div>
+          </motion.div>
       </CardContent>
 
       {/* Add/Update Dialog */}
@@ -314,17 +398,32 @@ export function ApiKeyManager({ onError, onSuccess }: ApiKeyManagerProps) {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              {openAiKey && keyName === 'OPENAI_API_KEY' ? 'Update OpenAI API Key' : 'Configure API Key'}
+              {keyName === 'OPENAI_API_KEY' && openAiKey 
+                ? 'Update OpenAI API Key' 
+                : keyName === 'LOGO_DEV_PUBLIC_KEY' && logoDevKey
+                  ? 'Update Logo.dev API Key'
+                  : keyName === 'LOGO_DEV_PUBLIC_KEY'
+                    ? 'Configure Logo.dev API Key'
+                    : keyName === 'OPENAI_API_KEY'
+                      ? 'Configure OpenAI API Key'
+                      : 'Configure API Key'
+              }
             </DialogTitle>
             <DialogDescription>
-              {openAiKey && keyName === 'OPENAI_API_KEY'
-                ? 'Enter the new API key value. This will replace the existing key.'
-                : 'Store an API key securely. You\'ll need your MFA code to save it.'
+              {keyName === 'OPENAI_API_KEY'
+                ? openAiKey 
+                  ? 'Enter the new API key value. This will replace the existing key.'
+                  : 'Configure OpenAI API key for AI enrichment features.'
+                : keyName === 'LOGO_DEV_PUBLIC_KEY'
+                  ? logoDevKey
+                    ? 'Enter the new API key value. This will replace the existing key.'
+                    : 'Configure Logo.dev public key for company logos. Get a free key at logo.dev'
+                  : 'Store an API key securely. You\'ll need your MFA code to save it.'
               }
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
-            {keyName !== 'OPENAI_API_KEY' && (
+            {keyName !== 'OPENAI_API_KEY' && keyName !== 'LOGO_DEV_PUBLIC_KEY' && (
               <div className="space-y-2">
                 <Label>Key Name</Label>
                 <Input
@@ -340,7 +439,7 @@ export function ApiKeyManager({ onError, onSuccess }: ApiKeyManagerProps) {
               <Input
                 value={keyValue}
                 onChange={(e) => setKeyValue(e.target.value)}
-                placeholder="sk-..."
+                placeholder={keyName === 'LOGO_DEV_PUBLIC_KEY' ? 'pk_...' : 'sk-...'}
                 type="password"
               />
             </div>

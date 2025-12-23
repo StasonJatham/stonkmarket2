@@ -232,7 +232,7 @@ function SwipeableCard({
         <div className="shrink-0 px-4 pt-3 pb-1 flex items-start justify-between">
           <div className="flex items-center gap-2">
             {/* Company Logo */}
-            <StockLogo symbol={card.symbol} website={card.website} size="md" />
+            <StockLogo symbol={card.symbol} size="md" />
             <div>
               <div className="flex items-center gap-1.5">
                 <span className="font-bold text-base">
@@ -467,7 +467,6 @@ function SuggestionSwipeCard({
           {/* Company Logo */}
           <StockLogo 
             symbol={suggestion.symbol} 
-            website={suggestion.website} 
             size="xl" 
             className="shrink-0 border-2 border-chart-4/30 shadow-md" 
           />

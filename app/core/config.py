@@ -151,6 +151,17 @@ class Settings(BaseSettings):
         default=3, ge=0, le=5, description="External API retry count"
     )
 
+    # Logo.dev API settings
+    logo_dev_public_key: str = Field(
+        default="pk_D27n9b3FSs24Q1yRf4_PHg", description="Logo.dev API public key"
+    )
+    logo_dev_secret_key: str = Field(
+        default="", description="Logo.dev API secret key (not currently used)"
+    )
+    logo_cache_days: int = Field(
+        default=90, ge=1, le=365, description="Days to cache logos before refetching"
+    )
+
     # Logging
     log_level: str = Field(
         default="INFO", description="Log level: DEBUG, INFO, WARNING, ERROR"

@@ -18,13 +18,12 @@ import httpx
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.database.connection import fetch_one, execute
+from app.repositories import api_keys as api_keys_repo
 
 logger = get_logger("services.logo")
 
-# Logo.dev configuration
-LOGO_DEV_PUBLIC_KEY = "pk_D27n9b3FSs24Q1yRf4_PHg"
+# Logo.dev configuration - uses settings from config
 LOGO_DEV_BASE_URL = "https://img.logo.dev"
-LOGO_CACHE_DAYS = 30  # Refresh logos every 30 days
 LOGO_SIZE = 128  # Retina size
 
 
@@ -32,6 +31,25 @@ class LogoTheme(str, Enum):
     """Logo theme variants."""
     LIGHT = "light"
     DARK = "dark"
+
+
+async def _get_logo_dev_public_key() -> Optional[str]:
+    """
+    Get Logo.dev public key from env or database.
+    
+    Checks environment variable first, then falls back to secure database storage.
+    """
+    # Check env first
+    if settings.logo_dev_public_key:
+        return settings.logo_dev_public_key
+    
+    # Check database
+    try:
+        key = await api_keys_repo.get_decrypted_key(api_keys_repo.LOGO_DEV_PUBLIC_KEY)
+        return key
+    except Exception as e:
+        logger.warning(f"Failed to get Logo.dev key from database: {e}")
+        return None
 
 
 async def _fetch_logo_from_api(
@@ -50,10 +68,16 @@ async def _fetch_logo_from_api(
     Returns:
         WebP image bytes or None if failed
     """
+    # Get API key
+    api_key = await _get_logo_dev_public_key()
+    if not api_key:
+        logger.debug(f"Logo.dev API key not configured, skipping fetch for {symbol}")
+        return None
+    
     # Logo.dev ticker endpoint
     url = f"{LOGO_DEV_BASE_URL}/ticker/{symbol.upper()}"
     params = {
-        "token": LOGO_DEV_PUBLIC_KEY,
+        "token": api_key,
         "format": "webp",
         "theme": theme.value,
         "retina": "true",
@@ -90,14 +114,14 @@ async def _fetch_favicon_fallback(
     Fetch favicon as fallback using Google's favicon service.
     
     Args:
-        website: Company website URL
-        symbol: Stock symbol for domain mapping fallback
+        website: Company website URL (from yfinance)
+        symbol: Stock symbol (for logging only)
         timeout: Request timeout
         
     Returns:
         Image bytes or None
     """
-    # Try to get domain from website
+    # Extract domain from website URL - no hardcoded fallback mappings
     domain = None
     if website:
         try:
@@ -107,31 +131,9 @@ async def _fetch_favicon_fallback(
         except Exception:
             pass
     
-    # Fallback domain mapping for common symbols
+    # No domain means no website available from yfinance - can't fetch favicon
     if not domain:
-        domain_map = {
-            'AAPL': 'apple.com',
-            'MSFT': 'microsoft.com',
-            'GOOGL': 'google.com',
-            'GOOG': 'google.com',
-            'AMZN': 'amazon.com',
-            'META': 'meta.com',
-            'TSLA': 'tesla.com',
-            'NVDA': 'nvidia.com',
-            'AMD': 'amd.com',
-            'NFLX': 'netflix.com',
-            'DIS': 'disney.com',
-            'NKE': 'nike.com',
-            'KO': 'coca-cola.com',
-            'PEP': 'pepsico.com',
-            'WMT': 'walmart.com',
-            'JPM': 'jpmorgan.com',
-            'V': 'visa.com',
-            'MA': 'mastercard.com',
-        }
-        domain = domain_map.get(symbol.upper())
-    
-    if not domain:
+        logger.debug(f"No website available for {symbol}, skipping favicon fallback")
         return None
     
     # Google favicon service
@@ -184,7 +186,7 @@ async def get_logo(
         fetched_at = row.get("logo_fetched_at")
         if fetched_at:
             age = datetime.utcnow() - fetched_at.replace(tzinfo=None)
-            if age < timedelta(days=LOGO_CACHE_DAYS):
+            if age < timedelta(days=settings.logo_cache_days):
                 return bytes(row[cache_column])
     
     # Fetch fresh logo

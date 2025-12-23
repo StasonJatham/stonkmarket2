@@ -105,6 +105,18 @@ export function Layout() {
               )}
             </div>
           </div>
+          
+          {/* Row 3: Attribution */}
+          <div className="flex justify-center mt-2 pt-2 border-t border-border/20">
+            <a 
+              href="https://logo.dev" 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="text-xs text-muted-foreground/60 hover:text-muted-foreground hover:underline transition-colors"
+            >
+              Logos provided by Logo.dev
+            </a>
+          </div>
         </div>
       </footer>
     </div>

@@ -40,6 +40,13 @@ class AppSettingsResponse(BaseModel):
     scheduler_timezone: str
     external_api_timeout: int
     external_api_retries: int
+    # Logo.dev settings
+    logo_dev_public_key_configured: bool = Field(
+        default=False, description="Whether Logo.dev public key is configured"
+    )
+    logo_cache_days: int = Field(
+        default=90, description="Days to cache logos before refetching"
+    )
 
 
 class RuntimeSettingsResponse(BaseModel):
@@ -105,5 +112,6 @@ class SystemStatusResponse(BaseModel):
     runtime_settings: RuntimeSettingsResponse
     cronjobs: List[CronJobSummary]
     openai_configured: bool
+    logo_dev_configured: bool
     total_symbols: int
     pending_suggestions: int

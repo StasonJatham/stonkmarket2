@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { validateSymbol, suggestStock } from '@/services/api';
 import { useTheme } from '@/context/ThemeContext';
+import { StockLogo } from '@/components/StockLogo';
 
 // Symbol validation: 1-10 chars, alphanumeric + dot only
 const SYMBOL_REGEX = /^[A-Z0-9.]{1,10}$/;
@@ -282,7 +283,8 @@ export function SuggestStockDialog() {
                   >
                     <Card className="bg-muted/50">
                       <CardContent className="p-4">
-                        <div className="flex items-start justify-between">
+                        <div className="flex items-start gap-3">
+                          <StockLogo symbol={stockPreview.symbol} size="lg" />
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
                               <span className="font-bold text-lg">{stockPreview.symbol}</span>

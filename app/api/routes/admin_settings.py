@@ -23,6 +23,7 @@ from app.services.runtime_settings import (
     get_all_runtime_settings,
     update_runtime_settings as update_settings_async,
     check_openai_configured,
+    check_logo_dev_configured,
 )
 
 logger = get_logger("api.admin_settings")
@@ -40,6 +41,9 @@ async def get_app_settings(
     user: TokenData = Depends(require_admin),
 ) -> AppSettingsResponse:
     """Get application settings (read-only from config)."""
+    # Check if Logo.dev is configured (env or database)
+    logo_dev_configured = await check_logo_dev_configured()
+    
     return AppSettingsResponse(
         app_name=settings.app_name,
         app_version=settings.app_version,
@@ -62,6 +66,8 @@ async def get_app_settings(
         scheduler_timezone=settings.scheduler_timezone,
         external_api_timeout=settings.external_api_timeout,
         external_api_retries=settings.external_api_retries,
+        logo_dev_public_key_configured=logo_dev_configured,
+        logo_cache_days=settings.logo_cache_days,
     )
 
 
@@ -141,6 +147,9 @@ async def get_system_status(
     # Check OpenAI configuration
     openai_configured = await check_openai_configured()
 
+    # Check Logo.dev configuration
+    logo_dev_configured = await check_logo_dev_configured()
+
     # Get symbol count
     total_symbols = 0
     try:
@@ -166,6 +175,7 @@ async def get_system_status(
         runtime_settings=RuntimeSettingsResponse(**get_all_runtime_settings()),
         cronjobs=cronjobs,
         openai_configured=openai_configured,
+        logo_dev_configured=logo_dev_configured,
         total_symbols=total_symbols,
         pending_suggestions=pending_suggestions,
     )

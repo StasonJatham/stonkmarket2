@@ -92,3 +92,5 @@ async def delete_key(service_name: str) -> bool:
 
 # Convenience constants for well-known keys
 OPENAI_API_KEY = "openai_api_key"
+LOGO_DEV_PUBLIC_KEY = "logo_dev_public_key"
+LOGO_DEV_SECRET_KEY = "logo_dev_secret_key"
