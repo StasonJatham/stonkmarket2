@@ -13,12 +13,15 @@ logger = get_logger("jobs.definitions")
 async def data_grab_job() -> str:
     """
     Fetch stock data from yfinance and calculate signals/dips.
+    Also fetches latest prices for benchmark indices.
 
     Schedule: Mon-Fri at 11pm (after market close)
     """
     from app.dipfinder.service import get_dipfinder_service
     from app.database.connection import fetch_all
     from app.cache.cache import Cache
+    from app.services.runtime_settings import get_runtime_setting
+    from datetime import date, timedelta
 
     logger.info("Starting data_grab job")
 
@@ -33,6 +36,25 @@ async def data_grab_job() -> str:
         signals = await service.get_signals(tickers, force_refresh=True)
         dips = sum(1 for s in signals if s.dip_metrics and s.dip_metrics.is_meaningful)
 
+        # Also fetch latest benchmark data
+        benchmarks = get_runtime_setting("benchmarks", [])
+        benchmark_symbols = [b.get("symbol") for b in benchmarks if b.get("symbol")]
+        benchmark_count = 0
+        
+        if benchmark_symbols:
+            logger.info(f"Fetching data for {len(benchmark_symbols)} benchmarks")
+            for symbol in benchmark_symbols:
+                try:
+                    # Fetch latest price data for benchmark (forces cache refresh)
+                    await service.price_provider.get_prices(
+                        symbol,
+                        start_date=date.today() - timedelta(days=5),
+                        end_date=date.today(),
+                    )
+                    benchmark_count += 1
+                except Exception as e:
+                    logger.warning(f"Failed to fetch benchmark {symbol}: {e}")
+
         # Invalidate caches since new data is available
         ranking_cache = Cache(prefix="ranking", default_ttl=1800)
         chart_cache = Cache(prefix="chart", default_ttl=3600)
@@ -40,7 +62,7 @@ async def data_grab_job() -> str:
         await chart_cache.invalidate_pattern("*")
         logger.info("Invalidated ranking and chart caches")
 
-        message = f"Fetched {len(signals)} symbols, {dips} dips"
+        message = f"Fetched {len(signals)} symbols, {dips} dips, {benchmark_count} benchmarks"
         logger.info(f"data_grab: {message}")
         return message
 
