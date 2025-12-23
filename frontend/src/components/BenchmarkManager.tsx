@@ -86,7 +86,7 @@ function BenchmarkForm({
       </div>
 
       <DialogFooter>
-        <Button onClick={onSubmit} disabled={!formId.trim() || !formSymbol.trim() || !formName.trim()}>
+        <Button type="button" onClick={onSubmit} disabled={!formId.trim() || !formSymbol.trim() || !formName.trim()}>
           {submitLabel}
         </Button>
       </DialogFooter>
@@ -97,9 +97,10 @@ function BenchmarkForm({
 interface BenchmarkManagerProps {
   benchmarks: BenchmarkConfig[];
   onChange: (benchmarks: BenchmarkConfig[]) => void;
+  onSave?: (benchmarks: BenchmarkConfig[]) => Promise<void>;
 }
 
-export function BenchmarkManager({ benchmarks, onChange }: BenchmarkManagerProps) {
+export function BenchmarkManager({ benchmarks, onChange, onSave }: BenchmarkManagerProps) {
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   
@@ -125,7 +126,7 @@ export function BenchmarkManager({ benchmarks, onChange }: BenchmarkManagerProps
     setEditingIndex(index);
   }
 
-  function handleAdd() {
+  async function handleAdd() {
     if (!formId.trim() || !formSymbol.trim() || !formName.trim()) return;
     
     const newBenchmark: BenchmarkConfig = {
@@ -140,12 +141,19 @@ export function BenchmarkManager({ benchmarks, onChange }: BenchmarkManagerProps
       return; // Could add error handling
     }
 
-    onChange([...benchmarks, newBenchmark]);
+    const newBenchmarks = [...benchmarks, newBenchmark];
+    onChange(newBenchmarks);
+    
+    // Save immediately if onSave is provided
+    if (onSave) {
+      await onSave(newBenchmarks);
+    }
+    
     resetForm();
     setIsAddOpen(false);
   }
 
-  function handleEdit() {
+  async function handleEdit() {
     if (editingIndex === null) return;
     if (!formId.trim() || !formSymbol.trim() || !formName.trim()) return;
 
@@ -159,12 +167,24 @@ export function BenchmarkManager({ benchmarks, onChange }: BenchmarkManagerProps
     const newBenchmarks = [...benchmarks];
     newBenchmarks[editingIndex] = updated;
     onChange(newBenchmarks);
+    
+    // Save immediately if onSave is provided
+    if (onSave) {
+      await onSave(newBenchmarks);
+    }
+    
     resetForm();
     setEditingIndex(null);
   }
 
-  function handleDelete(index: number) {
-    onChange(benchmarks.filter((_, i) => i !== index));
+  async function handleDelete(index: number) {
+    const newBenchmarks = benchmarks.filter((_, i) => i !== index);
+    onChange(newBenchmarks);
+    
+    // Save immediately if onSave is provided
+    if (onSave) {
+      await onSave(newBenchmarks);
+    }
   }
 
   const formProps = {

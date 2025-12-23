@@ -101,10 +101,10 @@ export function Dashboard() {
   // SEO - Dynamic meta tags based on selected stock
   useSEO({
     title: selectedStock 
-      ? `${selectedStock.symbol} Stock Analysis - ${selectedStock.depth?.toFixed(0)}% from High`
+      ? `${selectedStock.symbol} Stock Analysis - ${(selectedStock.depth * 100).toFixed(0)}% from High`
       : 'Stock Dip Tracker Dashboard',
     description: selectedStock
-      ? `Analyze ${selectedStock.symbol} stock dip: ${selectedStock.depth?.toFixed(1)}% below 52-week high. Track recovery potential with AI-powered analysis.`
+      ? `Analyze ${selectedStock.symbol} stock dip: ${(selectedStock.depth * 100).toFixed(1)}% below 52-week high. Track recovery potential with AI-powered analysis.`
       : 'Track market dips and identify stocks with high recovery potential. Real-time analysis with S&P 500 and MSCI World Index benchmarks.',
     keywords: selectedStock
       ? `${selectedStock.symbol}, stock analysis, dip buying, recovery potential, ${selectedStock.symbol} price`

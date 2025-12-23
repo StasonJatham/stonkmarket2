@@ -321,6 +321,10 @@ async def generate(
     instructions = INSTRUCTIONS.get(task, "")
     prompt = _build_prompt(task, context)
     
+    # OpenAI Responses API requires 'json' in input when using json_object format
+    if json_output:
+        prompt += "\n\nRespond with valid JSON."
+    
     # Request parameters
     params: dict[str, Any] = {
         "model": model,
@@ -517,6 +521,10 @@ async def submit_batch(
     for item in items:
         custom_id = f"{task.value}_{item.get('symbol', 'unknown')}"
         prompt = _build_prompt(task, item)
+        
+        # OpenAI Responses API requires 'json' in input when using json_object format
+        if json_output:
+            prompt += "\n\nRespond with valid JSON."
         
         body: dict[str, Any] = {
             "model": model,

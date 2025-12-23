@@ -20,8 +20,8 @@ interface BenchmarkSelectorProps {
   className?: string;
 }
 
-// Default benchmarks if none provided
-const DEFAULT_BENCHMARKS: { value: Exclude<BenchmarkType, null>; label: string; description: string }[] = [
+// Default benchmarks if none provided (fallback when API fails)
+const DEFAULT_BENCHMARKS: { value: string; label: string; description: string }[] = [
   { value: 'SP500', label: 'S&P 500', description: 'US Large Cap Index' },
   { value: 'MSCI_WORLD', label: 'MSCI World', description: 'Global Developed Markets' },
 ];
@@ -33,25 +33,18 @@ export function BenchmarkSelector({
   isLoading, 
   className 
 }: BenchmarkSelectorProps) {
-  // Merge custom benchmarks with defaults
+  // Use custom benchmarks from API if available, otherwise fall back to defaults
   const benchmarks = useMemo(() => {
-    const defaults = [...DEFAULT_BENCHMARKS];
-    
     if (customBenchmarks && customBenchmarks.length > 0) {
-      // Add custom benchmarks that aren't already in defaults
-      customBenchmarks.forEach((custom) => {
-        const existsInDefaults = defaults.some(d => d.value === custom.id || d.value === custom.symbol);
-        if (!existsInDefaults) {
-          defaults.push({
-            value: custom.id as Exclude<BenchmarkType, null>,
-            label: custom.name,
-            description: custom.description || custom.symbol,
-          });
-        }
-      });
+      // Use API benchmarks directly - they are the source of truth
+      return customBenchmarks.map((b) => ({
+        value: b.id,
+        label: b.name,
+        description: b.description || b.symbol,
+      }));
     }
-    
-    return defaults;
+    // Fallback to defaults if API didn't return any
+    return DEFAULT_BENCHMARKS;
   }, [customBenchmarks]);
 
   const selectedBenchmark = benchmarks.find(b => b.value === value);

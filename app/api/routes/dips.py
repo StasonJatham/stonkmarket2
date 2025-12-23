@@ -137,10 +137,22 @@ async def _build_ranking(
     summary="Get available benchmarks",
     description="Get list of available benchmarks for comparison. Public endpoint.",
 )
-async def get_benchmarks() -> List[BenchmarkInfo]:
-    """Get available benchmarks from runtime settings."""
+async def get_benchmarks() -> CacheableResponse:
+    """Get available benchmarks from runtime settings.
+    
+    Returns with short cache headers since benchmarks rarely change
+    but users expect immediate updates when they do.
+    """
     benchmarks = get_runtime_setting("benchmarks", [])
-    return [BenchmarkInfo(**b) for b in benchmarks]
+    data = [BenchmarkInfo(**b).model_dump() for b in benchmarks]
+    etag = generate_etag(data)
+    
+    return CacheableResponse(
+        data,
+        etag=etag,
+        max_age=60,  # 1 minute cache
+        stale_while_revalidate=60,  # Allow stale for 1 more minute while revalidating
+    )
 
 
 @router.get(

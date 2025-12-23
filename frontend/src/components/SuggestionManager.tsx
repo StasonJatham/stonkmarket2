@@ -102,6 +102,13 @@ function getFetchStatusBadge(fetchStatus: string | null) {
           Ready
         </Badge>
       );
+    case 'fetching':
+      return (
+        <Badge variant="outline" className="bg-primary/10 text-primary border-primary/30">
+          <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+          Fetching...
+        </Badge>
+      );
     case 'rate_limited':
       return (
         <Badge variant="outline" className="bg-chart-4/10 text-chart-4 border-chart-4/30">
@@ -223,6 +230,18 @@ export function SuggestionManager() {
   useEffect(() => {
     loadSuggestions();
   }, [loadSuggestions]);
+
+  // Auto-poll when any suggestion is in 'fetching' state
+  useEffect(() => {
+    const hasFetching = suggestions.some(s => s.fetch_status === 'fetching');
+    if (!hasFetching) return;
+
+    const pollInterval = setInterval(() => {
+      loadSuggestions();
+    }, 2000); // Poll every 2 seconds
+
+    return () => clearInterval(pollInterval);
+  }, [suggestions, loadSuggestions]);
 
   // Reset page when filter changes
   useEffect(() => {
@@ -476,7 +495,8 @@ export function SuggestionManager() {
                           ) : (
                             getFetchStatusBadge(suggestion.fetch_status)
                           )}
-                          {(suggestion.fetch_status === 'rate_limited' || suggestion.fetch_status === 'error' || suggestion.fetch_status === 'pending') && (
+                          {/* Only show retry button for pending suggestions (not approved - use Refresh Data instead) */}
+                          {suggestion.status === 'pending' && (suggestion.fetch_status === 'rate_limited' || suggestion.fetch_status === 'error') && (
                             <Button
                               size="sm"
                               variant="ghost"

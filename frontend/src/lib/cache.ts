@@ -278,7 +278,7 @@ export const CACHE_TTL = {
   RANKING: 30 * 60 * 1000,      // 30 minutes - data only changes when job runs
   CHART: 60 * 60 * 1000,        // 1 hour - historical data, invalidated when job runs
   STOCK_INFO: 60 * 60 * 1000,   // 1 hour - rarely changes
-  BENCHMARK: 60 * 60 * 1000,    // 1 hour - market data
+  BENCHMARK: 60 * 1000,         // 1 minute - benchmark config, updates immediately
   CRON_JOBS: 60 * 1000,         // 1 minute - admin data
   SYMBOLS: 24 * 60 * 60 * 1000, // 24 hours - symbol list, invalidated on add/delete
   SETTINGS: 60 * 60 * 1000,     // 1 hour - runtime settings

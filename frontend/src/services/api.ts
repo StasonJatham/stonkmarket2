@@ -189,7 +189,7 @@ export async function getAvailableBenchmarks(): Promise<PublicBenchmark[]> {
   return apiCache.fetch(
     cacheKey,
     () => fetchAPI<PublicBenchmark[]>('/dips/benchmarks'),
-    { ttl: CACHE_TTL.RANKING } // Cache for same time as ranking
+    { ttl: CACHE_TTL.BENCHMARK, staleWhileRevalidate: true }
   );
 }
 
@@ -235,7 +235,8 @@ export async function refreshData(): Promise<DipStock[]> {
 }
 
 // Benchmark types and functions
-export type BenchmarkType = 'SP500' | 'MSCI_WORLD' | null;
+// BenchmarkType is now dynamic - can be any benchmark ID from the API or null
+export type BenchmarkType = string | null;
 
 export interface BenchmarkDataPoint {
   date: string;
@@ -252,27 +253,51 @@ export interface ComparisonChartData {
   benchmarkNormalized?: number;
 }
 
-// Benchmark symbol mapping
-const BENCHMARK_SYMBOLS: Record<Exclude<BenchmarkType, null>, string> = {
+// Legacy benchmark symbol mapping (fallback for known benchmarks)
+const LEGACY_BENCHMARK_SYMBOLS: Record<string, string> = {
   SP500: '^GSPC',      // S&P 500 Index
   MSCI_WORLD: 'URTH',  // iShares MSCI World ETF (proxy for MSCI World)
 };
 
-const BENCHMARK_NAMES: Record<Exclude<BenchmarkType, null>, string> = {
+const LEGACY_BENCHMARK_NAMES: Record<string, string> = {
   SP500: 'S&P 500',
   MSCI_WORLD: 'MSCI World',
 };
 
 export function getBenchmarkName(benchmark: BenchmarkType): string {
   if (!benchmark) return '';
-  return BENCHMARK_NAMES[benchmark];
+  return LEGACY_BENCHMARK_NAMES[benchmark] || benchmark;
+}
+
+// Cache for benchmark config lookup
+let benchmarkConfigCache: PublicBenchmark[] | null = null;
+
+// Clear benchmark config cache - called when settings are updated
+export function clearBenchmarkConfigCache(): void {
+  benchmarkConfigCache = null;
+}
+
+async function getBenchmarkConfig(): Promise<PublicBenchmark[]> {
+  if (benchmarkConfigCache) return benchmarkConfigCache;
+  try {
+    benchmarkConfigCache = await getAvailableBenchmarks();
+    return benchmarkConfigCache;
+  } catch {
+    return [];
+  }
 }
 
 export async function getBenchmarkChart(
-  benchmark: Exclude<BenchmarkType, null>,
+  benchmark: string,
   days: number = 365
 ): Promise<ChartDataPoint[]> {
-  const symbol = BENCHMARK_SYMBOLS[benchmark];
+  // First try to get symbol from API config
+  const configs = await getBenchmarkConfig();
+  const config = configs.find(b => b.id === benchmark);
+  
+  // Use symbol from config, or fallback to legacy mapping, or use benchmark as symbol
+  const symbol = config?.symbol || LEGACY_BENCHMARK_SYMBOLS[benchmark] || benchmark;
+  
   if (!symbol) {
     console.error(`Unknown benchmark: ${benchmark}`);
     return [];
@@ -956,7 +981,9 @@ export async function updateRuntimeSettings(updates: Partial<RuntimeSettings>): 
     body: JSON.stringify(updates),
   });
   // Invalidate settings caches on update
-  apiCache.invalidate(/^(runtime-settings|suggestion-settings)/);
+  apiCache.invalidate(/^(runtime-settings|suggestion-settings|benchmarks)/);
+  // Also clear the module-level benchmark config cache
+  clearBenchmarkConfigCache();
   return result;
 }
 
@@ -990,7 +1017,7 @@ export async function updateCredentials(data: UserCredentialsUpdate): Promise<{ 
 // =============================================================================
 
 export type SuggestionStatus = 'pending' | 'approved' | 'rejected';
-export type FetchStatus = 'pending' | 'fetched' | 'rate_limited' | 'error' | 'invalid';
+export type FetchStatus = 'pending' | 'fetching' | 'fetched' | 'rate_limited' | 'error' | 'invalid';
 
 export interface Suggestion {
   id: number;
@@ -1128,9 +1155,12 @@ export async function getAllSuggestions(
 }
 
 export async function approveSuggestion(suggestionId: number): Promise<{ message: string; symbol: string }> {
-  return fetchAPI<{ message: string; symbol: string }>(`/suggestions/${suggestionId}/approve`, {
+  const result = await fetchAPI<{ message: string; symbol: string }>(`/suggestions/${suggestionId}/approve`, {
     method: 'POST',
   });
+  // Invalidate symbols cache so the new stock appears in symbol manager
+  apiCache.invalidate(/^symbols/);
+  return result;
 }
 
 export async function rejectSuggestion(suggestionId: number, reason?: string): Promise<{ message: string }> {

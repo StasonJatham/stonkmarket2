@@ -793,14 +793,24 @@ async def _process_approved_symbol(symbol: str) -> None:
     
     Fetches Yahoo Finance data, 365 days of price history, and generates AI content.
     Also generates AI summary of company description on first import.
+    Updates fetch_status throughout for real-time admin feedback.
     """
     from datetime import date, timedelta
     from app.services.stock_info import get_stock_info_async
     from app.services.openai_client import generate_bio, rate_dip, summarize_company
     from app.repositories import dip_votes as dip_votes_repo
     from app.dipfinder.service import get_dipfinder_service
+    from app.cache.cache import Cache
     
     logger.info(f"Processing newly approved symbol: {symbol}")
+    
+    # Set fetch_status to 'fetching' so admin UI shows loading state
+    await execute(
+        """UPDATE stock_suggestions 
+           SET fetch_status = 'fetching', fetch_error = NULL
+           WHERE symbol = $1""",
+        symbol.upper(),
+    )
     
     try:
         # Step 1: Fetch Yahoo Finance info
@@ -852,6 +862,23 @@ async def _process_approved_symbol(symbol: str) -> None:
                 ai_summary,
             )
             logger.info(f"Updated symbol info for {symbol}: name='{name}', sector='{sector}', summary_ai={'yes' if ai_summary else 'no'}")
+        
+        # Also update stock_suggestions table with name/sector for admin UI display
+        await execute(
+            """UPDATE stock_suggestions SET
+                   company_name = COALESCE($2, company_name),
+                   sector = COALESCE($3, sector),
+                   summary = COALESCE($4, summary),
+                   current_price = $5,
+                   ath_price = $6
+               WHERE symbol = $1""",
+            symbol.upper(),
+            name,
+            sector,
+            full_summary[:1000] if full_summary else None,  # Truncate for storage
+            current_price,
+            ath_price,
+        )
         
         # Step 1.6: Fetch 365 days of price history
         try:
@@ -909,9 +936,30 @@ async def _process_approved_symbol(symbol: str) -> None:
             logger.info(f"Generated AI content for {symbol}: bio={'yes' if bio else 'no'}, rating={rating_data.get('rating') if rating_data else 'none'}")
         else:
             logger.warning(f"No AI content generated for {symbol}")
+        
+        # Step 6: Mark as fetched and invalidate ranking cache
+        await execute(
+            """UPDATE stock_suggestions 
+               SET fetch_status = 'fetched', fetched_at = NOW()
+               WHERE symbol = $1""",
+            symbol.upper(),
+        )
+        
+        # Invalidate ranking cache so the new stock appears immediately
+        ranking_cache = Cache(prefix="ranking", default_ttl=3600)
+        deleted = await ranking_cache.invalidate_pattern("*")
+        logger.info(f"Completed processing {symbol}, invalidated {deleted} ranking cache keys")
             
     except Exception as e:
         logger.error(f"Error processing approved symbol {symbol}: {e}")
+        # Set error status so admin can retry
+        await execute(
+            """UPDATE stock_suggestions 
+               SET fetch_status = 'error', fetch_error = $2
+               WHERE symbol = $1""",
+            symbol.upper(),
+            str(e)[:500],  # Truncate error message
+        )
 
 
 @router.post("/{suggestion_id}/reject", response_model=dict)

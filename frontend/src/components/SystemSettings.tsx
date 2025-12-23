@@ -122,6 +122,22 @@ export function SystemSettings() {
     }
   }
 
+  // Save benchmarks immediately when edited in BenchmarkManager
+  async function saveBenchmarks(newBenchmarks: BenchmarkConfig[]) {
+    setIsSaving(true);
+    setError(null);
+    try {
+      const updated = await updateRuntimeSettings({ benchmarks: newBenchmarks });
+      setRuntimeSettings(updated);
+      setSuccess('Benchmark saved!');
+      setTimeout(() => setSuccess(null), 2000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save benchmark');
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
   const hasChanges = runtimeSettings && (
     aiEnabled !== runtimeSettings.ai_enrichment_enabled ||
     aiModel !== runtimeSettings.ai_model ||
@@ -304,7 +320,11 @@ export function SystemSettings() {
       </Card>
 
       {/* Benchmark Management */}
-      <BenchmarkManager benchmarks={benchmarks} onChange={setBenchmarks} />
+      <BenchmarkManager 
+        benchmarks={benchmarks} 
+        onChange={setBenchmarks}
+        onSave={saveBenchmarks}
+      />
 
       {/* App Info (Read-only) */}
       {appSettings && (
