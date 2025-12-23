@@ -1,6 +1,17 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
+import {
+  Area,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  ReferenceLine,
+  ReferenceDot,
+  Line,
+  ComposedChart,
+} from 'recharts';
 import { 
   getStockInfo, 
   getStockChart, 
@@ -10,21 +21,52 @@ import {
   type DipCard 
 } from '@/services/api';
 import { useSEO, generateBreadcrumbJsonLd } from '@/lib/seo';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { StockChart } from '@/components/StockChart';
+import { Separator } from '@/components/ui/separator';
 import { 
-  TrendingDown, 
+  TrendingDown,
+  TrendingUp,
   ArrowLeft,
   Building2,
   DollarSign,
   BarChart3,
   AlertTriangle,
   Calendar,
-  ExternalLink
+  ExternalLink,
+  Activity,
+  Percent,
+  Target,
+  Sparkles,
+  Globe,
+  LineChart,
+  Scale,
 } from 'lucide-react';
+
+// Format large numbers
+function formatNumber(value: number | null | undefined, options?: { decimals?: number; prefix?: string; suffix?: string }): string {
+  if (value === null || value === undefined) return '—';
+  const { decimals = 2, prefix = '', suffix = '' } = options || {};
+  
+  if (Math.abs(value) >= 1e12) return `${prefix}${(value / 1e12).toFixed(decimals)}T${suffix}`;
+  if (Math.abs(value) >= 1e9) return `${prefix}${(value / 1e9).toFixed(decimals)}B${suffix}`;
+  if (Math.abs(value) >= 1e6) return `${prefix}${(value / 1e6).toFixed(decimals)}M${suffix}`;
+  if (Math.abs(value) >= 1e3) return `${prefix}${(value / 1e3).toFixed(decimals)}K${suffix}`;
+  return `${prefix}${value.toFixed(decimals)}${suffix}`;
+}
+
+function formatPrice(value: number | null | undefined): string {
+  if (value === null || value === undefined) return '—';
+  return `$${value.toFixed(2)}`;
+}
+
+function formatPercent(value: number | null | undefined, asDecimal = true): string {
+  if (value === null || value === undefined) return '—';
+  const pct = asDecimal ? value * 100 : value;
+  return `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`;
+}
 
 // Generate stock-specific structured data
 function generateStockJsonLd(symbol: string, info: StockInfo | null, dipCard: DipCard | null) {
@@ -62,6 +104,37 @@ function generateStockJsonLd(symbol: string, info: StockInfo | null, dipCard: Di
   return baseSchema;
 }
 
+// Chart period options
+const CHART_PERIODS = [
+  { label: '1M', days: 30 },
+  { label: '3M', days: 90 },
+  { label: '6M', days: 180 },
+  { label: '1Y', days: 365 },
+  { label: '2Y', days: 730 },
+];
+
+// Stat item component
+interface StatItemProps {
+  icon: React.ElementType;
+  label: string;
+  value: string;
+  valueColor?: string;
+}
+
+function StatItem({ icon: Icon, label, value, valueColor }: StatItemProps) {
+  return (
+    <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/50 hover:bg-muted/70 transition-colors">
+      <div className="p-2 rounded-md bg-background">
+        <Icon className="h-4 w-4 text-muted-foreground" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="text-xs text-muted-foreground">{label}</p>
+        <p className={`text-sm font-semibold truncate ${valueColor || ''}`}>{value}</p>
+      </div>
+    </div>
+  );
+}
+
 export function StockDetailPage() {
   const { symbol } = useParams<{ symbol: string }>();
   const upperSymbol = symbol?.toUpperCase() || '';
@@ -71,6 +144,7 @@ export function StockDetailPage() {
   const [dipCard, setDipCard] = useState<DipCard | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [chartPeriod, setChartPeriod] = useState(365);
 
   // SEO for stock detail page
   useSEO({
@@ -90,6 +164,63 @@ export function StockDetailPage() {
     ],
   });
 
+  // Format chart data with display dates
+  const formattedChartData = useMemo(() => {
+    return chartData.map((point) => ({
+      ...point,
+      displayDate: new Date(point.date).toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+      }),
+    }));
+  }, [chartData]);
+
+  // Find current/last point index for the red marker
+  const currentPointIndex = useMemo(() => {
+    if (formattedChartData.length === 0) return -1;
+    return formattedChartData.length - 1;
+  }, [formattedChartData]);
+
+  // Find ref high point index for marker
+  const refHighIndex = useMemo(() => {
+    if (chartData.length === 0) return -1;
+    const refDate = chartData[0]?.ref_high_date;
+    if (!refDate) return -1;
+    return formattedChartData.findIndex(p => p.date === refDate);
+  }, [chartData, formattedChartData]);
+
+  // Create chart data with trendline connecting peak to current
+  const chartDataWithTrendline = useMemo(() => {
+    if (formattedChartData.length === 0) return [];
+    
+    return formattedChartData.map((point, index) => {
+      let trendline: number | null = null;
+      if (index === refHighIndex && refHighIndex >= 0) {
+        trendline = point.close;
+      } else if (index === formattedChartData.length - 1) {
+        trendline = point.close;
+      }
+      return { ...point, trendline };
+    });
+  }, [formattedChartData, refHighIndex]);
+
+  // Get current price for reference line
+  const currentPrice = useMemo(() => {
+    if (formattedChartData.length === 0) return null;
+    return formattedChartData[formattedChartData.length - 1]?.close;
+  }, [formattedChartData]);
+
+  // Calculate price change for chart period
+  const priceChange = useMemo(() => {
+    if (chartData.length < 2) return 0;
+    const first = chartData[0].close;
+    const last = chartData[chartData.length - 1].close;
+    return ((last - first) / first) * 100;
+  }, [chartData]);
+
+  const isPositive = priceChange >= 0;
+  const chartColor = isPositive ? 'var(--success)' : 'var(--danger)';
+
   const loadData = useCallback(async () => {
     if (!upperSymbol) return;
     
@@ -97,10 +228,9 @@ export function StockDetailPage() {
     setError(null);
     
     try {
-      // Load all data in parallel
       const [infoData, chartResult, dipCardResult] = await Promise.allSettled([
         getStockInfo(upperSymbol),
-        getStockChart(upperSymbol, 365),
+        getStockChart(upperSymbol, chartPeriod),
         getDipCard(upperSymbol),
       ]);
 
@@ -116,7 +246,6 @@ export function StockDetailPage() {
         setDipCard(dipCardResult.value);
       }
 
-      // If none succeeded, show error
       if (infoData.status === 'rejected' && chartResult.status === 'rejected') {
         setError('Stock not found or data unavailable');
       }
@@ -125,22 +254,38 @@ export function StockDetailPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [upperSymbol]);
+  }, [upperSymbol, chartPeriod]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
 
+  // Handle chart period change
+  const handlePeriodChange = async (days: number) => {
+    setChartPeriod(days);
+    try {
+      const newChartData = await getStockChart(upperSymbol, days);
+      setChartData(newChartData);
+    } catch (err) {
+      console.error('Failed to load chart data:', err);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="space-y-6">
         <Skeleton className="h-8 w-64" />
-        <div className="grid gap-4 md:grid-cols-3">
-          <Skeleton className="h-32" />
-          <Skeleton className="h-32" />
-          <Skeleton className="h-32" />
+        <div className="grid gap-4 md:grid-cols-4">
+          <Skeleton className="h-24" />
+          <Skeleton className="h-24" />
+          <Skeleton className="h-24" />
+          <Skeleton className="h-24" />
         </div>
         <Skeleton className="h-[400px]" />
+        <div className="grid gap-4 md:grid-cols-2">
+          <Skeleton className="h-48" />
+          <Skeleton className="h-48" />
+        </div>
       </div>
     );
   }
@@ -163,6 +308,8 @@ export function StockDetailPage() {
 
   const dipPct = dipCard?.dip_pct ? (dipCard.dip_pct * 100).toFixed(1) : null;
   const minDipPct = dipCard?.min_dip_pct ? (dipCard.min_dip_pct * 100).toFixed(1) : null;
+  const currentPriceValue = dipCard?.current_price || chartData[chartData.length - 1]?.close;
+  const refHigh = dipCard?.ref_high || chartData[0]?.ref_high;
 
   return (
     <motion.div
@@ -178,138 +325,476 @@ export function StockDetailPage() {
         </Link>
       </Button>
 
-      {/* Header */}
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">
-            {info?.name || upperSymbol}
-          </h1>
-          <div className="flex items-center gap-2 mt-1">
-            <Badge variant="outline">{upperSymbol}</Badge>
-            {info?.sector && (
-              <Badge variant="secondary">
-                <Building2 className="mr-1 h-3 w-3" />
-                {info.sector}
-              </Badge>
+      {/* Hero Section */}
+      <div className="grid gap-6 lg:grid-cols-3">
+        {/* Stock Header */}
+        <div className="lg:col-span-2">
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-3">
+                    <CardTitle className="text-3xl font-bold">
+                      {info?.name || upperSymbol}
+                    </CardTitle>
+                    {dipCard?.ai_rating && (
+                      <Badge variant={
+                        dipCard.ai_rating === 'strong_buy' || dipCard.ai_rating === 'buy' ? 'default' :
+                        dipCard.ai_rating === 'hold' ? 'secondary' : 'destructive'
+                      } className="text-sm">
+                        {dipCard.ai_rating.replace('_', ' ').toUpperCase()}
+                      </Badge>
+                    )}
+                  </div>
+                  <CardDescription className="flex items-center gap-2 mt-1">
+                    <Badge variant="outline" className="font-mono">{upperSymbol}</Badge>
+                    {info?.sector && (
+                      <Badge variant="secondary">
+                        <Building2 className="mr-1 h-3 w-3" />
+                        {info.sector}
+                      </Badge>
+                    )}
+                    {info?.industry && (
+                      <span className="text-sm text-muted-foreground">{info.industry}</span>
+                    )}
+                  </CardDescription>
+                </div>
+                
+                <div className="text-right">
+                  <div className="text-3xl font-bold font-mono">
+                    {formatPrice(currentPriceValue)}
+                  </div>
+                  <div className={`flex items-center justify-end gap-1 text-sm ${isPositive ? 'text-success' : 'text-danger'}`}>
+                    {isPositive ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
+                    <span className="font-medium">{formatPercent(priceChange / 100)}</span>
+                    <span className="text-muted-foreground">({CHART_PERIODS.find(p => p.days === chartPeriod)?.label})</span>
+                  </div>
+                </div>
+              </div>
+            </CardHeader>
+            
+            {/* Dip Summary Banner */}
+            {dipPct && (
+              <CardContent className="pt-0">
+                <div className="flex flex-wrap items-center gap-4 p-3 rounded-lg border border-danger/20 bg-danger/5">
+                  <div className="flex items-center gap-2">
+                    <TrendingDown className="h-4 w-4 text-danger" />
+                    <span className="text-sm text-muted-foreground">Current Dip:</span>
+                    <span className="font-bold text-danger">-{dipPct}%</span>
+                  </div>
+                  {minDipPct && (
+                    <div className="flex items-center gap-2">
+                      <Target className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-sm text-muted-foreground">Max Dip:</span>
+                      <span className="font-semibold">-{minDipPct}%</span>
+                    </div>
+                  )}
+                  {dipCard?.days_below && (
+                    <div className="flex items-center gap-2">
+                      <Calendar className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-sm text-muted-foreground">Days in Dip:</span>
+                      <span className="font-semibold">{dipCard.days_below}</span>
+                    </div>
+                  )}
+                  {refHigh && (
+                    <div className="flex items-center gap-2 ml-auto">
+                      <span className="text-sm text-muted-foreground">Ref High:</span>
+                      <span className="font-semibold font-mono">{formatPrice(refHigh)}</span>
+                    </div>
+                  )}
+                </div>
+              </CardContent>
             )}
-          </div>
+          </Card>
         </div>
-        
-        {dipCard?.ai_rating && (
-          <div className="text-right">
-            <div className="text-sm text-muted-foreground">AI Rating</div>
-            <Badge variant={
-              dipCard.ai_rating === 'strong_buy' || dipCard.ai_rating === 'buy' ? 'default' :
-              dipCard.ai_rating === 'hold' ? 'secondary' : 'destructive'
-            } className="text-lg px-3 py-1">
-              {dipCard.ai_rating.replace('_', ' ').toUpperCase()}
-            </Badge>
-          </div>
-        )}
-      </div>
 
-      {/* Stats Grid */}
-      <div className="grid gap-4 md:grid-cols-3">
-        {dipPct && (
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-                <TrendingDown className="h-4 w-4" />
-                Current Dip
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-destructive">
-                -{dipPct}%
-              </div>
-              <p className="text-xs text-muted-foreground">
-                From reference high
-              </p>
-            </CardContent>
-          </Card>
-        )}
-
-        {minDipPct && (
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-                <TrendingDown className="h-4 w-4" />
-                Max Dip
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-chart-4">
-                -{minDipPct}%
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Lowest point reached
-              </p>
-            </CardContent>
-          </Card>
-        )}
-
-        {info?.market_cap && (
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-                <DollarSign className="h-4 w-4" />
-                Market Cap
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">
-                ${(info.market_cap / 1e9).toFixed(1)}B
-              </div>
-              <p className="text-xs text-muted-foreground">
-                USD
-              </p>
-            </CardContent>
-          </Card>
-        )}
+        {/* Quick Stats Card */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Quick Stats</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            <div className="flex justify-between items-center py-1">
+              <span className="text-sm text-muted-foreground">Market Cap</span>
+              <span className="font-semibold">{formatNumber(info?.market_cap, { prefix: '$' })}</span>
+            </div>
+            <Separator />
+            <div className="flex justify-between items-center py-1">
+              <span className="text-sm text-muted-foreground">P/E Ratio</span>
+              <span className="font-semibold">{info?.pe_ratio?.toFixed(2) || '—'}</span>
+            </div>
+            <Separator />
+            <div className="flex justify-between items-center py-1">
+              <span className="text-sm text-muted-foreground">Forward P/E</span>
+              <span className="font-semibold">{info?.forward_pe?.toFixed(2) || '—'}</span>
+            </div>
+            <Separator />
+            <div className="flex justify-between items-center py-1">
+              <span className="text-sm text-muted-foreground">Dividend Yield</span>
+              <span className={`font-semibold ${info?.dividend_yield && info.dividend_yield > 0 ? 'text-success' : ''}`}>
+                {info?.dividend_yield ? `${(info.dividend_yield * 100).toFixed(2)}%` : '—'}
+              </span>
+            </div>
+            <Separator />
+            <div className="flex justify-between items-center py-1">
+              <span className="text-sm text-muted-foreground">Beta</span>
+              <span className="font-semibold">{info?.beta?.toFixed(2) || '—'}</span>
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       {/* Price Chart */}
-      {chartData.length > 0 && (
-        <Card>
-          <CardHeader>
+      <Card>
+        <CardHeader className="pb-2">
+          <div className="flex flex-wrap items-center justify-between gap-4">
             <CardTitle className="flex items-center gap-2">
-              <BarChart3 className="h-5 w-5" />
-              Price History (1 Year)
+              <LineChart className="h-5 w-5" />
+              Price Chart
+            </CardTitle>
+            <div className="flex gap-1">
+              {CHART_PERIODS.map((p) => (
+                <Button
+                  key={p.days}
+                  variant={chartPeriod === p.days ? 'default' : 'ghost'}
+                  size="sm"
+                  className="h-7 px-2.5 text-xs"
+                  onClick={() => handlePeriodChange(p.days)}
+                >
+                  {p.label}
+                </Button>
+              ))}
+            </div>
+          </div>
+          <CardDescription>
+            Price history with dip reference lines
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="h-80 md:h-96">
+            {chartDataWithTrendline.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={chartDataWithTrendline}>
+                  <defs>
+                    <linearGradient id={`gradient-${upperSymbol}`} x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={chartColor} stopOpacity={0.3} />
+                      <stop offset="100%" stopColor={chartColor} stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <XAxis
+                    dataKey="displayDate"
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fontSize: 11 }}
+                    tickMargin={8}
+                    minTickGap={50}
+                  />
+                  <YAxis
+                    domain={['dataMin', 'dataMax']}
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fontSize: 11 }}
+                    tickMargin={8}
+                    tickFormatter={(value) => `$${value.toFixed(0)}`}
+                    width={50}
+                  />
+                  
+                  {/* Current price reference line (dashed, red) */}
+                  {currentPrice && (
+                    <ReferenceLine
+                      y={currentPrice}
+                      stroke="var(--danger)"
+                      strokeDasharray="5 5"
+                      strokeOpacity={0.7}
+                    />
+                  )}
+                  
+                  {/* Peak price reference line (dashed, green) */}
+                  {chartData[0]?.ref_high && (
+                    <ReferenceLine
+                      y={chartData[0].ref_high}
+                      stroke="var(--success)"
+                      strokeDasharray="3 3"
+                      strokeOpacity={0.5}
+                    />
+                  )}
+                  
+                  {/* Trendline connecting peak to current */}
+                  <Line
+                    type="linear"
+                    dataKey="trendline"
+                    stroke="var(--muted-foreground)"
+                    strokeWidth={1}
+                    strokeDasharray="3 3"
+                    strokeOpacity={0.4}
+                    dot={false}
+                    connectNulls={true}
+                    isAnimationActive={false}
+                  />
+                  
+                  {/* Mark current price point (red dot) */}
+                  {currentPointIndex >= 0 && formattedChartData[currentPointIndex] && (
+                    <ReferenceDot
+                      x={formattedChartData[currentPointIndex].displayDate}
+                      y={formattedChartData[currentPointIndex].close}
+                      r={5}
+                      fill="var(--danger)"
+                      stroke="var(--background)"
+                      strokeWidth={2}
+                    />
+                  )}
+                  
+                  {/* Mark ref high point (green dot) */}
+                  {refHighIndex >= 0 && formattedChartData[refHighIndex] && (
+                    <ReferenceDot
+                      x={formattedChartData[refHighIndex].displayDate}
+                      y={formattedChartData[refHighIndex].close}
+                      r={5}
+                      fill="var(--success)"
+                      stroke="var(--background)"
+                      strokeWidth={2}
+                    />
+                  )}
+                  
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: 'hsl(var(--background))',
+                      border: '1px solid hsl(var(--border))',
+                      borderRadius: '8px',
+                      fontSize: '12px',
+                      padding: '8px 12px',
+                    }}
+                    labelStyle={{ color: 'hsl(var(--foreground))' }}
+                    itemStyle={{ color: 'hsl(var(--foreground))' }}
+                    formatter={(value: number, name: string, props) => {
+                      if (name === 'trendline') return null;
+                      const point = props.payload;
+                      const items: [string, string][] = [
+                        [`$${value.toFixed(2)}`, 'Price']
+                      ];
+                      if (point.drawdown !== null && point.drawdown !== undefined) {
+                        items.push([`${(point.drawdown * 100).toFixed(1)}%`, 'Drawdown']);
+                      }
+                      if (point.since_dip !== null && point.since_dip !== undefined) {
+                        items.push([`${(point.since_dip * 100).toFixed(1)}%`, 'Since Dip']);
+                      }
+                      return items;
+                    }}
+                    labelFormatter={(label) => label}
+                  />
+                  
+                  <Area
+                    type="monotone"
+                    dataKey="close"
+                    stroke={chartColor}
+                    strokeWidth={2}
+                    fill={`url(#gradient-${upperSymbol})`}
+                    isAnimationActive={true}
+                    animationDuration={800}
+                    animationEasing="ease-out"
+                  />
+                </ComposedChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="h-full flex items-center justify-center text-muted-foreground">
+                No chart data available
+              </div>
+            )}
+          </div>
+          
+          {/* Chart Legend */}
+          <div className="flex flex-wrap items-center gap-4 mt-4 pt-4 border-t text-xs text-muted-foreground">
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full bg-success" />
+              <span>Reference High</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full bg-danger" />
+              <span>Current Price</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-0 border-t-2 border-dashed border-muted-foreground" />
+              <span>Dip Trendline</span>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Fundamental Data Grid */}
+      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+        {/* Valuation Metrics */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Scale className="h-4 w-4" />
+              Valuation
             </CardTitle>
           </CardHeader>
-          <CardContent>
-            <StockChart symbol={upperSymbol} data={chartData} />
+          <CardContent className="grid gap-2">
+            <StatItem 
+              icon={DollarSign} 
+              label="Market Cap" 
+              value={formatNumber(info?.market_cap, { prefix: '$' })} 
+            />
+            <StatItem 
+              icon={BarChart3} 
+              label="P/E Ratio (TTM)" 
+              value={info?.pe_ratio?.toFixed(2) || '—'} 
+            />
+            <StatItem 
+              icon={BarChart3} 
+              label="Forward P/E" 
+              value={info?.forward_pe?.toFixed(2) || '—'} 
+            />
           </CardContent>
         </Card>
-      )}
 
-      {/* AI Analysis */}
-      {dipCard?.ai_reasoning && (
+        {/* Trading Metrics */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Activity className="h-4 w-4" />
+              Trading
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-2">
+            <StatItem 
+              icon={BarChart3} 
+              label="Avg Volume" 
+              value={formatNumber(info?.avg_volume)} 
+            />
+            <StatItem 
+              icon={Activity} 
+              label="Beta" 
+              value={info?.beta?.toFixed(2) || '—'} 
+            />
+            <StatItem 
+              icon={Percent} 
+              label="Dividend Yield" 
+              value={info?.dividend_yield ? `${(info.dividend_yield * 100).toFixed(2)}%` : '—'} 
+              valueColor={info?.dividend_yield && info.dividend_yield > 0 ? 'text-success' : undefined}
+            />
+          </CardContent>
+        </Card>
+
+        {/* Price Range */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <TrendingUp className="h-4 w-4" />
+              52-Week Range
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-2">
+            <StatItem 
+              icon={TrendingUp} 
+              label="52W High" 
+              value={formatPrice(dipCard?.ref_high)} 
+              valueColor="text-success"
+            />
+            <StatItem 
+              icon={TrendingDown} 
+              label="Current Price" 
+              value={formatPrice(currentPriceValue)} 
+            />
+            {dipPct && (
+              <StatItem 
+                icon={Target} 
+                label="Distance from High" 
+                value={`-${dipPct}%`} 
+                valueColor="text-danger"
+              />
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* AI Analysis & Company Info */}
+      <div className="grid gap-6 md:grid-cols-2">
+        {/* AI Analysis */}
+        {dipCard?.ai_reasoning && (
+          <Card className="bg-gradient-to-br from-primary/5 to-primary/10 border-primary/20">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Sparkles className="h-5 w-5 text-primary" />
+                AI Analysis
+                {dipCard.ai_rating && (
+                  <Badge 
+                    variant={
+                      dipCard.ai_rating === 'strong_buy' || dipCard.ai_rating === 'buy' ? 'default' :
+                      dipCard.ai_rating === 'hold' ? 'secondary' : 'destructive'
+                    }
+                    className="ml-auto"
+                  >
+                    {dipCard.ai_rating.replace('_', ' ').toUpperCase()}
+                  </Badge>
+                )}
+              </CardTitle>
+              {dipCard.ai_confidence && (
+                <CardDescription>
+                  Confidence: {(dipCard.ai_confidence * 100).toFixed(0)}%
+                </CardDescription>
+              )}
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm leading-relaxed text-muted-foreground whitespace-pre-wrap">
+                {dipCard.ai_reasoning}
+              </p>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Company Info */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Calendar className="h-5 w-5" />
-              AI Analysis
+              <Building2 className="h-5 w-5" />
+              About the Company
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            {dipCard.ai_rating && (
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-muted-foreground">Rating:</span>
+            {info?.sector && (
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="secondary">{info.sector}</Badge>
+                {info.industry && (
+                  <span className="text-sm text-muted-foreground">{info.industry}</span>
+                )}
+              </div>
+            )}
+            
+            {(info?.summary_ai || info?.summary) && (
+              <p className="text-sm leading-relaxed text-muted-foreground">
+                {info.summary_ai || info.summary}
+              </p>
+            )}
+
+            {info?.recommendation && (
+              <div className="flex items-center gap-2 pt-2">
+                <span className="text-sm text-muted-foreground">Analyst Rating:</span>
                 <Badge variant={
-                  dipCard.ai_rating === 'buy' ? 'default' :
-                  dipCard.ai_rating === 'hold' ? 'secondary' : 'destructive'
+                  info.recommendation.includes('buy') ? 'default' :
+                  info.recommendation.includes('sell') ? 'destructive' : 'secondary'
                 }>
-                  {dipCard.ai_rating.toUpperCase()}
+                  {info.recommendation.replace('_', ' ').toUpperCase()}
                 </Badge>
               </div>
             )}
-            <p className="text-sm text-muted-foreground leading-relaxed">
-              {dipCard.ai_reasoning}
-            </p>
+
+            {info?.website && (
+              <a
+                href={info.website}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 text-sm text-primary hover:underline"
+              >
+                <Globe className="h-4 w-4" />
+                Visit website
+                <ExternalLink className="h-3 w-3" />
+              </a>
+            )}
           </CardContent>
         </Card>
-      )}
+      </div>
 
       {/* Disclaimer */}
       <Card className="bg-muted/50 border-dashed">
@@ -319,7 +804,8 @@ export function StockDetailPage() {
             <div className="text-sm text-muted-foreground">
               <strong className="text-foreground">Disclaimer:</strong> This is not financial advice. 
               All information is for educational purposes only. Past performance does not guarantee 
-              future results. Always do your own research and consult a financial advisor.
+              future results. Always do your own research and consult a financial advisor before 
+              making investment decisions.
             </div>
           </div>
         </CardContent>
@@ -344,6 +830,16 @@ export function StockDetailPage() {
             rel="noopener noreferrer"
           >
             Google Finance
+            <ExternalLink className="ml-2 h-3 w-3" />
+          </a>
+        </Button>
+        <Button variant="outline" size="sm" asChild>
+          <a 
+            href={`https://www.tradingview.com/symbols/${upperSymbol}`} 
+            target="_blank" 
+            rel="noopener noreferrer"
+          >
+            TradingView
             <ExternalLink className="ml-2 h-3 w-3" />
           </a>
         </Button>
