@@ -33,11 +33,11 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "suggestion_cleanup_days": 30,
     "auto_approve_votes": 10,
     # Cache TTLs in seconds - shorter for frequently changing data
-    "cache_ttl_symbols": 60,        # 1 minute - symbols list
-    "cache_ttl_suggestions": 30,    # 30 seconds - suggestions
-    "cache_ttl_ai_content": 300,    # 5 minutes - AI generated content
-    "cache_ttl_ranking": 300,       # 5 minutes - dip rankings/dashboard
-    "cache_ttl_charts": 600,        # 10 minutes - price charts
+    "cache_ttl_symbols": 0,        # 0 = no cache - real-time
+    "cache_ttl_suggestions": 0,    # 0 = no cache - real-time
+    "cache_ttl_ai_content": 0,      # 0 = no cache - real-time
+    "cache_ttl_ranking": 0,         # 0 = no cache - real-time
+    "cache_ttl_charts": 0,          # 0 = no cache - real-time
     "benchmarks": [
         {
             "id": "SP500",

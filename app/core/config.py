@@ -77,10 +77,10 @@ class Settings(BaseSettings):
         description="Rate limit for auth endpoints (unauthenticated)",
     )
     rate_limit_api_anonymous: str = Field(
-        default="60/minute", description="Rate limit for anonymous API requests"
+        default="200/minute", description="Rate limit for anonymous API requests"
     )
     rate_limit_api_authenticated: str = Field(
-        default="600/minute", description="Rate limit for authenticated API requests"
+        default="1000/minute", description="Rate limit for authenticated API requests"
     )
     # Note: Admin users bypass rate limiting entirely
 

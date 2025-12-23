@@ -475,7 +475,9 @@ async def get_stock_info_endpoint(
     if symbol_data and symbol_data.get("summary_ai"):
         info.summary_ai = symbol_data["summary_ai"]
 
-    # Cache the result with dynamic TTL
-    await _info_cache.set(symbol, info.model_dump(), ttl=get_cache_ttl("ai_content"))
+    # Cache the result with dynamic TTL (skip cache if TTL is 0)
+    ttl = get_cache_ttl("ai_content")
+    if ttl > 0:
+        await _info_cache.set(symbol, info.model_dump(), ttl=ttl)
 
     return info

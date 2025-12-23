@@ -711,7 +711,7 @@ export function Dashboard() {
 
       {/* Mobile Details Sheet */}
       <Sheet open={isMobileDetailOpen && !!selectedStock} onOpenChange={setIsMobileDetailOpen}>
-        <SheetContent side="bottom" className="h-[90vh] p-0">
+        <SheetContent side="bottom" className="h-[85dvh] max-h-[calc(100dvh-env(safe-area-inset-top)-2rem)] p-0">
           <SheetTitle className="sr-only">Stock Details</SheetTitle>
           <div className="h-full overflow-hidden pt-2 pb-safe">
             <StockDetailsPanel
