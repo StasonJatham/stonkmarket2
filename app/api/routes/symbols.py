@@ -15,6 +15,7 @@ from app.core.security import TokenData
 from app.repositories import symbols as symbol_repo
 from app.schemas.symbols import SymbolCreate, SymbolResponse, SymbolUpdate
 from app.services.stock_info import get_stock_info
+from app.services.runtime_settings import get_cache_ttl
 
 logger = get_logger("api.routes.symbols")
 

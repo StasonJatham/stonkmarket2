@@ -25,17 +25,15 @@ from app.dipfinder.service import get_dipfinder_service  # For chart price data
 from app.repositories import symbols as symbol_repo
 from app.schemas.dips import ChartPoint, DipStateResponse, RankingEntry, StockInfo
 from app.services.stock_info import get_stock_info, get_stock_info_async
-from app.services.runtime_settings import get_runtime_setting
+from app.services.runtime_settings import get_runtime_setting, get_cache_ttl
 
 
 router = APIRouter()
 
-# Caches with appropriate TTLs - data only changes when scheduled job runs
-_ranking_cache = Cache(
-    prefix="ranking", default_ttl=3600
-)  # 1 hour - invalidated by jobs
-_chart_cache = Cache(prefix="chart", default_ttl=3600)  # 1 hour
-_info_cache = Cache(prefix="stockinfo", default_ttl=3600)  # 1 hour
+# Caches - TTLs are applied dynamically from runtime settings when setting values
+_ranking_cache = Cache(prefix="ranking", default_ttl=300)
+_chart_cache = Cache(prefix="chart", default_ttl=600)
+_info_cache = Cache(prefix="stockinfo", default_ttl=300)
 
 
 async def invalidate_stock_info_cache(symbol: str) -> None:
@@ -217,8 +215,8 @@ async def get_ranking(
     ranking = all_entries if show_all else filtered_entries
     data = [r.model_dump(mode="json") for r in ranking]
 
-    # Cache the result
-    await _ranking_cache.set(cache_key, data)
+    # Cache the result with dynamic TTL
+    await _ranking_cache.set(cache_key, data, ttl=get_cache_ttl("ranking"))
     
     etag = generate_etag(data)
     return CacheableResponse(
@@ -248,9 +246,10 @@ async def refresh_ranking(
     # Build ranking with force refresh (use shared helper)
     all_entries, filtered_entries = await _build_ranking(force_refresh=True)
 
-    # Cache both filtered and unfiltered results
-    await _ranking_cache.set("all:True", [r.model_dump() for r in all_entries])
-    await _ranking_cache.set("all:False", [r.model_dump() for r in filtered_entries])
+    # Cache both filtered and unfiltered results with dynamic TTL
+    ttl = get_cache_ttl("ranking")
+    await _ranking_cache.set("all:True", [r.model_dump() for r in all_entries], ttl=ttl)
+    await _ranking_cache.set("all:False", [r.model_dump() for r in filtered_entries], ttl=ttl)
 
     return all_entries
 
@@ -423,9 +422,9 @@ async def get_chart(
                 )
             )
 
-        # Cache the result
+        # Cache the result with dynamic TTL
         data = [p.model_dump(mode="json") for p in chart_points]
-        await _chart_cache.set(cache_key, data)
+        await _chart_cache.set(cache_key, data, ttl=get_cache_ttl("charts"))
 
         etag = generate_etag(data)
         return CacheableResponse(
@@ -476,7 +475,7 @@ async def get_stock_info_endpoint(
     if symbol_data and symbol_data.get("summary_ai"):
         info.summary_ai = symbol_data["summary_ai"]
 
-    # Cache the result
-    await _info_cache.set(symbol, info.model_dump())
+    # Cache the result with dynamic TTL
+    await _info_cache.set(symbol, info.model_dump(), ttl=get_cache_ttl("ai_content"))
 
     return info

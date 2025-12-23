@@ -42,8 +42,16 @@ import {
 } from 'lucide-react';
 import { StockLogo } from '@/components/StockLogo';
 
-// Swipe threshold in pixels
-const SWIPE_THRESHOLD = 100;
+// Dynamic swipe threshold based on screen width
+// Mobile: ~35% of screen width (prevents accidental swipes with thumbs)
+// Desktop: ~20% of card width (feels natural with mouse/trackpad)
+const getSwipeThreshold = (screenWidth: number): number => {
+  if (screenWidth < 480) return Math.max(120, screenWidth * 0.35);  // Small phones
+  if (screenWidth < 768) return Math.max(100, screenWidth * 0.28);  // Large phones/small tablets
+  if (screenWidth < 1024) return Math.max(90, screenWidth * 0.15);  // Tablets
+  return Math.min(150, Math.max(80, screenWidth * 0.08));           // Desktop
+};
+const VELOCITY_THRESHOLD = 500;  // Minimum velocity (px/s) for intentional quick swipes
 
 // Spring transition for smooth animations
 const springTransition = {
@@ -156,15 +164,35 @@ function SwipeableCard({
   colorblindMode: boolean;
   customColors?: { up: string; down: string };
 }) {
+  // Dynamic threshold based on current screen width
+  const [swipeThreshold, setSwipeThreshold] = useState(() => 
+    typeof window !== 'undefined' ? getSwipeThreshold(window.innerWidth) : 100
+  );
+  
+  // Update threshold on resize
+  useEffect(() => {
+    const handleResize = () => setSwipeThreshold(getSwipeThreshold(window.innerWidth));
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+  
   const x = useMotionValue(0);
   const rotate = useTransform(x, [-200, 200], [-15, 15]);
-  const buyOpacity = useTransform(x, [0, SWIPE_THRESHOLD], [0, 1]);
-  const sellOpacity = useTransform(x, [-SWIPE_THRESHOLD, 0], [1, 0]);
+  const buyOpacity = useTransform(x, [0, swipeThreshold], [0, 1]);
+  const sellOpacity = useTransform(x, [-swipeThreshold, 0], [1, 0]);
   
   const handleDragEnd = (_: unknown, info: PanInfo) => {
-    if (info.offset.x > SWIPE_THRESHOLD) {
+    const offset = info.offset.x;
+    const velocity = Math.abs(info.velocity.x);
+    
+    // Require either: enough distance OR (moderate distance + high velocity)
+    // This prevents accidental quick flicks on mobile
+    const hasEnoughDistance = Math.abs(offset) > swipeThreshold;
+    const hasIntentionalSwipe = Math.abs(offset) > swipeThreshold * 0.5 && velocity > VELOCITY_THRESHOLD;
+    
+    if ((hasEnoughDistance || hasIntentionalSwipe) && offset > 0) {
       onVote('buy');
-    } else if (info.offset.x < -SWIPE_THRESHOLD) {
+    } else if ((hasEnoughDistance || hasIntentionalSwipe) && offset < 0) {
       onVote('sell');
     }
   };

@@ -1030,6 +1030,12 @@ export interface RuntimeSettings {
   ai_model: string;
   suggestion_cleanup_days: number;
   auto_approve_votes: number;
+  // Cache TTL settings (in seconds)
+  cache_ttl_symbols: number;
+  cache_ttl_suggestions: number;
+  cache_ttl_ai_content: number;
+  cache_ttl_ranking: number;
+  cache_ttl_charts: number;
   benchmarks: BenchmarkConfig[];
 }
 

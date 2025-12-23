@@ -32,6 +32,12 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "ai_model": "gpt-5-mini",
     "suggestion_cleanup_days": 30,
     "auto_approve_votes": 10,
+    # Cache TTLs in seconds - shorter for frequently changing data
+    "cache_ttl_symbols": 60,        # 1 minute - symbols list
+    "cache_ttl_suggestions": 30,    # 30 seconds - suggestions
+    "cache_ttl_ai_content": 300,    # 5 minutes - AI generated content
+    "cache_ttl_ranking": 300,       # 5 minutes - dip rankings/dashboard
+    "cache_ttl_charts": 600,        # 10 minutes - price charts
     "benchmarks": [
         {
             "id": "SP500",
@@ -197,6 +203,20 @@ def get_all_runtime_settings() -> Dict[str, Any]:
     if not _cache_initialized:
         return DEFAULT_SETTINGS.copy()
     return _settings_cache.copy()
+
+
+def get_cache_ttl(cache_type: str) -> int:
+    """Get cache TTL for a specific cache type from runtime settings.
+    
+    Args:
+        cache_type: One of 'symbols', 'suggestions', 'ai_content', 'ranking', 'charts'
+    
+    Returns:
+        TTL in seconds
+    """
+    key = f"cache_ttl_{cache_type}"
+    default = DEFAULT_SETTINGS.get(key, 300)
+    return int(get_setting(key, default))
 
 
 async def check_openai_configured() -> bool:

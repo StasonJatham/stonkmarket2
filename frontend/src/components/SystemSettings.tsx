@@ -36,6 +36,7 @@ import {
   AlertCircle,
   CheckCircle,
   KeyRound,
+  Clock,
 } from 'lucide-react';
 
 const AI_MODELS = [
@@ -63,6 +64,13 @@ export function SystemSettings() {
   const [holdThreshold, setHoldThreshold] = useState(40);
   const [benchmarks, setBenchmarks] = useState<BenchmarkConfig[]>([]);
   const [openaiConfigured, setOpenaiConfigured] = useState(false);
+  
+  // Cache TTL state (in seconds)
+  const [cacheTtlSymbols, setCacheTtlSymbols] = useState(60);
+  const [cacheTtlSuggestions, setCacheTtlSuggestions] = useState(30);
+  const [cacheTtlAiContent, setCacheTtlAiContent] = useState(300);
+  const [cacheTtlRanking, setCacheTtlRanking] = useState(300);
+  const [cacheTtlCharts, setCacheTtlCharts] = useState(600);
 
   useEffect(() => {
     loadSettings();
@@ -90,6 +98,13 @@ export function SystemSettings() {
       setBuyThreshold(runtime.signal_threshold_buy);
       setHoldThreshold(runtime.signal_threshold_hold);
       setBenchmarks(runtime.benchmarks || []);
+      
+      // Initialize cache TTL state
+      setCacheTtlSymbols(runtime.cache_ttl_symbols ?? 60);
+      setCacheTtlSuggestions(runtime.cache_ttl_suggestions ?? 30);
+      setCacheTtlAiContent(runtime.cache_ttl_ai_content ?? 300);
+      setCacheTtlRanking(runtime.cache_ttl_ranking ?? 300);
+      setCacheTtlCharts(runtime.cache_ttl_charts ?? 600);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load settings');
     } finally {
@@ -111,6 +126,11 @@ export function SystemSettings() {
         signal_threshold_buy: buyThreshold,
         signal_threshold_hold: holdThreshold,
         benchmarks: benchmarks,
+        cache_ttl_symbols: cacheTtlSymbols,
+        cache_ttl_suggestions: cacheTtlSuggestions,
+        cache_ttl_ai_content: cacheTtlAiContent,
+        cache_ttl_ranking: cacheTtlRanking,
+        cache_ttl_charts: cacheTtlCharts,
       });
       setRuntimeSettings(updated);
       setSuccess('Settings saved successfully!');
@@ -146,7 +166,12 @@ export function SystemSettings() {
     strongBuyThreshold !== runtimeSettings.signal_threshold_strong_buy ||
     buyThreshold !== runtimeSettings.signal_threshold_buy ||
     holdThreshold !== runtimeSettings.signal_threshold_hold ||
-    JSON.stringify(benchmarks) !== JSON.stringify(runtimeSettings.benchmarks || [])
+    JSON.stringify(benchmarks) !== JSON.stringify(runtimeSettings.benchmarks || []) ||
+    cacheTtlSymbols !== (runtimeSettings.cache_ttl_symbols ?? 60) ||
+    cacheTtlSuggestions !== (runtimeSettings.cache_ttl_suggestions ?? 30) ||
+    cacheTtlAiContent !== (runtimeSettings.cache_ttl_ai_content ?? 300) ||
+    cacheTtlRanking !== (runtimeSettings.cache_ttl_ranking ?? 300) ||
+    cacheTtlCharts !== (runtimeSettings.cache_ttl_charts ?? 600)
   );
 
   if (isLoading) {
@@ -315,6 +340,93 @@ export function SystemSettings() {
             <p className="text-xs text-muted-foreground">
               Remove rejected and pending suggestions older than this many days
             </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Cache TTL Settings */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Clock className="h-5 w-5 text-primary" />
+            Cache TTL Settings
+          </CardTitle>
+          <CardDescription>
+            Configure how long cached data is retained (in seconds). Lower values = fresher data, higher API load.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label>Symbols Cache</Label>
+              <Input
+                type="number"
+                value={cacheTtlSymbols}
+                onChange={(e) => setCacheTtlSymbols(parseInt(e.target.value) || 60)}
+                min={5}
+                max={3600}
+                className="max-w-32"
+              />
+              <p className="text-xs text-muted-foreground">
+                Symbol list & details ({Math.floor(cacheTtlSymbols / 60)}m {cacheTtlSymbols % 60}s)
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label>Suggestions Cache</Label>
+              <Input
+                type="number"
+                value={cacheTtlSuggestions}
+                onChange={(e) => setCacheTtlSuggestions(parseInt(e.target.value) || 30)}
+                min={5}
+                max={3600}
+                className="max-w-32"
+              />
+              <p className="text-xs text-muted-foreground">
+                Stock suggestions ({Math.floor(cacheTtlSuggestions / 60)}m {cacheTtlSuggestions % 60}s)
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label>AI Content Cache</Label>
+              <Input
+                type="number"
+                value={cacheTtlAiContent}
+                onChange={(e) => setCacheTtlAiContent(parseInt(e.target.value) || 300)}
+                min={30}
+                max={86400}
+                className="max-w-32"
+              />
+              <p className="text-xs text-muted-foreground">
+                AI-generated bios & insights ({Math.floor(cacheTtlAiContent / 60)}m)
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label>Ranking Cache</Label>
+              <Input
+                type="number"
+                value={cacheTtlRanking}
+                onChange={(e) => setCacheTtlRanking(parseInt(e.target.value) || 300)}
+                min={30}
+                max={3600}
+                className="max-w-32"
+              />
+              <p className="text-xs text-muted-foreground">
+                Dip ranking data ({Math.floor(cacheTtlRanking / 60)}m)
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label>Charts Cache</Label>
+              <Input
+                type="number"
+                value={cacheTtlCharts}
+                onChange={(e) => setCacheTtlCharts(parseInt(e.target.value) || 600)}
+                min={60}
+                max={3600}
+                className="max-w-32"
+              />
+              <p className="text-xs text-muted-foreground">
+                Chart data ({Math.floor(cacheTtlCharts / 60)}m)
+              </p>
+            </div>
           </div>
         </CardContent>
       </Card>

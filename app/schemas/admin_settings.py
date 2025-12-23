@@ -76,6 +76,22 @@ class RuntimeSettingsResponse(BaseModel):
     auto_approve_votes: int = Field(
         default=10, ge=1, le=1000, description="Votes needed for auto-approval"
     )
+    # Cache TTL settings (in seconds)
+    cache_ttl_symbols: int = Field(
+        default=60, ge=5, le=3600, description="Cache TTL for symbols list (seconds)"
+    )
+    cache_ttl_suggestions: int = Field(
+        default=30, ge=5, le=3600, description="Cache TTL for suggestions (seconds)"
+    )
+    cache_ttl_ai_content: int = Field(
+        default=300, ge=30, le=7200, description="Cache TTL for AI content (seconds)"
+    )
+    cache_ttl_ranking: int = Field(
+        default=300, ge=30, le=7200, description="Cache TTL for rankings/dashboard (seconds)"
+    )
+    cache_ttl_charts: int = Field(
+        default=600, ge=60, le=7200, description="Cache TTL for price charts (seconds)"
+    )
     benchmarks: List[BenchmarkConfig] = Field(
         default_factory=list, description="Configured benchmark indices"
     )
@@ -92,6 +108,12 @@ class RuntimeSettingsUpdate(BaseModel):
     ai_model: Optional[str] = None
     suggestion_cleanup_days: Optional[int] = Field(default=None, ge=1, le=365)
     auto_approve_votes: Optional[int] = Field(default=None, ge=1, le=1000)
+    # Cache TTL settings
+    cache_ttl_symbols: Optional[int] = Field(default=None, ge=5, le=3600)
+    cache_ttl_suggestions: Optional[int] = Field(default=None, ge=5, le=3600)
+    cache_ttl_ai_content: Optional[int] = Field(default=None, ge=30, le=7200)
+    cache_ttl_ranking: Optional[int] = Field(default=None, ge=30, le=7200)
+    cache_ttl_charts: Optional[int] = Field(default=None, ge=60, le=7200)
     benchmarks: Optional[List[BenchmarkConfig]] = None
 
 
