@@ -435,15 +435,27 @@ function SuggestionSwipeCard({
   isTop: boolean;
   autoApproveVotes?: number;
 }) {
+  // Dynamic threshold based on current screen width
+  const [swipeThreshold, setSwipeThreshold] = useState(() => 
+    typeof window !== 'undefined' ? getSwipeThreshold(window.innerWidth) : 100
+  );
+  
+  // Update threshold on resize
+  useEffect(() => {
+    const handleResize = () => setSwipeThreshold(getSwipeThreshold(window.innerWidth));
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   const x = useMotionValue(0);
   const rotate = useTransform(x, [-200, 200], [-15, 15]);
-  const approveOpacity = useTransform(x, [0, SWIPE_THRESHOLD], [0, 1]);
-  const skipOpacity = useTransform(x, [-SWIPE_THRESHOLD, 0], [1, 0]);
+  const approveOpacity = useTransform(x, [0, swipeThreshold], [0, 1]);
+  const skipOpacity = useTransform(x, [-swipeThreshold, 0], [1, 0]);
   
   const handleDragEnd = (_: unknown, info: PanInfo) => {
-    if (info.offset.x > SWIPE_THRESHOLD) {
+    if (info.offset.x > swipeThreshold) {
       onVote(true);
-    } else if (info.offset.x < -SWIPE_THRESHOLD) {
+    } else if (info.offset.x < -swipeThreshold) {
       onVote(false);
     }
   };
