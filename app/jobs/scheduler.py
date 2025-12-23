@@ -69,9 +69,10 @@ class JobScheduler:
         # First, seed any registered jobs that don't exist in DB
         registered_jobs = get_all_jobs()
 
-        # Define default schedules for registered jobs (exactly 5)
+        # Define default schedules for registered jobs
         default_schedules = {
             "data_grab": ("0 23 * * 1-5", "Fetch stock data Mon-Fri 11pm"),
+            "cache_warmup": ("*/30 * * * *", "Pre-cache chart data every 30 min"),
             "batch_ai_swipe": ("0 3 * * 0", "Generate swipe bios weekly Sunday 3am"),
             "batch_ai_analysis": (
                 "0 4 * * 0",
