@@ -83,24 +83,7 @@ async def get_dip_card(
     if not card:
         raise NotFoundError(f"Symbol {symbol.upper()} is not currently in a dip")
 
-    return DipCard(
-        symbol=card["symbol"],
-        name=card.get("name"),
-        sector=card.get("sector"),
-        industry=card.get("industry"),
-        website=card.get("website"),
-        ipo_year=card.get("ipo_year"),
-        current_price=card["current_price"],
-        ref_high=card["ref_high"],
-        dip_pct=card["dip_pct"],
-        days_below=card["days_below"],
-        min_dip_pct=card.get("min_dip_pct"),
-        tinder_bio=card.get("tinder_bio"),
-        ai_rating=card.get("ai_rating"),
-        ai_reasoning=card.get("ai_reasoning"),
-        ai_confidence=card.get("ai_confidence"),
-        vote_counts=VoteCounts(**card["vote_counts"]),
-    )
+    return card
 
 
 @router.put(

@@ -157,7 +157,7 @@ async def get_ranking(
     cached = await _ranking_cache.get(cache_key)
     if cached:
         ranking = [RankingEntry(**item) for item in cached]
-        data = [r.model_dump() for r in ranking]
+        data = [r.model_dump(mode="json") for r in ranking]
         etag = generate_etag(data)
         
         # Check for conditional request (If-None-Match)
@@ -175,7 +175,7 @@ async def get_ranking(
     
     # Select appropriate result based on show_all
     ranking = all_entries if show_all else filtered_entries
-    data = [r.model_dump() for r in ranking]
+    data = [r.model_dump(mode="json") for r in ranking]
 
     # Cache the result
     await _ranking_cache.set(cache_key, data)
@@ -314,7 +314,7 @@ async def get_chart(
     # Try cache first
     cached = await _chart_cache.get(cache_key)
     if cached:
-        data = [ChartPoint(**item).model_dump() for item in cached]
+        data = [ChartPoint(**item).model_dump(mode="json") for item in cached]
         etag = generate_etag(data)
         
         # Check for conditional request (If-None-Match)
@@ -384,7 +384,7 @@ async def get_chart(
             )
 
         # Cache the result
-        data = [p.model_dump() for p in chart_points]
+        data = [p.model_dump(mode="json") for p in chart_points]
         await _chart_cache.set(cache_key, data)
 
         etag = generate_etag(data)

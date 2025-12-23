@@ -145,14 +145,14 @@ export function ComparisonChart({
               dataKey="displayDate"
               axisLine={false}
               tickLine={false}
-              tick={{ fontSize: 9, fill: 'hsl(var(--muted-foreground))' }}
+              tick={{ fontSize: 9 }}
               tickMargin={4}
               minTickGap={50}
             />
             <YAxis
               axisLine={false}
               tickLine={false}
-              tick={{ fontSize: 9, fill: 'hsl(var(--muted-foreground))' }}
+              tick={{ fontSize: 9 }}
               tickMargin={4}
               tickFormatter={(value) => `${value.toFixed(0)}%`}
               width={35}
@@ -167,6 +167,12 @@ export function ComparisonChart({
                 fontSize: '11px',
                 padding: '6px 10px',
                 boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)',
+              }}
+              labelStyle={{
+                color: 'hsl(var(--foreground))',
+              }}
+              itemStyle={{
+                color: 'hsl(var(--foreground))',
               }}
               formatter={(value: number, name: string) => {
                 const label = name === 'stockNormalized' ? stockSymbol : getBenchmarkName(benchmark);
@@ -273,7 +279,7 @@ export function ComparisonChart({
                 dataKey="displayDate"
                 axisLine={false}
                 tickLine={false}
-                tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
+                tick={{ fontSize: 10 }}
                 tickMargin={8}
                 minTickGap={40}
               />
@@ -281,7 +287,7 @@ export function ComparisonChart({
               <YAxis
                 axisLine={false}
                 tickLine={false}
-                tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
+                tick={{ fontSize: 10 }}
                 tickMargin={8}
                 tickFormatter={(value) => `${value.toFixed(0)}%`}
                 width={45}

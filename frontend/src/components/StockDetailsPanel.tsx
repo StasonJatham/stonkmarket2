@@ -339,11 +339,17 @@ export function StockDetailsPanel({
                     )}
                     <Tooltip
                       contentStyle={{
-                        backgroundColor: 'var(--background)',
-                        border: '1px solid var(--border)',
+                        backgroundColor: 'hsl(var(--background))',
+                        border: '1px solid hsl(var(--border))',
                         borderRadius: '8px',
                         fontSize: '12px',
                         padding: '8px 12px',
+                      }}
+                      labelStyle={{
+                        color: 'hsl(var(--foreground))',
+                      }}
+                      itemStyle={{
+                        color: 'hsl(var(--foreground))',
                       }}
                       formatter={(value: number, name: string, props) => {
                         if (name === 'trendline') return null; // Hide trendline from tooltip

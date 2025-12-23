@@ -174,7 +174,7 @@ export function PortfolioChart({
                 dataKey="displayDate"
                 axisLine={false}
                 tickLine={false}
-                tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
+                tick={{ fontSize: 11 }}
                 tickMargin={8}
                 minTickGap={50}
               />
@@ -182,7 +182,7 @@ export function PortfolioChart({
               <YAxis
                 axisLine={false}
                 tickLine={false}
-                tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
+                tick={{ fontSize: 11 }}
                 tickMargin={8}
                 tickFormatter={(value) => `${value.toFixed(0)}%`}
                 width={50}

@@ -186,3 +186,26 @@
     background-color: hsl(var(--muted-foreground) / 0.5);
   }
 }
+
+/* Recharts SVG text styling - CSS variables don't work in SVG attributes */
+.recharts-cartesian-axis-tick-value {
+  fill: var(--muted-foreground) !important;
+}
+
+.recharts-legend-item-text {
+  fill: var(--muted-foreground) !important;
+  color: var(--muted-foreground) !important;
+}
+
+.recharts-tooltip-label {
+  color: var(--foreground) !important;
+}
+
+.recharts-tooltip-item {
+  color: var(--foreground) !important;
+}
+
+.recharts-default-tooltip {
+  background-color: var(--background) !important;
+  border-color: var(--border) !important;
+}
