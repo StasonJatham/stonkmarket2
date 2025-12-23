@@ -14,6 +14,7 @@ from . import dip_changes
 from . import user_api_keys
 from . import dipfinder
 from . import admin_settings
+from . import metrics
 
 __all__ = [
     "auth",
@@ -30,4 +31,5 @@ __all__ = [
     "user_api_keys",
     "dipfinder",
     "admin_settings",
+    "metrics",
 ]

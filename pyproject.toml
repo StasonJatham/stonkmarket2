@@ -1,0 +1,162 @@
+# ============================================================================
+# stonkmarket - Python project configuration
+# ============================================================================
+
+[project]
+name = "stonkmarket"
+version = "1.0.0"
+description = "Stock dip analysis and tracking platform"
+requires-python = ">=3.11"
+
+# ============================================================================
+# pytest configuration
+# ============================================================================
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "--strict-markers",
+    "--tb=short",
+    "-ra",
+]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests requiring DB",
+    "e2e: marks tests as end-to-end tests",
+    "unit: marks tests as unit tests",
+]
+
+# ============================================================================
+# coverage configuration
+# ============================================================================
+[tool.coverage.run]
+source = ["app"]
+branch = true
+omit = [
+    "*/tests/*",
+    "*/__pycache__/*",
+    "*/migrations/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
+fail_under = 50
+show_missing = true
+
+[tool.coverage.html]
+directory = "htmlcov"
+
+# ============================================================================
+# ruff configuration (linting + formatting)
+# ============================================================================
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    "*.pyc",
+    "node_modules",
+    "frontend",
+    "migrations",
+    "dist",
+    "build",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # Pyflakes
+    "I",      # isort
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "UP",     # pyupgrade
+    "ARG",    # flake8-unused-arguments
+    "SIM",    # flake8-simplify
+    "TCH",    # flake8-type-checking
+    "PTH",    # flake8-use-pathlib
+    "ERA",    # eradicate (commented-out code)
+    "RUF",    # Ruff-specific rules
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "B008",   # do not perform function calls in argument defaults (FastAPI uses this)
+    "B904",   # raise from inside except (too noisy)
+    "ARG001", # unused function argument (common in fixtures/handlers)
+    "ARG002", # unused method argument
+]
+fixable = ["ALL"]
+unfixable = []
+
+[tool.ruff.lint.isort]
+known-first-party = ["app", "tests"]
+force-single-line = false
+lines-after-imports = 2
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["ARG", "S101", "PLR2004"]
+"conftest.py" = ["ARG"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+# ============================================================================
+# mypy configuration (type checking)
+# ============================================================================
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false  # Start permissive, tighten later
+ignore_missing_imports = true
+exclude = [
+    "tests",
+    "migrations",
+    "frontend",
+]
+
+[[tool.mypy.overrides]]
+module = "app.*"
+disallow_untyped_defs = false
+check_untyped_defs = true
+
+# ============================================================================
+# black configuration (for compatibility if anyone uses it)
+# ============================================================================
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+exclude = '''
+/(
+    \.git
+    | \.venv
+    | __pycache__
+    | node_modules
+    | frontend
+    | migrations
+    | dist
+    | build
+)/
+'''

@@ -26,6 +26,7 @@ from .routes import (
     user_api_keys,
     dipfinder,
     admin_settings,
+    metrics,
 )
 
 logger = get_logger("api")
@@ -168,5 +169,6 @@ def create_api_app() -> FastAPI:
     app.include_router(cronjobs.router, prefix="/cronjobs", tags=["CronJobs"])
     app.include_router(suggestions.router, tags=["Suggestions"])
     app.include_router(ws.router, tags=["WebSocket"])
+    app.include_router(metrics.router, prefix="/metrics", tags=["Metrics"])
 
     return app

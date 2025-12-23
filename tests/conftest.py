@@ -104,3 +104,116 @@ def sample_prices_array(sample_prices) -> "np.ndarray":
     """Sample prices as numpy array."""
     import numpy as np
     return np.array(sample_prices)
+
+
+# ============================================================================
+# Mock fixtures for database-independent testing
+# ============================================================================
+
+@pytest.fixture
+def mock_db(mocker):
+    """Mock database operations for unit tests."""
+    mock = mocker.patch("app.database.connection.fetch_one", new_callable=AsyncMock)
+    mock.return_value = None
+    
+    mock_fetch_all = mocker.patch("app.database.connection.fetch_all", new_callable=AsyncMock)
+    mock_fetch_all.return_value = []
+    
+    mock_execute = mocker.patch("app.database.connection.execute", new_callable=AsyncMock)
+    mock_execute.return_value = None
+    
+    return {
+        "fetch_one": mock,
+        "fetch_all": mock_fetch_all,
+        "execute": mock_execute,
+    }
+
+
+@pytest.fixture
+def mock_cache(mocker):
+    """Mock cache operations for unit tests."""
+    mock_get = mocker.patch("app.cache.cache.Cache.get", new_callable=AsyncMock)
+    mock_get.return_value = None
+    
+    mock_set = mocker.patch("app.cache.cache.Cache.set", new_callable=AsyncMock)
+    mock_set.return_value = True
+    
+    mock_delete = mocker.patch("app.cache.cache.Cache.delete", new_callable=AsyncMock)
+    mock_delete.return_value = True
+    
+    return {
+        "get": mock_get,
+        "set": mock_set,
+        "delete": mock_delete,
+    }
+
+
+@pytest.fixture
+def sample_stock_info() -> dict:
+    """Sample stock info for testing."""
+    return {
+        "symbol": "AAPL",
+        "name": "Apple Inc.",
+        "sector": "Technology",
+        "industry": "Consumer Electronics",
+        "market_cap": 3000000000000,
+        "pe_ratio": 28.5,
+        "forward_pe": 25.2,
+        "dividend_yield": 0.005,
+        "beta": 1.2,
+        "avg_volume": 75000000,
+        "summary": "Apple Inc. designs, manufactures, and markets smartphones, personal computers, tablets, wearables, and accessories worldwide.",
+        "website": "https://www.apple.com",
+        "recommendation": "buy",
+    }
+
+
+@pytest.fixture
+def sample_ranking_entry() -> dict:
+    """Sample ranking entry for testing."""
+    return {
+        "symbol": "NVDA",
+        "name": "NVIDIA Corporation",
+        "depth": 0.15,
+        "last_price": 450.0,
+        "previous_close": 455.0,
+        "change_percent": -1.1,
+        "days_since_dip": 5,
+        "high_52w": 530.0,
+        "low_52w": 350.0,
+        "market_cap": 1100000000000,
+        "sector": "Technology",
+        "pe_ratio": 65.0,
+        "volume": 45000000,
+        "updated_at": "2025-12-23T00:00:00",
+    }
+
+
+@pytest.fixture
+def sample_chart_data() -> list[dict]:
+    """Sample chart data points for testing."""
+    import datetime
+    
+    base_date = datetime.date(2025, 9, 1)
+    data = []
+    price = 100.0
+    ref_high = 120.0
+    
+    for i in range(90):
+        date = base_date + datetime.timedelta(days=i)
+        price = price * (1 + (0.002 if i < 30 else -0.003))
+        drawdown = (price - ref_high) / ref_high
+        
+        data.append({
+            "date": date.isoformat(),
+            "close": round(price, 2),
+            "ref_high": ref_high,
+            "threshold": ref_high * 0.9,
+            "drawdown": round(drawdown, 4),
+            "since_dip": None,
+            "ref_high_date": "2025-09-15",
+            "dip_start_date": "2025-10-01",
+        })
+    
+    return data
+
