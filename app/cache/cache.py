@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import time
 from functools import wraps
 from typing import Any, Callable, Optional, TypeVar, Union
 
@@ -12,6 +13,7 @@ from app.core.config import settings
 from app.core.logging import get_logger
 
 from .client import get_valkey_client
+from .metrics import cache_metrics
 
 logger = get_logger("cache")
 
@@ -54,14 +56,19 @@ class Cache:
         """Get value from cache."""
         client = await get_valkey_client()
         full_key = cache_key(key, prefix=self.prefix)
+        start = time.perf_counter()
         try:
             value = await client.get(full_key)
+            duration_ms = (time.perf_counter() - start) * 1000
             if value is not None:
+                cache_metrics.record_hit(self.prefix, duration_ms)
                 logger.debug(f"Cache hit: {full_key}")
                 return _deserialize(value)
+            cache_metrics.record_miss(self.prefix, duration_ms)
             logger.debug(f"Cache miss: {full_key}")
             return None
         except Exception as e:
+            cache_metrics.record_error(self.prefix)
             logger.warning(f"Cache get failed: {e}")
             return None
 
@@ -74,12 +81,16 @@ class Cache:
         """Set value in cache with TTL."""
         client = await get_valkey_client()
         full_key = cache_key(key, prefix=self.prefix)
+        start = time.perf_counter()
         try:
             serialized = _serialize(value)
             await client.set(full_key, serialized, ex=ttl or self.default_ttl)
+            duration_ms = (time.perf_counter() - start) * 1000
+            cache_metrics.record_set(self.prefix, duration_ms)
             logger.debug(f"Cache set: {full_key}, TTL: {ttl or self.default_ttl}s")
             return True
         except Exception as e:
+            cache_metrics.record_error(self.prefix)
             logger.warning(f"Cache set failed: {e}")
             return False
 

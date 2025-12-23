@@ -181,3 +181,22 @@ async def get_openai_status(
 ) -> dict:
     """Check if OpenAI is configured."""
     return {"configured": await check_openai_configured()}
+
+
+@router.get(
+    "/suspicious-votes",
+    summary="Get suspicious vote log",
+    description="View recent votes flagged as potentially fraudulent.",
+)
+async def get_suspicious_votes(
+    limit: int = 100,
+    user: TokenData = Depends(require_admin),
+) -> dict:
+    """Get suspicious vote log for admin review."""
+    from app.core.client_identity import get_suspicious_log
+    
+    entries = await get_suspicious_log(limit)
+    return {
+        "entries": entries,
+        "count": len(entries),
+    }

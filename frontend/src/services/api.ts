@@ -4,19 +4,54 @@ import { getDeviceFingerprint, getDeviceFingerprintSync, recordLocalVote, hasVot
 
 const API_BASE = '/api';
 
-async function fetchAPI<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+// ETag storage for conditional requests
+const etagStore = new Map<string, string>();
+
+interface FetchOptions extends RequestInit {
+  useEtag?: boolean;
+}
+
+async function fetchAPI<T>(endpoint: string, options: FetchOptions = {}): Promise<T> {
+  const { useEtag = false, ...fetchOptions } = options;
+  const headers: HeadersInit = {
+    'Content-Type': 'application/json',
+    ...getAuthHeaders(),
+    ...fetchOptions.headers,
+  };
+  
+  // Add If-None-Match header if we have a stored ETag for this endpoint
+  if (useEtag) {
+    const storedEtag = etagStore.get(endpoint);
+    if (storedEtag) {
+      (headers as Record<string, string>)['If-None-Match'] = storedEtag;
+    }
+  }
+  
   const response = await fetch(`${API_BASE}${endpoint}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...getAuthHeaders(),
-      ...options.headers,
-    },
+    ...fetchOptions,
+    headers,
   });
+
+  // Handle 304 Not Modified - return cached data
+  if (response.status === 304) {
+    const cacheKey = `api:${endpoint}`;
+    const cached = apiCache.get<T>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+    // If no cache, fall through to error (shouldn't happen normally)
+    throw new Error('Received 304 but no cached data available');
+  }
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: 'Request failed' }));
     throw new Error(error.detail || `HTTP ${response.status}`);
+  }
+
+  // Store ETag from response if present
+  const etag = response.headers.get('ETag');
+  if (etag) {
+    etagStore.set(endpoint, etag);
   }
 
   return response.json();
@@ -95,10 +130,11 @@ export interface CronLogsResponse {
 
 // API functions with caching
 export async function getRanking(skipCache = false, showAll = false): Promise<RankingResponse> {
+  const endpoint = `/dips/ranking?show_all=${showAll}`;
   const cacheKey = `ranking:${showAll}`;
   
   const fetcher = async () => {
-    const ranking = await fetchAPI<DipStock[]>(`/dips/ranking?show_all=${showAll}`);
+    const ranking = await fetchAPI<DipStock[]>(endpoint, { useEtag: true });
     return {
       ranking: ranking.map((stock, index) => ({
         ...stock,
@@ -120,11 +156,12 @@ export async function getRanking(skipCache = false, showAll = false): Promise<Ra
 }
 
 export async function getStockChart(symbol: string, days: number = 180): Promise<ChartDataPoint[]> {
+  const endpoint = `/dips/${symbol}/chart?days=${days}`;
   const cacheKey = `chart:${symbol}:${days}`;
   
   return apiCache.fetch(
     cacheKey,
-    () => fetchAPI<ChartDataPoint[]>(`/dips/${symbol}/chart?days=${days}`),
+    () => fetchAPI<ChartDataPoint[]>(endpoint, { useEtag: true }),
     { ttl: CACHE_TTL.CHART, staleWhileRevalidate: true }
   );
 }

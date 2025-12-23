@@ -6,11 +6,18 @@ import asyncio
 from datetime import date, timedelta
 from typing import List, Tuple
 
-from fastapi import APIRouter, Depends, Path, Query
+from fastapi import APIRouter, Depends, Path, Query, Request
 from pydantic import BaseModel
 
 from app.api.dependencies import require_admin, require_user
 from app.cache.cache import Cache
+from app.cache.http_cache import (
+    CacheableResponse,
+    CachePresets,
+    check_if_none_match,
+    generate_etag,
+    NotModifiedResponse,
+)
 from app.core.exceptions import ExternalServiceError, NotFoundError
 from app.core.security import TokenData
 from app.database.connection import fetch_all, fetch_one
@@ -133,29 +140,52 @@ async def get_benchmarks() -> List[BenchmarkInfo]:
 
 @router.get(
     "/ranking",
-    response_model=List[RankingEntry],
     summary="Get dip ranking",
     description="Get stocks ranked by dip depth. Use show_all=true to include stocks not in active dip.",
 )
-async def get_ranking(show_all: bool = False) -> List[RankingEntry]:
-    """Get ranked list of stocks. By default only shows stocks in meaningful dip (>10%)."""
+async def get_ranking(
+    request: Request,
+    show_all: bool = False,
+) -> CacheableResponse:
+    """Get ranked list of stocks. By default only shows stocks in meaningful dip (>10%).
+    
+    Returns with HTTP caching headers for browser caching.
+    """
     cache_key = f"all:{show_all}"
 
     # Try cache first
     cached = await _ranking_cache.get(cache_key)
     if cached:
-        return [RankingEntry(**item) for item in cached]
+        ranking = [RankingEntry(**item) for item in cached]
+        data = [r.model_dump() for r in ranking]
+        etag = generate_etag(data)
+        
+        # Check for conditional request (If-None-Match)
+        if check_if_none_match(request, etag):
+            return NotModifiedResponse(etag=etag)
+        
+        return CacheableResponse(
+            data,
+            etag=etag,
+            **CachePresets.RANKING,
+        )
 
     # Build ranking (use shared helper)
     all_entries, filtered_entries = await _build_ranking(force_refresh=False)
     
     # Select appropriate result based on show_all
     ranking = all_entries if show_all else filtered_entries
+    data = [r.model_dump() for r in ranking]
 
     # Cache the result
-    await _ranking_cache.set(cache_key, [r.model_dump() for r in ranking])
-
-    return ranking
+    await _ranking_cache.set(cache_key, data)
+    
+    etag = generate_etag(data)
+    return CacheableResponse(
+        data,
+        etag=etag,
+        **CachePresets.RANKING,
+    )
 
 
 @router.post(
@@ -262,7 +292,6 @@ async def get_symbol_state(
 
 @router.get(
     "/{symbol}/chart",
-    response_model=List[ChartPoint],
     summary="Get chart data",
     description="Get historical price chart data for a symbol. Works with both tracked and untracked symbols.",
     responses={
@@ -270,18 +299,33 @@ async def get_symbol_state(
     },
 )
 async def get_chart(
+    request: Request,
     symbol: str = Depends(_validate_symbol_path),
     days: int = Query(
         default=180, ge=7, le=1825, description="Number of days of history (max 5 years)"
     ),
-) -> List[ChartPoint]:
-    """Get chart data for a symbol (works for tracked symbols and benchmarks)."""
+) -> CacheableResponse:
+    """Get chart data for a symbol (works for tracked symbols and benchmarks).
+    
+    Returns with HTTP caching headers for browser caching.
+    """
     cache_key = f"{symbol}:{days}"
 
     # Try cache first
     cached = await _chart_cache.get(cache_key)
     if cached:
-        return [ChartPoint(**item) for item in cached]
+        data = [ChartPoint(**item).model_dump() for item in cached]
+        etag = generate_etag(data)
+        
+        # Check for conditional request (If-None-Match)
+        if check_if_none_match(request, etag):
+            return NotModifiedResponse(etag=etag)
+        
+        return CacheableResponse(
+            data,
+            etag=etag,
+            **CachePresets.CHART,
+        )
 
     # Get config if tracked
     row = await fetch_one("SELECT min_dip_pct FROM symbols WHERE symbol = $1", symbol)
@@ -340,9 +384,15 @@ async def get_chart(
             )
 
         # Cache the result
-        await _chart_cache.set(cache_key, [p.model_dump() for p in chart_points])
+        data = [p.model_dump() for p in chart_points]
+        await _chart_cache.set(cache_key, data)
 
-        return chart_points
+        etag = generate_etag(data)
+        return CacheableResponse(
+            data,
+            etag=etag,
+            **CachePresets.CHART,
+        )
     except ExternalServiceError:
         raise
     except Exception as e:

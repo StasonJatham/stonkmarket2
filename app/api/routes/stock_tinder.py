@@ -7,7 +7,13 @@ from typing import Optional
 from fastapi import APIRouter, Query, Request, Header
 
 from app.core.exceptions import NotFoundError, ValidationError
-from app.core.fingerprint import get_vote_identifier
+from app.core.client_identity import (
+    get_vote_identifier,
+    check_vote_allowed,
+    record_vote,
+    get_voted_symbols,
+    RiskLevel,
+)
 from app.repositories import user_api_keys
 from app.repositories import dip_votes as dip_votes_repo
 from app.schemas.stock_tinder import (
@@ -119,8 +125,16 @@ async def vote_on_dip(
 
     API key holders get 10x vote weight. Use X-API-Key header for authenticated voting.
     """
+    symbol = symbol.upper()
+    
+    # === Check if vote is allowed (cooldown + risk assessment) ===
+    check = await check_vote_allowed(request, symbol)
+    
+    if not check.allowed:
+        raise ValidationError(check.reason, details={"retry_after": 3600})
+    
     # Get voter identifier
-    vote_id = get_vote_identifier(request, symbol.upper())
+    vote_id = get_vote_identifier(request, symbol)
 
     # Check for API key and get vote weight
     vote_weight = 1
@@ -131,9 +145,13 @@ async def vote_on_dip(
         if key_data:
             vote_weight = key_data.get("vote_weight", 10)
             api_key_id = key_data.get("id")
+    
+    # Reduce vote weight for high-risk votes (soft penalty)
+    if check.reduce_weight:
+        vote_weight = max(1, vote_weight // 2)
 
     success, error = await stock_tinder.vote_on_dip(
-        symbol=symbol.upper(),
+        symbol=symbol,
         voter_identifier=vote_id,
         vote_type=payload.vote_type,
         vote_weight=vote_weight,
@@ -142,6 +160,9 @@ async def vote_on_dip(
 
     if not success:
         raise ValidationError(error or "Failed to record vote")
+    
+    # Record successful vote for tracking
+    await record_vote(request, symbol)
 
     weight_msg = f" (weight: {vote_weight}x)" if vote_weight > 1 else ""
 

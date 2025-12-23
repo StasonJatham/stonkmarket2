@@ -1,4 +1,9 @@
-"""Stock info service with caching and rate limiting."""
+"""Stock info service with caching and rate limiting.
+
+NOTE: This module uses synchronous functions because yfinance is blocking.
+These functions are designed to be called from ThreadPoolExecutor.
+For Valkey caching, we use the sync cache wrapper.
+"""
 
 from __future__ import annotations
 
@@ -15,6 +20,11 @@ from app.schemas.dips import StockInfo
 
 logger = get_logger("services.stock_info")
 
+# Process-local cache with short TTL (5 min) for reducing yfinance calls.
+# This is acceptable because:
+# 1. Stock info changes infrequently
+# 2. The primary cache is in Valkey (see dips.py routes)
+# 3. These functions run in sync thread pool, can't easily use async Valkey
 _INFO_CACHE: Dict[str, tuple[float, StockInfo]] = {}
 _PRICE_CACHE: Dict[str, tuple[float, Dict[str, Any]]] = {}
 _CACHE_TTL = 300  # 5 minutes

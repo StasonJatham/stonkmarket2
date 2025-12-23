@@ -9,7 +9,7 @@ from fastapi import Cookie, Depends, Header, Request
 from app.core.config import settings
 from app.core.exceptions import AuthenticationError, AuthorizationError
 from app.core.security import TokenData, decode_access_token, validate_token_not_revoked
-from app.core.fingerprint import (
+from app.core.client_identity import (
     get_client_ip,
     get_request_fingerprint,
     get_vote_identifier,
@@ -18,7 +18,7 @@ from app.core.fingerprint import (
 from app.cache.rate_limit import check_rate_limit
 
 
-# Re-export fingerprint functions for backwards compatibility
+# Re-export identity functions
 __all__ = [
     "get_client_ip",
     "get_request_fingerprint",

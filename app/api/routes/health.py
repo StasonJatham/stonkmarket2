@@ -98,3 +98,20 @@ async def liveness_check() -> dict:
     Simple check that the process is running.
     """
     return {"status": "alive"}
+
+
+@router.get(
+    "/cache",
+    summary="Cache statistics",
+    description="Get cache hit/miss statistics for monitoring.",
+)
+async def cache_stats() -> dict:
+    """
+    Get cache performance statistics.
+
+    Returns hit rates, error counts, and timing information for each cache prefix.
+    Useful for monitoring and debugging cache performance.
+    """
+    from app.cache.metrics import cache_metrics
+    
+    return cache_metrics.get_summary()

@@ -13,13 +13,15 @@ from app.api.dependencies import require_admin
 from app.core.exceptions import ValidationError, NotFoundError
 from app.core.logging import get_logger
 from app.core.security import TokenData
-from app.core.anon_session import (
-    get_device_fingerprint,
-    check_can_vote,
+from app.core.client_identity import (
+    get_client_fingerprint,
+    get_server_fingerprint,
+    check_vote_allowed,
     record_vote,
     check_can_suggest,
     record_suggestion,
     get_voted_symbols,
+    RiskLevel,
 )
 from app.database.connection import fetch_all, fetch_one, execute
 from app.services.runtime_settings import get_runtime_setting
@@ -74,16 +76,9 @@ async def suggest_stock(
     # Validate symbol format
     symbol = _validate_symbol_format(symbol)
     
-    # Get device fingerprint from header (sent by frontend)
-    device_id = get_device_fingerprint(request)
-    if not device_id:
-        raise ValidationError(
-            message="Device fingerprint required",
-            details={"hint": "Please enable cookies and try again"}
-        )
-    
-    # Hash for database storage
-    fingerprint_hash = hashlib.sha256(device_id.encode()).hexdigest()[:32]
+    # Get server-generated fingerprint (not client-provided)
+    server_fp = get_server_fingerprint(request)
+    fingerprint_hash = hashlib.sha256(server_fp.encode()).hexdigest()[:32]
 
     # Check if suggestion already exists
     existing = await fetch_one(
@@ -93,15 +88,14 @@ async def suggest_stock(
 
     if existing:
         # Already exists - try to add a vote
-        # Check if this device/IP can vote (Valkey-based session)
-        can_vote, reason = await check_can_vote(device_id, symbol, request)
-        if not can_vote:
-            raise ValidationError(message=reason, details={"symbol": symbol})
+        check = await check_vote_allowed(request, symbol)
+        if not check.allowed:
+            raise ValidationError(message=check.reason, details={"symbol": symbol})
 
         suggestion_id = existing["id"]
 
-        # Record vote in Valkey (for device/IP tracking)
-        await record_vote(device_id, symbol, request)
+        # Record vote for tracking
+        await record_vote(request, symbol)
 
         # Also store in database for historical record
         await execute(
@@ -148,7 +142,7 @@ async def suggest_stock(
         }
 
     # NEW SUGGESTION - check rate limit first
-    can_suggest, reason = await check_can_suggest(device_id, request)
+    can_suggest, reason = await check_can_suggest(request)
     if not can_suggest:
         raise ValidationError(message=reason, details={"symbol": symbol})
 
@@ -184,11 +178,11 @@ async def suggest_stock(
         stock_info["fetch_error"],
     )
 
-    # Record suggestion count in session (for rate limiting)
-    await record_suggestion(device_id, request)
+    # Record suggestion for rate limiting
+    await record_suggestion(request)
     
-    # Record vote in Valkey (suggesting also counts as voting)
-    await record_vote(device_id, symbol, request)
+    # Record vote (suggesting also counts as voting)
+    await record_vote(request, symbol)
 
     # Add initial vote to database
     await execute(
@@ -224,23 +218,19 @@ async def vote_for_suggestion(
     Vote for an existing stock suggestion.
 
     Public endpoint - no auth required.
-    Uses multi-layer fingerprinting: client device ID + IP address.
+    Uses server-side fingerprinting for abuse prevention.
     Vote cooldown: 7 days per stock per user/device/IP.
     """
     symbol = symbol.strip().upper()
     
-    # Get device fingerprint from header (sent by frontend)
-    device_id = get_device_fingerprint(request)
-    if not device_id:
+    # === Risk Assessment + Cooldown Check ===
+    check = await check_vote_allowed(request, symbol)
+    
+    if not check.allowed:
         raise ValidationError(
-            message="Device fingerprint required",
-            details={"hint": "Please enable cookies and try again"}
+            check.reason,
+            details={"retry_after": 3600}
         )
-
-    # Check if this device/IP can vote (Valkey-based session)
-    can_vote, reason = await check_can_vote(device_id, symbol, request)
-    if not can_vote:
-        raise ValidationError(message=reason, details={"symbol": symbol})
 
     # Get suggestion
     suggestion = await fetch_one(
@@ -255,11 +245,12 @@ async def vote_for_suggestion(
 
     suggestion_id = suggestion["id"]
 
-    # Record vote in Valkey (for device/IP tracking)
-    await record_vote(device_id, symbol, request)
+    # Record vote for tracking
+    await record_vote(request, symbol)
 
-    # Also store in database for historical record (using hashed device_id)
-    fingerprint_hash = hashlib.sha256(device_id.encode()).hexdigest()[:32]
+    # Also store in database for historical record
+    server_fp = get_server_fingerprint(request)
+    fingerprint_hash = hashlib.sha256(server_fp.encode()).hexdigest()[:32]
     await execute(
         """INSERT INTO suggestion_votes (suggestion_id, fingerprint, vote_type, created_at)
            VALUES ($1, $2, 'up', NOW())
@@ -316,12 +307,10 @@ async def get_top_suggestions(
     Public endpoint - shows what stocks the community wants tracked.
     Uses session-based tracking for exclude_voted filter.
     """
-    # Get voted symbols from Valkey session
+    # Get voted symbols from Valkey
     voted_symbols = set()
     if exclude_voted:
-        device_id = get_device_fingerprint(request)
-        if device_id:
-            voted_symbols = await get_voted_symbols(device_id, request)
+        voted_symbols = await get_voted_symbols(request)
     
     rows = await fetch_all(
         """SELECT symbol, company_name as name, vote_score as vote_count, 
