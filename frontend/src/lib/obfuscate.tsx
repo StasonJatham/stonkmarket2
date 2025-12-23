@@ -31,7 +31,7 @@ export function deobfuscate(encoded: string): string {
 
 // Pre-encoded values (these are obfuscated at build time)
 // PayPal username: machleidtkarl
-const OBFUSCATED_PAYPAL = 'em5wdXlydnFneG5seQ==';
+const OBFUSCATED_PAYPAL = 'em5wdXlydnFneG5leQ==';
 // Email: stonk@stonkmarket.de (base64 encoded)
 const OBFUSCATED_EMAIL = 'c3RvbmtAc3RvbmttYXJrZXQuZGU=';
 // Personal address (base64 encoded, split to avoid pattern matching)

@@ -150,6 +150,10 @@ CREATE TABLE IF NOT EXISTS stock_suggestions (
     status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
     vote_score INTEGER DEFAULT 0,
     fetch_status VARCHAR(20) DEFAULT 'pending',  -- pending, fetched, failed
+    fetch_error TEXT,
+    fetched_at TIMESTAMPTZ,
+    current_price NUMERIC(12, 4),
+    ath_price NUMERIC(12, 4),
     approved_by INTEGER REFERENCES auth_user(id),
     created_at TIMESTAMPTZ DEFAULT NOW(),
     reviewed_at TIMESTAMPTZ

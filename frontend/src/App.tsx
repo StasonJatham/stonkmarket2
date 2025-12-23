@@ -66,11 +66,7 @@ function App() {
                 <Route path="/contact" element={<ContactPage />} />
                 <Route
                   path="/signals"
-                  element={
-                    <ProtectedRoute>
-                      <DipFinderPage />
-                    </ProtectedRoute>
-                  }
+                  element={<DipFinderPage />}
                 />
                 <Route
                   path="/admin"

@@ -175,9 +175,10 @@ export function ComparisonChart({
               itemStyle={{
                 color: 'hsl(var(--foreground))',
               }}
-              formatter={(value: number, name: string) => {
+              formatter={(value, name) => {
+                if (value === undefined) return ['', ''];
                 const label = name === 'stockNormalized' ? stockSymbol : getBenchmarkName(benchmark);
-                return [`${value.toFixed(2)}%`, label];
+                return [`${Number(value).toFixed(2)}%`, label];
               }}
               labelFormatter={(label) => label}
             />
@@ -256,7 +257,7 @@ export function ComparisonChart({
       </CardHeader>
       <CardContent>
         <ChartContainer config={chartConfig} className={`h-[${height}px] w-full`}>
-          <ResponsiveContainer width="100%" height={height} minWidth={0} debounce={50}>
+          <ResponsiveContainer width="100%" height={height as number} minWidth={0} debounce={50}>
             <LineChart
               data={data}
               margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
