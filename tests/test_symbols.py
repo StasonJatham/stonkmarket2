@@ -38,19 +38,22 @@ class TestValidateSymbolEndpoint:
 
 
 class TestListSymbolsEndpoint:
-    """Tests for GET /symbols."""
+    """Tests for GET /symbols (public endpoint)."""
 
-    def test_list_symbols_without_auth_returns_401(self, client: TestClient):
-        """GET /symbols without auth returns 401."""
+    def test_list_symbols_without_auth_returns_200(self, client: TestClient):
+        """GET /symbols without auth returns 200 (public endpoint for signals page)."""
         response = client.get("/symbols")
-        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert response.status_code == status.HTTP_200_OK
+        # Returns empty list or list of symbols
+        assert isinstance(response.json(), list)
 
-    def test_list_symbols_with_invalid_token_returns_401(self, client: TestClient):
-        """GET /symbols with invalid token returns 401."""
+    def test_list_symbols_with_invalid_token_still_returns_200(self, client: TestClient):
+        """GET /symbols with invalid token still works (public endpoint)."""
         response = client.get(
             "/symbols", headers={"Authorization": "Bearer invalid"}
         )
-        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        # Public endpoint ignores auth header
+        assert response.status_code == status.HTTP_200_OK
 
 
 class TestGetSymbolEndpoint:

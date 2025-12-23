@@ -122,7 +122,7 @@ export function Layout() {
             <a 
               href="https://logo.dev" 
               target="_blank" 
-              rel="noopener noreferrer"
+              rel="noopener"
               className="text-xs text-muted-foreground/60 hover:text-muted-foreground hover:underline transition-colors"
             >
               Logos provided by Logo.dev
