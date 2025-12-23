@@ -49,8 +49,9 @@ WORKDIR /app
 COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
-# Copy application code
+# Copy application code and migrations
 COPY --chown=appuser:appgroup app/ ./app/
+COPY --chown=appuser:appgroup migrations/ ./migrations/
 COPY --chown=appuser:appgroup init.sql ./
 
 # Switch to non-root user

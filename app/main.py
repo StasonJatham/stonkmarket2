@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 
@@ -10,7 +12,7 @@ from app.api.app import create_api_app
 from app.cache.client import close_valkey_client, get_valkey_client
 from app.core.config import settings
 from app.core.logging import get_logger, setup_logging
-from app.database.connection import init_pg_pool, close_pg_pool, execute
+from app.database.connection import init_pg_pool, close_pg_pool, execute, fetch_one
 from app.jobs import start_scheduler, stop_scheduler
 from app.services.runtime_settings import init_runtime_settings
 from app.repositories.api_keys import seed_api_keys_from_env
@@ -20,15 +22,61 @@ logger = get_logger("main")
 
 
 async def run_migrations() -> None:
-    """Run any pending database migrations."""
-    # Add summary_ai column to symbols table if it doesn't exist
-    try:
-        await execute("""
-            ALTER TABLE symbols ADD COLUMN IF NOT EXISTS summary_ai VARCHAR(400);
-        """)
-        logger.info("Database migrations completed")
-    except Exception as e:
-        logger.warning(f"Migration check failed (may already be applied): {e}")
+    """Run all pending database migrations from the migrations folder."""
+    # Ensure migrations tracking table exists
+    await execute("""
+        CREATE TABLE IF NOT EXISTS schema_migrations (
+            version VARCHAR(50) PRIMARY KEY,
+            applied_at TIMESTAMPTZ DEFAULT NOW()
+        );
+    """)
+    
+    # Find migrations directory (relative to app)
+    migrations_dir = Path(__file__).parent.parent / "migrations"
+    if not migrations_dir.exists():
+        logger.info("No migrations directory found, skipping migrations")
+        return
+    
+    # Get all .sql files sorted by name
+    migration_files = sorted(migrations_dir.glob("*.sql"))
+    if not migration_files:
+        logger.info("No migration files found")
+        return
+    
+    applied_count = 0
+    for migration_file in migration_files:
+        version = migration_file.stem  # e.g., "005_add_symbol_type_and_dip_start"
+        
+        # Check if already applied
+        result = await fetch_one(
+            "SELECT version FROM schema_migrations WHERE version = $1",
+            version
+        )
+        if result:
+            continue
+        
+        # Run migration
+        logger.info(f"Running migration: {version}")
+        try:
+            sql = migration_file.read_text()
+            await execute(sql)
+            
+            # Mark as applied
+            await execute(
+                "INSERT INTO schema_migrations (version) VALUES ($1)",
+                version
+            )
+            applied_count += 1
+            logger.info(f"Migration {version} applied successfully")
+        except Exception as e:
+            logger.error(f"Migration {version} failed: {e}")
+            # Don't raise - allow app to start, admin can fix manually
+            break
+    
+    if applied_count > 0:
+        logger.info(f"Applied {applied_count} migration(s)")
+    else:
+        logger.info("All migrations already applied")
 
 
 @asynccontextmanager
