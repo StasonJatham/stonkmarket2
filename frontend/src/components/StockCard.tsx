@@ -1,7 +1,8 @@
-import { useMemo, memo } from 'react';
+import { useMemo, memo, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { AreaChart, Area, ResponsiveContainer } from 'recharts';
 import type { DipStock, ChartDataPoint } from '@/services/api';
+import { prefetchStockChart, prefetchStockInfo } from '@/services/api';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -69,12 +70,19 @@ export const StockCard = memo(function StockCard({
     );
   }
 
+  // Prefetch data when user hovers over card
+  const handleMouseEnter = useCallback(() => {
+    prefetchStockChart(stock.symbol, 365);
+    prefetchStockInfo(stock.symbol);
+  }, [stock.symbol]);
+
   return (
     <motion.div
       whileHover={{ scale: 1.01 }}
       whileTap={{ scale: 0.99 }}
       transition={{ duration: 0.15 }}
       className="h-full"
+      onMouseEnter={handleMouseEnter}
     >
       <Card 
         className={`overflow-hidden cursor-pointer transition-all duration-200 hover:shadow-md h-full ${

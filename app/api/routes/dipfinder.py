@@ -6,7 +6,7 @@ Endpoints for computing, retrieving, and managing dip signals.
 from __future__ import annotations
 
 from datetime import date
-from typing import Optional
+from typing import Optional, Dict
 
 from fastapi import APIRouter, Depends, Query, Path, BackgroundTasks
 
@@ -14,6 +14,7 @@ from app.api.dependencies import require_user, require_admin
 from app.core.exceptions import NotFoundError, BadRequestError
 from app.core.logging import get_logger
 from app.core.security import TokenData
+from app.database.connection import fetch_all
 from app.dipfinder.config import get_dipfinder_config
 from app.dipfinder.service import get_dipfinder_service
 from app.schemas.dipfinder import (
@@ -33,26 +34,72 @@ logger = get_logger("api.dipfinder")
 router = APIRouter()
 
 
-def _signal_to_response(signal, include_factors: bool = False) -> DipSignalResponse:
-    """Convert DipSignal to response schema."""
+async def _get_dip_state_map(tickers: list[str]) -> Dict[str, dict]:
+    """Get dip_state data for multiple tickers (ATH-based source of truth)."""
+    if not tickers:
+        return {}
+    
+    placeholders = ", ".join(f"${i+1}" for i in range(len(tickers)))
+    rows = await fetch_all(
+        f"""
+        SELECT symbol, current_price, ath_price, dip_percentage, dip_start_date
+        FROM dip_state
+        WHERE symbol IN ({placeholders})
+        """,
+        *tickers
+    )
+    return {row["symbol"]: dict(row) for row in rows}
+
+
+def _signal_to_response(signal, include_factors: bool = False, dip_state: dict = None) -> DipSignalResponse:
+    """Convert DipSignal to response schema.
+    
+    Args:
+        signal: The computed DipSignal
+        include_factors: Whether to include quality/stability factors
+        dip_state: Optional dip_state data (ATH-based source of truth)
+    """
+    # Default to signal's computed values
+    dip_pct = signal.dip_metrics.dip_pct
+    peak_price = signal.dip_metrics.peak_price
+    current_price = signal.dip_metrics.current_price
+    persist_days = signal.dip_metrics.persist_days
+    dip_score = signal.dip_score
+    final_score = signal.final_score
+    
+    # Override with ATH-based values from dip_state (source of truth)
+    if dip_state:
+        if dip_state.get("dip_percentage"):
+            dip_pct = float(dip_state["dip_percentage"]) / 100
+        if dip_state.get("ath_price"):
+            peak_price = float(dip_state["ath_price"])
+        if dip_state.get("current_price"):
+            current_price = float(dip_state["current_price"])
+        if dip_state.get("dip_start_date"):
+            from datetime import date
+            persist_days = (date.today() - dip_state["dip_start_date"]).days
+        # Recalculate scores based on ATH dip
+        dip_score = min(100.0, dip_pct * 100 * 5)
+        final_score = (signal.quality_metrics.score + signal.stability_metrics.score + dip_score) / 3
+    
     response = DipSignalResponse(
         ticker=signal.ticker,
         window=signal.window,
         benchmark=signal.benchmark,
         as_of_date=signal.as_of_date,
-        dip_stock=signal.dip_metrics.dip_pct,
-        peak_stock=signal.dip_metrics.peak_price,
-        current_price=signal.dip_metrics.current_price,
+        dip_stock=dip_pct,
+        peak_stock=peak_price,
+        current_price=current_price,
         dip_pctl=signal.dip_metrics.dip_percentile,
         dip_vs_typical=signal.dip_metrics.dip_vs_typical,
-        persist_days=signal.dip_metrics.persist_days,
+        persist_days=persist_days,
         dip_mkt=signal.market_context.dip_mkt,
         excess_dip=signal.market_context.excess_dip,
         dip_class=signal.market_context.dip_class.value,
         quality_score=signal.quality_metrics.score,
         stability_score=signal.stability_metrics.score,
-        dip_score=signal.dip_score,
-        final_score=signal.final_score,
+        dip_score=dip_score,
+        final_score=final_score,
         alert_level=signal.alert_level.value,
         should_alert=signal.should_alert,
         reason=signal.reason,
@@ -95,7 +142,6 @@ async def get_signals(
         default=False,
         description="Include detailed quality/stability factors",
     ),
-    user: TokenData = Depends(require_user),
 ) -> DipSignalListResponse:
     """
     Get dip signals for specified tickers.
@@ -129,9 +175,12 @@ async def get_signals(
         benchmark=benchmark,
         window=window,
     )
+    
+    # Get dip_state data for ATH-based dip percentages
+    dip_state_map = await _get_dip_state_map(ticker_list)
 
     return DipSignalListResponse(
-        signals=[_signal_to_response(s, include_factors) for s in signals],
+        signals=[_signal_to_response(s, include_factors, dip_state_map.get(s.ticker)) for s in signals],
         count=len(signals),
         benchmark=benchmark,
         window=window,
@@ -153,7 +202,6 @@ async def get_ticker_signal(
     benchmark: Optional[str] = Query(default=None),
     window: Optional[int] = Query(default=30, ge=7, le=365),
     force_refresh: bool = Query(default=False, description="Force recomputation"),
-    user: TokenData = Depends(require_user),
 ) -> DipSignalResponse:
     """Get dip signal for a single ticker with full details."""
     config = get_dipfinder_config()
@@ -172,7 +220,9 @@ async def get_ticker_signal(
             details={"ticker": ticker},
         )
 
-    return _signal_to_response(signal, include_factors=True)
+    # Get dip_state for ATH-based dip percentage
+    dip_state_map = await _get_dip_state_map([ticker.upper()])
+    return _signal_to_response(signal, include_factors=True, dip_state=dip_state_map.get(ticker.upper()))
 
 
 @router.post(
@@ -276,7 +326,6 @@ async def get_latest_signals(
         default=None, ge=0, le=100, description="Minimum final score"
     ),
     only_alerts: bool = Query(default=False, description="Only return alerts"),
-    user: TokenData = Depends(require_user),
 ) -> DipSignalListResponse:
     """Get latest computed signals from database."""
     service = get_dipfinder_service()
@@ -288,8 +337,12 @@ async def get_latest_signals(
         only_alerts=only_alerts,
     )
 
+    # Get dip_state data for ATH-based values
+    tickers = [s.ticker for s in signals if s]
+    dip_state_map = await _get_dip_state_map(tickers)
+
     return DipSignalListResponse(
-        signals=[_signal_to_response(s) for s in signals if s],
+        signals=[_signal_to_response(s, dip_state=dip_state_map.get(s.ticker)) for s in signals if s],
         count=len(signals),
         benchmark=config.default_benchmark,
         window=config.windows[1],
@@ -305,7 +358,6 @@ async def get_latest_signals(
 )
 async def get_alerts(
     limit: int = Query(default=20, ge=1, le=50),
-    user: TokenData = Depends(require_user),
 ) -> DipSignalListResponse:
     """Get active dip alerts."""
     service = get_dipfinder_service()
@@ -316,8 +368,12 @@ async def get_alerts(
         only_alerts=True,
     )
 
+    # Get dip_state data for ATH-based values
+    tickers = [s.ticker for s in signals if s]
+    dip_state_map = await _get_dip_state_map(tickers)
+
     return DipSignalListResponse(
-        signals=[_signal_to_response(s) for s in signals if s],
+        signals=[_signal_to_response(s, dip_state=dip_state_map.get(s.ticker)) for s in signals if s],
         count=len(signals),
         benchmark=config.default_benchmark,
         window=config.windows[1],
@@ -334,7 +390,6 @@ async def get_alerts(
 async def get_ticker_history(
     ticker: str = Path(..., min_length=1, max_length=10),
     days: int = Query(default=90, ge=7, le=365),
-    user: TokenData = Depends(require_user),
 ) -> DipHistoryResponse:
     """Get dip history for a ticker."""
     service = get_dipfinder_service()
@@ -368,9 +423,7 @@ async def get_ticker_history(
     summary="Get DipFinder configuration",
     description="Get current thresholds and settings.",
 )
-async def get_config(
-    user: TokenData = Depends(require_user),
-) -> DipFinderConfigResponse:
+async def get_config() -> DipFinderConfigResponse:
     """Get current DipFinder configuration."""
     config = get_dipfinder_config()
 

@@ -2,16 +2,18 @@ import { motion } from 'framer-motion';
 import { Shield, Cookie, Server, Eye, Globe, CreditCard, Scale, AlertTriangle } from 'lucide-react';
 import { useObfuscatedContact } from '@/lib/obfuscate';
 import { useSEO, generateBreadcrumbJsonLd } from '@/lib/seo';
+import { ProtectedContent } from '@/components/ProtectedContent';
 
 export function PrivacyPage() {
-  const { decodedEmail, decode, decoded } = useObfuscatedContact();
+  const { decodedEmail, decodedAddress, decode, decoded } = useObfuscatedContact();
 
-  // SEO for Privacy page (important for E-E-A-T)
+  // SEO for Privacy page - NOINDEX to protect personal data from scrapers
   useSEO({
     title: 'Privacy Policy (GDPR/DSGVO)',
-    description: 'Privacy policy and data protection information for StonkMarket. Learn how we protect your data, what we collect, and your rights under GDPR.',
-    keywords: 'privacy policy, GDPR, data protection, DSGVO, cookies, analytics',
+    description: 'Privacy policy and data protection information for StonkMarket.',
+    keywords: 'privacy policy, GDPR, data protection, DSGVO, cookies',
     canonical: '/privacy',
+    noindex: true, // Protect from search engine indexing
     jsonLd: generateBreadcrumbJsonLd([
       { name: 'Home', url: '/' },
       { name: 'Privacy Policy', url: '/privacy' },
@@ -40,24 +42,35 @@ export function PrivacyPage() {
         </div>
         <div className="space-y-3 text-sm text-muted-foreground">
           <p>The controller responsible for data processing on this website is:</p>
-          <div className="bg-muted/50 p-4 rounded-lg space-y-1">
-            <p className="font-medium text-foreground">Karl Machleidt</p>
-            {/* TODO: Replace with your real address */}
-            <p>Musterstraße 123</p>
-            <p>12345 Musterstadt, Germany</p>
-            <p>
-              E-Mail:{' '}
-              {decoded ? (
-                <a href={`mailto:${decodedEmail}`} className="text-primary underline">
-                  {decodedEmail}
-                </a>
+          
+          <ProtectedContent
+            title="Controller Details"
+            description="Contact information is protected from automated scrapers and search engine indexing."
+          >
+            <div className="bg-muted/50 p-4 rounded-lg space-y-1">
+              {decoded && decodedAddress ? (
+                <>
+                  <p className="font-medium text-foreground">{decodedAddress.name}</p>
+                  <p>{decodedAddress.street}</p>
+                  <p>{decodedAddress.city}, {decodedAddress.country}</p>
+                  <p>
+                    E-Mail:{' '}
+                    <a href={`mailto:${decodedEmail}`} className="text-primary underline">
+                      {decodedEmail}
+                    </a>
+                  </p>
+                </>
               ) : (
-                <button onClick={decode} className="text-primary underline">
-                  Click to reveal
+                <button 
+                  onClick={decode}
+                  className="text-primary underline underline-offset-4 hover:text-primary/80 transition-colors"
+                >
+                  Click to reveal contact details
                 </button>
               )}
-            </p>
-          </div>
+            </div>
+          </ProtectedContent>
+          
           <p>
             <strong className="text-foreground">Data Protection Officer:</strong> Not appointed 
             (not required under GDPR Art. 37 for private operators without large-scale processing).

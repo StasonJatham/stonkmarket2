@@ -37,6 +37,7 @@ class RankingEntry(BaseModel):
     sector: Optional[str] = Field(None, description="Sector")
     pe_ratio: Optional[float] = Field(None, description="P/E ratio")
     volume: Optional[int] = Field(None, description="Trading volume")
+    symbol_type: Optional[str] = Field("stock", description="Type: 'stock' or 'index'")
     updated_at: Optional[datetime] = Field(None, description="Last update timestamp")
 
     model_config = {"from_attributes": True}

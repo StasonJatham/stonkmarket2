@@ -7,6 +7,9 @@ import { useObfuscatedContact } from '@/lib/obfuscate';
 import { ColorPickerInline } from '@/components/ui/color-picker';
 import { Heart, Mail, Eye, EyeOff } from 'lucide-react';
 
+// Feature flags from environment
+const ENABLE_LEGAL_PAGES = import.meta.env.VITE_ENABLE_LEGAL_PAGES === 'true';
+
 export function Layout() {
   const { decoded, decode, getPayPalLink } = useObfuscatedContact();
   const { tickerStocks, isLoadingTicker } = useDips();
@@ -44,8 +47,12 @@ export function Layout() {
                 StonkMarket • <span className="text-warning/80">Not financial advice</span>
               </span>
               <div className="flex items-center gap-3 sm:hidden">
-                <Link to="/privacy" className="hover:text-foreground transition-colors">Privacy</Link>
-                <Link to="/imprint" className="hover:text-foreground transition-colors">Imprint</Link>
+                {ENABLE_LEGAL_PAGES && (
+                  <>
+                    <Link to="/privacy" className="hover:text-foreground transition-colors">Privacy</Link>
+                    <Link to="/imprint" className="hover:text-foreground transition-colors">Imprint</Link>
+                  </>
+                )}
               </div>
             </div>
             
@@ -75,8 +82,12 @@ export function Layout() {
               {/* Links group - Desktop only (mobile shows above) */}
               <div className="hidden sm:flex items-center gap-3">
                 <Link to="/about" className="hover:text-foreground transition-colors">About</Link>
-                <Link to="/privacy" className="hover:text-foreground transition-colors">Privacy</Link>
-                <Link to="/imprint" className="hover:text-foreground transition-colors">Imprint</Link>
+                {ENABLE_LEGAL_PAGES && (
+                  <>
+                    <Link to="/privacy" className="hover:text-foreground transition-colors">Privacy</Link>
+                    <Link to="/imprint" className="hover:text-foreground transition-colors">Imprint</Link>
+                  </>
+                )}
                 <Link to="/contact" className="inline-flex items-center gap-1 hover:text-foreground transition-colors">
                   <Mail className="h-3 w-3" />
                   Contact

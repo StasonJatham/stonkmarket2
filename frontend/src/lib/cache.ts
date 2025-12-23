@@ -268,6 +268,40 @@ class ApiCache {
   clear(): void {
     this.invalidate();
   }
+
+  /**
+   * Prefetch data in the background without blocking.
+   * Returns immediately, caches the result when ready.
+   */
+  prefetch<T>(
+    key: string,
+    fetcher: () => Promise<T>,
+    options: CacheOptions = {}
+  ): void {
+    // Skip if already cached and not stale
+    const cached = this.get<T>(key);
+    if (cached && !cached.isStale) {
+      return;
+    }
+
+    // Fetch in background
+    this.dedupe(key, fetcher)
+      .then(data => {
+        this.set(key, data, options);
+      })
+      .catch(() => {
+        // Silently fail prefetch - it's not critical
+      });
+  }
+
+  /**
+   * Check if a key is cached (and not expired)
+   */
+  has(key: string): boolean {
+    const entry = this.cache.get(key);
+    if (!entry) return false;
+    return Date.now() <= entry.expiresAt;
+  }
 }
 
 // Singleton instance

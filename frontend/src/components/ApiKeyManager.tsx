@@ -22,7 +22,8 @@ import {
   Loader2, 
   Copy, 
   CheckCircle,
-  Shield
+  Shield,
+  AlertCircle
 } from 'lucide-react';
 import { 
   listApiKeys, 
@@ -30,6 +31,8 @@ import {
   revealApiKey, 
   deleteApiKey, 
   getMFAStatus,
+  getSystemStatus,
+  checkMfaSession,
   type ApiKeyInfo 
 } from '@/services/api';
 
@@ -42,6 +45,8 @@ export function ApiKeyManager({ onError, onSuccess }: ApiKeyManagerProps) {
   const [keys, setKeys] = useState<ApiKeyInfo[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [mfaEnabled, setMfaEnabled] = useState(false);
+  const [hasMfaSession, setHasMfaSession] = useState(false);
+  const [logoDevEnvConfigured, setLogoDevEnvConfigured] = useState(false);
   
   // Add dialog
   const [addDialogOpen, setAddDialogOpen] = useState(false);
@@ -49,6 +54,7 @@ export function ApiKeyManager({ onError, onSuccess }: ApiKeyManagerProps) {
   const [keyValue, setKeyValue] = useState('');
   const [mfaCode, setMfaCode] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
   
   // Reveal dialog
   const [revealDialogOpen, setRevealDialogOpen] = useState(false);
@@ -56,24 +62,32 @@ export function ApiKeyManager({ onError, onSuccess }: ApiKeyManagerProps) {
   const [revealMfaCode, setRevealMfaCode] = useState('');
   const [revealedValue, setRevealedValue] = useState<string | null>(null);
   const [isRevealing, setIsRevealing] = useState(false);
+  const [revealError, setRevealError] = useState<string | null>(null);
   
   // Delete dialog
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
   const [deleteMfaCode, setDeleteMfaCode] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   
   const [copied, setCopied] = useState(false);
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
     try {
-      const [keysData, mfaStatus] = await Promise.all([
+      const [keysData, mfaStatus, systemStatus, mfaSession] = await Promise.all([
         listApiKeys(),
         getMFAStatus(),
+        getSystemStatus(),
+        checkMfaSession().catch(() => ({ has_session: false })),
       ]);
       setKeys(keysData.keys);
       setMfaEnabled(mfaStatus.enabled);
+      setHasMfaSession(mfaSession.has_session);
+      // Check if Logo.dev is configured via env (configured but not in database)
+      const logoDevDbKey = keysData.keys.find(k => k.key_name === 'logo_dev_public_key');
+      setLogoDevEnvConfigured(systemStatus.logo_dev_configured && !logoDevDbKey);
     } catch (err) {
       onError?.(err instanceof Error ? err.message : 'Failed to load API keys');
     } finally {
@@ -85,52 +99,73 @@ export function ApiKeyManager({ onError, onSuccess }: ApiKeyManagerProps) {
     loadData();
   }, [loadData]);
 
-  async function handleAdd() {
-    if (!keyName || !keyValue || mfaCode.length !== 6) return;
+  async function handleAdd(codeOverride?: string) {
+    const code = codeOverride ?? mfaCode;
+    // If we have a session, code can be empty; otherwise need 6 digits
+    if (!keyName || !keyValue || (!hasMfaSession && code.length !== 6)) return;
     
     setIsSaving(true);
+    setAddError(null);
     try {
-      await createApiKey(keyName, keyValue, mfaCode);
+      await createApiKey(keyName, keyValue, code);
       await loadData();
       setAddDialogOpen(false);
       setKeyName('OPENAI_API_KEY');
       setKeyValue('');
       setMfaCode('');
+      setHasMfaSession(true); // Session is now active
+      setAddError(null);
       onSuccess?.('API key saved successfully');
     } catch (err) {
-      onError?.(err instanceof Error ? err.message : 'Failed to save API key');
+      const message = err instanceof Error ? err.message : 'Failed to save API key';
+      setAddError(message);
+      setMfaCode('');
     } finally {
       setIsSaving(false);
     }
   }
 
-  async function handleReveal() {
-    if (!revealingKey || revealMfaCode.length !== 6) return;
+  async function handleReveal(codeOverride?: string) {
+    const code = codeOverride ?? revealMfaCode;
+    // If we have a session, code can be empty; otherwise need 6 digits
+    if (!revealingKey || (!hasMfaSession && code.length !== 6)) return;
     
     setIsRevealing(true);
+    setRevealError(null);
     try {
-      const result = await revealApiKey(revealingKey, revealMfaCode);
+      const result = await revealApiKey(revealingKey, code);
       setRevealedValue(result.api_key);
+      setHasMfaSession(true); // Session is now active
+      setRevealError(null);
     } catch (err) {
-      onError?.(err instanceof Error ? err.message : 'Failed to reveal API key');
+      const message = err instanceof Error ? err.message : 'Failed to reveal API key';
+      setRevealError(message);
+      setRevealMfaCode('');
     } finally {
       setIsRevealing(false);
     }
   }
 
-  async function handleDelete() {
-    if (!deletingKey || deleteMfaCode.length !== 6) return;
+  async function handleDelete(codeOverride?: string) {
+    const code = codeOverride ?? deleteMfaCode;
+    // If we have a session, code can be empty; otherwise need 6 digits
+    if (!deletingKey || (!hasMfaSession && code.length !== 6)) return;
     
     setIsDeleting(true);
+    setDeleteError(null);
     try {
-      await deleteApiKey(deletingKey, deleteMfaCode);
+      await deleteApiKey(deletingKey, code);
       await loadData();
       setDeleteDialogOpen(false);
       setDeletingKey(null);
       setDeleteMfaCode('');
+      setHasMfaSession(true); // Session is now active
+      setDeleteError(null);
       onSuccess?.('API key deleted');
     } catch (err) {
-      onError?.(err instanceof Error ? err.message : 'Failed to delete API key');
+      const message = err instanceof Error ? err.message : 'Failed to delete API key';
+      setDeleteError(message);
+      setDeleteMfaCode('');
     } finally {
       setIsDeleting(false);
     }
@@ -147,10 +182,11 @@ export function ApiKeyManager({ onError, onSuccess }: ApiKeyManagerProps) {
     setRevealingKey(null);
     setRevealMfaCode('');
     setRevealedValue(null);
+    setRevealError(null);
   }
 
   const openAiKey = keys.find(k => k.key_name === 'OPENAI_API_KEY');
-  const logoDevKey = keys.find(k => k.key_name === 'LOGO_DEV_PUBLIC_KEY');
+  const logoDevKey = keys.find(k => k.key_name === 'logo_dev_public_key');
 
   if (isLoading) {
     return (
@@ -331,6 +367,8 @@ export function ApiKeyManager({ onError, onSuccess }: ApiKeyManagerProps) {
                           Updated {new Date(logoDevKey.updated_at).toLocaleDateString()}
                         </span>
                       </>
+                    ) : logoDevEnvConfigured ? (
+                      'Configured via environment variable'
                     ) : (
                       'Not configured – company logos will show fallback icons'
                     )}
@@ -347,7 +385,7 @@ export function ApiKeyManager({ onError, onSuccess }: ApiKeyManagerProps) {
                       variant="outline"
                       size="sm"
                       onClick={() => {
-                        setKeyName('LOGO_DEV_PUBLIC_KEY');
+                        setKeyName('logo_dev_public_key');
                         setKeyValue('');
                         setAddDialogOpen(true);
                       }}
@@ -358,7 +396,7 @@ export function ApiKeyManager({ onError, onSuccess }: ApiKeyManagerProps) {
                       variant="ghost"
                       size="icon"
                       onClick={() => {
-                        setRevealingKey('LOGO_DEV_PUBLIC_KEY');
+                        setRevealingKey('logo_dev_public_key');
                         setRevealDialogOpen(true);
                       }}
                     >
@@ -368,18 +406,22 @@ export function ApiKeyManager({ onError, onSuccess }: ApiKeyManagerProps) {
                       variant="ghost"
                       size="icon"
                       onClick={() => {
-                        setDeletingKey('LOGO_DEV_PUBLIC_KEY');
+                        setDeletingKey('logo_dev_public_key');
                         setDeleteDialogOpen(true);
                       }}
                     >
                       <Trash2 className="h-4 w-4 text-danger" />
                     </Button>
                   </>
+                ) : logoDevEnvConfigured ? (
+                  <Badge variant="default" className="bg-success/20 text-success">
+                    Via Environment
+                  </Badge>
                 ) : (
                   <Button
                     size="sm"
                     onClick={() => {
-                      setKeyName('LOGO_DEV_PUBLIC_KEY');
+                      setKeyName('logo_dev_public_key');
                       setKeyValue('');
                       setAddDialogOpen(true);
                     }}
@@ -394,15 +436,18 @@ export function ApiKeyManager({ onError, onSuccess }: ApiKeyManagerProps) {
       </CardContent>
 
       {/* Add/Update Dialog */}
-      <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
+      <Dialog open={addDialogOpen} onOpenChange={(open) => {
+        setAddDialogOpen(open);
+        if (!open) setAddError(null);
+      }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
               {keyName === 'OPENAI_API_KEY' && openAiKey 
                 ? 'Update OpenAI API Key' 
-                : keyName === 'LOGO_DEV_PUBLIC_KEY' && logoDevKey
+                : keyName === 'logo_dev_public_key' && logoDevKey
                   ? 'Update Logo.dev API Key'
-                  : keyName === 'LOGO_DEV_PUBLIC_KEY'
+                  : keyName === 'logo_dev_public_key'
                     ? 'Configure Logo.dev API Key'
                     : keyName === 'OPENAI_API_KEY'
                       ? 'Configure OpenAI API Key'
@@ -414,7 +459,7 @@ export function ApiKeyManager({ onError, onSuccess }: ApiKeyManagerProps) {
                 ? openAiKey 
                   ? 'Enter the new API key value. This will replace the existing key.'
                   : 'Configure OpenAI API key for AI enrichment features.'
-                : keyName === 'LOGO_DEV_PUBLIC_KEY'
+                : keyName === 'logo_dev_public_key'
                   ? logoDevKey
                     ? 'Enter the new API key value. This will replace the existing key.'
                     : 'Configure Logo.dev public key for company logos. Get a free key at logo.dev'
@@ -423,7 +468,7 @@ export function ApiKeyManager({ onError, onSuccess }: ApiKeyManagerProps) {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
-            {keyName !== 'OPENAI_API_KEY' && keyName !== 'LOGO_DEV_PUBLIC_KEY' && (
+            {keyName !== 'OPENAI_API_KEY' && keyName !== 'logo_dev_public_key' && (
               <div className="space-y-2">
                 <Label>Key Name</Label>
                 <Input
@@ -439,28 +484,49 @@ export function ApiKeyManager({ onError, onSuccess }: ApiKeyManagerProps) {
               <Input
                 value={keyValue}
                 onChange={(e) => setKeyValue(e.target.value)}
-                placeholder={keyName === 'LOGO_DEV_PUBLIC_KEY' ? 'pk_...' : 'sk-...'}
+                placeholder={keyName === 'logo_dev_public_key' ? 'pk_...' : 'sk-...'}
                 type="password"
               />
             </div>
-            <div className="space-y-2">
-              <Label>MFA Code</Label>
-              <Input
-                value={mfaCode}
-                onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                placeholder="000000"
-                className="font-mono text-center tracking-widest"
-                maxLength={6}
-              />
-            </div>
+            {!hasMfaSession && (
+              <div className="space-y-2">
+                <Label>MFA Code</Label>
+                <Input
+                  value={mfaCode}
+                  onChange={(e) => {
+                    const code = e.target.value.replace(/\D/g, '').slice(0, 6);
+                    setMfaCode(code);
+                    if (code.length === 6 && keyName && keyValue) {
+                      handleAdd(code);
+                    }
+                  }}
+                  placeholder="000000"
+                  className="font-mono text-center tracking-widest"
+                  maxLength={6}
+                  autoComplete="one-time-code"
+                />
+                {addError && (
+                  <div className="flex items-center gap-2 text-sm text-destructive mt-2">
+                    <AlertCircle className="h-4 w-4" />
+                    {addError}
+                  </div>
+                )}
+              </div>
+            )}
+            {hasMfaSession && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground p-2 bg-muted/50 rounded">
+                <Shield className="h-4 w-4" />
+                MFA verified - session active
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setAddDialogOpen(false)}>
               Cancel
             </Button>
             <Button
-              onClick={handleAdd}
-              disabled={!keyName || !keyValue || mfaCode.length !== 6 || isSaving}
+              onClick={() => handleAdd()}
+              disabled={!keyName || !keyValue || (!hasMfaSession && mfaCode.length !== 6) || isSaving}
             >
               {isSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Save Key
@@ -475,7 +541,10 @@ export function ApiKeyManager({ onError, onSuccess }: ApiKeyManagerProps) {
           <DialogHeader>
             <DialogTitle>Reveal API Key</DialogTitle>
             <DialogDescription>
-              Enter your MFA code to view the full API key for <strong>{revealingKey}</strong>.
+              {hasMfaSession 
+                ? <>View the full API key for <strong>{revealingKey}</strong>.</>
+                : <>Enter your MFA code to view the full API key for <strong>{revealingKey}</strong>.</>
+              }
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
@@ -497,16 +566,34 @@ export function ApiKeyManager({ onError, onSuccess }: ApiKeyManagerProps) {
                   </Button>
                 </div>
               </div>
+            ) : hasMfaSession ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground p-2 bg-muted/50 rounded">
+                <Shield className="h-4 w-4" />
+                MFA verified - session active
+              </div>
             ) : (
               <div className="space-y-2">
                 <Label>MFA Code</Label>
                 <Input
                   value={revealMfaCode}
-                  onChange={(e) => setRevealMfaCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  onChange={(e) => {
+                    const code = e.target.value.replace(/\D/g, '').slice(0, 6);
+                    setRevealMfaCode(code);
+                    if (code.length === 6 && revealingKey) {
+                      handleReveal(code);
+                    }
+                  }}
                   placeholder="000000"
                   className="font-mono text-center tracking-widest"
                   maxLength={6}
+                  autoComplete="one-time-code"
                 />
+                {revealError && (
+                  <div className="flex items-center gap-2 text-sm text-destructive mt-2">
+                    <AlertCircle className="h-4 w-4" />
+                    {revealError}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -516,8 +603,8 @@ export function ApiKeyManager({ onError, onSuccess }: ApiKeyManagerProps) {
             </Button>
             {!revealedValue && (
               <Button
-                onClick={handleReveal}
-                disabled={revealMfaCode.length !== 6 || isRevealing}
+                onClick={() => handleReveal()}
+                disabled={(!hasMfaSession && revealMfaCode.length !== 6) || isRevealing}
               >
                 {isRevealing && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                 <Eye className="h-4 w-4 mr-2" />
@@ -529,24 +616,49 @@ export function ApiKeyManager({ onError, onSuccess }: ApiKeyManagerProps) {
       </Dialog>
 
       {/* Delete Dialog */}
-      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+      <Dialog open={deleteDialogOpen} onOpenChange={(open) => {
+        setDeleteDialogOpen(open);
+        if (!open) setDeleteError(null);
+      }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Delete API Key</DialogTitle>
             <DialogDescription>
               Are you sure you want to delete <strong>{deletingKey}</strong>? 
-              Enter your MFA code to confirm.
+              {!hasMfaSession && ' Enter your MFA code to confirm.'}
             </DialogDescription>
           </DialogHeader>
           <div className="py-4">
-            <Label>MFA Code</Label>
-            <Input
-              value={deleteMfaCode}
-              onChange={(e) => setDeleteMfaCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-              placeholder="000000"
-              className="font-mono text-center tracking-widest mt-2"
-              maxLength={6}
-            />
+            {hasMfaSession ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground p-2 bg-muted/50 rounded">
+                <Shield className="h-4 w-4" />
+                MFA verified - session active
+              </div>
+            ) : (
+              <>
+                <Label>MFA Code</Label>
+                <Input
+                  value={deleteMfaCode}
+                  onChange={(e) => {
+                    const code = e.target.value.replace(/\D/g, '').slice(0, 6);
+                    setDeleteMfaCode(code);
+                    if (code.length === 6 && deletingKey) {
+                      handleDelete(code);
+                    }
+                  }}
+                  placeholder="000000"
+                  className="font-mono text-center tracking-widest mt-2"
+                  maxLength={6}
+                  autoComplete="one-time-code"
+                />
+                {deleteError && (
+                  <div className="flex items-center gap-2 text-sm text-destructive mt-2">
+                    <AlertCircle className="h-4 w-4" />
+                    {deleteError}
+                  </div>
+                )}
+              </>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>
@@ -554,8 +666,8 @@ export function ApiKeyManager({ onError, onSuccess }: ApiKeyManagerProps) {
             </Button>
             <Button
               variant="destructive"
-              onClick={handleDelete}
-              disabled={deleteMfaCode.length !== 6 || isDeleting}
+              onClick={() => handleDelete()}
+              disabled={(!hasMfaSession && deleteMfaCode.length !== 6) || isDeleting}
             >
               {isDeleting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Delete

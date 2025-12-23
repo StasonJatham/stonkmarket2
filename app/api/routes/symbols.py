@@ -253,16 +253,21 @@ async def delete_symbol(
 async def _process_new_symbol(symbol: str) -> None:
     """Background task to process newly added symbol.
     
-    Fetches Yahoo Finance data and generates AI summary for company description.
+    Fetches Yahoo Finance data, adds to dip_state, generates AI content,
+    and invalidates caches so the stock appears immediately in dashboard.
     """
+    from datetime import date, timedelta
     from app.database.connection import execute, fetch_one
     from app.services.stock_info import get_stock_info_async
-    from app.services.openai_client import summarize_company
+    from app.services.openai_client import summarize_company, generate_bio, rate_dip
+    from app.repositories import dip_votes as dip_votes_repo
+    from app.dipfinder.service import get_dipfinder_service
+    from app.cache.cache import Cache
     
     logger.info(f"Processing newly added symbol: {symbol}")
     
     try:
-        # Fetch Yahoo Finance info
+        # Step 1: Fetch Yahoo Finance info
         info = await get_stock_info_async(symbol)
         if not info:
             logger.warning(f"Could not fetch Yahoo data for {symbol}")
@@ -271,8 +276,13 @@ async def _process_new_symbol(symbol: str) -> None:
         name = info.get("name") or info.get("short_name")
         sector = info.get("sector")
         full_summary = info.get("summary")  # longBusinessSummary from yfinance
+        current_price = info.get("current_price", 0)
+        ath_price = info.get("ath_price") or info.get("fifty_two_week_high", 0)
+        dip_pct = ((ath_price - current_price) / ath_price * 100) if ath_price > 0 else 0
         
-        # Generate AI summary from the long description
+        logger.info(f"Fetched data for {symbol}: price=${current_price}, ATH=${ath_price}, dip={dip_pct:.1f}%")
+        
+        # Step 2: Generate AI summary from the long description
         ai_summary = None
         if full_summary and len(full_summary) > 100:
             ai_summary = await summarize_company(
@@ -283,7 +293,7 @@ async def _process_new_symbol(symbol: str) -> None:
             if ai_summary:
                 logger.info(f"Generated AI summary for {symbol}: {len(ai_summary)} chars")
         
-        # Update symbols with name, sector, and AI summary
+        # Step 3: Update symbols with name, sector, and AI summary
         if name or sector or ai_summary:
             await execute(
                 """UPDATE symbols SET 
@@ -298,6 +308,69 @@ async def _process_new_symbol(symbol: str) -> None:
                 ai_summary,
             )
             logger.info(f"Updated symbol info for {symbol}: name='{name}', sector='{sector}', summary_ai={'yes' if ai_summary else 'no'}")
+        
+        # Step 4: Fetch 365 days of price history for dipfinder
+        try:
+            service = get_dipfinder_service()
+            prices = await service.price_provider.get_prices(
+                symbol.upper(),
+                start_date=date.today() - timedelta(days=365),
+                end_date=date.today(),
+            )
+            if prices is not None and not prices.empty:
+                logger.info(f"Fetched {len(prices)} days of price history for {symbol}")
+            else:
+                logger.warning(f"No price history returned for {symbol}")
+        except Exception as price_err:
+            logger.warning(f"Failed to fetch price history for {symbol}: {price_err}")
+        
+        # Step 5: Add to dip_state so it appears in dashboard
+        await execute(
+            """INSERT INTO dip_state (symbol, current_price, ath_price, dip_percentage, first_seen, last_updated)
+               VALUES ($1, $2, $3, $4, NOW(), NOW())
+               ON CONFLICT (symbol) DO UPDATE SET
+                   current_price = EXCLUDED.current_price,
+                   ath_price = EXCLUDED.ath_price,
+                   dip_percentage = EXCLUDED.dip_percentage,
+                   last_updated = NOW()""",
+            symbol.upper(),
+            current_price,
+            ath_price,
+            dip_pct,
+        )
+        logger.info(f"Added {symbol} to dip_state with dip={dip_pct:.1f}%")
+        
+        # Step 6: Generate AI bio (swipe card summary)
+        bio = await generate_bio(
+            symbol=symbol,
+            dip_pct=dip_pct,
+        )
+        
+        # Step 7: Generate AI rating
+        rating_data = await rate_dip(
+            symbol=symbol,
+            current_price=current_price,
+            ref_high=ath_price,
+            dip_pct=dip_pct,
+        )
+        
+        # Step 8: Store AI analysis
+        if bio or rating_data:
+            await dip_votes_repo.upsert_ai_analysis(
+                symbol=symbol,
+                swipe_bio=bio,
+                ai_rating=rating_data.get("rating") if rating_data else None,
+                ai_reasoning=rating_data.get("reasoning") if rating_data else None,
+                is_batch=False,
+            )
+            logger.info(f"Generated AI content for {symbol}: bio={'yes' if bio else 'no'}, rating={rating_data.get('rating') if rating_data else 'none'}")
+        else:
+            logger.warning(f"No AI content generated for {symbol}")
+        
+        # Step 9: Invalidate caches so the stock appears immediately
+        ranking_cache = Cache(prefix="ranking", default_ttl=3600)
+        deleted = await ranking_cache.invalidate_pattern("*")
+        logger.info(f"Completed processing {symbol}, invalidated {deleted} ranking cache keys")
             
     except Exception as e:
         logger.error(f"Error processing new symbol {symbol}: {e}")

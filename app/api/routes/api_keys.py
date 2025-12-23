@@ -22,6 +22,33 @@ from app.schemas.api_keys import (
 
 router = APIRouter()
 
+# MFA session cache settings
+MFA_SESSION_TTL_SECONDS = 15 * 60  # 15 minutes
+MFA_SESSION_PREFIX = "mfa_session:"
+
+
+async def _get_mfa_session(user_id: int) -> bool:
+    """Check if user has a valid MFA session."""
+    try:
+        from app.cache.client import get_valkey_client
+        client = await get_valkey_client()
+        result = await client.get(f"{MFA_SESSION_PREFIX}{user_id}")
+        return result is not None
+    except Exception:
+        # If cache fails, require MFA
+        return False
+
+
+async def _set_mfa_session(user_id: int) -> None:
+    """Store MFA session after successful verification."""
+    try:
+        from app.cache.client import get_valkey_client
+        client = await get_valkey_client()
+        await client.setex(f"{MFA_SESSION_PREFIX}{user_id}", MFA_SESSION_TTL_SECONDS, "1")
+    except Exception:
+        # If cache fails, just continue (user will need to re-enter MFA next time)
+        pass
+
 
 async def _verify_mfa_for_request(
     user: TokenData,
@@ -29,6 +56,9 @@ async def _verify_mfa_for_request(
 ) -> int:
     """
     Verify MFA code for an API key operation.
+    
+    If user has a valid MFA session (verified within last 15 minutes),
+    the mfa_code can be empty to skip re-verification.
     
     Returns the user ID on success.
     Raises AuthenticationError if MFA verification fails.
@@ -40,8 +70,17 @@ async def _verify_mfa_for_request(
     if not db_user.mfa_enabled:
         raise ValidationError("MFA must be enabled to manage API keys")
 
+    # Check for valid MFA session (skip re-verification if within 15 min)
+    if await _get_mfa_session(db_user.id):
+        return db_user.id
+
+    # No valid session - require MFA code
+    if not mfa_code:
+        raise AuthenticationError(message="MFA code required", error_code="MFA_REQUIRED")
+
     # Try TOTP first
     if db_user.mfa_secret and verify_totp(db_user.mfa_secret, mfa_code):
+        await _set_mfa_session(db_user.id)
         return db_user.id
 
     # Try backup code
@@ -51,9 +90,27 @@ async def _verify_mfa_for_request(
             # Update backup codes (one was used)
             if updated:
                 await auth_repo.update_backup_codes(user.sub, updated)
+            await _set_mfa_session(db_user.id)
             return db_user.id
 
     raise AuthenticationError(message="Invalid MFA code", error_code="INVALID_MFA_CODE")
+
+
+@router.get(
+    "/mfa-session",
+    summary="Check MFA session status",
+    description="Check if user has an active MFA session (verified within last 15 minutes).",
+)
+async def check_mfa_session(
+    user: TokenData = Depends(require_admin),
+) -> dict:
+    """Check if user has an active MFA session."""
+    db_user = await auth_repo.get_user(user.sub)
+    if not db_user:
+        return {"has_session": False}
+    
+    has_session = await _get_mfa_session(db_user.id)
+    return {"has_session": has_session}
 
 
 @router.get(

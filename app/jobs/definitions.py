@@ -9,19 +9,75 @@ from .registry import register_job
 logger = get_logger("jobs.definitions")
 
 
+async def _calculate_dip_start_date(symbol: str, ath_price: float, dip_threshold: float):
+    """
+    Calculate when the stock first entered the current dip period.
+    
+    Uses price_history table to find the first date where the stock dropped
+    below the dip threshold (from ATH) and stayed there.
+    
+    Args:
+        symbol: Stock symbol
+        ath_price: All-time high price from price_history
+        dip_threshold: Minimum dip percentage to consider (e.g., 0.15 for 15%)
+    
+    Returns:
+        Date when dip started, or None if not in dip
+    """
+    from datetime import date
+    from app.database.connection import fetch_all as db_fetch_all
+    
+    if ath_price <= 0:
+        return None
+    
+    # Calculate the threshold price (e.g., if ATH=100 and threshold=0.15, then dip_price=85)
+    dip_threshold_price = ath_price * (1 - dip_threshold)
+    
+    # Get all price history sorted chronologically
+    rows = await db_fetch_all(
+        "SELECT date, close FROM price_history WHERE symbol = $1 ORDER BY date ASC",
+        symbol
+    )
+    
+    if not rows:
+        return None
+    
+    # Find when the current dip started
+    # Walk through prices chronologically, tracking when we enter/exit dip territory
+    dip_start = None
+    currently_in_dip = False
+    
+    for row in rows:
+        price = float(row["close"])
+        is_dip = price <= dip_threshold_price
+        
+        if is_dip and not currently_in_dip:
+            # Entering a dip
+            dip_start = row["date"]
+            currently_in_dip = True
+        elif not is_dip and currently_in_dip:
+            # Exited the dip, reset
+            dip_start = None
+            currently_in_dip = False
+    
+    # If currently in dip, return when it started
+    return dip_start if currently_in_dip else None
+
+
 @register_job("data_grab")
 async def data_grab_job() -> str:
     """
-    Fetch stock data from yfinance and calculate signals/dips.
+    Fetch stock data from yfinance and update dip_state with latest prices.
     Also fetches latest prices for benchmark indices.
 
     Schedule: Mon-Fri at 11pm (after market close)
     """
     from app.dipfinder.service import get_dipfinder_service
-    from app.database.connection import fetch_all
+    from app.database.connection import fetch_all, execute
     from app.cache.cache import Cache
     from app.services.runtime_settings import get_runtime_setting
     from datetime import date, timedelta
+    import yfinance as yf
 
     logger.info("Starting data_grab job")
 
@@ -33,8 +89,65 @@ async def data_grab_job() -> str:
             return "No active symbols"
 
         service = get_dipfinder_service()
-        signals = await service.get_signals(tickers, force_refresh=True)
-        dips = sum(1 for s in signals if s.dip_metrics and s.dip_metrics.is_meaningful)
+        
+        # Fetch latest prices and update dip_state
+        updated_count = 0
+        
+        # Get min_dip_pct for each symbol to calculate dip start date
+        dip_thresholds = {}
+        threshold_rows = await fetch_all("SELECT symbol, min_dip_pct FROM symbols WHERE is_active = TRUE")
+        for row in threshold_rows:
+            dip_thresholds[row["symbol"]] = float(row["min_dip_pct"]) if row["min_dip_pct"] else 0.15
+        
+        for ticker in tickers:
+            try:
+                # Get full price history (1 year) for dip start calculation
+                full_prices = await service.price_provider.get_prices(
+                    ticker,
+                    start_date=date.today() - timedelta(days=365),
+                    end_date=date.today(),
+                )
+                
+                if full_prices is not None and not full_prices.empty:
+                    current_price = float(full_prices["Close"].iloc[-1])
+                    
+                    # ATH is calculated from our price_history table (single source of truth)
+                    # This uses our stored historical data (typically ~1 year) rather than yfinance's 52w high
+                    from app.database.connection import fetch_val
+                    ath_price = await fetch_val(
+                        "SELECT COALESCE(MAX(close), $2) FROM price_history WHERE symbol = $1",
+                        ticker, float(full_prices["Close"].max())
+                    )
+                    ath_price = float(ath_price)
+                    
+                    # Calculate dip percentage using the true ATH
+                    dip_percentage = ((ath_price - current_price) / ath_price * 100) if ath_price > 0 else 0
+                    
+                    # Calculate when the dip started using price_history table
+                    dip_threshold = dip_thresholds.get(ticker, 0.15)
+                    dip_start_date = await _calculate_dip_start_date(ticker, ath_price, dip_threshold)
+                    
+                    # Update dip_state
+                    await execute(
+                        """
+                        INSERT INTO dip_state (symbol, current_price, ath_price, dip_percentage, dip_start_date, first_seen, last_updated)
+                        VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+                        ON CONFLICT (symbol) DO UPDATE SET
+                            current_price = EXCLUDED.current_price,
+                            ath_price = EXCLUDED.ath_price,
+                            dip_percentage = EXCLUDED.dip_percentage,
+                            dip_start_date = COALESCE(EXCLUDED.dip_start_date, dip_state.dip_start_date),
+                            last_updated = NOW()
+                        """,
+                        ticker, current_price, ath_price, dip_percentage, dip_start_date
+                    )
+                    updated_count += 1
+                    days_in_dip = (date.today() - dip_start_date).days if dip_start_date else 0
+                    logger.debug(f"Updated dip_state for {ticker}: ${current_price:.2f}, ATH: ${ath_price:.2f}, dip: {dip_percentage:.1f}%, days: {days_in_dip}")
+                    
+            except Exception as e:
+                logger.warning(f"Failed to update {ticker}: {e}")
+                continue
 
         # Also fetch latest benchmark data
         benchmarks = get_runtime_setting("benchmarks", [])
@@ -45,7 +158,6 @@ async def data_grab_job() -> str:
             logger.info(f"Fetching data for {len(benchmark_symbols)} benchmarks")
             for symbol in benchmark_symbols:
                 try:
-                    # Fetch latest price data for benchmark (forces cache refresh)
                     await service.price_provider.get_prices(
                         symbol,
                         start_date=date.today() - timedelta(days=5),
@@ -62,7 +174,7 @@ async def data_grab_job() -> str:
         await chart_cache.invalidate_pattern("*")
         logger.info("Invalidated ranking and chart caches")
 
-        message = f"Fetched {len(signals)} symbols, {dips} dips, {benchmark_count} benchmarks"
+        message = f"Updated {updated_count}/{len(tickers)} symbols, {benchmark_count} benchmarks"
         logger.info(f"data_grab: {message}")
         return message
 
@@ -75,6 +187,7 @@ async def data_grab_job() -> str:
 async def cache_warmup_job() -> str:
     """
     Pre-cache chart data for top dips and benchmarks.
+    Forces refresh of existing cache entries.
 
     Schedule: After data_grab (Mon-Fri at 11:30pm) or on demand
     """
@@ -114,14 +227,9 @@ async def cache_warmup_job() -> str:
         for symbol in all_symbols:
             for days in periods:
                 cache_key = f"{symbol}:{days}"
-                
-                # Skip if already cached
-                existing = await chart_cache.get(cache_key)
-                if existing:
-                    continue
 
                 try:
-                    # Fetch price data
+                    # Fetch fresh price data (always refresh)
                     prices = await service.price_provider.get_prices(
                         symbol,
                         start_date=date.today() - timedelta(days=days),

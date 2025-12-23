@@ -601,6 +601,38 @@ class DipFinderService:
         """Save signal to database."""
         try:
             expires_at = datetime.utcnow() + timedelta(days=7)
+            
+            # Convert as_of_date string to date object if needed
+            as_of_date = signal.as_of_date
+            if isinstance(as_of_date, str):
+                as_of_date = date.fromisoformat(as_of_date)
+
+            # Fetch ATH-based dip values from dip_state (source of truth)
+            dip_state = await fetch_one(
+                """
+                SELECT ath_price, dip_percentage, dip_start_date
+                FROM dip_state
+                WHERE symbol = $1
+                """,
+                signal.ticker,
+            )
+
+            # Use ATH-based values if available, otherwise fall back to computed values
+            if dip_state:
+                peak_stock = float(dip_state["ath_price"])
+                dip_stock = float(dip_state["dip_percentage"]) / 100.0  # Convert to fraction
+                persist_days = (date.today() - dip_state["dip_start_date"]).days if dip_state["dip_start_date"] else 0
+                # Recalculate dip_score based on ATH dip
+                dip_score = min(100.0, dip_stock * 100 * 5)
+                # Recalculate final_score
+                final_score = (signal.quality_metrics.score + signal.stability_metrics.score + dip_score) / 3
+            else:
+                # Fallback to computed values
+                peak_stock = signal.dip_metrics.peak_price
+                dip_stock = signal.dip_metrics.dip_pct
+                persist_days = signal.dip_metrics.persist_days
+                dip_score = signal.dip_score
+                final_score = signal.final_score
 
             await execute(
                 """
@@ -644,19 +676,19 @@ class DipFinderService:
                 signal.ticker,
                 signal.benchmark,
                 signal.window,
-                signal.as_of_date,
-                signal.dip_metrics.dip_pct,
-                signal.dip_metrics.peak_price,
+                as_of_date,
+                dip_stock,
+                peak_stock,
                 signal.dip_metrics.dip_percentile,
                 signal.dip_metrics.dip_vs_typical,
-                signal.dip_metrics.persist_days,
+                persist_days,
                 signal.market_context.dip_mkt,
                 signal.market_context.excess_dip,
                 signal.market_context.dip_class.value,
                 signal.quality_metrics.score,
                 signal.stability_metrics.score,
-                signal.dip_score,
-                signal.final_score,
+                dip_score,
+                final_score,
                 signal.alert_level.value,
                 signal.should_alert,
                 signal.reason,

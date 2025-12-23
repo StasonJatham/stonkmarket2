@@ -1,6 +1,6 @@
 /* eslint-disable react-refresh/only-export-components -- Context module exports hook alongside provider */
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
-import { getRanking } from '@/services/api';
+import { getRanking, prefetchTopStocks, preloadStockLogos } from '@/services/api';
 import type { DipStock } from '@/services/api';
 
 interface DipContextType {
@@ -16,6 +16,9 @@ interface DipContextType {
 }
 
 const DipContext = createContext<DipContextType | null>(null);
+
+// Number of top stocks to prefetch on initial load
+const PREFETCH_COUNT = 6;
 
 export function DipProvider({ children }: { children: ReactNode }) {
   const [stocks, setStocks] = useState<DipStock[]>([]);
@@ -50,6 +53,12 @@ export function DipProvider({ children }: { children: ReactNode }) {
       const data = await getRanking(skipCache, useShowAll);
       setStocks(data.ranking);
       setLastUpdated(data.last_updated);
+      
+      // Prefetch chart data and info for top stocks (likely to be clicked)
+      const topSymbols = data.ranking.slice(0, PREFETCH_COUNT).map(s => s.symbol);
+      prefetchTopStocks(topSymbols);
+      preloadStockLogos(topSymbols);
+      
       // Also update ticker stocks if we got all stocks
       if (useShowAll) {
         setTickerStocks(data.ranking.slice(0, 40));

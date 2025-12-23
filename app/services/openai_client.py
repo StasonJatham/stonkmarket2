@@ -210,7 +210,12 @@ def _is_gpt5(model: str) -> bool:
 
 
 def _adjust_tokens(model: str, desired: int) -> int:
-    """Adjust max_output_tokens for GPT-5 reasoning overhead."""
+    """Adjust max_output_tokens for GPT-5 reasoning overhead.
+    
+    GPT-5 reasoning models use some output tokens for internal reasoning.
+    Even with reasoning effort set to 'low', we need 4x multiplier to ensure
+    enough headroom for the actual output after reasoning tokens are used.
+    """
     return desired * 4 if _is_gpt5(model) else desired
 
 
@@ -333,6 +338,11 @@ async def generate(
         "max_output_tokens": _adjust_tokens(model, max_tokens),
         "store": False,
     }
+    
+    # For GPT-5 reasoning models, use low effort for simple tasks
+    # This minimizes internal "thinking" tokens for straightforward generations
+    if _is_gpt5(model):
+        params["reasoning"] = {"effort": "low"}
     
     if json_output:
         params["text"] = {"format": {"type": "json_object"}}

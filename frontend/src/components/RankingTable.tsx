@@ -7,8 +7,9 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { TrendingDown } from 'lucide-react';
+import { TrendingDown, BarChart2 } from 'lucide-react';
 
 interface RankingTableProps {
   stocks: DipStock[];
@@ -69,6 +70,12 @@ export function RankingTable({ stocks, isLoading, onSelectStock, selectedSymbol 
                 <TableCell>
                   <div className="flex items-center gap-2">
                     <span className="font-semibold">{stock.symbol}</span>
+                    {stock.symbol_type === 'index' && (
+                      <Badge variant="outline" className="text-xs px-1.5 py-0 h-5 border-chart-2 text-chart-2">
+                        <BarChart2 className="h-3 w-3 mr-0.5" />
+                        Index
+                      </Badge>
+                    )}
                   </div>
                 </TableCell>
                 <TableCell className="hidden md:table-cell text-muted-foreground truncate max-w-48">

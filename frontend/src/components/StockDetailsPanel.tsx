@@ -165,33 +165,35 @@ export function StockDetailsPanel({
       <Card className="h-full flex flex-col overflow-hidden">
         {/* Header - Fixed */}
         <CardHeader className="py-2 md:py-4 px-3 md:px-6 shrink-0 border-b border-border/50">
-          <div className="flex items-start justify-between">
-            <div className="flex items-center gap-3 min-w-0">
-              <StockLogo symbol={stock.symbol} size="lg" />
-              <div className="min-w-0">
+          <div className="flex flex-col gap-1">
+            {/* Top row: Logo + Symbol + Price */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <StockLogo symbol={stock.symbol} size="lg" />
                 <CardTitle className="text-xl md:text-2xl">{stock.symbol}</CardTitle>
-                <p className="text-xs md:text-sm text-muted-foreground truncate">
-                  {stock.name || stock.symbol}
-                </p>
+              </div>
+              <div className="text-right shrink-0">
+                <div className="text-xl md:text-2xl font-bold font-mono">
+                  ${stock.last_price.toFixed(2)}
+                </div>
+                <div className={`flex items-center justify-end gap-1 text-sm ${
+                  isPositive ? 'text-success' : 'text-danger'
+                }`}>
+                  {isPositive ? (
+                    <TrendingUp className="h-4 w-4" />
+                  ) : (
+                    <TrendingDown className="h-4 w-4" />
+                  )}
+                  <span className="font-medium">
+                    {priceChange >= 0 ? '+' : ''}{priceChange.toFixed(2)}%
+                  </span>
+                </div>
               </div>
             </div>
-            <div className="text-right">
-              <div className="text-xl md:text-2xl font-bold font-mono">
-                ${stock.last_price.toFixed(2)}
-              </div>
-              <div className={`flex items-center justify-end gap-1 text-sm ${
-                isPositive ? 'text-success' : 'text-danger'
-              }`}>
-                {isPositive ? (
-                  <TrendingUp className="h-4 w-4" />
-                ) : (
-                  <TrendingDown className="h-4 w-4" />
-                )}
-                <span className="font-medium">
-                  {priceChange >= 0 ? '+' : ''}{priceChange.toFixed(2)}%
-                </span>
-              </div>
-            </div>
+            {/* Second row: Stock name (aligned with logo) */}
+            <p className="text-xs md:text-sm text-muted-foreground">
+              {stock.name || stock.symbol}
+            </p>
           </div>
 
           {/* Period Selector */}

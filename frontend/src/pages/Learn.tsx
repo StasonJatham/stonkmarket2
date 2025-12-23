@@ -18,6 +18,9 @@ import {
 import { useSEO, generateBreadcrumbJsonLd, generateFAQJsonLd } from '@/lib/seo';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+
+// Feature flags from environment
+const ENABLE_LEGAL_PAGES = import.meta.env.VITE_ENABLE_LEGAL_PAGES === 'true';
 import { Badge } from '@/components/ui/badge';
 import {
   Accordion,
@@ -575,9 +578,11 @@ export function LearnPage() {
           <Button variant="ghost" size="sm" asChild>
             <Link to="/about">About Our Methodology</Link>
           </Button>
-          <Button variant="ghost" size="sm" asChild>
-            <Link to="/privacy">Privacy Policy</Link>
-          </Button>
+          {ENABLE_LEGAL_PAGES && (
+            <Button variant="ghost" size="sm" asChild>
+              <Link to="/privacy">Privacy Policy</Link>
+            </Button>
+          )}
           <Button variant="ghost" size="sm" asChild>
             <Link to="/contact">Contact Us</Link>
           </Button>

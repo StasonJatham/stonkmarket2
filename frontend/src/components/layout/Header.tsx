@@ -13,7 +13,7 @@ const navLinks = [
   { href: '/', label: 'Dashboard' },
   { href: '/swipe', label: 'DipSwipe', icon: Heart },
   { href: '/learn', label: 'Learn' },
-  { href: '/signals', label: 'Signals', icon: BarChart3, auth: true },
+  { href: '/signals', label: 'Signals', icon: BarChart3 },
 ];
 
 const adminLinks = [
@@ -43,8 +43,6 @@ export function Header() {
           {/* Desktop Navigation */}
           <nav className="hidden md:flex items-center gap-6">
             {navLinks.map((link) => {
-              // Skip auth-required links if not logged in
-              if (link.auth && !user) return null;
               const Icon = link.icon;
               return (
                 <Link

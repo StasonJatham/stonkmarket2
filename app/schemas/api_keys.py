@@ -39,7 +39,9 @@ class ApiKeyResponse(BaseModel):
     )
     created_at: str
     updated_at: str
-    created_by: str
+    created_by: Optional[str] = Field(
+        None, description="Username who created the key (None for system-seeded keys)"
+    )
 
 
 class ApiKeyList(BaseModel):

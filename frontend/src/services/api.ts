@@ -45,7 +45,7 @@ async function fetchAPI<T>(endpoint: string, options: FetchOptions = {}): Promis
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: 'Request failed' }));
-    throw new Error(error.detail || `HTTP ${response.status}`);
+    throw new Error(error.message || error.detail || `HTTP ${response.status}`);
   }
 
   // Store ETag from response if present
@@ -72,6 +72,7 @@ export interface DipStock {
   sector: string | null;
   pe_ratio: number | null;
   volume: number | null;
+  symbol_type?: 'stock' | 'index';
   // Added for UI calculations
   dip_score?: number;
   recovery_potential?: number;
@@ -174,6 +175,80 @@ export async function getStockInfo(symbol: string): Promise<StockInfo> {
     () => fetchAPI<StockInfo>(`/dips/${symbol}/info`),
     { ttl: CACHE_TTL.STOCK_INFO, staleWhileRevalidate: true }
   );
+}
+
+// =============================================================================
+// PREFETCH UTILITIES
+// =============================================================================
+
+/**
+ * Prefetch chart data for a stock in background (non-blocking).
+ * Call this on hover or when you anticipate user interaction.
+ */
+export function prefetchStockChart(symbol: string, days: number = 365): void {
+  const endpoint = `/dips/${symbol}/chart?days=${days}`;
+  const cacheKey = `chart:${symbol}:${days}`;
+  
+  apiCache.prefetch(
+    cacheKey,
+    () => fetchAPI<ChartDataPoint[]>(endpoint, { useEtag: true }),
+    { ttl: CACHE_TTL.CHART }
+  );
+}
+
+/**
+ * Prefetch stock info in background.
+ */
+export function prefetchStockInfo(symbol: string): void {
+  const cacheKey = `info:${symbol}`;
+  
+  apiCache.prefetch(
+    cacheKey,
+    () => fetchAPI<StockInfo>(`/dips/${symbol}/info`),
+    { ttl: CACHE_TTL.STOCK_INFO }
+  );
+}
+
+/**
+ * Prefetch data for multiple stocks (top N from ranking).
+ * Called after ranking loads to pre-warm cache for likely clicks.
+ */
+export function prefetchTopStocks(symbols: string[], chartDays: number = 365): void {
+  // Stagger prefetches to avoid hammering the API
+  symbols.forEach((symbol, index) => {
+    setTimeout(() => {
+      prefetchStockChart(symbol, chartDays);
+      prefetchStockInfo(symbol);
+    }, index * 100); // 100ms between each prefetch
+  });
+}
+
+/**
+ * Preload stock logo images for faster display.
+ * Uses link preload for browser-native prefetching.
+ */
+export function preloadStockLogos(symbols: string[]): void {
+  if (typeof document === 'undefined') return;
+  
+  // Create a fragment to batch DOM operations
+  const fragment = document.createDocumentFragment();
+  const existingPreloads = new Set(
+    Array.from(document.querySelectorAll('link[rel="preload"][as="image"]'))
+      .map(link => link.getAttribute('href'))
+  );
+  
+  symbols.forEach(symbol => {
+    const logoUrl = `https://assets.parqet.com/logos/symbol/${symbol}`;
+    if (existingPreloads.has(logoUrl)) return;
+    
+    const link = document.createElement('link');
+    link.rel = 'preload';
+    link.as = 'image';
+    link.href = logoUrl;
+    fragment.appendChild(link);
+  });
+  
+  document.head.appendChild(fragment);
 }
 
 export interface PublicBenchmark {
@@ -806,6 +881,10 @@ export async function checkApiKey(keyName: string): Promise<{ key_name: string; 
   return fetchAPI<{ key_name: string; exists: boolean; key_hint: string | null }>(`/admin/api-keys/check/${keyName}`);
 }
 
+export async function checkMfaSession(): Promise<{ has_session: boolean }> {
+  return fetchAPI<{ has_session: boolean }>('/admin/api-keys/mfa-session');
+}
+
 // =============================================================================
 // USER API KEYS (External access keys for the stonkmarket API)
 // =============================================================================
@@ -959,6 +1038,7 @@ export interface SystemStatus {
   runtime_settings: RuntimeSettings;
   cronjobs: CronJobSummary[];
   openai_configured: boolean;
+  logo_dev_configured: boolean;
   total_symbols: number;
   pending_suggestions: number;
 }

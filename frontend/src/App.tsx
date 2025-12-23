@@ -1,5 +1,8 @@
 import { lazy, Suspense, memo } from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+
+// Feature flags from environment
+const ENABLE_LEGAL_PAGES = import.meta.env.VITE_ENABLE_LEGAL_PAGES === 'true';
 import { AuthProvider } from '@/context/AuthContext';
 import { ThemeProvider } from '@/context/ThemeContext';
 import { DipProvider } from '@/context/DipContext';
@@ -49,8 +52,17 @@ function App() {
                 <Route path="/about" element={<AboutPage />} />
                 <Route path="/learn" element={<LearnPage />} />
                 <Route path="/stock/:symbol" element={<StockDetailPage />} />
-                <Route path="/privacy" element={<PrivacyPage />} />
-                <Route path="/imprint" element={<ImprintPage />} />
+                {ENABLE_LEGAL_PAGES ? (
+                  <>
+                    <Route path="/privacy" element={<PrivacyPage />} />
+                    <Route path="/imprint" element={<ImprintPage />} />
+                  </>
+                ) : (
+                  <>
+                    <Route path="/privacy" element={<Navigate to="/" replace />} />
+                    <Route path="/imprint" element={<Navigate to="/" replace />} />
+                  </>
+                )}
                 <Route path="/contact" element={<ContactPage />} />
                 <Route
                   path="/signals"

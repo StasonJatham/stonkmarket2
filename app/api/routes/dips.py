@@ -21,7 +21,7 @@ from app.cache.http_cache import (
 from app.core.exceptions import ExternalServiceError, NotFoundError
 from app.core.security import TokenData
 from app.database.connection import fetch_all, fetch_one
-from app.dipfinder.service import get_dipfinder_service
+from app.dipfinder.service import get_dipfinder_service  # For chart price data
 from app.repositories import symbols as symbol_repo
 from app.schemas.dips import ChartPoint, DipStateResponse, RankingEntry, StockInfo
 from app.services.stock_info import get_stock_info, get_stock_info_async
@@ -60,30 +60,37 @@ async def _build_ranking(
     force_refresh: bool = False,
 ) -> Tuple[List[RankingEntry], List[RankingEntry]]:
     """
-    Build ranking data from dipfinder service and stock info.
+    Build ranking data from dip_state table and stock info.
+    
+    Uses ATH-based dip calculations from dip_state table.
     
     Returns:
         Tuple of (all_entries, filtered_entries) where filtered_entries
         only includes stocks meeting their individual dip thresholds.
     """
-    # Get all symbols from database (includes per-symbol min_dip_pct thresholds)
-    symbols = await symbol_repo.list_symbols()
-    if not symbols:
+    # Get all dip states with symbol info in one query
+    rows = await fetch_all(
+        """
+        SELECT ds.symbol, ds.current_price, ds.ath_price, ds.dip_percentage,
+               ds.dip_start_date, ds.first_seen, ds.last_updated,
+               s.name, s.sector, s.min_dip_pct, s.symbol_type
+        FROM dip_state ds
+        JOIN symbols s ON s.symbol = ds.symbol
+        WHERE s.is_active = true
+        ORDER BY ds.dip_percentage DESC
+        """
+    )
+    
+    if not rows:
         return [], []
 
-    # Build a map of symbol -> min_dip_pct threshold
-    symbol_thresholds = {s.symbol: s.min_dip_pct for s in symbols}
-    tickers = [s.symbol for s in symbols]
-
-    # Get signals from dipfinder service
-    service = get_dipfinder_service()
-    signals = await service.get_signals(tickers, force_refresh=force_refresh)
-
-    # Fetch stock info for all symbols in parallel (for enrichment)
+    # Fetch stock info for enrichment (52w low, market cap, etc)
+    symbols_list = [r["symbol"] for r in rows]
+    
     async def get_info(symbol: str):
         return symbol, await get_stock_info_async(symbol)
     
-    info_tasks = [get_info(t) for t in tickers]
+    info_tasks = [get_info(s) for s in symbols_list]
     info_results = await asyncio.gather(*info_tasks, return_exceptions=True)
     stock_info_map = {}
     for result in info_results:
@@ -92,39 +99,55 @@ async def _build_ranking(
             if info:
                 stock_info_map[sym] = info
 
-    # Convert signals to ranking entries with enriched data
+    # Build ranking entries from dip_state
     all_entries = []
     filtered_entries = []
     
-    for signal in signals:
-        if signal.dip_metrics:
-            # Get enriched info if available
-            info = stock_info_map.get(signal.ticker, {})
-            
-            entry = RankingEntry(
-                symbol=signal.ticker,
-                name=info.get("name") or signal.ticker,
-                depth=signal.dip_metrics.dip_pct,
-                days_since_dip=signal.dip_metrics.days_since_peak,
-                last_price=signal.dip_metrics.current_price,
-                previous_close=info.get("previous_close"),
-                change_percent=info.get("change_percent"),
-                high_52w=signal.dip_metrics.peak_price,
-                low_52w=info.get("fifty_two_week_low"),
-                market_cap=info.get("market_cap"),
-                pe_ratio=info.get("pe_ratio"),
-                volume=info.get("avg_volume"),
-                sector=info.get("sector"),
-                updated_at=signal.as_of_date if signal.as_of_date else None,
-            )
-            all_entries.append(entry)
-            
-            # Check if this stock meets its individual dip threshold
-            min_dip_threshold = symbol_thresholds.get(signal.ticker, 0.10)
-            if signal.dip_metrics.dip_pct >= min_dip_threshold:
-                filtered_entries.append(entry)
+    for row in rows:
+        symbol = row["symbol"]
+        info = stock_info_map.get(symbol, {})
+        
+        # Calculate days in dip - prefer dip_start_date, fall back to first_seen
+        days_in_dip = 0
+        from datetime import datetime, timezone, date as date_type
+        
+        if row["dip_start_date"]:
+            dip_start = row["dip_start_date"]
+            if isinstance(dip_start, date_type):
+                days_in_dip = (date_type.today() - dip_start).days
+        elif row["first_seen"]:
+            first_seen = row["first_seen"]
+            if hasattr(first_seen, 'tzinfo') and first_seen.tzinfo is None:
+                first_seen = first_seen.replace(tzinfo=timezone.utc)
+            days_in_dip = (datetime.now(timezone.utc) - first_seen).days
+        
+        dip_pct = float(row["dip_percentage"]) if row["dip_percentage"] else 0
+        
+        entry = RankingEntry(
+            symbol=symbol,
+            name=row["name"] or info.get("name") or symbol,
+            depth=dip_pct / 100,  # Convert percentage to decimal
+            days_since_dip=days_in_dip,
+            last_price=float(row["current_price"]) if row["current_price"] else None,
+            previous_close=info.get("previous_close"),
+            change_percent=info.get("change_percent"),
+            high_52w=float(row["ath_price"]) if row["ath_price"] else info.get("fifty_two_week_high"),
+            low_52w=info.get("fifty_two_week_low"),
+            market_cap=info.get("market_cap"),
+            pe_ratio=info.get("pe_ratio"),
+            volume=info.get("avg_volume"),
+            sector=row["sector"] or info.get("sector"),
+            symbol_type=row.get("symbol_type", "stock"),
+            updated_at=row["last_updated"].isoformat() if row["last_updated"] else None,
+        )
+        all_entries.append(entry)
+        
+        # Check if this stock meets its individual dip threshold
+        min_dip_threshold = float(row["min_dip_pct"]) if row["min_dip_pct"] else 0.10
+        if dip_pct / 100 >= min_dip_threshold:
+            filtered_entries.append(entry)
 
-    # Sort by depth (deepest dip first - higher value = deeper dip)
+    # Already sorted by dip_percentage DESC in query, but ensure consistency
     all_entries.sort(key=lambda x: x.depth, reverse=True)
     filtered_entries.sort(key=lambda x: x.depth, reverse=True)
 

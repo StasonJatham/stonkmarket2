@@ -13,6 +13,7 @@ from app.core.logging import get_logger, setup_logging
 from app.database.connection import init_pg_pool, close_pg_pool, execute
 from app.jobs import start_scheduler, stop_scheduler
 from app.services.runtime_settings import init_runtime_settings
+from app.repositories.api_keys import seed_api_keys_from_env
 import app.jobs.definitions  # noqa: F401 - register jobs
 
 logger = get_logger("main")
@@ -48,6 +49,9 @@ async def lifespan(app: FastAPI):
     # Initialize runtime settings from database
     await init_runtime_settings()
     logger.info("Runtime settings initialized")
+
+    # Seed API keys from environment variables (if not already in db)
+    await seed_api_keys_from_env()
 
     # Initialize Valkey connection
     try:

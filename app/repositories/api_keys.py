@@ -94,3 +94,30 @@ async def delete_key(service_name: str) -> bool:
 OPENAI_API_KEY = "openai_api_key"
 LOGO_DEV_PUBLIC_KEY = "logo_dev_public_key"
 LOGO_DEV_SECRET_KEY = "logo_dev_secret_key"
+
+
+async def seed_api_keys_from_env() -> None:
+    """
+    Seed API keys from environment variables into the database.
+    
+    Only seeds if the key is set in env AND not already in database.
+    This allows env vars to provide initial values that are then managed via UI.
+    """
+    from app.core.config import settings
+    from app.core.logging import get_logger
+    
+    logger = get_logger("api_keys.seed")
+    
+    # Seed Logo.dev public key if set in env and not in db
+    if settings.logo_dev_public_key:
+        existing = await get_key(LOGO_DEV_PUBLIC_KEY)
+        if not existing:
+            await upsert_key(LOGO_DEV_PUBLIC_KEY, settings.logo_dev_public_key)
+            logger.info("Seeded Logo.dev public key from environment")
+    
+    # Seed Logo.dev secret key if set in env and not in db
+    if settings.logo_dev_secret_key:
+        existing = await get_key(LOGO_DEV_SECRET_KEY)
+        if not existing:
+            await upsert_key(LOGO_DEV_SECRET_KEY, settings.logo_dev_secret_key)
+            logger.info("Seeded Logo.dev secret key from environment")

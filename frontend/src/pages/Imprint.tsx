@@ -2,16 +2,18 @@ import { motion } from 'framer-motion';
 import { useObfuscatedContact } from '@/lib/obfuscate';
 import { useSEO, generateBreadcrumbJsonLd } from '@/lib/seo';
 import { AlertTriangle } from 'lucide-react';
+import { ProtectedContent } from '@/components/ProtectedContent';
 
 export function ImprintPage() {
-  const { decodedEmail, decode, decoded } = useObfuscatedContact();
+  const { decodedEmail, decodedAddress, decode, decoded } = useObfuscatedContact();
 
-  // SEO for Imprint/Legal Notice (required for E-E-A-T and German law)
+  // SEO for Imprint/Legal Notice - NOINDEX to protect personal data from scrapers
   useSEO({
     title: 'Impressum - Legal Notice',
-    description: 'Legal notice (Impressum) for StonkMarket according to German TMG § 5. Contact information and editorial responsibility.',
-    keywords: 'impressum, legal notice, contact, TMG, editorial responsibility',
+    description: 'Legal notice (Impressum) for StonkMarket according to German TMG § 5.',
+    keywords: 'impressum, legal notice, contact, TMG',
     canonical: '/imprint',
+    noindex: true, // Protect from search engine indexing
     jsonLd: generateBreadcrumbJsonLd([
       { name: 'Home', url: '/' },
       { name: 'Imprint', url: '/imprint' },
@@ -34,46 +36,80 @@ export function ImprintPage() {
 
       <section className="space-y-4">
         <h2 className="text-xl font-semibold">Information according to § 5 TMG</h2>
-        <div className="space-y-2 text-muted-foreground">
-          <p><strong className="text-foreground">Responsible for content (Angaben gemäß § 5 TMG):</strong></p>
-          <p>Karl Machleidt</p>
-          {/* TODO: Replace with your real address */}
-          <p>Musterstraße 123</p>
-          <p>12345 Musterstadt</p>
-          <p>Germany</p>
-          <p className="pt-2">
-            <strong className="text-foreground">Contact:</strong>
-          </p>
-          <p>
-            E-Mail:{' '}
-            {decoded ? (
-              <a 
-                href={`mailto:${decodedEmail}`}
-                className="text-primary underline underline-offset-4 hover:text-primary/80 transition-colors"
-              >
-                {decodedEmail}
-              </a>
+        
+        <ProtectedContent
+          title="Contact Details"
+          description="Contact information is protected from automated scrapers and search engine indexing."
+        >
+          <div className="space-y-2 text-muted-foreground">
+            <p><strong className="text-foreground">Responsible for content (Angaben gemäß § 5 TMG):</strong></p>
+            {decoded && decodedAddress ? (
+              <>
+                <p>{decodedAddress.name}</p>
+                <p>{decodedAddress.street}</p>
+                <p>{decodedAddress.city}</p>
+                <p>{decodedAddress.country}</p>
+              </>
             ) : (
               <button 
                 onClick={decode}
                 className="text-primary underline underline-offset-4 hover:text-primary/80 transition-colors"
               >
-                Click to reveal email
+                Click to reveal address
               </button>
             )}
-          </p>
-          <p className="text-sm text-muted-foreground">
-            Response time: We aim to respond to inquiries within 24 hours.
-          </p>
-        </div>
+            <p className="pt-2">
+              <strong className="text-foreground">Contact:</strong>
+            </p>
+            <p>
+              E-Mail:{' '}
+              {decoded ? (
+                <a 
+                  href={`mailto:${decodedEmail}`}
+                  className="text-primary underline underline-offset-4 hover:text-primary/80 transition-colors"
+                >
+                  {decodedEmail}
+                </a>
+              ) : (
+                <button 
+                  onClick={decode}
+                  className="text-primary underline underline-offset-4 hover:text-primary/80 transition-colors"
+                >
+                  Click to reveal email
+                </button>
+              )}
+            </p>
+            <p className="text-sm text-muted-foreground">
+              Response time: We aim to respond to inquiries within 24 hours.
+            </p>
+          </div>
+        </ProtectedContent>
       </section>
 
       <section className="space-y-4">
         <h2 className="text-xl font-semibold">Editorial Responsibility (V.i.S.d.P.)</h2>
-        <p className="text-muted-foreground">
-          Responsible for editorial content according to § 18 Abs. 2 MStV:
-        </p>
-        <p className="text-muted-foreground">Karl Machleidt (address as above)</p>
+        <ProtectedContent
+          title="Editorial Contact"
+          description="Editorial responsibility information is protected."
+        >
+          <div className="text-muted-foreground space-y-1">
+            <p>
+              Responsible for editorial content according to § 18 Abs. 2 MStV:
+            </p>
+            <p>
+              {decoded && decodedAddress ? (
+                <>{decodedAddress.name} (address as above)</>
+              ) : (
+                <button 
+                  onClick={decode}
+                  className="text-primary underline underline-offset-4 hover:text-primary/80 transition-colors"
+                >
+                  Click to reveal
+                </button>
+              )}
+            </p>
+          </div>
+        </ProtectedContent>
       </section>
 
       <section className="space-y-4">

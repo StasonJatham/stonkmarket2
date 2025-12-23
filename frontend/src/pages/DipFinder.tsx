@@ -7,7 +7,6 @@ import {
   type Symbol,
 } from '@/services/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
@@ -29,6 +28,15 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip';
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+  PaginationEllipsis,
+} from '@/components/ui/pagination';
 import { 
   TrendingDown, 
   AlertTriangle,
@@ -36,8 +44,6 @@ import {
   Search,
   BarChart3,
   Zap,
-  ChevronLeft,
-  ChevronRight,
   HelpCircle,
 } from 'lucide-react';
 import { useTheme } from '@/context/ThemeContext';
@@ -265,7 +271,8 @@ export function DipFinderPage() {
       result = result.filter(s => s.dip_stock >= 0.10);
     }
     
-    result.sort((a, b) => b.final_score - a.final_score);
+    // Sort by dip ascending (largest dip at top, since dip is positive when stock is down)
+    result.sort((a, b) => b.dip_stock - a.dip_stock);
     
     return result;
   }, [signals, searchQuery, dipTypeFilter, showActiveDips]);
@@ -656,32 +663,87 @@ export function DipFinderPage() {
           )}
           
           {/* Pagination */}
-          {totalPages > 1 && (
+          {filteredSignals.length > 0 && (
             <div className="flex items-center justify-between mt-6 pt-4 border-t">
               <p className="text-sm text-muted-foreground">
-                {page * ITEMS_PER_PAGE + 1}-{Math.min((page + 1) * ITEMS_PER_PAGE, filteredSignals.length)} of {filteredSignals.length}
+                Showing {page * ITEMS_PER_PAGE + 1}-{Math.min((page + 1) * ITEMS_PER_PAGE, filteredSignals.length)} of {filteredSignals.length} signals
               </p>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setPage(p => Math.max(0, p - 1))}
-                  disabled={page === 0}
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                </Button>
-                <span className="text-sm text-muted-foreground px-2">
-                  {page + 1} / {totalPages}
-                </span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
-                  disabled={page >= totalPages - 1}
-                >
-                  <ChevronRight className="w-4 h-4" />
-                </Button>
-              </div>
+              {totalPages > 1 && (
+                <Pagination>
+                  <PaginationContent>
+                    <PaginationItem>
+                      <PaginationPrevious 
+                        onClick={() => setPage(p => Math.max(0, p - 1))}
+                        className={page === 0 ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
+                      />
+                    </PaginationItem>
+                    
+                    {/* First page */}
+                    {page > 1 && (
+                      <PaginationItem>
+                        <PaginationLink onClick={() => setPage(0)} className="cursor-pointer">
+                          1
+                        </PaginationLink>
+                      </PaginationItem>
+                    )}
+                    
+                    {/* Ellipsis before current */}
+                    {page > 2 && (
+                      <PaginationItem>
+                        <PaginationEllipsis />
+                      </PaginationItem>
+                    )}
+                    
+                    {/* Previous page */}
+                    {page > 0 && (
+                      <PaginationItem>
+                        <PaginationLink onClick={() => setPage(page - 1)} className="cursor-pointer">
+                          {page}
+                        </PaginationLink>
+                      </PaginationItem>
+                    )}
+                    
+                    {/* Current page */}
+                    <PaginationItem>
+                      <PaginationLink isActive className="cursor-pointer">
+                        {page + 1}
+                      </PaginationLink>
+                    </PaginationItem>
+                    
+                    {/* Next page */}
+                    {page < totalPages - 1 && (
+                      <PaginationItem>
+                        <PaginationLink onClick={() => setPage(page + 1)} className="cursor-pointer">
+                          {page + 2}
+                        </PaginationLink>
+                      </PaginationItem>
+                    )}
+                    
+                    {/* Ellipsis after current */}
+                    {page < totalPages - 3 && (
+                      <PaginationItem>
+                        <PaginationEllipsis />
+                      </PaginationItem>
+                    )}
+                    
+                    {/* Last page */}
+                    {page < totalPages - 2 && (
+                      <PaginationItem>
+                        <PaginationLink onClick={() => setPage(totalPages - 1)} className="cursor-pointer">
+                          {totalPages}
+                        </PaginationLink>
+                      </PaginationItem>
+                    )}
+                    
+                    <PaginationItem>
+                      <PaginationNext 
+                        onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+                        className={page >= totalPages - 1 ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
+                      />
+                    </PaginationItem>
+                  </PaginationContent>
+                </Pagination>
+              )}
             </div>
           )}
         </CardContent>

@@ -8,3 +8,7 @@ Sitemap: https://stonkmarket.de/sitemap.xml
 # Disallow admin routes
 Disallow: /admin
 Disallow: /api/
+
+# Protect legal pages with personal data from indexing
+Disallow: /imprint
+Disallow: /privacy

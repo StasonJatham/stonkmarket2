@@ -21,12 +21,13 @@ async def record_usage(
     """Record an API usage entry."""
     result = await execute(
         """
-        INSERT INTO api_usage (service, operation, input_tokens, output_tokens, cost_usd, is_batch, metadata, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+        INSERT INTO api_usage (service, endpoint, model, input_tokens, output_tokens, cost_usd, is_batch, request_metadata, recorded_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
         RETURNING id
         """,
         service,
         operation,
+        metadata.get("model") if metadata else None,
         input_tokens,
         output_tokens,
         cost_usd,
@@ -54,7 +55,7 @@ async def get_usage_summary(
             SUM(CASE WHEN is_batch THEN 1 ELSE 0 END) as batch_requests,
             SUM(CASE WHEN NOT is_batch THEN 1 ELSE 0 END) as realtime_requests
         FROM api_usage
-        WHERE created_at > $1
+        WHERE recorded_at > $1
         GROUP BY service
         """,
         cutoff,
@@ -94,13 +95,13 @@ async def get_daily_costs(
     rows = await fetch_all(
         """
         SELECT 
-            DATE(created_at) as date,
+            DATE(recorded_at) as date,
             COALESCE(SUM(cost_usd), 0) as cost_usd,
             COUNT(*) as request_count,
             COALESCE(SUM(input_tokens + output_tokens), 0) as total_tokens
         FROM api_usage
-        WHERE created_at > $1
-        GROUP BY DATE(created_at)
+        WHERE recorded_at > $1
+        GROUP BY DATE(recorded_at)
         ORDER BY date DESC
         """,
         cutoff,
