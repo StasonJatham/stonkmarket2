@@ -106,6 +106,9 @@ async def list_symbols() -> List[SymbolResponse]:
             symbol=s.symbol,
             min_dip_pct=s.min_dip_pct,
             min_days=s.min_days,
+            name=s.name,
+            fetch_status=s.fetch_status,
+            fetch_error=s.fetch_error,
         )
         for s in symbols
     ]
@@ -135,6 +138,9 @@ async def get_symbol(
         symbol=config.symbol,
         min_dip_pct=config.min_dip_pct,
         min_days=config.min_days,
+        name=config.name,
+        fetch_status=config.fetch_status,
+        fetch_error=config.fetch_error,
     )
 
 
@@ -180,6 +186,9 @@ async def create_symbol(
         symbol=created.symbol,
         min_dip_pct=created.min_dip_pct,
         min_days=created.min_days,
+        name=created.name,
+        fetch_status='fetching',  # Will be set to fetching by background task
+        fetch_error=None,
     )
 
 
@@ -219,6 +228,9 @@ async def update_symbol(
         symbol=updated.symbol,
         min_dip_pct=updated.min_dip_pct,
         min_days=updated.min_days,
+        name=updated.name,
+        fetch_status=updated.fetch_status,
+        fetch_error=updated.fetch_error,
     )
 
 
@@ -264,6 +276,14 @@ async def _process_new_symbol(symbol: str) -> None:
     
     logger.info(f"[NEW SYMBOL] Starting background processing for: {symbol}")
     
+    # Set fetch_status to 'fetching' so UI shows loading state
+    await execute(
+        """UPDATE symbols 
+           SET fetch_status = 'fetching', fetch_error = NULL, updated_at = NOW()
+           WHERE symbol = $1""",
+        symbol.upper(),
+    )
+    
     # Track what we've successfully done
     steps_completed = []
     
@@ -273,6 +293,13 @@ async def _process_new_symbol(symbol: str) -> None:
         info = await get_stock_info_async(symbol)
         if not info:
             logger.error(f"[NEW SYMBOL] FAILED: Could not fetch Yahoo data for {symbol} - aborting")
+            # Mark as error
+            await execute(
+                """UPDATE symbols 
+                   SET fetch_status = 'error', fetch_error = 'Could not fetch data from Yahoo Finance'
+                   WHERE symbol = $1""",
+                symbol.upper(),
+            )
             # Still try to invalidate cache
             try:
                 ranking_cache = Cache(prefix="ranking", default_ttl=3600)
@@ -433,10 +460,29 @@ async def _process_new_symbol(symbol: str) -> None:
         except Exception as e:
             logger.warning(f"[NEW SYMBOL] Step 9 FAILED: Could not invalidate cache: {e}")
         
+        # Step 10: Mark as fetched
+        await execute(
+            """UPDATE symbols 
+               SET fetch_status = 'fetched', fetched_at = NOW(), updated_at = NOW()
+               WHERE symbol = $1""",
+            symbol.upper(),
+        )
+        
         logger.info(f"[NEW SYMBOL] COMPLETED processing {symbol}. Steps completed: {', '.join(steps_completed)}")
             
     except Exception as e:
         logger.error(f"[NEW SYMBOL] FATAL ERROR processing {symbol}: {e}", exc_info=True)
+        # Mark as error
+        try:
+            await execute(
+                """UPDATE symbols 
+                   SET fetch_status = 'error', fetch_error = $2
+                   WHERE symbol = $1""",
+                symbol.upper(),
+                str(e)[:500],
+            )
+        except Exception:
+            pass
         # Try to invalidate cache even on error
         try:
             ranking_cache = Cache(prefix="ranking", default_ttl=3600)

@@ -81,6 +81,19 @@ export function SymbolManager({ onError }: SymbolManagerProps) {
     loadSymbols();
   }, [loadSymbols]);
 
+  // Auto-poll when any symbol is in 'fetching' state
+  useEffect(() => {
+    const hasFetching = symbols.some(s => s.fetch_status === 'fetching');
+    if (!hasFetching) return;
+
+    const pollInterval = setInterval(() => {
+      // Silently reload without showing loading state, skip cache
+      getSymbols(true).then(setSymbols).catch(() => {});
+    }, 2000); // Poll every 2 seconds
+
+    return () => clearInterval(pollInterval);
+  }, [symbols]);
+
   async function handleValidateSymbol() {
     if (!formSymbol.trim()) return;
     setIsValidating(true);
@@ -217,6 +230,8 @@ export function SymbolManager({ onError }: SymbolManagerProps) {
             <TableHeader>
               <TableRow>
                 <TableHead>Symbol</TableHead>
+                <TableHead>Name</TableHead>
+                <TableHead>Status</TableHead>
                 <TableHead>Min Dip %</TableHead>
                 <TableHead>Min Days</TableHead>
                 <TableHead className="w-[100px]">Actions</TableHead>
@@ -236,6 +251,31 @@ export function SymbolManager({ onError }: SymbolManagerProps) {
                       <Badge variant="outline" className="font-mono">
                         {symbol.symbol}
                       </Badge>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {symbol.name || '—'}
+                    </TableCell>
+                    <TableCell>
+                      {symbol.fetch_status === 'fetching' ? (
+                        <Badge variant="secondary" className="animate-pulse">
+                          <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                          Fetching...
+                        </Badge>
+                      ) : symbol.fetch_status === 'error' ? (
+                        <Badge variant="destructive" title={symbol.fetch_error || 'Unknown error'}>
+                          <XCircle className="h-3 w-3 mr-1" />
+                          Error
+                        </Badge>
+                      ) : symbol.fetch_status === 'fetched' ? (
+                        <Badge variant="default" className="bg-success">
+                          <CheckCircle className="h-3 w-3 mr-1" />
+                          Ready
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline">
+                          Pending
+                        </Badge>
+                      )}
                     </TableCell>
                     <TableCell>{(symbol.min_dip_pct * 100).toFixed(0)}%</TableCell>
                     <TableCell>{symbol.min_days} days</TableCell>

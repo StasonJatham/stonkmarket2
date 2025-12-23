@@ -47,11 +47,17 @@ class SymbolConfig:
         symbol: str,
         min_dip_pct: float = 0.15,
         min_days: int = 5,
+        name: str | None = None,
+        fetch_status: str | None = None,
+        fetch_error: str | None = None,
         created_at: datetime | None = None,
     ):
         self.symbol = symbol
         self.min_dip_pct = min_dip_pct
         self.min_days = min_days
+        self.name = name
+        self.fetch_status = fetch_status
+        self.fetch_error = fetch_error
         self.created_at = created_at
 
     @classmethod
@@ -60,6 +66,9 @@ class SymbolConfig:
             symbol=row["symbol"],
             min_dip_pct=float(row.get("min_dip_pct", 0.15)),
             min_days=int(row.get("min_days", 5)),
+            name=row.get("name"),
+            fetch_status=row.get("fetch_status"),
+            fetch_error=row.get("fetch_error"),
             created_at=row.get("created_at"),
         )
 
@@ -69,8 +78,11 @@ async def list_symbols() -> List[SymbolConfig]:
     rows = await fetch_all(
         """
         SELECT symbol, 
+               name,
                COALESCE(min_dip_pct, 0.15) as min_dip_pct,
                COALESCE(min_days, 5) as min_days,
+               fetch_status,
+               fetch_error,
                added_at as created_at
         FROM symbols 
         WHERE is_active = TRUE
@@ -85,8 +97,11 @@ async def get_symbol(symbol: str) -> Optional[SymbolConfig]:
     row = await fetch_one(
         """
         SELECT symbol, 
+               name,
                COALESCE(min_dip_pct, 0.15) as min_dip_pct,
                COALESCE(min_days, 5) as min_days,
+               fetch_status,
+               fetch_error,
                added_at as created_at
         FROM symbols 
         WHERE symbol = $1

@@ -723,9 +723,15 @@ export interface Symbol {
   symbol: string;
   min_dip_pct: number;
   min_days: number;
+  name?: string | null;
+  fetch_status?: 'pending' | 'fetching' | 'fetched' | 'error' | null;
+  fetch_error?: string | null;
 }
 
-export async function getSymbols(): Promise<Symbol[]> {
+export async function getSymbols(skipCache = false): Promise<Symbol[]> {
+  if (skipCache) {
+    return fetchAPI<Symbol[]>('/symbols');
+  }
   return apiCache.fetch(
     'symbols-list',
     () => fetchAPI<Symbol[]>('/symbols'),

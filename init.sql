@@ -85,6 +85,10 @@ CREATE TABLE IF NOT EXISTS symbols (
     logo_dark BYTEA,   -- WebP logo for dark theme
     logo_fetched_at TIMESTAMPTZ,
     logo_source VARCHAR(50),  -- 'logo.dev' or 'favicon'
+    -- Fetch status for loading UI
+    fetch_status VARCHAR(20) DEFAULT 'pending',  -- pending, fetching, fetched, error
+    fetch_error TEXT,
+    fetched_at TIMESTAMPTZ,
     added_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
