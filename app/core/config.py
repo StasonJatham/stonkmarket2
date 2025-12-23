@@ -17,6 +17,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
+        populate_by_name=True,
     )
 
     # Application
@@ -55,9 +56,9 @@ class Settings(BaseSettings):
         default=8, ge=6, description="Minimum password length"
     )
 
-    # Admin
-    default_admin_user: str = Field(default="admin", min_length=3)
-    default_admin_password: str = Field(default="changeme", min_length=6)
+    # Admin - env vars are ADMIN_USER and ADMIN_PASS
+    admin_user: str = Field(default="admin", min_length=3, alias="ADMIN_USER")
+    admin_pass: str = Field(default="changeme", min_length=6, alias="ADMIN_PASS")
 
     # Domain and HTTPS
     domain: Optional[str] = Field(default=None, description="Cookie domain")
