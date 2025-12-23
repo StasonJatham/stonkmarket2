@@ -5,14 +5,13 @@ import {
   Area,
   XAxis,
   YAxis,
-  Tooltip,
   ResponsiveContainer,
-  ReferenceLine,
-  ReferenceDot,
   Line,
   ComposedChart,
+  ReferenceDot,
 } from 'recharts';
-import { CHART_LINE_ANIMATION } from '@/lib/chartConfig';
+import { ChartTooltip, SimpleChartTooltipContent } from '@/components/ui/chart';
+import { CHART_LINE_ANIMATION, CHART_TRENDLINE_ANIMATION, CHART_ANIMATION } from '@/lib/chartConfig';
 import { 
   getStockInfo, 
   getStockChart, 
@@ -148,6 +147,18 @@ export function StockDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [chartPeriod, setChartPeriod] = useState(365);
 
+  // Track when dots should be visible (after chart animation completes)
+  const [dotsVisible, setDotsVisible] = useState(false);
+  
+  // When chart period or data changes, hide dots and show them after animation completes
+  useEffect(() => {
+    setDotsVisible(false);
+    const timer = setTimeout(() => {
+      setDotsVisible(true);
+    }, CHART_ANIMATION.animationDuration + 50);
+    return () => clearTimeout(timer);
+  }, [chartPeriod, chartData]);
+
   // SEO for stock detail page
   useSEO({
     title: info ? `${info.name} (${upperSymbol}) - Stock Analysis` : `${upperSymbol} Stock Analysis`,
@@ -177,12 +188,6 @@ export function StockDetailPage() {
     }));
   }, [chartData]);
 
-  // Find current/last point index for the red marker
-  const currentPointIndex = useMemo(() => {
-    if (formattedChartData.length === 0) return -1;
-    return formattedChartData.length - 1;
-  }, [formattedChartData]);
-
   // Find ref high point index for marker
   const refHighIndex = useMemo(() => {
     if (chartData.length === 0) return -1;
@@ -191,7 +196,31 @@ export function StockDetailPage() {
     return formattedChartData.findIndex(p => p.date === refDate);
   }, [chartData, formattedChartData]);
 
-  // Create chart data with trendline connecting peak to current
+  // Get the display date for ref high point (for ReferenceDot x value)
+  const refHighDisplayDate = useMemo(() => {
+    if (refHighIndex < 0 || !formattedChartData[refHighIndex]) return null;
+    return formattedChartData[refHighIndex].displayDate;
+  }, [refHighIndex, formattedChartData]);
+
+  // Get the display date for current price (last point)
+  const currentDisplayDate = useMemo(() => {
+    if (formattedChartData.length === 0) return null;
+    return formattedChartData[formattedChartData.length - 1].displayDate;
+  }, [formattedChartData]);
+
+  // Get current price for reference line
+  const currentPrice = useMemo(() => {
+    if (formattedChartData.length === 0) return null;
+    return formattedChartData[formattedChartData.length - 1]?.close;
+  }, [formattedChartData]);
+
+  // Get the ref high price
+  const refHighPrice = useMemo(() => {
+    if (chartData.length === 0) return null;
+    return chartData[0]?.ref_high ?? null;
+  }, [chartData]);
+
+  // Create chart data with trendline, reference lines, and animated dot positions
   const chartDataWithTrendline = useMemo(() => {
     if (formattedChartData.length === 0) return [];
     
@@ -202,15 +231,19 @@ export function StockDetailPage() {
       } else if (index === formattedChartData.length - 1) {
         trendline = point.close;
       }
-      return { ...point, trendline };
+      
+      return { 
+        ...point, 
+        trendline,
+        // Horizontal reference lines for smooth animation
+        currentPriceLine: currentPrice,
+        refHighLine: refHighPrice,
+        // Scatter point values - only non-null at specific indices for dot rendering
+        refHighDot: index === refHighIndex ? point.close : null,
+        currentDot: index === formattedChartData.length - 1 ? point.close : null,
+      };
     });
-  }, [formattedChartData, refHighIndex]);
-
-  // Get current price for reference line
-  const currentPrice = useMemo(() => {
-    if (formattedChartData.length === 0) return null;
-    return formattedChartData[formattedChartData.length - 1]?.close;
-  }, [formattedChartData]);
+  }, [formattedChartData, refHighIndex, currentPrice, refHighPrice]);
 
   // Calculate price change for chart period
   const priceChange = useMemo(() => {
@@ -504,25 +537,31 @@ export function StockDetailPage() {
                     width={50}
                   />
                   
-                  {/* Current price reference line (dashed, red) */}
-                  {currentPrice && (
-                    <ReferenceLine
-                      y={currentPrice}
-                      stroke="var(--danger)"
-                      strokeDasharray="5 5"
-                      strokeOpacity={0.7}
-                    />
-                  )}
+                  {/* Current price reference line - animated horizontal line */}
+                  <Line
+                    type="linear"
+                    dataKey="currentPriceLine"
+                    stroke="var(--danger)"
+                    strokeWidth={1}
+                    strokeDasharray="5 5"
+                    strokeOpacity={0.7}
+                    dot={false}
+                    activeDot={false}
+                    {...CHART_TRENDLINE_ANIMATION}
+                  />
                   
-                  {/* Peak price reference line (dashed, green) */}
-                  {chartData[0]?.ref_high && (
-                    <ReferenceLine
-                      y={chartData[0].ref_high}
-                      stroke="var(--success)"
-                      strokeDasharray="3 3"
-                      strokeOpacity={0.5}
-                    />
-                  )}
+                  {/* Peak price reference line - animated horizontal line */}
+                  <Line
+                    type="linear"
+                    dataKey="refHighLine"
+                    stroke="var(--success)"
+                    strokeWidth={1}
+                    strokeDasharray="3 3"
+                    strokeOpacity={0.5}
+                    dot={false}
+                    activeDot={false}
+                    {...CHART_TRENDLINE_ANIMATION}
+                  />
                   
                   {/* Trendline connecting peak to current */}
                   <Line
@@ -533,59 +572,49 @@ export function StockDetailPage() {
                     strokeDasharray="3 3"
                     strokeOpacity={0.4}
                     dot={false}
+                    activeDot={false}
                     connectNulls={true}
-                    isAnimationActive={false}
+                    {...CHART_TRENDLINE_ANIMATION}
                   />
                   
-                  {/* Mark current price point (red dot) */}
-                  {currentPointIndex >= 0 && formattedChartData[currentPointIndex] && (
-                    <ReferenceDot
-                      x={formattedChartData[currentPointIndex].displayDate}
-                      y={formattedChartData[currentPointIndex].close}
-                      r={5}
-                      fill="var(--danger)"
-                      stroke="var(--background)"
-                      strokeWidth={2}
-                    />
-                  )}
-                  
-                  {/* Mark ref high point (green dot) */}
-                  {refHighIndex >= 0 && formattedChartData[refHighIndex] && (
-                    <ReferenceDot
-                      x={formattedChartData[refHighIndex].displayDate}
-                      y={formattedChartData[refHighIndex].close}
-                      r={5}
-                      fill="var(--success)"
-                      stroke="var(--background)"
-                      strokeWidth={2}
-                    />
-                  )}
-                  
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: 'hsl(var(--background))',
-                      border: '1px solid hsl(var(--border))',
-                      borderRadius: '8px',
-                      fontSize: '12px',
-                      padding: '8px 12px',
-                    }}
-                    labelStyle={{ color: 'hsl(var(--foreground))' }}
-                    itemStyle={{ color: 'hsl(var(--foreground))' }}
-                    formatter={(value: number, name: string, props) => {
-                      if (name === 'trendline') return null;
-                      const point = props.payload;
-                      const items: [string, string][] = [
-                        [`$${value.toFixed(2)}`, 'Price']
-                      ];
-                      if (point.drawdown !== null && point.drawdown !== undefined) {
-                        items.push([`${(point.drawdown * 100).toFixed(1)}%`, 'Drawdown']);
-                      }
-                      if (point.since_dip !== null && point.since_dip !== undefined) {
-                        items.push([`${(point.since_dip * 100).toFixed(1)}%`, 'Since Dip']);
-                      }
-                      return items;
-                    }}
-                    labelFormatter={(label) => label}
+                  <ChartTooltip
+                    content={
+                      <SimpleChartTooltipContent
+                        className="min-w-[140px]"
+                        formatter={(value: number, name: string, payload: Record<string, unknown>) => {
+                          if (name !== 'close') return null;
+                          return (
+                            <div className="flex flex-col gap-1">
+                              <div className="flex items-center justify-between gap-4">
+                                <span className="text-muted-foreground">Price</span>
+                                <span className="font-mono font-medium tabular-nums text-foreground">
+                                  ${value.toFixed(2)}
+                                </span>
+                              </div>
+                              {payload.drawdown !== null && payload.drawdown !== undefined && (
+                                <div className="flex items-center justify-between gap-4">
+                                  <span className="text-muted-foreground">Drawdown</span>
+                                  <span className="font-mono font-medium tabular-nums text-danger">
+                                    {((payload.drawdown as number) * 100).toFixed(1)}%
+                                  </span>
+                                </div>
+                              )}
+                              {payload.since_dip !== null && payload.since_dip !== undefined && (
+                                <div className="flex items-center justify-between gap-4">
+                                  <span className="text-muted-foreground">Since Dip</span>
+                                  <span className={`font-mono font-medium tabular-nums ${(payload.since_dip as number) >= 0 ? 'text-success' : 'text-danger'}`}>
+                                    {(payload.since_dip as number) >= 0 ? '+' : ''}{((payload.since_dip as number) * 100).toFixed(1)}%
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        }}
+                        labelFormatter={(label: string) => (
+                          <span className="font-medium text-foreground">{label}</span>
+                        )}
+                      />
+                    }
                   />
                   
                   <Area
@@ -594,8 +623,37 @@ export function StockDetailPage() {
                     stroke={chartColor}
                     strokeWidth={2}
                     fill={`url(#gradient-${upperSymbol})`}
+                    dot={false}
+                    activeDot={{
+                      r: 5,
+                      fill: chartColor,
+                      stroke: 'var(--background)',
+                      strokeWidth: 2,
+                    }}
                     {...CHART_LINE_ANIMATION}
                   />
+                  {/* Ref high dot (green) - appears after line animation completes */}
+                  {dotsVisible && refHighDisplayDate && refHighPrice !== null && (
+                    <ReferenceDot
+                      x={refHighDisplayDate}
+                      y={refHighPrice}
+                      r={5}
+                      fill="var(--success)"
+                      stroke="var(--background)"
+                      strokeWidth={2}
+                    />
+                  )}
+                  {/* Current price dot (red) - appears after line animation completes */}
+                  {dotsVisible && currentDisplayDate && currentPrice !== null && (
+                    <ReferenceDot
+                      x={currentDisplayDate}
+                      y={currentPrice}
+                      r={5}
+                      fill="var(--danger)"
+                      stroke="var(--background)"
+                      strokeWidth={2}
+                    />
+                  )}
                 </ComposedChart>
               </ResponsiveContainer>
             ) : (

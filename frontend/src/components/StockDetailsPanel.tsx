@@ -1,17 +1,16 @@
-import { useMemo } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import {
   Area,
   XAxis,
   YAxis,
-  Tooltip,
   ResponsiveContainer,
-  ReferenceLine,
-  ReferenceDot,
   Line,
   ComposedChart,
+  ReferenceDot,
 } from 'recharts';
-import { CHART_LINE_ANIMATION } from '@/lib/chartConfig';
+import { ChartTooltip, SimpleChartTooltipContent } from '@/components/ui/chart';
+import { CHART_LINE_ANIMATION, CHART_TRENDLINE_ANIMATION, CHART_ANIMATION } from '@/lib/chartConfig';
 import type { DipStock, ChartDataPoint, StockInfo, BenchmarkType, ComparisonChartData } from '@/services/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -88,6 +87,18 @@ export function StockDetailsPanel({
   aiData,
   isLoadingAi = false,
 }: StockDetailsPanelProps) {
+  // Track when dots should be visible (after chart animation completes)
+  const [dotsVisible, setDotsVisible] = useState(false);
+  
+  // When chart period or data changes, hide dots and show them after animation completes
+  useEffect(() => {
+    setDotsVisible(false);
+    const timer = setTimeout(() => {
+      setDotsVisible(true);
+    }, CHART_ANIMATION.animationDuration + 50); // Add 50ms buffer
+    return () => clearTimeout(timer);
+  }, [chartPeriod, chartData]);
+
   const formattedChartData = useMemo(() => {
     return chartData.map((point) => ({
       ...point,
@@ -98,12 +109,6 @@ export function StockDetailsPanel({
     }));
   }, [chartData]);
 
-  // Find current/last point index for the red marker (showing current dip position)
-  const currentPointIndex = useMemo(() => {
-    if (formattedChartData.length === 0) return -1;
-    return formattedChartData.length - 1; // Last point = current price
-  }, [formattedChartData]);
-
   // Find ref high point index for marker
   const refHighIndex = useMemo(() => {
     if (chartData.length === 0) return -1;
@@ -112,7 +117,31 @@ export function StockDetailsPanel({
     return formattedChartData.findIndex(p => p.date === refDate);
   }, [chartData, formattedChartData]);
 
-  // Create chart data with trendline connecting peak to current
+  // Get the display date for ref high point (for ReferenceDot x value)
+  const refHighDisplayDate = useMemo(() => {
+    if (refHighIndex < 0 || !formattedChartData[refHighIndex]) return null;
+    return formattedChartData[refHighIndex].displayDate;
+  }, [refHighIndex, formattedChartData]);
+
+  // Get the display date for current price (last point)
+  const currentDisplayDate = useMemo(() => {
+    if (formattedChartData.length === 0) return null;
+    return formattedChartData[formattedChartData.length - 1].displayDate;
+  }, [formattedChartData]);
+
+  // Get the current price for the reference line
+  const currentPrice = useMemo(() => {
+    if (formattedChartData.length === 0) return null;
+    return formattedChartData[formattedChartData.length - 1]?.close;
+  }, [formattedChartData]);
+
+  // Get the ref high price
+  const refHighPrice = useMemo(() => {
+    if (chartData.length === 0) return null;
+    return chartData[0]?.ref_high ?? null;
+  }, [chartData]);
+
+  // Create chart data with trendline, reference lines, and animated dot positions
   const chartDataWithTrendline = useMemo(() => {
     if (formattedChartData.length === 0) return [];
     
@@ -124,15 +153,19 @@ export function StockDetailsPanel({
       } else if (index === formattedChartData.length - 1) {
         trendline = point.close;
       }
-      return { ...point, trendline };
+      
+      return { 
+        ...point, 
+        trendline,
+        // Horizontal reference lines (constant value across all points for smooth animation)
+        currentPriceLine: currentPrice,
+        refHighLine: refHighPrice,
+        // Scatter point values - only non-null at specific indices for dot rendering
+        refHighDot: index === refHighIndex ? point.close : null,
+        currentDot: index === formattedChartData.length - 1 ? point.close : null,
+      };
     });
-  }, [formattedChartData, refHighIndex]);
-
-  // Get the current price for the reference line
-  const currentPrice = useMemo(() => {
-    if (formattedChartData.length === 0) return null;
-    return formattedChartData[formattedChartData.length - 1]?.close;
-  }, [formattedChartData]);
+  }, [formattedChartData, refHighIndex, currentPrice, refHighPrice]);
 
   const priceChange = useMemo(() => {
     if (chartData.length < 2) return 0;
@@ -257,22 +290,26 @@ export function StockDetailsPanel({
                   height="100%"
                   compact
                 />
-              ) : isLoadingChart ? (
-                <Skeleton className="h-full w-full" />
-              ) : formattedChartData.length > 0 ? (
-                <ResponsiveContainer width="100%" height="100%" minWidth={0}>
-                  <ComposedChart 
-                    key={`${stock.symbol}-${chartPeriod}`}
-                    data={chartDataWithTrendline}
+              ) : (
+                // Always keep chart mounted for smooth interpolation animations
+                <div className="relative h-full w-full">
+                  {/* Loading overlay - fades in smoothly, keeps chart visible underneath */}
+                  <div 
+                    className={`absolute inset-0 bg-background/40 backdrop-blur-[1px] z-10 flex items-center justify-center transition-opacity duration-200 ${
+                      isLoadingChart ? 'opacity-100' : 'opacity-0 pointer-events-none'
+                    }`}
                   >
+                    <div className="h-5 w-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                  </div>
+                  {formattedChartData.length > 0 ? (
+                    <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+                      {/* No key prop - keep chart mounted for smooth animation interpolation */}
+                      <ComposedChart data={chartDataWithTrendline}>
                     <defs>
-                      <linearGradient id={`gradient-${stock.symbol}-${chartPeriod}`} x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor={chartColor} stopOpacity={0.3}>
-                          <animate attributeName="stop-color" to={chartColor} dur="0.3s" fill="freeze" />
-                        </stop>
-                        <stop offset="100%" stopColor={chartColor} stopOpacity={0}>
-                          <animate attributeName="stop-color" to={chartColor} dur="0.3s" fill="freeze" />
-                        </stop>
+                      {/* Stable gradient ID (no period) for smooth transitions */}
+                      <linearGradient id={`gradient-${stock.symbol}`} x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor={chartColor} stopOpacity={0.3} />
+                        <stop offset="100%" stopColor={chartColor} stopOpacity={0} />
                       </linearGradient>
                     </defs>
                     <XAxis
@@ -292,24 +329,30 @@ export function StockDetailsPanel({
                       tickFormatter={(value) => `$${value.toFixed(0)}`}
                       width={45}
                     />
-                    {/* Current price reference line (aligns with red dot) */}
-                    {currentPrice && (
-                      <ReferenceLine
-                        y={currentPrice}
-                        stroke="var(--danger)"
-                        strokeDasharray="5 5"
-                        strokeOpacity={0.7}
-                      />
-                    )}
-                    {/* Peak price reference line (aligns with green dot) */}
-                    {chartData[0]?.ref_high && (
-                      <ReferenceLine
-                        y={chartData[0].ref_high}
-                        stroke="var(--success)"
-                        strokeDasharray="3 3"
-                        strokeOpacity={0.5}
-                      />
-                    )}
+                    {/* Current price reference line - animated horizontal line */}
+                    <Line
+                      type="linear"
+                      dataKey="currentPriceLine"
+                      stroke="var(--danger)"
+                      strokeWidth={1}
+                      strokeDasharray="5 5"
+                      strokeOpacity={0.7}
+                      dot={false}
+                      activeDot={false}
+                      {...CHART_TRENDLINE_ANIMATION}
+                    />
+                    {/* Peak price reference line - animated horizontal line */}
+                    <Line
+                      type="linear"
+                      dataKey="refHighLine"
+                      stroke="var(--success)"
+                      strokeWidth={1}
+                      strokeDasharray="3 3"
+                      strokeOpacity={0.5}
+                      dot={false}
+                      activeDot={false}
+                      {...CHART_TRENDLINE_ANIMATION}
+                    />
                     {/* Trendline connecting peak to current */}
                     <Line
                       type="linear"
@@ -319,74 +362,94 @@ export function StockDetailsPanel({
                       strokeDasharray="3 3"
                       strokeOpacity={0.4}
                       dot={false}
+                      activeDot={false}
                       connectNulls={true}
-                      isAnimationActive={false}
+                      {...CHART_TRENDLINE_ANIMATION}
                     />
-                    {/* Mark the current price point (red - shows where we are now in the dip) */}
-                    {currentPointIndex >= 0 && formattedChartData[currentPointIndex] && (
-                      <ReferenceDot
-                        x={formattedChartData[currentPointIndex].displayDate}
-                        y={formattedChartData[currentPointIndex].close}
-                        r={4}
-                        fill="var(--danger)"
-                        stroke="var(--background)"
-                        strokeWidth={2}
-                      />
-                    )}
-                    {/* Mark the ref high point */}
-                    {refHighIndex >= 0 && formattedChartData[refHighIndex] && (
-                      <ReferenceDot
-                        x={formattedChartData[refHighIndex].displayDate}
-                        y={formattedChartData[refHighIndex].close}
-                        r={4}
-                        fill="var(--success)"
-                        stroke="var(--background)"
-                        strokeWidth={2}
-                      />
-                    )}
-                    <Tooltip
-                      contentStyle={{
-                        backgroundColor: 'hsl(var(--background))',
-                        border: '1px solid hsl(var(--border))',
-                        borderRadius: '8px',
-                        fontSize: '12px',
-                        padding: '8px 12px',
-                      }}
-                      labelStyle={{
-                        color: 'hsl(var(--foreground))',
-                      }}
-                      itemStyle={{
-                        color: 'hsl(var(--foreground))',
-                      }}
-                      formatter={(value: number, name: string, props) => {
-                        if (name === 'trendline') return null; // Hide trendline from tooltip
-                        const point = props.payload;
-                        const items: [string, string][] = [
-                          [`$${value.toFixed(2)}`, 'Price']
-                        ];
-                        if (point.drawdown !== null) {
-                          items.push([`${(point.drawdown * 100).toFixed(1)}%`, 'Drawdown']);
-                        }
-                        if (point.since_dip !== null) {
-                          items.push([`${(point.since_dip * 100).toFixed(1)}%`, 'Since Dip']);
-                        }
-                        return items;
-                      }}
-                      labelFormatter={(label) => label}
+                    <ChartTooltip
+                      content={
+                        <SimpleChartTooltipContent
+                          className="min-w-[140px]"
+                          formatter={(value: number, name: string, payload: Record<string, unknown>) => {
+                            // Only show for the 'close' data key
+                            if (name !== 'close') return null;
+                            return (
+                              <div className="flex flex-col gap-1">
+                                <div className="flex items-center justify-between gap-4">
+                                  <span className="text-muted-foreground">Price</span>
+                                  <span className="font-mono font-medium tabular-nums text-foreground">
+                                    ${value.toFixed(2)}
+                                  </span>
+                                </div>
+                                {payload.drawdown !== null && payload.drawdown !== undefined && (
+                                  <div className="flex items-center justify-between gap-4">
+                                    <span className="text-muted-foreground">Drawdown</span>
+                                    <span className="font-mono font-medium tabular-nums text-danger">
+                                      {((payload.drawdown as number) * 100).toFixed(1)}%
+                                    </span>
+                                  </div>
+                                )}
+                                {payload.since_dip !== null && payload.since_dip !== undefined && (
+                                  <div className="flex items-center justify-between gap-4">
+                                    <span className="text-muted-foreground">Since Dip</span>
+                                    <span className={`font-mono font-medium tabular-nums ${(payload.since_dip as number) >= 0 ? 'text-success' : 'text-danger'}`}>
+                                      {(payload.since_dip as number) >= 0 ? '+' : ''}{((payload.since_dip as number) * 100).toFixed(1)}%
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          }}
+                          labelFormatter={(label: string) => (
+                            <span className="font-medium text-foreground">{label}</span>
+                          )}
+                        />
+                      }
                     />
                     <Area
                       type="linear"
                       dataKey="close"
                       stroke={chartColor}
                       strokeWidth={2}
-                      fill={`url(#gradient-${stock.symbol}-${chartPeriod})`}
+                      fill={`url(#gradient-${stock.symbol})`}
+                      dot={false}
+                      activeDot={{
+                        r: 5,
+                        fill: chartColor,
+                        stroke: 'var(--background)',
+                        strokeWidth: 2,
+                      }}
                       {...CHART_LINE_ANIMATION}
                     />
+                    {/* Ref high dot (green) - appears after line animation completes */}
+                    {dotsVisible && refHighDisplayDate && refHighPrice !== null && (
+                      <ReferenceDot
+                        x={refHighDisplayDate}
+                        y={refHighPrice}
+                        r={5}
+                        fill="var(--success)"
+                        stroke="var(--background)"
+                        strokeWidth={2}
+                      />
+                    )}
+                    {/* Current price dot (red) - appears after line animation completes */}
+                    {dotsVisible && currentDisplayDate && currentPrice !== null && (
+                      <ReferenceDot
+                        x={currentDisplayDate}
+                        y={currentPrice}
+                        r={5}
+                        fill="var(--danger)"
+                        stroke="var(--background)"
+                        strokeWidth={2}
+                      />
+                    )}
                   </ComposedChart>
                 </ResponsiveContainer>
-              ) : (
-                <div className="h-full flex items-center justify-center text-muted-foreground">
-                  No chart data available
+                  ) : (
+                    <div className="h-full flex items-center justify-center text-muted-foreground">
+                      No chart data available
+                    </div>
+                  )}
                 </div>
               )}
             </div>

@@ -7,7 +7,7 @@ import {
   type ChartDataPoint,
   type StockInfo,
 } from '@/services/api';
-import { CHART_LINE_ANIMATION } from '@/lib/chartConfig';
+import { CHART_LINE_ANIMATION, CHART_TRENDLINE_ANIMATION, CHART_ANIMATION } from '@/lib/chartConfig';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -38,10 +38,9 @@ import {
   XAxis,
   YAxis,
   ResponsiveContainer,
-  Tooltip as RechartsTooltip,
-  ReferenceLine,
   ReferenceDot,
 } from 'recharts';
+import { ChartTooltip, SimpleChartTooltipContent } from '@/components/ui/chart';
 import { StockLogo } from '@/components/StockLogo';
 
 // Chart timeframe options
@@ -145,6 +144,18 @@ export function SignalDetailsSheet({
   
   // Unique gradient ID to avoid conflicts
   const gradientId = `sheet-chart-gradient-${signal?.ticker || 'default'}`;
+
+  // Track when dots should be visible (after chart animation completes)
+  const [dotsVisible, setDotsVisible] = useState(false);
+  
+  // When chart timeframe or data changes, hide dots and show them after animation completes
+  useEffect(() => {
+    setDotsVisible(false);
+    const timer = setTimeout(() => {
+      setDotsVisible(true);
+    }, CHART_ANIMATION.animationDuration + 50);
+    return () => clearTimeout(timer);
+  }, [chartTimeframe, chartData]);
   
   // Load stock info when signal changes
   useEffect(() => {
@@ -208,7 +219,6 @@ export function SignalDetailsSheet({
 
   // Get current price (last point)
   const currentPrice = chartData.length > 0 ? chartData[chartData.length - 1]?.close : null;
-  const currentPointIndex = chartData.length - 1;
 
   // Format chart data with display dates
   const formattedChartData = chartData.map(point => ({
@@ -221,7 +231,17 @@ export function SignalDetailsSheet({
     ? formattedChartData.findIndex(p => p.date === refHighDate)
     : -1;
 
-  // Create chart data with trendline connecting peak to current
+  // Get the display date for ref high point (for ReferenceDot x value)
+  const refHighDisplayDate = refHighIndex >= 0 && formattedChartData[refHighIndex]
+    ? formattedChartData[refHighIndex].displayDate
+    : null;
+
+  // Get the display date for current price (last point)
+  const currentDisplayDate = formattedChartData.length > 0
+    ? formattedChartData[formattedChartData.length - 1].displayDate
+    : null;
+
+  // Create chart data with trendline, reference lines, and animated dot positions
   const chartDataWithTrendline = formattedChartData.map((point, index) => {
     let trendline: number | null = null;
     if (index === refHighIndex && refHighIndex >= 0) {
@@ -229,9 +249,15 @@ export function SignalDetailsSheet({
     } else if (index === formattedChartData.length - 1) {
       trendline = point.close;
     }
-    return { ...point, trendline };
+    
+    return { 
+      ...point, 
+      trendline,
+      // Horizontal reference lines for smooth animation
+      currentPriceLine: currentPrice,
+      refHighLine: refHigh,
+    };
   });
-
   // Animation variants
   const containerVariants = {
     hidden: { opacity: 0 },
@@ -382,12 +408,8 @@ export function SignalDetailsSheet({
                     >
                       <defs>
                         <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor={chartColor} stopOpacity={0.3}>
-                            <animate attributeName="stop-color" to={chartColor} dur="0.3s" fill="freeze" />
-                          </stop>
-                          <stop offset="100%" stopColor={chartColor} stopOpacity={0}>
-                            <animate attributeName="stop-color" to={chartColor} dur="0.3s" fill="freeze" />
-                          </stop>
+                          <stop offset="0%" stopColor={chartColor} stopOpacity={0.3} />
+                          <stop offset="100%" stopColor={chartColor} stopOpacity={0} />
                         </linearGradient>
                       </defs>
                       <XAxis
@@ -407,24 +429,30 @@ export function SignalDetailsSheet({
                         width={50}
                         dx={-5}
                       />
-                      {/* Current price reference line (red dashed) */}
-                      {currentPrice && (
-                        <ReferenceLine
-                          y={currentPrice}
-                          stroke="var(--danger)"
-                          strokeDasharray="5 5"
-                          strokeOpacity={0.7}
-                        />
-                      )}
-                      {/* Peak price reference line (green dashed) */}
-                      {refHigh && (
-                        <ReferenceLine
-                          y={refHigh}
-                          stroke="var(--success)"
-                          strokeDasharray="3 3"
-                          strokeOpacity={0.5}
-                        />
-                      )}
+                      {/* Current price reference line - animated horizontal line */}
+                      <Line
+                        type="linear"
+                        dataKey="currentPriceLine"
+                        stroke="var(--danger)"
+                        strokeWidth={1}
+                        strokeDasharray="5 5"
+                        strokeOpacity={0.7}
+                        dot={false}
+                        activeDot={false}
+                        {...CHART_TRENDLINE_ANIMATION}
+                      />
+                      {/* Peak price reference line - animated horizontal line */}
+                      <Line
+                        type="linear"
+                        dataKey="refHighLine"
+                        stroke="var(--success)"
+                        strokeWidth={1}
+                        strokeDasharray="3 3"
+                        strokeOpacity={0.5}
+                        dot={false}
+                        activeDot={false}
+                        {...CHART_TRENDLINE_ANIMATION}
+                      />
                       {/* Trendline connecting peak to current */}
                       <Line
                         type="linear"
@@ -434,44 +462,48 @@ export function SignalDetailsSheet({
                         strokeDasharray="3 3"
                         strokeOpacity={0.4}
                         dot={false}
+                        activeDot={false}
                         connectNulls={true}
-                        isAnimationActive={false}
+                        {...CHART_TRENDLINE_ANIMATION}
                       />
-                      {/* Mark the current price point (red dot) */}
-                      {currentPointIndex >= 0 && formattedChartData[currentPointIndex] && (
-                        <ReferenceDot
-                          x={formattedChartData[currentPointIndex].displayDate}
-                          y={formattedChartData[currentPointIndex].close}
-                          r={4}
-                          fill="var(--danger)"
-                          stroke="var(--background)"
-                          strokeWidth={2}
-                        />
-                      )}
-                      {/* Mark the ref high point (green dot) */}
-                      {refHighIndex >= 0 && formattedChartData[refHighIndex] && (
-                        <ReferenceDot
-                          x={formattedChartData[refHighIndex].displayDate}
-                          y={formattedChartData[refHighIndex].close}
-                          r={4}
-                          fill="var(--success)"
-                          stroke="var(--background)"
-                          strokeWidth={2}
-                        />
-                      )}
-                      <RechartsTooltip
-                        contentStyle={{
-                          backgroundColor: 'hsl(var(--background) / 0.95)',
-                          border: '1px solid hsl(var(--border))',
-                          borderRadius: '8px',
-                          backdropFilter: 'blur(8px)',
-                          boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-                        }}
-                        labelStyle={{ color: 'hsl(var(--foreground))' }}
-                        formatter={(value: number, name: string) => {
-                          if (name === 'trendline') return null;
-                          return [`$${value.toFixed(2)}`, 'Price'];
-                        }}
+                      <ChartTooltip
+                        content={
+                          <SimpleChartTooltipContent
+                            className="min-w-[140px]"
+                            formatter={(value: number, name: string, payload: Record<string, unknown>) => {
+                              if (name !== 'close') return null;
+                              return (
+                                <div className="flex flex-col gap-1">
+                                  <div className="flex items-center justify-between gap-4">
+                                    <span className="text-muted-foreground">Price</span>
+                                    <span className="font-mono font-medium tabular-nums text-foreground">
+                                      ${value.toFixed(2)}
+                                    </span>
+                                  </div>
+                                  {payload.drawdown !== null && payload.drawdown !== undefined && (
+                                    <div className="flex items-center justify-between gap-4">
+                                      <span className="text-muted-foreground">Drawdown</span>
+                                      <span className="font-mono font-medium tabular-nums text-danger">
+                                        {((payload.drawdown as number) * 100).toFixed(1)}%
+                                      </span>
+                                    </div>
+                                  )}
+                                  {payload.since_dip !== null && payload.since_dip !== undefined && (
+                                    <div className="flex items-center justify-between gap-4">
+                                      <span className="text-muted-foreground">Since Dip</span>
+                                      <span className={`font-mono font-medium tabular-nums ${(payload.since_dip as number) >= 0 ? 'text-success' : 'text-danger'}`}>
+                                        {(payload.since_dip as number) >= 0 ? '+' : ''}{((payload.since_dip as number) * 100).toFixed(1)}%
+                                      </span>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            }}
+                            labelFormatter={(label: string) => (
+                              <span className="font-medium text-foreground">{label}</span>
+                            )}
+                          />
+                        }
                       />
                       <Area
                         type="monotone"
@@ -479,8 +511,37 @@ export function SignalDetailsSheet({
                         stroke={chartColor}
                         fill={`url(#${gradientId})`}
                         strokeWidth={2}
+                        dot={false}
+                        activeDot={{
+                          r: 5,
+                          fill: chartColor,
+                          stroke: 'var(--background)',
+                          strokeWidth: 2,
+                        }}
                         {...CHART_LINE_ANIMATION}
                       />
+                      {/* Ref high dot (green) - appears after line animation completes */}
+                      {dotsVisible && refHighDisplayDate && refHigh !== null && (
+                        <ReferenceDot
+                          x={refHighDisplayDate}
+                          y={refHigh}
+                          r={4}
+                          fill="var(--success)"
+                          stroke="var(--background)"
+                          strokeWidth={2}
+                        />
+                      )}
+                      {/* Current price dot (red) - appears after line animation completes */}
+                      {dotsVisible && currentDisplayDate && currentPrice !== null && (
+                        <ReferenceDot
+                          x={currentDisplayDate}
+                          y={currentPrice}
+                          r={4}
+                          fill="var(--danger)"
+                          stroke="var(--background)"
+                          strokeWidth={2}
+                        />
+                      )}
                     </ComposedChart>
                   </ResponsiveContainer>
                 ) : (

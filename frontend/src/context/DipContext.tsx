@@ -17,8 +17,8 @@ interface DipContextType {
 
 const DipContext = createContext<DipContextType | null>(null);
 
-// Number of top stocks to prefetch on initial load
-const PREFETCH_COUNT = 6;
+// Number of days to prefetch for charts (3 months - fetch more on demand)
+const PREFETCH_CHART_DAYS = 90;
 
 export function DipProvider({ children }: { children: ReactNode }) {
   const [stocks, setStocks] = useState<DipStock[]>([]);
@@ -54,10 +54,10 @@ export function DipProvider({ children }: { children: ReactNode }) {
       setStocks(data.ranking);
       setLastUpdated(data.last_updated);
       
-      // Prefetch chart data and info for top stocks (likely to be clicked)
-      const topSymbols = data.ranking.slice(0, PREFETCH_COUNT).map(s => s.symbol);
-      prefetchTopStocks(topSymbols);
-      preloadStockLogos(topSymbols);
+      // Prefetch chart data and info for ALL active dips (3 months initially)
+      const allSymbols = data.ranking.map(s => s.symbol);
+      prefetchTopStocks(allSymbols, PREFETCH_CHART_DAYS);
+      preloadStockLogos(allSymbols);
       
       // Also update ticker stocks if we got all stocks
       if (useShowAll) {

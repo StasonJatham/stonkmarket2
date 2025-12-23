@@ -184,8 +184,9 @@ export async function getStockInfo(symbol: string): Promise<StockInfo> {
 /**
  * Prefetch chart data for a stock in background (non-blocking).
  * Call this on hover or when you anticipate user interaction.
+ * Defaults to 90 days (3 months) - fetch more data on demand.
  */
-export function prefetchStockChart(symbol: string, days: number = 365): void {
+export function prefetchStockChart(symbol: string, days: number = 90): void {
   const endpoint = `/dips/${symbol}/chart?days=${days}`;
   const cacheKey = `chart:${symbol}:${days}`;
   
@@ -210,10 +211,11 @@ export function prefetchStockInfo(symbol: string): void {
 }
 
 /**
- * Prefetch data for multiple stocks (top N from ranking).
- * Called after ranking loads to pre-warm cache for likely clicks.
+ * Prefetch data for multiple stocks.
+ * Called after ranking loads to pre-warm cache for all active dips.
+ * Defaults to 90 days (3 months) - more data is fetched on demand.
  */
-export function prefetchTopStocks(symbols: string[], chartDays: number = 365): void {
+export function prefetchTopStocks(symbols: string[], chartDays: number = 90): void {
   // Stagger prefetches to avoid hammering the API
   symbols.forEach((symbol, index) => {
     setTimeout(() => {

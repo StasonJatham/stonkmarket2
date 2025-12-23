@@ -301,10 +301,13 @@ export function Dashboard() {
         return;
       }
 
-      // Load stock chart
-      setIsLoadingChart(true);
+      // Deferred loading: only show spinner after 150ms to avoid flash for fast responses
+      const loadingTimer = setTimeout(() => setIsLoadingChart(true), 150);
+      
       try {
         const stockChartData = await getStockChart(selectedStock.symbol, chartPeriod);
+        clearTimeout(loadingTimer);
+        setIsLoadingChart(false);
         setChartData(stockChartData);
 
         // If benchmark is selected, load it and merge
@@ -333,10 +336,10 @@ export function Dashboard() {
           setComparisonData([]);
         }
       } catch (err) {
+        clearTimeout(loadingTimer);
         console.error('Failed to load chart:', err);
         setChartData([]);
         setComparisonData([]);
-      } finally {
         setIsLoadingChart(false);
       }
     }

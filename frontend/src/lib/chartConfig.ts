@@ -33,12 +33,28 @@ export const CHART_ANIMATION = {
 /**
  * Animation props to spread on Line/Area components.
  * Usage: <Line {...CHART_LINE_ANIMATION} dataKey="value" />
+ * 
+ * The animationId=0 ensures path morphing between data updates
+ * instead of full redraws when data changes.
  */
 export const CHART_LINE_ANIMATION = {
   isAnimationActive: CHART_ANIMATION.isAnimationActive,
   animationDuration: CHART_ANIMATION.animationDuration,
   animationEasing: CHART_ANIMATION.animationEasing,
   animationBegin: CHART_ANIMATION.animationBegin,
+  animationId: 0, // Constant ID for smooth path interpolation
+} as const;
+
+/**
+ * Animation props for trendlines and reference lines.
+ * Uses same animationId as main line for synchronized movement.
+ */
+export const CHART_TRENDLINE_ANIMATION = {
+  isAnimationActive: true,
+  animationDuration: 600,
+  animationEasing: 'ease-out' as const,
+  animationBegin: 0,
+  animationId: 0, // Same ID as main line for synchronized animation
 } as const;
 
 /**
@@ -49,6 +65,7 @@ export const CHART_MINI_ANIMATION = {
   animationDuration: 400,
   animationEasing: 'ease-out' as const,
   animationBegin: 0,
+  animationId: 0, // Constant ID for smooth path interpolation
 } as const;
 
 /**

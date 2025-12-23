@@ -71,9 +71,9 @@ export const StockCard = memo(function StockCard({
     );
   }
 
-  // Prefetch data when user hovers over card
+  // Prefetch data when user hovers over card (90 days default, more on demand)
   const handleMouseEnter = useCallback(() => {
-    prefetchStockChart(stock.symbol, 365);
+    prefetchStockChart(stock.symbol, 90);
     prefetchStockInfo(stock.symbol);
   }, [stock.symbol]);
 

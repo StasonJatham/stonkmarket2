@@ -209,3 +209,23 @@
   background-color: var(--background) !important;
   border-color: var(--border) !important;
 }
+
+/* Chart dot fade-in animation - starts after line animation completes */
+@keyframes chart-dot-fade-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.chart-dot-delayed {
+  opacity: 0;
+  animation: chart-dot-fade-in 300ms ease-out forwards;
+  animation-delay: 600ms; /* Wait for chart line animation to complete */
+  transform-origin: center;
+  transform-box: fill-box;
+}

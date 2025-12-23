@@ -171,7 +171,7 @@ function ChartTooltipContent({
   return (
     <div
       className={cn(
-        "border-border/50 bg-background grid min-w-[8rem] items-start gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs shadow-xl",
+        "grid min-w-[8rem] items-start gap-1.5 rounded-xl border border-white/20 bg-gradient-to-br from-white/15 to-white/5 px-3 py-2 text-xs shadow-[0_8px_32px_rgba(0,0,0,0.12)] backdrop-blur-xl dark:from-white/10 dark:to-white/[0.02] dark:border-white/10 dark:shadow-[0_8px_32px_rgba(0,0,0,0.4)]",
         className
       )}
     >
@@ -345,6 +345,69 @@ function getPayloadConfigFromPayload(
     : config[key as keyof typeof config]
 }
 
+/**
+ * Simple glass-styled tooltip content for use outside ChartContainer.
+ * Use this when you need the glass styling but can't wrap in ChartContainer.
+ */
+interface SimpleChartTooltipContentProps {
+  active?: boolean;
+  payload?: Array<{
+    value: number;
+    name: string;
+    dataKey: string;
+    payload: Record<string, unknown>;
+  }>;
+  label?: string;
+  className?: string;
+  formatter?: (value: number, name: string, payload: Record<string, unknown>) => React.ReactNode;
+  labelFormatter?: (label: string) => React.ReactNode;
+}
+
+function SimpleChartTooltipContent({
+  active,
+  payload,
+  label,
+  className,
+  formatter,
+  labelFormatter,
+}: SimpleChartTooltipContentProps) {
+  if (!active || !payload?.length) {
+    return null;
+  }
+
+  return (
+    <div
+      className={cn(
+        "grid min-w-[8rem] items-start gap-1.5 rounded-xl border border-white/20 bg-gradient-to-br from-white/15 to-white/5 px-3 py-2 text-xs shadow-[0_8px_32px_rgba(0,0,0,0.12)] backdrop-blur-xl dark:from-white/10 dark:to-white/[0.02] dark:border-white/10 dark:shadow-[0_8px_32px_rgba(0,0,0,0.4)]",
+        className
+      )}
+    >
+      {label && (
+        <div className="font-medium text-foreground">
+          {labelFormatter ? labelFormatter(label) : label}
+        </div>
+      )}
+      <div className="grid gap-1">
+        {payload.map((item, index) => {
+          if (formatter) {
+            const result = formatter(item.value, item.name, item.payload);
+            if (result === null) return null;
+            return <div key={index}>{result}</div>;
+          }
+          return (
+            <div key={index} className="flex items-center justify-between gap-4">
+              <span className="text-muted-foreground">{item.name}</span>
+              <span className="font-mono font-medium tabular-nums text-foreground">
+                {typeof item.value === 'number' ? item.value.toLocaleString() : item.value}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export {
   ChartContainer,
   ChartTooltip,
@@ -352,4 +415,5 @@ export {
   ChartLegend,
   ChartLegendContent,
   ChartStyle,
+  SimpleChartTooltipContent,
 }
