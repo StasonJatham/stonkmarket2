@@ -83,13 +83,13 @@ async def add_vote(
         minutes = (cooldown % 3600) // 60
         return False, f"Vote cooldown active. Try again in {hours}h {minutes}m"
 
-    # Check symbol exists in dip_state
+    # Check symbol is tracked (exists in symbols table, doesn't need to be in dip_state)
     exists = await fetch_val(
-        "SELECT EXISTS(SELECT 1 FROM dip_state WHERE symbol = $1)",
+        "SELECT EXISTS(SELECT 1 FROM symbols WHERE symbol = $1 AND is_active = true)",
         symbol.upper(),
     )
     if not exists:
-        return False, f"Symbol {symbol.upper()} is not currently in a dip"
+        return False, f"Symbol {symbol.upper()} is not being tracked"
 
     # Insert vote with weight
     async with get_pg_connection() as conn:
