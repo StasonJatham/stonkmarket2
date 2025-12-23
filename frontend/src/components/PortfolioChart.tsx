@@ -10,6 +10,7 @@ import {
   ResponsiveContainer,
   ReferenceLine,
 } from 'recharts';
+import { CHART_LINE_ANIMATION } from '@/lib/chartConfig';
 import type { AggregatedPerformance, BenchmarkType } from '@/services/api';
 import { getBenchmarkName } from '@/services/api';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -230,6 +231,7 @@ export function PortfolioChart({
                 stroke="none"
                 fill="url(#rangeGradient)"
                 fillOpacity={1}
+                {...CHART_LINE_ANIMATION}
               />
               <Area
                 type="monotone"
@@ -237,6 +239,7 @@ export function PortfolioChart({
                 stroke="none"
                 fill="hsl(var(--background))"
                 fillOpacity={1}
+                {...CHART_LINE_ANIMATION}
               />
               
               {/* Portfolio average line with fill */}
@@ -247,6 +250,7 @@ export function PortfolioChart({
                 strokeWidth={2.5}
                 fill="url(#portfolioGradient)"
                 fillOpacity={1}
+                {...CHART_LINE_ANIMATION}
               />
               
               {/* Benchmark line */}
@@ -259,6 +263,7 @@ export function PortfolioChart({
                   strokeDasharray="6 4"
                   dot={false}
                   activeDot={{ r: 4, strokeWidth: 0 }}
+                  {...CHART_LINE_ANIMATION}
                 />
               )}
             </AreaChart>

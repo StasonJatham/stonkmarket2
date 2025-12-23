@@ -1,6 +1,7 @@
 import { useMemo, memo, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { AreaChart, Area, ResponsiveContainer } from 'recharts';
+import { CHART_MINI_ANIMATION } from '@/lib/chartConfig';
 import type { DipStock, ChartDataPoint } from '@/services/api';
 import { prefetchStockChart, prefetchStockInfo } from '@/services/api';
 import { Card, CardContent } from '@/components/ui/card';
@@ -126,6 +127,7 @@ export const StockCard = memo(function StockCard({
                       stroke={chartColor}
                       strokeWidth={1.5}
                       fill={`url(#mini-gradient-${stock.symbol})`}
+                      {...CHART_MINI_ANIMATION}
                     />
                   </AreaChart>
                 </ResponsiveContainer>

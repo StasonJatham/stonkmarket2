@@ -227,7 +227,7 @@ export function prefetchTopStocks(symbols: string[], chartDays: number = 365): v
  * Preload stock logo images for faster display.
  * Uses link preload for browser-native prefetching.
  */
-export function preloadStockLogos(symbols: string[]): void {
+export function preloadStockLogos(symbols: string[], theme: 'light' | 'dark' = 'light'): void {
   if (typeof document === 'undefined') return;
   
   // Create a fragment to batch DOM operations
@@ -238,7 +238,7 @@ export function preloadStockLogos(symbols: string[]): void {
   );
   
   symbols.forEach(symbol => {
-    const logoUrl = `https://assets.parqet.com/logos/symbol/${symbol}`;
+    const logoUrl = `/api/logos/${symbol.toUpperCase()}?theme=${theme}`;
     if (existingPreloads.has(logoUrl)) return;
     
     const link = document.createElement('link');

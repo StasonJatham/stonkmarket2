@@ -7,6 +7,7 @@ import {
   type ChartDataPoint,
   type StockInfo,
 } from '@/services/api';
+import { CHART_LINE_ANIMATION } from '@/lib/chartConfig';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -478,9 +479,7 @@ export function SignalDetailsSheet({
                         stroke={chartColor}
                         fill={`url(#${gradientId})`}
                         strokeWidth={2}
-                        animationDuration={800}
-                        animationEasing="ease-out"
-                        isAnimationActive={true}
+                        {...CHART_LINE_ANIMATION}
                       />
                     </ComposedChart>
                   </ResponsiveContainer>

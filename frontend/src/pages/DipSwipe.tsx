@@ -3,6 +3,7 @@ import { motion, AnimatePresence, useMotionValue, useTransform } from 'framer-mo
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { useTheme } from '@/context/ThemeContext';
 import { AreaChart, Area, ResponsiveContainer, XAxis, YAxis, Tooltip } from 'recharts';
+import { CHART_LINE_ANIMATION } from '@/lib/chartConfig';
 import type { PanInfo } from 'framer-motion';
 import { 
   getDipCards, 
@@ -295,8 +296,7 @@ function SwipeableCard({
                   stroke={getChartColors(colorblindMode, customColors).stroke}
                   strokeWidth={2}
                   fill={`url(#swipe-gradient-${card.symbol})`}
-                  isAnimationActive={true}
-                  animationDuration={600}
+                  {...CHART_LINE_ANIMATION}
                 />
               </AreaChart>
             </ResponsiveContainer>

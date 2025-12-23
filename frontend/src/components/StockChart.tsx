@@ -7,6 +7,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts';
+import { CHART_LINE_ANIMATION } from '@/lib/chartConfig';
 import type { ChartDataPoint } from '@/services/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -112,6 +113,7 @@ export function StockChart({ symbol, data, isLoading }: StockChartProps) {
                 stroke={chartColor}
                 strokeWidth={2}
                 fill={`url(#gradient-${symbol})`}
+                {...CHART_LINE_ANIMATION}
               />
             </AreaChart>
           </ResponsiveContainer>

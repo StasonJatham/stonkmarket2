@@ -10,6 +10,7 @@ import {
   ReferenceLine,
   Tooltip,
 } from 'recharts';
+import { CHART_LINE_ANIMATION } from '@/lib/chartConfig';
 import type { ComparisonChartData, BenchmarkType } from '@/services/api';
 import { getBenchmarkName } from '@/services/api';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -186,6 +187,7 @@ export function ComparisonChart({
               stroke={stockColor}
               strokeWidth={2}
               dot={false}
+              {...CHART_LINE_ANIMATION}
             />
             {hasBenchmark && (
               <Line
@@ -195,6 +197,7 @@ export function ComparisonChart({
                 strokeWidth={1.5}
                 strokeDasharray="4 4"
                 dot={false}
+                {...CHART_LINE_ANIMATION}
               />
             )}
           </LineChart>
@@ -330,6 +333,7 @@ export function ComparisonChart({
                 strokeWidth={2}
                 dot={false}
                 activeDot={{ r: 4, strokeWidth: 0 }}
+                {...CHART_LINE_ANIMATION}
               />
               
               {hasBenchmark && (
@@ -341,6 +345,7 @@ export function ComparisonChart({
                   strokeDasharray="4 4"
                   dot={false}
                   activeDot={{ r: 4, strokeWidth: 0 }}
+                  {...CHART_LINE_ANIMATION}
                 />
               )}
             </LineChart>

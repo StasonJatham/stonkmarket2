@@ -12,6 +12,7 @@ import {
   Line,
   ComposedChart,
 } from 'recharts';
+import { CHART_LINE_ANIMATION } from '@/lib/chartConfig';
 import { 
   getStockInfo, 
   getStockChart, 
@@ -593,9 +594,7 @@ export function StockDetailPage() {
                     stroke={chartColor}
                     strokeWidth={2}
                     fill={`url(#gradient-${upperSymbol})`}
-                    isAnimationActive={true}
-                    animationDuration={800}
-                    animationEasing="ease-out"
+                    {...CHART_LINE_ANIMATION}
                   />
                 </ComposedChart>
               </ResponsiveContainer>

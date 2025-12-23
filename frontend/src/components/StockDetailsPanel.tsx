@@ -11,6 +11,7 @@ import {
   Line,
   ComposedChart,
 } from 'recharts';
+import { CHART_LINE_ANIMATION } from '@/lib/chartConfig';
 import type { DipStock, ChartDataPoint, StockInfo, BenchmarkType, ComparisonChartData } from '@/services/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -379,9 +380,7 @@ export function StockDetailsPanel({
                       stroke={chartColor}
                       strokeWidth={2}
                       fill={`url(#gradient-${stock.symbol}-${chartPeriod})`}
-                      isAnimationActive={true}
-                      animationDuration={800}
-                      animationEasing="ease-out"
+                      {...CHART_LINE_ANIMATION}
                     />
                   </ComposedChart>
                 </ResponsiveContainer>
