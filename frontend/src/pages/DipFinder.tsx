@@ -45,6 +45,7 @@ import { useSEO, generateBreadcrumbJsonLd } from '@/lib/seo';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { SignalDetailsSheet } from '@/components/dipfinder/SignalDetailsSheet';
 import { DipFinderMethodology, getDipTypeBadge } from '@/components/dipfinder/DipFinderMethodology';
+import { StockLogo } from '@/components/StockLogo';
 
 const WINDOWS = [
   { value: 7, label: '7 days', desc: 'Short-term dips (1 week lookback)' },
@@ -588,7 +589,12 @@ export function DipFinderPage() {
                         className="hover:bg-muted/50 transition-colors border-b cursor-pointer"
                         onClick={() => setSelectedSignal(signal)}
                       >
-                        <TableCell className="font-semibold">{signal.ticker}</TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <StockLogo symbol={signal.ticker} size="xs" />
+                            <span className="font-semibold">{signal.ticker}</span>
+                          </div>
+                        </TableCell>
                         <TableCell>
                           <span className={colorblindMode ? 'text-orange-500 font-medium' : 'text-danger font-medium'}>
                             {formatPercent(-signal.dip_stock)}

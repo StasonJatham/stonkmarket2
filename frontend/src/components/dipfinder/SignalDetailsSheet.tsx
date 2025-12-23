@@ -41,6 +41,7 @@ import {
   ReferenceLine,
   ReferenceDot,
 } from 'recharts';
+import { StockLogo } from '@/components/StockLogo';
 
 // Chart timeframe options
 const CHART_TIMEFRAMES = [
@@ -254,14 +255,17 @@ export function SignalDetailsSheet({
         <div className="shrink-0 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
           <SheetHeader className="p-6 pb-4">
             <div className="flex items-start justify-between gap-4">
-              <div className="flex-1 min-w-0">
-                <SheetTitle className="flex items-center gap-3 flex-wrap">
-                  <span className="text-2xl font-bold">{signal.ticker}</span>
-                  {getDipTypeBadge(signal.dip_class, colorblindMode)}
-                </SheetTitle>
-                <SheetDescription className="mt-1 truncate">
-                  {stockInfo?.name || 'Loading company info...'}
-                </SheetDescription>
+              <div className="flex items-center gap-3 min-w-0">
+                <StockLogo symbol={signal.ticker} size="lg" />
+                <div className="min-w-0">
+                  <SheetTitle className="flex items-center gap-2 flex-wrap">
+                    <span className="text-2xl font-bold">{signal.ticker}</span>
+                    {getDipTypeBadge(signal.dip_class, colorblindMode)}
+                  </SheetTitle>
+                  <SheetDescription className="mt-1 truncate">
+                    {stockInfo?.name || 'Loading company info...'}
+                  </SheetDescription>
+                </div>
               </div>
               {/* Score Badge */}
               <div className={`shrink-0 px-4 py-2 rounded-xl ${getScoreBadgeClass(signal.final_score, colorblindMode)}`}>

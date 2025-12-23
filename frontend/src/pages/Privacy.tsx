@@ -42,14 +42,9 @@ export function PrivacyPage() {
           <p>The controller responsible for data processing on this website is:</p>
           <div className="bg-muted/50 p-4 rounded-lg space-y-1">
             <p className="font-medium text-foreground">Karl Machleidt</p>
-            {/* 
-              ⚠️ IMPORTANT: You MUST add your real postal address here.
-              This is required by GDPR Art. 13(1)(a) and TMG § 5.
-              Example:
-              <p>Musterstraße 123</p>
-              <p>12345 Berlin, Germany</p>
-            */}
-            <p className="text-warning">[Postal address required]</p>
+            {/* TODO: Replace with your real address */}
+            <p>Musterstraße 123</p>
+            <p>12345 Musterstadt, Germany</p>
             <p>
               E-Mail:{' '}
               {decoded ? (
@@ -245,42 +240,92 @@ export function PrivacyPage() {
             </table>
           </div>
 
-          <h3 className="font-medium text-foreground pt-4">Functional / Anti-Fraud</h3>
+          <h3 className="font-medium text-foreground pt-4">Fraud Prevention (Anti-Manipulation)</h3>
+          <p className="text-sm text-muted-foreground mb-3">
+            To maintain voting integrity and prevent manipulation, we use a multi-layered 
+            identification system. This is essential to ensure fair voting and protect against 
+            coordinated abuse attempts.
+          </p>
+
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="border-b">
-                  <th className="p-2">Name</th>
+                  <th className="p-2">Storage Location</th>
                   <th className="p-2">Purpose</th>
                   <th className="p-2">Duration</th>
                 </tr>
               </thead>
               <tbody>
                 <tr className="border-b">
-                  <td className="p-2 font-mono text-xs">dip_device_id</td>
-                  <td className="p-2">Prevents vote manipulation (one vote per device per stock)</td>
+                  <td className="p-2 font-mono text-xs">Cookie: dip_device_id</td>
+                  <td className="p-2">Device identifier for vote deduplication</td>
                   <td className="p-2">2 years</td>
+                </tr>
+                <tr className="border-b">
+                  <td className="p-2 font-mono text-xs">localStorage: dip_device_id</td>
+                  <td className="p-2">Backup device identifier</td>
+                  <td className="p-2">Persistent</td>
+                </tr>
+                <tr className="border-b">
+                  <td className="p-2 font-mono text-xs">localStorage: dip_votes</td>
+                  <td className="p-2">Local record of your votes</td>
+                  <td className="p-2">Persistent</td>
+                </tr>
+                <tr className="border-b">
+                  <td className="p-2 font-mono text-xs">IndexedDB: dipfinder_db</td>
+                  <td className="p-2">Backup device identifier</td>
+                  <td className="p-2">Persistent</td>
+                </tr>
+                <tr className="border-b">
+                  <td className="p-2 font-mono text-xs">Server-side cache</td>
+                  <td className="p-2">Hashed IP + browser fingerprint for abuse detection</td>
+                  <td className="p-2">7 days</td>
                 </tr>
               </tbody>
             </table>
           </div>
-          <div className="bg-muted/50 p-3 rounded-lg">
-            <p>
-              <strong className="text-foreground">Note on Anti-Fraud Identifier:</strong> We store 
-              a random device identifier to prevent vote manipulation. This identifier is a random 
-              string that cannot be used to identify you personally. It is stored in cookies and 
-              browser storage (localStorage, IndexedDB) to maintain consistency across sessions.
-            </p>
-            <p className="mt-2">
-              <strong className="text-foreground">Legal Basis:</strong> Article 6(1)(f) GDPR 
-              (legitimate interest in preventing abuse and ensuring fair voting). This processing 
-              is strictly necessary for the integrity of the voting system (§ 25 Abs. 2 Nr. 2 TTDSG).
-            </p>
-            <p className="mt-2">
-              <strong className="text-foreground">Note:</strong> This identifier is essential for 
-              the voting functionality and cannot be disabled. Clearing your browser data will reset 
-              the identifier but also your voting history.
-            </p>
+
+          <div className="bg-muted/50 p-3 rounded-lg mt-3 space-y-3">
+            <div>
+              <strong className="text-foreground">Why multiple storage locations?</strong>
+              <p className="mt-1">
+                To prevent circumvention of the one-vote-per-device limit, we synchronize the 
+                device identifier across multiple browser storage mechanisms. This identifier 
+                is a random string that cannot identify you personally but allows us to detect 
+                if the same device votes multiple times.
+              </p>
+            </div>
+            
+            <div>
+              <strong className="text-foreground">Server-side fingerprinting:</strong>
+              <p className="mt-1">
+                We also generate a fingerprint from your browser's HTTP headers (user agent, 
+                language preferences, browser capabilities) to detect manipulation attempts. 
+                IP addresses are hashed immediately using SHA-256 and never stored in plain text.
+              </p>
+            </div>
+            
+            <div>
+              <strong className="text-foreground">Legal Basis:</strong>
+              <p className="mt-1">
+                Article 6(1)(f) GDPR (legitimate interest in preventing fraud and ensuring fair 
+                voting). We have conducted a balancing test and determined that our interest in 
+                vote integrity outweighs the minimal privacy impact of storing a random identifier. 
+                Access to browser storage is justified under TTDSG § 25 Abs. 2 Nr. 2 as technically 
+                necessary for the voting service you choose to use.
+              </p>
+            </div>
+            
+            <div>
+              <strong className="text-foreground">Your Control:</strong>
+              <p className="mt-1">
+                Clearing all browser data (cookies, localStorage, IndexedDB) will reset your 
+                identifier. Note that this also resets your local voting history. The voting 
+                feature is optional – you can use all other features of this site without 
+                triggering this storage.
+              </p>
+            </div>
           </div>
         </div>
       </section>
@@ -354,10 +399,22 @@ export function PrivacyPage() {
           </p>
           <div className="bg-muted/50 p-3 rounded-lg">
             <p><strong className="text-foreground">Competent Supervisory Authority:</strong></p>
-            {/* Replace with YOUR state's DPA */}
-            <p className="mt-1">[Your state's data protection authority]</p>
+            {/* TODO: Replace with YOUR state's DPA based on your address */}
             <p className="mt-1">
-              List of German DPAs:{' '}
+              Die Landesbeauftragte für den Datenschutz Niedersachsen<br />
+              Prinzenstraße 5<br />
+              30159 Hannover<br />
+              <a 
+                href="https://www.lfd.niedersachsen.de" 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="text-primary underline"
+              >
+                www.lfd.niedersachsen.de
+              </a>
+            </p>
+            <p className="mt-2 text-xs">
+              Full list of German DPAs:{' '}
               <a 
                 href="https://www.bfdi.bund.de/DE/Service/Anschriften/Laender/Laender-node.html" 
                 target="_blank" 

@@ -32,6 +32,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { StockLogo } from '@/components/StockLogo';
 
 interface AiData {
   ai_rating: 'strong_buy' | 'buy' | 'hold' | 'sell' | 'strong_sell' | null;
@@ -165,11 +166,14 @@ export function StockDetailsPanel({
         {/* Header - Fixed */}
         <CardHeader className="py-2 md:py-4 px-3 md:px-6 shrink-0 border-b border-border/50">
           <div className="flex items-start justify-between">
-            <div className="flex-1 min-w-0">
-              <CardTitle className="text-xl md:text-2xl">{stock.symbol}</CardTitle>
-              <p className="text-xs md:text-sm text-muted-foreground truncate">
-                {stock.name || stock.symbol}
-              </p>
+            <div className="flex items-center gap-3 min-w-0">
+              <StockLogo symbol={stock.symbol} size="lg" />
+              <div className="min-w-0">
+                <CardTitle className="text-xl md:text-2xl">{stock.symbol}</CardTitle>
+                <p className="text-xs md:text-sm text-muted-foreground truncate">
+                  {stock.name || stock.symbol}
+                </p>
+              </div>
             </div>
             <div className="text-right">
               <div className="text-xl md:text-2xl font-bold font-mono">

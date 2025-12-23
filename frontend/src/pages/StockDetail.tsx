@@ -44,6 +44,7 @@ import {
   LineChart,
   Scale,
 } from 'lucide-react';
+import { StockLogo } from '@/components/StockLogo';
 
 // Format large numbers
 function formatNumber(value: number | null | undefined, options?: { decimals?: number; prefix?: string; suffix?: string }): string {
@@ -332,32 +333,35 @@ export function StockDetailPage() {
           <Card>
             <CardHeader className="pb-3">
               <div className="flex flex-wrap items-start justify-between gap-4">
-                <div>
-                  <div className="flex items-center gap-3">
-                    <CardTitle className="text-3xl font-bold">
-                      {info?.name || upperSymbol}
-                    </CardTitle>
-                    {dipCard?.ai_rating && (
-                      <Badge variant={
-                        dipCard.ai_rating === 'strong_buy' || dipCard.ai_rating === 'buy' ? 'default' :
-                        dipCard.ai_rating === 'hold' ? 'secondary' : 'destructive'
-                      } className="text-sm">
-                        {dipCard.ai_rating.replace('_', ' ').toUpperCase()}
-                      </Badge>
-                    )}
+                <div className="flex items-start gap-4">
+                  <StockLogo symbol={upperSymbol} size="xl" className="shrink-0" />
+                  <div>
+                    <div className="flex items-center gap-3">
+                      <CardTitle className="text-3xl font-bold">
+                        {info?.name || upperSymbol}
+                      </CardTitle>
+                      {dipCard?.ai_rating && (
+                        <Badge variant={
+                          dipCard.ai_rating === 'strong_buy' || dipCard.ai_rating === 'buy' ? 'default' :
+                          dipCard.ai_rating === 'hold' ? 'secondary' : 'destructive'
+                        } className="text-sm">
+                          {dipCard.ai_rating.replace('_', ' ').toUpperCase()}
+                        </Badge>
+                      )}
+                    </div>
+                    <CardDescription className="flex items-center gap-2 mt-1">
+                      <Badge variant="outline" className="font-mono">{upperSymbol}</Badge>
+                      {info?.sector && (
+                        <Badge variant="secondary">
+                          <Building2 className="mr-1 h-3 w-3" />
+                          {info.sector}
+                        </Badge>
+                      )}
+                      {info?.industry && (
+                        <span className="text-sm text-muted-foreground">{info.industry}</span>
+                      )}
+                    </CardDescription>
                   </div>
-                  <CardDescription className="flex items-center gap-2 mt-1">
-                    <Badge variant="outline" className="font-mono">{upperSymbol}</Badge>
-                    {info?.sector && (
-                      <Badge variant="secondary">
-                        <Building2 className="mr-1 h-3 w-3" />
-                        {info.sector}
-                      </Badge>
-                    )}
-                    {info?.industry && (
-                      <span className="text-sm text-muted-foreground">{info.industry}</span>
-                    )}
-                  </CardDescription>
                 </div>
                 
                 <div className="text-right">

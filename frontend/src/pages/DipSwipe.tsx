@@ -34,12 +34,12 @@ import {
   ThumbsDown,
   Lightbulb,
   DollarSign,
-  Building2,
   Calendar,
   Flame,
   TrendingDown,
   Award
 } from 'lucide-react';
+import { StockLogo } from '@/components/StockLogo';
 
 // Swipe threshold in pixels
 const SWIPE_THRESHOLD = 100;
@@ -86,64 +86,6 @@ function formatBioText(text: string): string {
     .replace(/(👋|🚀|📉|💸|🎯|✨)\s*/g, '$1\n\n')  // Add line break after certain emojis
     .replace(/\n{3,}/g, '\n\n')  // Normalize multiple line breaks
     .trim();
-}
-
-// Get stock logo URL using Google Favicon API
-function getStockLogoUrl(symbol: string, website?: string | null): string {
-  // If website provided, extract domain
-  if (website) {
-    try {
-      const url = new URL(website);
-      return `https://www.google.com/s2/favicons?domain=${url.hostname}&sz=128`;
-    } catch {
-      // Invalid URL, fall through to domain map
-    }
-  }
-  
-  // Fallback: Map common symbols to company domains
-  const cleanSymbol = symbol.replace('.', '-').toLowerCase();
-  const domainMap: Record<string, string> = {
-    'aapl': 'apple.com',
-    'msft': 'microsoft.com',
-    'googl': 'google.com',
-    'goog': 'google.com',
-    'amzn': 'amazon.com',
-    'meta': 'meta.com',
-    'tsla': 'tesla.com',
-    'nvda': 'nvidia.com',
-    'amd': 'amd.com',
-    'intc': 'intel.com',
-    'nflx': 'netflix.com',
-    'crm': 'salesforce.com',
-    'orcl': 'oracle.com',
-    'adbe': 'adobe.com',
-    'csco': 'cisco.com',
-    'ibm': 'ibm.com',
-    'pypl': 'paypal.com',
-    'dis': 'disney.com',
-    'nke': 'nike.com',
-    'ko': 'coca-cola.com',
-    'pep': 'pepsico.com',
-    'wmt': 'walmart.com',
-    'jpm': 'jpmorgan.com',
-    'v': 'visa.com',
-    'ma': 'mastercard.com',
-    'bac': 'bankofamerica.com',
-    'gs': 'goldmansachs.com',
-    'ms': 'morganstanley.com',
-    'pltr': 'palantir.com',
-    'snow': 'snowflake.com',
-    'coin': 'coinbase.com',
-    'uber': 'uber.com',
-    'lyft': 'lyft.com',
-    'sq': 'squareup.com',
-    'shop': 'shopify.com',
-    'twlo': 'twilio.com',
-    'zm': 'zoom.us',
-    'docu': 'docusign.com',
-  };
-  const domain = domainMap[cleanSymbol] || `${cleanSymbol}.com`;
-  return `https://www.google.com/s2/favicons?domain=${domain}&sz=128`;
 }
 
 // Colorblind-friendly colors for dip indicator
@@ -217,7 +159,6 @@ function SwipeableCard({
   const rotate = useTransform(x, [-200, 200], [-15, 15]);
   const buyOpacity = useTransform(x, [0, SWIPE_THRESHOLD], [0, 1]);
   const sellOpacity = useTransform(x, [-SWIPE_THRESHOLD, 0], [1, 0]);
-  const [logoError, setLogoError] = useState(false);
   
   const handleDragEnd = (_: unknown, info: PanInfo) => {
     if (info.offset.x > SWIPE_THRESHOLD) {
@@ -291,18 +232,7 @@ function SwipeableCard({
         <div className="shrink-0 px-4 pt-3 pb-1 flex items-start justify-between">
           <div className="flex items-center gap-2">
             {/* Company Logo */}
-            <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center overflow-hidden border border-border/50">
-              {!logoError ? (
-                <img 
-                  src={getStockLogoUrl(card.symbol, card.website)}
-                  alt={card.symbol}
-                  className="w-full h-full object-contain p-0.5"
-                  onError={() => setLogoError(true)}
-                />
-              ) : (
-                <Building2 className="w-5 h-5 text-muted-foreground" />
-              )}
-            </div>
+            <StockLogo symbol={card.symbol} website={card.website} size="md" />
             <div>
               <div className="flex items-center gap-1.5">
                 <span className="font-bold text-base">
@@ -481,7 +411,6 @@ function SuggestionSwipeCard({
   const rotate = useTransform(x, [-200, 200], [-15, 15]);
   const approveOpacity = useTransform(x, [0, SWIPE_THRESHOLD], [0, 1]);
   const skipOpacity = useTransform(x, [-SWIPE_THRESHOLD, 0], [1, 0]);
-  const [logoError, setLogoError] = useState(false);
   
   const handleDragEnd = (_: unknown, info: PanInfo) => {
     if (info.offset.x > SWIPE_THRESHOLD) {
@@ -536,18 +465,12 @@ function SuggestionSwipeCard({
         {/* Compact Header - Logo, Name, Stats in row */}
         <div className="shrink-0 px-4 pt-3 pb-2 flex items-start gap-3 bg-gradient-to-b from-chart-4/10 to-transparent">
           {/* Company Logo */}
-          <div className="w-14 h-14 shrink-0 rounded-xl bg-background flex items-center justify-center overflow-hidden border-2 border-chart-4/30 shadow-md">
-            {!logoError ? (
-              <img 
-                src={getStockLogoUrl(suggestion.symbol, suggestion.website)}
-                alt={suggestion.symbol}
-                className="w-full h-full object-contain p-1.5"
-                onError={() => setLogoError(true)}
-              />
-            ) : (
-              <Building2 className="w-7 h-7 text-muted-foreground" />
-            )}
-          </div>
+          <StockLogo 
+            symbol={suggestion.symbol} 
+            website={suggestion.website} 
+            size="xl" 
+            className="shrink-0 border-2 border-chart-4/30 shadow-md" 
+          />
           {/* Name & Badges */}
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-0.5">

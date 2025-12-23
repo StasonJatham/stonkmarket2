@@ -37,16 +37,10 @@ export function ImprintPage() {
         <div className="space-y-2 text-muted-foreground">
           <p><strong className="text-foreground">Responsible for content (Angaben gemäß § 5 TMG):</strong></p>
           <p>Karl Machleidt</p>
-          {/* 
-            ⚠️ IMPORTANT: You MUST add your real postal address here.
-            Example format:
-            <p>Musterstraße 123</p>
-            <p>12345 Berlin</p>
-            <p>Germany</p>
-          */}
-          <p className="text-warning bg-warning/10 p-2 rounded text-sm">
-            [Address must be added here - see Privacy.tsx comments]
-          </p>
+          {/* TODO: Replace with your real address */}
+          <p>Musterstraße 123</p>
+          <p>12345 Musterstadt</p>
+          <p>Germany</p>
           <p className="pt-2">
             <strong className="text-foreground">Contact:</strong>
           </p>

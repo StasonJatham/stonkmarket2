@@ -15,6 +15,7 @@ from . import dipfinder
 from . import admin_settings
 from . import metrics
 from . import seo
+from . import logos
 
 __all__ = [
     "auth",
@@ -32,4 +33,5 @@ __all__ = [
     "admin_settings",
     "metrics",
     "seo",
+    "logos",
 ]

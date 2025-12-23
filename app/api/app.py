@@ -27,6 +27,7 @@ from .routes import (
     admin_settings,
     metrics,
     seo,
+    logos,
 )
 
 logger = get_logger("api")
@@ -168,6 +169,7 @@ def create_api_app() -> FastAPI:
     app.include_router(cronjobs.router, prefix="/cronjobs", tags=["CronJobs"])
     app.include_router(suggestions.router, tags=["Suggestions"])
     app.include_router(metrics.router, tags=["Metrics"])
+    app.include_router(logos.router, tags=["Logos"])
     app.include_router(seo.router, tags=["SEO"])  # No prefix - serves at root for crawlers
 
     return app
