@@ -634,6 +634,7 @@ export function DipSwipePage() {
         setSuggestions(data);
       }
       setCurrentIndex(0);
+      setVotedCards(new Set()); // Reset local voted tracking on reload
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load cards');
     } finally {
@@ -685,8 +686,18 @@ export function DipSwipePage() {
       setCurrentIndex(prev => prev + 1);
     } catch (err) {
       console.error('Vote failed:', err);
-      // Still advance to next card
-      setCurrentIndex(prev => prev + 1);
+      // Check if it's a cooldown/already voted error - skip silently
+      const errMsg = err instanceof Error ? err.message : String(err);
+      if (errMsg.includes('Already voted') || errMsg.includes('cooldown') || errMsg.includes('Try again')) {
+        // Already voted - mark as voted and advance
+        setVotedCards(prev => new Set([...prev, currentCard.symbol]));
+        setCurrentIndex(prev => prev + 1);
+      } else {
+        // Other error - show it and still advance
+        setError(`Vote failed: ${errMsg}`);
+        setTimeout(() => setError(null), 3000);
+        setCurrentIndex(prev => prev + 1);
+      }
     } finally {
       setIsVoting(false);
     }

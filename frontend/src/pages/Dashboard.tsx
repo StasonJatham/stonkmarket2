@@ -30,7 +30,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
-import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
+import { Drawer, DrawerContent, DrawerTitle } from '@/components/ui/drawer';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { 
@@ -709,11 +709,11 @@ export function Dashboard() {
         </div>
       </div>
 
-      {/* Mobile Details Sheet */}
-      <Sheet open={isMobileDetailOpen && !!selectedStock} onOpenChange={setIsMobileDetailOpen}>
-        <SheetContent side="bottom" className="h-[85dvh] max-h-[calc(100dvh-env(safe-area-inset-top)-2rem)] p-0">
-          <SheetTitle className="sr-only">Stock Details</SheetTitle>
-          <div className="h-full overflow-hidden pt-2 pb-safe">
+      {/* Mobile Details Drawer - swipe down to close */}
+      <Drawer open={isMobileDetailOpen && !!selectedStock} onOpenChange={setIsMobileDetailOpen}>
+        <DrawerContent className="h-[85dvh] max-h-[calc(100dvh-env(safe-area-inset-top)-2rem)] p-0">
+          <DrawerTitle className="sr-only">Stock Details</DrawerTitle>
+          <div className="h-full overflow-hidden pb-safe">
             <StockDetailsPanel
               stock={selectedStock}
               chartData={chartData}
@@ -730,8 +730,8 @@ export function Dashboard() {
               isLoadingAi={isLoadingAi}
             />
           </div>
-        </SheetContent>
-      </Sheet>
+        </DrawerContent>
+      </Drawer>
     </div>
   );
 }

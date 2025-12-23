@@ -198,15 +198,21 @@ async def get_user_vote_for_symbol(
     symbol: str,
     fingerprint: str,
 ) -> Optional[dict]:
-    """Get user's existing vote for a symbol."""
+    """Get user's existing vote for a symbol within cooldown period."""
+    cooldown_days = settings.vote_cooldown_days
+    cutoff = datetime.utcnow() - timedelta(days=cooldown_days)
+    
     row = await fetch_one(
         """
         SELECT id, symbol, fingerprint, vote_type, vote_weight, created_at
         FROM dip_votes
-        WHERE symbol = $1 AND fingerprint = $2
+        WHERE symbol = $1 AND fingerprint = $2 AND created_at > $3
+        ORDER BY created_at DESC
+        LIMIT 1
         """,
         symbol.upper(),
         fingerprint,
+        cutoff,
     )
     return dict(row) if row else None
 

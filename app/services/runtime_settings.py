@@ -216,7 +216,7 @@ def get_cache_ttl(cache_type: str) -> int:
     """
     key = f"cache_ttl_{cache_type}"
     default = DEFAULT_SETTINGS.get(key, 300)
-    return int(get_setting(key, default))
+    return int(get_runtime_setting(key, default))
 
 
 async def check_openai_configured() -> bool:

@@ -119,4 +119,77 @@ test.describe('Stock Interactions', () => {
       expect(hasDetails || urlChanged).toBeTruthy();
     }
   });
+
+  test('should switch chart periods on mobile', async ({ page }) => {
+    // Set mobile viewport
+    await page.setViewportSize({ width: 375, height: 667 });
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
+    
+    // Wait for stocks to load
+    await page.waitForTimeout(1000);
+    
+    // Find and click a stock to open the detail sheet
+    const stockElement = page.locator('[data-testid="stock-card"], table tbody tr, [class*="cursor-pointer"]').first();
+    
+    if (await stockElement.isVisible()) {
+      await stockElement.click();
+      
+      // Wait for sheet to open
+      await page.waitForTimeout(500);
+      
+      // Look for chart period buttons (1M, 3M, 6M, 1Y, etc.)
+      const periodButtons = page.locator('button:has-text("1M"), button:has-text("3M"), button:has-text("1Y")');
+      const periodCount = await periodButtons.count();
+      
+      console.log(`Found ${periodCount} period buttons`);
+      
+      if (periodCount > 0) {
+        // Try clicking 1M button
+        const oneMonthBtn = page.locator('button:has-text("1M")').first();
+        if (await oneMonthBtn.isVisible()) {
+          console.log('Clicking 1M button...');
+          await oneMonthBtn.click();
+          await page.waitForTimeout(1000);
+          
+          // Check for any errors in console
+          const consoleErrors: string[] = [];
+          page.on('console', msg => {
+            if (msg.type() === 'error') {
+              consoleErrors.push(msg.text());
+            }
+          });
+          
+          // Verify chart is still visible or loading
+          const chartArea = page.locator('[class*="chart"], canvas, svg');
+          const chartVisible = await chartArea.count() > 0;
+          console.log(`Chart area visible: ${chartVisible}`);
+          
+          // Check for any loading or error states
+          const hasError = await page.locator('[class*="error"], [class*="danger"]').count() > 0;
+          const isLoading = await page.locator('[class*="loading"], [class*="spinner"], [class*="animate-spin"]').count() > 0;
+          
+          console.log(`Has error: ${hasError}, Is loading: ${isLoading}`);
+          console.log(`Console errors: ${consoleErrors.join(', ')}`);
+          
+          // The chart should be visible (not in permanent error state)
+          expect(chartVisible || isLoading).toBeTruthy();
+        }
+        
+        // Try clicking 1Y button
+        const oneYearBtn = page.locator('button:has-text("1Y")').first();
+        if (await oneYearBtn.isVisible()) {
+          console.log('Clicking 1Y button...');
+          await oneYearBtn.click();
+          await page.waitForTimeout(1000);
+          
+          const chartArea = page.locator('[class*="chart"], canvas, svg');
+          const chartVisible = await chartArea.count() > 0;
+          console.log(`Chart area visible after 1Y: ${chartVisible}`);
+          
+          expect(chartVisible).toBeTruthy();
+        }
+      }
+    }
+  });
 });
