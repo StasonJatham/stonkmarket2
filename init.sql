@@ -202,7 +202,7 @@ CREATE TABLE IF NOT EXISTS dip_ai_analysis (
     id SERIAL PRIMARY KEY,
     symbol VARCHAR(20) UNIQUE NOT NULL,
     swipe_bio TEXT,
-    ai_rating DECIMAL(3, 1) CHECK (ai_rating >= 0 AND ai_rating <= 10),
+    ai_rating VARCHAR(20) CHECK (ai_rating IS NULL OR ai_rating IN ('strong_buy', 'buy', 'hold', 'sell', 'strong_sell')),
     rating_reasoning TEXT,
     model_used VARCHAR(50),
     tokens_used INTEGER,
@@ -213,7 +213,7 @@ CREATE TABLE IF NOT EXISTS dip_ai_analysis (
 );
 
 CREATE INDEX idx_dip_ai_analysis_symbol ON dip_ai_analysis(symbol);
-CREATE INDEX idx_dip_ai_analysis_rating ON dip_ai_analysis(ai_rating DESC);
+CREATE INDEX idx_dip_ai_analysis_rating ON dip_ai_analysis(ai_rating);
 CREATE INDEX idx_dip_ai_analysis_expires ON dip_ai_analysis(expires_at);
 
 -- ============================================================================

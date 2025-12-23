@@ -262,14 +262,26 @@ async def _process_new_symbol(symbol: str) -> None:
     from app.dipfinder.service import get_dipfinder_service
     from app.cache.cache import Cache
     
-    logger.info(f"Processing newly added symbol: {symbol}")
+    logger.info(f"[NEW SYMBOL] Starting background processing for: {symbol}")
+    
+    # Track what we've successfully done
+    steps_completed = []
     
     try:
         # Step 1: Fetch Yahoo Finance info
+        logger.info(f"[NEW SYMBOL] Step 1: Fetching Yahoo Finance data for {symbol}")
         info = await get_stock_info_async(symbol)
         if not info:
-            logger.warning(f"Could not fetch Yahoo data for {symbol}")
+            logger.error(f"[NEW SYMBOL] FAILED: Could not fetch Yahoo data for {symbol} - aborting")
+            # Still try to invalidate cache
+            try:
+                ranking_cache = Cache(prefix="ranking", default_ttl=3600)
+                await ranking_cache.invalidate_pattern("*")
+            except Exception:
+                pass
             return
+        
+        steps_completed.append("yahoo_fetch")
         
         name = info.get("name") or info.get("short_name")
         sector = info.get("sector")
@@ -278,36 +290,47 @@ async def _process_new_symbol(symbol: str) -> None:
         ath_price = info.get("ath_price") or info.get("fifty_two_week_high", 0)
         dip_pct = ((ath_price - current_price) / ath_price * 100) if ath_price > 0 else 0
         
-        logger.info(f"Fetched data for {symbol}: price=${current_price}, ATH=${ath_price}, dip={dip_pct:.1f}%")
+        logger.info(f"[NEW SYMBOL] Fetched: {symbol} - name='{name}', price=${current_price}, ATH=${ath_price}, dip={dip_pct:.1f}%")
         
-        # Step 2: Generate AI summary from the long description
-        ai_summary = None
-        if full_summary and len(full_summary) > 100:
-            ai_summary = await summarize_company(
-                symbol=symbol,
-                name=name,
-                description=full_summary,
-            )
-            if ai_summary:
-                logger.info(f"Generated AI summary for {symbol}: {len(ai_summary)} chars")
+        # Step 2: Update symbols with name, sector (no AI yet)
+        if name or sector:
+            try:
+                await execute(
+                    """UPDATE symbols SET 
+                           name = COALESCE($2, name),
+                           sector = COALESCE($3, sector),
+                           updated_at = NOW()
+                       WHERE symbol = $1""",
+                    symbol.upper(),
+                    name,
+                    sector,
+                )
+                steps_completed.append("symbol_update")
+                logger.info(f"[NEW SYMBOL] Step 2: Updated symbol table for {symbol}")
+            except Exception as e:
+                logger.error(f"[NEW SYMBOL] Step 2 FAILED: Could not update symbol {symbol}: {e}")
         
-        # Step 3: Update symbols with name, sector, and AI summary
-        if name or sector or ai_summary:
+        # Step 3: Add to dip_state so it appears in dashboard
+        try:
             await execute(
-                """UPDATE symbols SET 
-                       name = COALESCE($2, name),
-                       sector = COALESCE($3, sector),
-                       summary_ai = COALESCE($4, summary_ai),
-                       updated_at = NOW()
-                   WHERE symbol = $1""",
+                """INSERT INTO dip_state (symbol, current_price, ath_price, dip_percentage, first_seen, last_updated)
+                   VALUES ($1, $2, $3, $4, NOW(), NOW())
+                   ON CONFLICT (symbol) DO UPDATE SET
+                       current_price = EXCLUDED.current_price,
+                       ath_price = EXCLUDED.ath_price,
+                       dip_percentage = EXCLUDED.dip_percentage,
+                       last_updated = NOW()""",
                 symbol.upper(),
-                name,
-                sector,
-                ai_summary,
+                current_price,
+                ath_price,
+                dip_pct,
             )
-            logger.info(f"Updated symbol info for {symbol}: name='{name}', sector='{sector}', summary_ai={'yes' if ai_summary else 'no'}")
+            steps_completed.append("dip_state")
+            logger.info(f"[NEW SYMBOL] Step 3: Added to dip_state with dip={dip_pct:.1f}%")
+        except Exception as e:
+            logger.error(f"[NEW SYMBOL] Step 3 FAILED: Could not add to dip_state for {symbol}: {e}")
         
-        # Step 4: Fetch 365 days of price history for dipfinder
+        # Step 4: Fetch price history for dipfinder
         try:
             service = get_dipfinder_service()
             prices = await service.price_provider.get_prices(
@@ -316,62 +339,110 @@ async def _process_new_symbol(symbol: str) -> None:
                 end_date=date.today(),
             )
             if prices is not None and not prices.empty:
-                logger.info(f"Fetched {len(prices)} days of price history for {symbol}")
+                steps_completed.append("price_history")
+                logger.info(f"[NEW SYMBOL] Step 4: Fetched {len(prices)} days of price history")
             else:
-                logger.warning(f"No price history returned for {symbol}")
-        except Exception as price_err:
-            logger.warning(f"Failed to fetch price history for {symbol}: {price_err}")
+                logger.warning(f"[NEW SYMBOL] Step 4: No price history returned for {symbol}")
+        except Exception as e:
+            logger.warning(f"[NEW SYMBOL] Step 4 FAILED: Could not fetch price history for {symbol}: {e}")
         
-        # Step 5: Add to dip_state so it appears in dashboard
-        await execute(
-            """INSERT INTO dip_state (symbol, current_price, ath_price, dip_percentage, first_seen, last_updated)
-               VALUES ($1, $2, $3, $4, NOW(), NOW())
-               ON CONFLICT (symbol) DO UPDATE SET
-                   current_price = EXCLUDED.current_price,
-                   ath_price = EXCLUDED.ath_price,
-                   dip_percentage = EXCLUDED.dip_percentage,
-                   last_updated = NOW()""",
-            symbol.upper(),
-            current_price,
-            ath_price,
-            dip_pct,
-        )
-        logger.info(f"Added {symbol} to dip_state with dip={dip_pct:.1f}%")
-        
-        # Step 6: Generate AI bio (swipe card summary)
-        bio = await generate_bio(
-            symbol=symbol,
-            dip_pct=dip_pct,
-        )
-        
-        # Step 7: Generate AI rating
-        rating_data = await rate_dip(
-            symbol=symbol,
-            current_price=current_price,
-            ref_high=ath_price,
-            dip_pct=dip_pct,
-        )
-        
-        # Step 8: Store AI analysis
-        if bio or rating_data:
-            await dip_votes_repo.upsert_ai_analysis(
-                symbol=symbol,
-                swipe_bio=bio,
-                ai_rating=rating_data.get("rating") if rating_data else None,
-                ai_reasoning=rating_data.get("reasoning") if rating_data else None,
-                is_batch=False,
-            )
-            logger.info(f"Generated AI content for {symbol}: bio={'yes' if bio else 'no'}, rating={rating_data.get('rating') if rating_data else 'none'}")
+        # Step 5: Generate AI summary (optional - continues if fails)
+        ai_summary = None
+        if full_summary and len(full_summary) > 100:
+            try:
+                ai_summary = await summarize_company(
+                    symbol=symbol,
+                    name=name,
+                    description=full_summary,
+                )
+                if ai_summary:
+                    await execute(
+                        "UPDATE symbols SET summary_ai = $2, updated_at = NOW() WHERE symbol = $1",
+                        symbol.upper(),
+                        ai_summary,
+                    )
+                    steps_completed.append("ai_summary")
+                    logger.info(f"[NEW SYMBOL] Step 5: Generated AI summary ({len(ai_summary)} chars)")
+                else:
+                    logger.warning(f"[NEW SYMBOL] Step 5: No AI summary generated (OpenAI not configured?)")
+            except Exception as e:
+                logger.warning(f"[NEW SYMBOL] Step 5 FAILED: AI summary error for {symbol}: {e}")
         else:
-            logger.warning(f"No AI content generated for {symbol}")
+            logger.info(f"[NEW SYMBOL] Step 5: Skipped AI summary (no description or too short)")
+        
+        # Step 6: Generate AI bio (swipe card) - optional
+        bio = None
+        try:
+            bio = await generate_bio(symbol=symbol, dip_pct=dip_pct)
+            if bio:
+                steps_completed.append("ai_bio")
+                logger.info(f"[NEW SYMBOL] Step 6: Generated AI bio")
+            else:
+                logger.warning(f"[NEW SYMBOL] Step 6: No AI bio generated (OpenAI not configured?)")
+        except Exception as e:
+            logger.warning(f"[NEW SYMBOL] Step 6 FAILED: AI bio error for {symbol}: {e}")
+        
+        # Step 7: Generate AI rating - optional
+        rating_data = None
+        try:
+            rating_data = await rate_dip(
+                symbol=symbol,
+                current_price=current_price,
+                ref_high=ath_price,
+                dip_pct=dip_pct,
+            )
+            if rating_data:
+                steps_completed.append("ai_rating")
+                logger.info(f"[NEW SYMBOL] Step 7: Generated AI rating: {rating_data.get('rating')}")
+            else:
+                logger.warning(f"[NEW SYMBOL] Step 7: No AI rating generated (OpenAI not configured?)")
+        except Exception as e:
+            logger.warning(f"[NEW SYMBOL] Step 7 FAILED: AI rating error for {symbol}: {e}")
+        
+        # Step 8: Store AI analysis if any was generated
+        if bio or rating_data:
+            try:
+                await dip_votes_repo.upsert_ai_analysis(
+                    symbol=symbol,
+                    swipe_bio=bio,
+                    ai_rating=rating_data.get("rating") if rating_data else None,
+                    ai_reasoning=rating_data.get("reasoning") if rating_data else None,
+                    is_batch=False,
+                )
+                steps_completed.append("ai_stored")
+                logger.info(f"[NEW SYMBOL] Step 8: Stored AI analysis")
+            except Exception as e:
+                logger.error(f"[NEW SYMBOL] Step 8 FAILED: Could not store AI analysis for {symbol}: {e}")
         
         # Step 9: Invalidate caches so the stock appears immediately
-        ranking_cache = Cache(prefix="ranking", default_ttl=3600)
-        deleted = await ranking_cache.invalidate_pattern("*")
-        logger.info(f"Completed processing {symbol}, invalidated {deleted} ranking cache keys")
+        try:
+            # Invalidate ranking cache
+            ranking_cache = Cache(prefix="ranking", default_ttl=3600)
+            deleted = await ranking_cache.invalidate_pattern("*")
+            
+            # Invalidate stock info cache
+            stockinfo_cache = Cache(prefix="stockinfo", default_ttl=3600)
+            await stockinfo_cache.delete(symbol.upper())
+            
+            # Invalidate symbols list cache
+            symbols_cache = Cache(prefix="symbols", default_ttl=3600)
+            await symbols_cache.invalidate_pattern("*")
+            
+            steps_completed.append("cache_invalidated")
+            logger.info(f"[NEW SYMBOL] Step 9: Invalidated caches (ranking: {deleted} keys, stockinfo, symbols)")
+        except Exception as e:
+            logger.warning(f"[NEW SYMBOL] Step 9 FAILED: Could not invalidate cache: {e}")
+        
+        logger.info(f"[NEW SYMBOL] COMPLETED processing {symbol}. Steps completed: {', '.join(steps_completed)}")
             
     except Exception as e:
-        logger.error(f"Error processing new symbol {symbol}: {e}")
+        logger.error(f"[NEW SYMBOL] FATAL ERROR processing {symbol}: {e}", exc_info=True)
+        # Try to invalidate cache even on error
+        try:
+            ranking_cache = Cache(prefix="ranking", default_ttl=3600)
+            await ranking_cache.invalidate_pattern("*")
+        except Exception:
+            pass
 
 
 # =============================================================================

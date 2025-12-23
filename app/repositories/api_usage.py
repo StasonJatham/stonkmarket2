@@ -143,7 +143,7 @@ async def record_batch_job(
     """Record a new batch job."""
     await execute(
         """
-        INSERT INTO batch_jobs (batch_id, job_type, status, item_count, created_at)
+        INSERT INTO batch_jobs (batch_id, job_type, status, total_requests, created_at)
         VALUES ($1, $2, 'pending', $3, NOW())
         """,
         batch_id, job_type, total_requests,
@@ -162,7 +162,7 @@ async def update_batch_job(
         await execute(
             """
             UPDATE batch_jobs 
-            SET status = $1, cost_usd = $2, completed_at = NOW()
+            SET status = $1, actual_cost_usd = $2, completed_at = NOW()
             WHERE batch_id = $3
             """,
             status, cost_usd, batch_id,

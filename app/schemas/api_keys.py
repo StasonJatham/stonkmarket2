@@ -15,7 +15,7 @@ class ApiKeyCreate(BaseModel):
     )
     api_key: str = Field(..., min_length=10, description="The API key value")
     mfa_code: str = Field(
-        ..., min_length=6, max_length=8, description="MFA code for verification"
+        default="", max_length=8, description="MFA code for verification (optional if session active)"
     )
 
     model_config = {
@@ -53,13 +53,13 @@ class ApiKeyList(BaseModel):
 class ApiKeyDelete(BaseModel):
     """Request to delete an API key."""
 
-    mfa_code: str = Field(..., min_length=6, max_length=8)
+    mfa_code: str = Field(default="", max_length=8, description="MFA code (optional if session active)")
 
 
 class ApiKeyReveal(BaseModel):
     """Request to reveal an API key (requires MFA)."""
 
-    mfa_code: str = Field(..., min_length=6, max_length=8)
+    mfa_code: str = Field(default="", max_length=8, description="MFA code (optional if session active)")
 
 
 class ApiKeyRevealResponse(BaseModel):

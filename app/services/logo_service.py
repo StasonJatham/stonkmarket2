@@ -38,6 +38,8 @@ async def _get_logo_dev_public_key() -> Optional[str]:
     Get Logo.dev public key from env or database.
     
     Checks environment variable first, then falls back to secure database storage.
+    Note: Logo.dev image CDN requires the publishable (public) key, not the secret key.
+    If you get domain restriction errors, update key settings in Logo.dev dashboard.
     """
     # Check env first
     if settings.logo_dev_public_key:
@@ -68,7 +70,7 @@ async def _fetch_logo_from_api(
     Returns:
         WebP image bytes or None if failed
     """
-    # Get API key
+    # Get API key (must be publishable key for image CDN)
     api_key = await _get_logo_dev_public_key()
     if not api_key:
         logger.debug(f"Logo.dev API key not configured, skipping fetch for {symbol}")
