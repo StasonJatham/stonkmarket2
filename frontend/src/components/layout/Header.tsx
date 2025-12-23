@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button';
 const navLinks = [
   { href: '/', label: 'Dashboard' },
   { href: '/swipe', label: 'DipSwipe', icon: Heart },
+  { href: '/learn', label: 'Learn' },
   { href: '/signals', label: 'Signals', icon: BarChart3, auth: true },
 ];
 

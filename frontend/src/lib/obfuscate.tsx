@@ -32,8 +32,8 @@ export function deobfuscate(encoded: string): string {
 // Pre-encoded values (these are obfuscated at build time)
 // PayPal username: machleidtkarl
 const OBFUSCATED_PAYPAL = 'em5wdXlydnFneG5seQ==';
-// Email: karl@machleidt.dev (base64 encoded)
-const OBFUSCATED_EMAIL = 'a2FybEBtYWNobGVpZHQuZGV2';
+// Email: stonk@stonkmarket.de (base64 encoded)
+const OBFUSCATED_EMAIL = 'c3RvbmtAc3RvbmttYXJrZXQuZGU=';
 
 // Hook for components to access decoded values on user interaction
 export function useObfuscatedContact() {

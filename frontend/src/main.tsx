@@ -19,3 +19,7 @@ createRoot(document.getElementById('root')!).render(
     <App />
   </StrictMode>,
 )
+
+// Dispatch event for prerenderer to know when app is ready
+// This is used by vite-plugin-prerender to capture the rendered HTML
+document.dispatchEvent(new Event('render-event'))

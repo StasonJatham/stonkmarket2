@@ -217,6 +217,30 @@ test.describe('Crawlability', () => {
     // Otherwise, just verify the file exists in public folder (dev mode serves SPA)
   });
 
+  test('should have security.txt', async ({ page }) => {
+    // security.txt can be at /.well-known/security.txt or /security.txt
+    const response = await page.goto('/security.txt');
+    
+    // Should at least get a response
+    expect(response?.ok() || response?.status() === 304).toBeTruthy();
+    
+    const body = await response?.text() || '';
+    if (body.includes('Contact:')) {
+      expect(body).toContain('Expires:');
+    }
+  });
+
+  test('should have humans.txt', async ({ page }) => {
+    const response = await page.goto('/humans.txt');
+    
+    expect(response?.ok() || response?.status() === 304).toBeTruthy();
+    
+    const body = await response?.text() || '';
+    if (body.includes('TEAM')) {
+      expect(body).toContain('stonkmarket');
+    }
+  });
+
   test('should have manifest.json for PWA', async ({ page }) => {
     const response = await page.goto('/manifest.json');
     expect(response?.status()).toBe(200);

@@ -1,7 +1,7 @@
 # Security Policy for stonkmarket.de
 # https://securitytxt.org/
 
-Contact: mailto:security@stonkmarket.de
+Contact: mailto:stonk@stonkmarket.de
 Expires: 2026-12-31T23:59:59.000Z
 Preferred-Languages: en, de
 Canonical: https://stonkmarket.de/.well-known/security.txt

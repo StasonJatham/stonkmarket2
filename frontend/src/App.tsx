@@ -20,6 +20,8 @@ const PrivacyPage = lazy(() => import('@/pages/Privacy').then(m => ({ default: m
 const ImprintPage = lazy(() => import('@/pages/Imprint').then(m => ({ default: m.ImprintPage })));
 const ContactPage = lazy(() => import('@/pages/Contact').then(m => ({ default: m.ContactPage })));
 const AboutPage = lazy(() => import('@/pages/About').then(m => ({ default: m.AboutPage })));
+const StockDetailPage = lazy(() => import('@/pages/StockDetail').then(m => ({ default: m.StockDetailPage })));
+const LearnPage = lazy(() => import('@/pages/Learn').then(m => ({ default: m.LearnPage })));
 
 // Loading fallback component - minimal to avoid layout shift
 const PageLoader = memo(function PageLoader() {
@@ -45,6 +47,8 @@ function App() {
                 <Route path="/swipe" element={<DipSwipePage />} />
                 <Route path="/suggest" element={<SuggestionsPage />} />
                 <Route path="/about" element={<AboutPage />} />
+                <Route path="/learn" element={<LearnPage />} />
+                <Route path="/stock/:symbol" element={<StockDetailPage />} />
                 <Route path="/privacy" element={<PrivacyPage />} />
                 <Route path="/imprint" element={<ImprintPage />} />
                 <Route path="/contact" element={<ContactPage />} />

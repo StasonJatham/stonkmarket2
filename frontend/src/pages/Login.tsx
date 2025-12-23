@@ -12,8 +12,16 @@ import {
   InputOTPSlot,
 } from '@/components/ui/input-otp';
 import { TrendingUp, AlertCircle, ShieldCheck, ArrowLeft, Loader2 } from 'lucide-react';
+import { useSEO } from '@/lib/seo';
 
 export function LoginPage() {
+  // SEO - noindex for login page
+  useSEO({
+    title: 'Admin Login',
+    description: 'Login to access StonkMarket admin features.',
+    noindex: true, // Don't index login pages
+  });
+
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [mfaCode, setMfaCode] = useState('');

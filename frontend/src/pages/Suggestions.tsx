@@ -39,6 +39,7 @@ import {
   X
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
+import { useSEO, generateBreadcrumbJsonLd } from '@/lib/seo';
 import { 
   suggestStock, 
   voteForSuggestion, 
@@ -54,6 +55,18 @@ import {
 
 export function SuggestionsPage() {
   const { isAdmin } = useAuth();
+
+  // SEO for suggestions page
+  useSEO({
+    title: 'Stock Suggestions - Vote for New Stocks',
+    description: 'Suggest new stocks to track on StonkMarket or vote for existing suggestions. Community-driven stock discovery for dip tracking.',
+    keywords: 'stock suggestions, community voting, stock discovery, dip tracking, suggest stocks',
+    canonical: '/suggest',
+    jsonLd: generateBreadcrumbJsonLd([
+      { name: 'Home', url: '/' },
+      { name: 'Suggestions', url: '/suggest' },
+    ]),
+  });
 
   return (
     <div className="space-y-6">

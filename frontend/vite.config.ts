@@ -4,6 +4,11 @@ import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
 
 // https://vite.dev/config/
+// NOTE: For production SEO, consider adding prerendering with:
+// - vite-plugin-ssr (for SSR/SSG)
+// - @prerenderer/rollup-plugin (build-time prerender)
+// - Netlify/Vercel prerender feature
+// This allows search engines to see full HTML without executing JS.
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {

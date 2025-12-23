@@ -69,8 +69,16 @@ import { UserApiKeyManager } from '@/components/UserApiKeyManager';
 import { SystemSettings } from '@/components/SystemSettings';
 import { SuggestionManager } from '@/components/SuggestionManager';
 import { AIManager } from '@/components/AIManager';
+import { useSEO } from '@/lib/seo';
 
 export function AdminPage() {
+  // SEO - noindex for admin page
+  useSEO({
+    title: 'Admin Dashboard',
+    description: 'StonkMarket administration panel.',
+    noindex: true, // Don't index admin pages
+  });
+
   const { user } = useAuth();
   const [cronJobs, setCronJobs] = useState<CronJob[]>([]);
   const [cronLogs, setCronLogs] = useState<CronLogEntry[]>([]);

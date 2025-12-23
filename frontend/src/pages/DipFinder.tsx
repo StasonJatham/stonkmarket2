@@ -41,6 +41,7 @@ import {
   HelpCircle,
 } from 'lucide-react';
 import { useTheme } from '@/context/ThemeContext';
+import { useSEO, generateBreadcrumbJsonLd } from '@/lib/seo';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { SignalDetailsSheet } from '@/components/dipfinder/SignalDetailsSheet';
 import { DipFinderMethodology, getDipTypeBadge } from '@/components/dipfinder/DipFinderMethodology';
@@ -175,6 +176,20 @@ function SignalCard({
 export function DipFinderPage() {
   const { colorblindMode } = useTheme();
   const isMobile = useIsMobile();
+
+  // SEO for DipFinder page (protected but still good to have)
+  useSEO({
+    title: 'Dip Signals - Advanced Stock Analysis',
+    description: 'Advanced dip detection signals for stocks. Filter by timeframe, analyze recovery potential, and identify buying opportunities.',
+    keywords: 'dip signals, stock analysis, dip detection, recovery potential, stock scanner',
+    canonical: '/signals',
+    noindex: true, // Protected page - don't index
+    jsonLd: generateBreadcrumbJsonLd([
+      { name: 'Home', url: '/' },
+      { name: 'Dip Signals', url: '/signals' },
+    ]),
+  });
+
   const [signals, setSignals] = useState<DipSignal[]>([]);
   const [symbols, setSymbols] = useState<Symbol[]>([]);
   const [isLoading, setIsLoading] = useState(true);
