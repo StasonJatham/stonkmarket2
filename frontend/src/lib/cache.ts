@@ -328,3 +328,4 @@ export const CACHE_TTL = {
   SYMBOLS: 0,                   // Real-time - no frontend cache
   SETTINGS: 60 * 60 * 1000,     // 1 hour - runtime settings
   SUGGESTIONS: 0,               // Real-time - no frontend cache
+} as const;
