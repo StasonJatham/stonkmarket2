@@ -78,7 +78,7 @@ class JobScheduler:
                 "0 4 * * 0",
                 "Generate dip analysis weekly Sunday 4am",
             ),
-            "batch_poll": ("*/15 * * * *", "Poll for completed batch jobs every 15 min"),
+            "batch_poll": ("*/5 * * * *", "Poll for completed batch jobs every 5 min"),
             "cleanup": ("0 0 * * *", "Clean up expired data daily midnight"),
         }
 

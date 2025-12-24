@@ -354,7 +354,7 @@ async def batch_poll_job() -> str:
     """
     Poll for completed OpenAI batch jobs.
 
-    Schedule: Every 15 minutes
+    Schedule: Every 5 minutes (idempotent - only calls API if pending jobs exist)
 
     OpenAI Batch API can take up to 24 hours to complete.
     This job polls for completed batches and processes their results.

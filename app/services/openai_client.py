@@ -37,14 +37,17 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import random
+import re
 import tempfile
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
 from pathlib import Path
 from typing import Any, Literal, Optional, TypedDict
 
-from openai import AsyncOpenAI, APITimeoutError, RateLimitError
+from openai import AsyncOpenAI, APITimeoutError, APIConnectionError, RateLimitError, APIStatusError
 
 from app.core.logging import get_logger
 from app.repositories import api_keys as api_keys_repo
@@ -108,32 +111,69 @@ class TaskType(str, Enum):
 
 
 # JSON Schema for RATING task - enforces exact structure with Structured Outputs
+# Format for Responses API: text.format = { type: "json_schema", name: ..., schema: ... }
 RATING_SCHEMA = {
     "type": "json_schema",
-    "json_schema": {
-        "name": "stock_rating",
-        "strict": True,
-        "schema": {
-            "type": "object",
-            "properties": {
-                "rating": {
-                    "type": "string",
-                    "enum": ["strong_buy", "buy", "hold", "sell", "strong_sell"],
-                    "description": "The dip-buy opportunity rating"
-                },
-                "reasoning": {
-                    "type": "string",
-                    "description": "Exactly 3 sentences citing concrete context facts"
-                },
-                "confidence": {
-                    "type": "integer",
-                    "description": "Confidence level from 1-10"
-                }
+    "name": "stock_rating",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "properties": {
+            "rating": {
+                "type": "string",
+                "enum": ["strong_buy", "buy", "hold", "sell", "strong_sell"],
+                "description": "The dip-buy opportunity rating"
             },
-            "required": ["rating", "reasoning", "confidence"],
-            "additionalProperties": False
-        }
+            "reasoning": {
+                "type": "string",
+                "description": "Brief explanation under 400 chars citing at least 2 concrete context facts"
+            },
+            "confidence": {
+                "type": "integer",
+                "description": "Confidence level from 1-10"
+            }
+        },
+        "required": ["rating", "reasoning", "confidence"],
+        "additionalProperties": False
     }
+}
+
+# =============================================================================
+# Task Configuration
+# =============================================================================
+
+@dataclass
+class TaskConfig:
+    """Per-task generation configuration."""
+    min_chars: int = 0           # Minimum output characters (0 = no limit)
+    max_chars: int = 0           # Maximum output characters (0 = no limit)
+    reasoning_overhead: int = 100  # GPT-5 reasoning token overhead
+    reasoning_max_chars: int = 0 # Max chars for reasoning field (RATING only)
+    max_emojis: int = 0          # Max emoji count (0 = no limit)
+    default_max_tokens: int = 300  # Default output tokens for this task
+
+
+TASK_CONFIGS: dict[TaskType, TaskConfig] = {
+    TaskType.BIO: TaskConfig(
+        min_chars=150,
+        max_chars=200,
+        reasoning_overhead=100,
+        max_emojis=2,
+        default_max_tokens=150,  # 200 chars / 4 + buffer
+    ),
+    TaskType.RATING: TaskConfig(
+        min_chars=0,
+        max_chars=0,
+        reasoning_overhead=300,
+        reasoning_max_chars=400,  # Cap reasoning length
+        default_max_tokens=400,  # JSON with reasoning needs more
+    ),
+    TaskType.SUMMARY: TaskConfig(
+        min_chars=350,
+        max_chars=500,
+        reasoning_overhead=150,
+        default_max_tokens=300,  # 500 chars / 4 + buffer
+    ),
 }
 
 
@@ -182,7 +222,7 @@ You MUST:
 
 Return JSON with:
 - rating: "strong_buy" | "buy" | "hold" | "sell" | "strong_sell"
-- reasoning: EXACTLY 2 sentences. Must cite at least 2 concrete context facts (e.g., dip %, days in dip, P/E, sector, business).
+- reasoning: Brief explanation (under 400 chars). Cite at least 2 concrete context facts (e.g., dip %, days in dip, P/E, sector).
 - confidence: integer 1–10.
 
 Decision rubric (apply in order):
@@ -270,12 +310,14 @@ def _build_prompt(task: TaskType, context: dict[str, Any]) -> str:
             parts.append(f"Company: {name}")
         if desc := context.get("description"):
             # Pre-trim very long descriptions to avoid context overflow
-            if len(desc) > MAX_DESCRIPTION_CHARS:
+            # Use dynamic calculation or fallback
+            max_desc_chars = MAX_DESCRIPTION_CHARS_FALLBACK
+            if len(desc) > max_desc_chars:
                 logger.warning(
                     f"Description for {context.get('symbol', 'unknown')} is {len(desc)} chars, "
-                    f"trimming to {MAX_DESCRIPTION_CHARS}"
+                    f"trimming to {max_desc_chars}"
                 )
-                desc = desc[:MAX_DESCRIPTION_CHARS] + "..."
+                desc = desc[:max_desc_chars] + "..."
             parts.append(f"\nFull Description:\n{desc}")
         
         return "\n".join(parts)
@@ -396,8 +438,37 @@ def _estimate_tokens(text: str, model: str = DEFAULT_MODEL) -> int:
 GPT5_REASONING_OVERHEAD = 300
 
 # Maximum description length before pre-trimming (in characters)
-# ~50k chars = ~12.5k tokens, leaving plenty of room for output
-MAX_DESCRIPTION_CHARS = 50_000
+# This is a fallback; dynamic calculation is preferred
+MAX_DESCRIPTION_CHARS_FALLBACK = 50_000
+
+
+def _calculate_max_description_chars(model: str, instructions: str, base_prompt_chars: int) -> int:
+    """
+    Dynamically calculate max description length based on available context.
+    
+    Args:
+        model: Model name
+        instructions: System instructions text
+        base_prompt_chars: Characters in prompt excluding description
+        
+    Returns:
+        Maximum characters allowed for description
+    """
+    limits = _get_model_limits(model)
+    context_window = limits["context"]
+    chars_per_token = limits.get("chars_per_token", 4)
+    
+    # Reserve tokens for: instructions, base prompt, output, safety buffer
+    instruction_tokens = _estimate_tokens(instructions, model)
+    base_prompt_tokens = int(base_prompt_chars / chars_per_token * 1.1)
+    output_reserve = 500  # Reserve for output
+    safety_buffer = 1000  # Extra safety margin
+    
+    available_tokens = context_window - instruction_tokens - base_prompt_tokens - output_reserve - safety_buffer
+    max_chars = int(available_tokens * chars_per_token * 0.9)  # 10% safety
+    
+    # Clamp to reasonable bounds
+    return max(10_000, min(max_chars, 200_000))
 
 
 def _calculate_safe_output_tokens(
@@ -405,6 +476,7 @@ def _calculate_safe_output_tokens(
     instructions: str,
     prompt: str,
     desired_output: int,
+    task: Optional[TaskType] = None,
 ) -> tuple[int, bool]:
     """
     Calculate safe max_output_tokens that won't exceed model limits.
@@ -416,17 +488,16 @@ def _calculate_safe_output_tokens(
         instructions: System instructions text
         prompt: User prompt text  
         desired_output: Desired output token count
+        task: Optional task type for per-task reasoning overhead
         
     Returns:
         Tuple of (safe_output_tokens, input_overflow):
         - safe_output_tokens: Adjusted for model limits
-        - input_overflow: True if input exceeded context window (prompt was trimmed)
+        - input_overflow: True if input exceeded context window
         
     Note:
         For GPT-5 models, max_output_tokens includes both visible output
-        AND reasoning tokens. With effort="low", reasoning overhead is
-        minimal (~100-300 tokens), so we add a small fixed buffer rather
-        than a multiplier.
+        AND reasoning tokens. Overhead is per-task to avoid overspending.
     """
     limits = _get_model_limits(model)
     context_window = limits["context"]
@@ -444,15 +515,18 @@ def _calculate_safe_output_tokens(
     input_overflow = available_for_output <= 0
     if input_overflow:
         logger.error(
-            f"Input exceeds context window: ~{input_estimate} tokens > {context_window} limit. "
-            f"Prompt will be truncated."
+            f"Input exceeds context window: ~{input_estimate} tokens > {context_window} limit."
         )
-        # Allow minimum output budget - prompt should have been pre-trimmed
-        available_for_output = desired_output * 2  # Give some headroom
+        # Return minimum viable output - caller should handle overflow
+        return 100, True
     
-    # For GPT-5 models, add small fixed overhead for reasoning tokens (effort="low")
+    # Get per-task reasoning overhead (or default)
     if _is_gpt5(model):
-        desired_with_overhead = desired_output + GPT5_REASONING_OVERHEAD
+        if task and task in TASK_CONFIGS:
+            reasoning_overhead = TASK_CONFIGS[task].reasoning_overhead
+        else:
+            reasoning_overhead = GPT5_REASONING_OVERHEAD
+        desired_with_overhead = desired_output + reasoning_overhead
     else:
         desired_with_overhead = desired_output
     
@@ -533,6 +607,138 @@ def _calculate_cost(input_tokens: int, output_tokens: int, model: str, is_batch:
 
 
 # =============================================================================
+# Validation and Repair
+# =============================================================================
+
+def _count_emojis(text: str) -> int:
+    """Count emoji characters in text."""
+    emoji_pattern = re.compile(
+        "["
+        "\U0001F600-\U0001F64F"  # emoticons
+        "\U0001F300-\U0001F5FF"  # symbols & pictographs
+        "\U0001F680-\U0001F6FF"  # transport & map
+        "\U0001F1E0-\U0001F1FF"  # flags
+        "\U00002702-\U000027B0"  # dingbats
+        "\U0001F900-\U0001F9FF"  # supplemental symbols
+        "\U0001FA00-\U0001FA6F"  # chess symbols
+        "\U0001FA70-\U0001FAFF"  # symbols extended
+        "]",  # No + quantifier - match individual emojis
+        flags=re.UNICODE
+    )
+    return len(emoji_pattern.findall(text))
+
+
+def _validate_output(task: TaskType, output: str | dict) -> tuple[bool, str]:
+    """
+    Validate output against task constraints.
+    
+    Returns:
+        (is_valid, error_message)
+    """
+    config = TASK_CONFIGS.get(task)
+    if not config:
+        return True, ""
+    
+    # For RATING, validate the reasoning field length
+    if task == TaskType.RATING and isinstance(output, dict):
+        reasoning = output.get("reasoning", "")
+        if config.reasoning_max_chars > 0 and len(reasoning) > config.reasoning_max_chars:
+            return False, f"reasoning too long: {len(reasoning)} chars, max is {config.reasoning_max_chars}"
+        return True, ""
+    
+    # For text outputs (BIO, SUMMARY)
+    if isinstance(output, str):
+        char_count = len(output)
+        
+        # Check character limits
+        if config.min_chars > 0 and char_count < config.min_chars:
+            return False, f"too short: {char_count} chars, min is {config.min_chars}"
+        if config.max_chars > 0 and char_count > config.max_chars:
+            return False, f"too long: {char_count} chars, max is {config.max_chars}"
+        
+        # Check emoji count for BIO
+        if task == TaskType.BIO and config.max_emojis > 0:
+            emoji_count = _count_emojis(output)
+            if emoji_count > config.max_emojis:
+                return False, f"too many emojis: {emoji_count}, max is {config.max_emojis}"
+    
+    return True, ""
+
+
+async def _repair_output(
+    task: TaskType,
+    output: str | dict,
+    error: str,
+    model: str,
+) -> Optional[str | dict]:
+    """
+    Attempt to repair output that failed validation.
+    
+    Uses a focused repair prompt to fix specific issues.
+    """
+    config = TASK_CONFIGS.get(task)
+    if not config:
+        return None
+    
+    client = await _get_client()
+    if not client:
+        return None
+    
+    # Build repair prompt based on task
+    if task == TaskType.BIO:
+        repair_prompt = f"""Fix this stock bio to be exactly {config.min_chars}-{config.max_chars} characters.
+Keep the same meaning and tone. Use 1-2 emojis max. Output only the fixed text.
+
+Original ({len(output)} chars): {output}"""
+    
+    elif task == TaskType.SUMMARY:
+        repair_prompt = f"""Adjust this summary to be exactly {config.min_chars}-{config.max_chars} characters.
+Keep the same meaning. No extra facts. Output only the fixed text.
+
+Original ({len(output)} chars): {output}"""
+    
+    elif task == TaskType.RATING and isinstance(output, dict):
+        # Repair reasoning length
+        repair_prompt = f"""Shorten this reasoning to under {config.reasoning_max_chars} characters.
+Keep the same rating ({output.get('rating')}) and confidence ({output.get('confidence')}).
+Cite at least 2 facts. Output only the reasoning text, no JSON.
+
+Original ({len(output.get('reasoning', ''))} chars): {output.get('reasoning', '')}"""
+    else:
+        return None
+    
+    try:
+        params = {
+            "model": model,
+            "instructions": "You are a precise editor. Follow instructions exactly.",
+            "input": repair_prompt,
+            "max_output_tokens": 300,
+            "store": False,
+        }
+        
+        if _is_gpt5(model):
+            params["reasoning"] = {"effort": "low"}
+        
+        response = await client.responses.create(**params)
+        
+        if response.status != "completed" or not response.output_text:
+            return None
+        
+        repaired = response.output_text.strip().strip('"\'')
+        
+        # For RATING, rebuild the dict with fixed reasoning
+        if task == TaskType.RATING and isinstance(output, dict):
+            output["reasoning"] = clean_ai_text(repaired)
+            return output
+        
+        return clean_ai_text(repaired)
+        
+    except Exception as e:
+        logger.warning(f"Repair failed: {e}")
+        return None
+
+
+# =============================================================================
 # Core Generation Function
 # =============================================================================
 
@@ -542,7 +748,7 @@ async def generate(
     *,
     model: Optional[str] = None,
     json_output: bool = False,
-    max_tokens: int = 200,
+    max_tokens: Optional[int] = None,
 ) -> Optional[str | dict]:
     """
     Generate AI content using the Responses API.
@@ -579,6 +785,11 @@ async def generate(
     instructions = INSTRUCTIONS.get(task, "")
     prompt = _build_prompt(task, context)
     
+    # Use per-task default if max_tokens not specified
+    if max_tokens is None:
+        config = TASK_CONFIGS.get(task)
+        max_tokens = config.default_max_tokens if config else 300
+    
     # For RATING task, we use structured outputs (no need for "respond with JSON" hint)
     # For other json_output tasks, add hint for json_object format
     use_structured_output = task == TaskType.RATING and json_output
@@ -591,12 +802,13 @@ async def generate(
         instructions=instructions,
         prompt=prompt,
         desired_output=max_tokens,
+        task=task,
     )
     
-    # If input overflowed, the prompt should already be trimmed by _build_prompt
-    # Log for visibility but continue
+    # If input overflowed, fail fast - caller should handle
     if input_overflow:
-        logger.warning(f"Proceeding with trimmed input for {task.value}")
+        logger.error(f"Input too large for {task.value}, cannot proceed")
+        return None
     
     # Request parameters
     params: dict[str, Any] = {
@@ -607,33 +819,70 @@ async def generate(
         "store": False,
     }
     
-    # For GPT-5 reasoning models, use low effort for simple tasks
+    # For GPT-5 reasoning models, use minimal effort for simple tasks
     # This minimizes internal "thinking" tokens for straightforward generations
     if _is_gpt5(model):
-        params["reasoning"] = {"effort": "low"}
+        params["reasoning"] = {"effort": "minimal"}
+    
+    # Build text config with verbosity and optional format
+    # verbosity: "low" reduces token usage for short outputs
+    text_config: dict[str, Any] = {"verbosity": "low"}
     
     # Use Structured Outputs (JSON Schema) for RATING - guarantees exact schema
     # Use json_object for other JSON tasks - just ensures valid JSON
     if use_structured_output:
-        params["text"] = {"format": RATING_SCHEMA}
+        text_config["format"] = RATING_SCHEMA
     elif json_output:
-        params["text"] = {"format": {"type": "json_object"}}
+        text_config["format"] = {"type": "json_object"}
     
-    # Retry loop with exponential backoff
+    params["text"] = text_config
+    
+    # Retry loop with exponential backoff + jitter
     last_error: Optional[Exception] = None
     start_time = datetime.utcnow()
+    incomplete_count = 0
+    token_boost_applied = False
     
     for attempt in range(MAX_RETRIES):
         try:
             response = await client.responses.create(**params)
             
-            if response.status != "completed":
-                logger.warning(f"Response incomplete: {response.incomplete_details}")
+            # Check for unexpected status (not completed or incomplete)
+            if response.status not in ("completed", "incomplete"):
+                logger.warning(f"Unexpected response status: {response.status}")
                 continue
             
-            output = response.output_text
-            if not output:
-                continue
+            # Get output text (may exist even for incomplete responses)
+            output = response.output_text or ""
+            
+            # If incomplete with max_output_tokens reason and no/empty output, retry with bigger cap
+            if response.status == "incomplete":
+                reason = getattr(response.incomplete_details, 'reason', None) if response.incomplete_details else None
+                logger.warning(f"Response incomplete: reason={reason}, output_len={len(output)}")
+                
+                if reason == "max_output_tokens" and not output.strip():
+                    # Retry with bigger token cap (only once)
+                    if not token_boost_applied:
+                        token_boost_applied = True
+                        current_max = params.get("max_output_tokens", safe_output_tokens)
+                        boosted = min(current_max * 2, 2000)  # Cap at 2000
+                        params["max_output_tokens"] = boosted
+                        logger.info(f"Boosting max_output_tokens from {current_max} to {boosted}")
+                    incomplete_count += 1
+                    if incomplete_count < MAX_RETRIES:
+                        delay = RETRY_DELAY * (2 ** incomplete_count) + random.uniform(0, 0.5)
+                        await asyncio.sleep(delay)
+                    continue
+                # If we have output despite incomplete status, try to use it
+            
+            # Handle empty output
+            if not output.strip():
+                # Check if SDK returned parsed object directly
+                if hasattr(response, 'output') and isinstance(response.output, dict):
+                    output = response.output
+                else:
+                    logger.warning(f"Empty output, status={response.status}")
+                    continue
             
             # Record metrics
             duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
@@ -649,38 +898,81 @@ async def generate(
             
             logger.info(f"{task.value} for {context.get('symbol', 'unknown')}: {metrics.total_tokens} tokens, ${metrics.cost_usd:.4f}")
             
-            # Parse, clean, and return
-            output = output.strip()
+            # Parse output
             if json_output:
-                result = json.loads(output)
+                # Handle already-parsed dict or parse string
+                if isinstance(output, dict):
+                    result = output
+                else:
+                    result = json.loads(output.strip())
                 # Clean string values in JSON response
                 if isinstance(result, dict):
                     for key, value in result.items():
                         if isinstance(value, str):
                             result[key] = clean_ai_text(value)
-                return result
-            # Clean text output and remove quotes
-            return clean_ai_text(output.strip('"\''))
+            else:
+                # Clean text output and remove quotes
+                result = clean_ai_text(output.strip().strip('"\''))
+            
+            # Validate output against task constraints
+            is_valid, validation_error = _validate_output(task, result)
+            if not is_valid:
+                logger.warning(f"Validation failed for {task.value}: {validation_error}")
+                # Attempt repair
+                repaired = await _repair_output(task, result, validation_error, model)
+                if repaired:
+                    # Re-validate repaired output
+                    is_valid2, error2 = _validate_output(task, repaired)
+                    if is_valid2:
+                        logger.info(f"Repair succeeded for {task.value}")
+                        return repaired
+                    else:
+                        logger.warning(f"Repair still invalid: {error2}, returning original")
+                # Return original if repair failed
+            
+            return result
             
         except RateLimitError as e:
             last_error = e
-            delay = RETRY_DELAY * (2 ** attempt)
-            logger.warning(f"Rate limited, waiting {delay}s...")
+            delay = RETRY_DELAY * (2 ** attempt) + random.uniform(0, 1)
+            logger.warning(f"Rate limited, waiting {delay:.1f}s...")
             await asyncio.sleep(delay)
             
         except APITimeoutError as e:
             last_error = e
-            logger.warning(f"Timeout on attempt {attempt + 1}")
+            delay = RETRY_DELAY * (2 ** attempt) + random.uniform(0, 0.5)
+            logger.warning(f"Timeout on attempt {attempt + 1}, waiting {delay:.1f}s...")
+            await asyncio.sleep(delay)
+            
+        except APIConnectionError as e:
+            last_error = e
+            delay = RETRY_DELAY * (2 ** attempt) + random.uniform(0, 1)
+            logger.warning(f"Connection error on attempt {attempt + 1}, waiting {delay:.1f}s...")
+            await asyncio.sleep(delay)
+            
+        except APIStatusError as e:
+            last_error = e
+            # Retry on 5xx errors
+            if e.status_code >= 500:
+                delay = RETRY_DELAY * (2 ** attempt) + random.uniform(0, 1)
+                logger.warning(f"Server error {e.status_code} on attempt {attempt + 1}, waiting {delay:.1f}s...")
+                await asyncio.sleep(delay)
+            else:
+                # Don't retry client errors (4xx)
+                logger.error(f"Client error {e.status_code}: {e}")
+                break
             
         except json.JSONDecodeError as e:
             last_error = e
             logger.warning(f"Invalid JSON response: {e}")
+            # Don't sleep for parse errors, just retry
             
         except Exception as e:
             last_error = e
             logger.warning(f"Attempt {attempt + 1} failed: {e}")
             if attempt < MAX_RETRIES - 1:
-                await asyncio.sleep(RETRY_DELAY * (2 ** attempt))
+                delay = RETRY_DELAY * (2 ** attempt) + random.uniform(0, 0.5)
+                await asyncio.sleep(delay)
     
     # All retries exhausted
     duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
@@ -798,10 +1090,15 @@ async def submit_batch(
     json_output = task == TaskType.RATING
     use_structured_output = task == TaskType.RATING
     
+    # Generate unique batch run ID to avoid custom_id collisions
+    batch_run_id = uuid.uuid4().hex[:8]
+    
     # Build JSONL
     jsonl_lines = []
-    for item in items:
-        custom_id = f"{task.value}_{item.get('symbol', 'unknown')}"
+    for i, item in enumerate(items):
+        # Include index and batch_run_id to prevent collisions
+        symbol = item.get('symbol', 'unknown')
+        custom_id = f"{task.value}_{i}_{symbol}_{batch_run_id}"
         prompt = _build_prompt(task, item)
         
         # For RATING, we use structured outputs (no hint needed)
@@ -810,12 +1107,18 @@ async def submit_batch(
             prompt += "\n\nRespond with valid JSON."
         
         # Calculate safe output tokens dynamically for this item
-        safe_output_tokens, _ = _calculate_safe_output_tokens(
+        safe_output_tokens, overflow = _calculate_safe_output_tokens(
             model=model,
             instructions=instructions,
             prompt=prompt,
             desired_output=300,  # Default for batch items
+            task=task,
         )
+        
+        # Skip items with overflow
+        if overflow:
+            logger.warning(f"Skipping {symbol} in batch: input too large")
+            continue
         
         body: dict[str, Any] = {
             "model": model,
@@ -913,13 +1216,13 @@ async def collect_batch(batch_id: str) -> Optional[list[dict]]:
     Collect results from a completed batch job.
     
     Returns list of dicts with:
-    - 'custom_id': Original ID (e.g., 'rating_AAPL')
+    - 'custom_id': Original ID (e.g., 'rating_0_AAPL_abc123')
     - 'symbol': Extracted symbol
     - 'result': Parsed JSON for rating tasks, raw text for others
     - 'error': Error message if parsing/validation failed
     - 'failed': True if result is unusable
     
-    For rating tasks, JSON parsing and validation is attempted with retries.
+    For rating tasks, JSON parsing and validation is attempted.
     """
     client = await _get_client()
     if not client:
@@ -932,9 +1235,8 @@ async def collect_batch(batch_id: str) -> Optional[list[dict]]:
             logger.warning(f"Batch {batch_id} not ready: {batch.status}")
             return None
         
-        # Determine task type from batch metadata
+        # Determine task type from batch metadata (with fallback)
         task_type = batch.metadata.get("task", "") if batch.metadata else ""
-        is_rating = task_type == "rating"
         
         output = await client.files.content(batch.output_file_id)
         
@@ -947,7 +1249,22 @@ async def collect_batch(batch_id: str) -> Optional[list[dict]]:
             
             data = json.loads(line)
             custom_id = data.get("custom_id", "")
-            symbol = custom_id.split("_", 1)[-1] if "_" in custom_id else custom_id
+            
+            # Extract symbol from custom_id format: "{task}_{index}_{symbol}_{batch_run_id}"
+            # or legacy format: "{task}_{symbol}"
+            parts = custom_id.split("_")
+            if len(parts) >= 4:
+                # New format: task_index_symbol_batchid
+                symbol = parts[2]
+            elif len(parts) >= 2:
+                # Legacy format: task_symbol
+                symbol = parts[-1]
+            else:
+                symbol = custom_id
+            
+            # Fallback task detection from custom_id prefix
+            inferred_task = parts[0] if parts else ""
+            is_rating = task_type == "rating" or inferred_task == "rating"
             
             # Check for API-level errors
             error_info = data.get("error")
