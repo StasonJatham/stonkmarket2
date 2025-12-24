@@ -459,6 +459,7 @@ async def _process_new_symbol(symbol: str) -> None:
     Fetches Yahoo Finance data, adds to dip_state, generates AI content,
     and invalidates caches so the stock appears immediately in dashboard.
     """
+    import asyncio
     from datetime import date, timedelta
     from app.database.connection import execute, fetch_one
     from app.services.stock_info import get_stock_info_async
@@ -468,6 +469,15 @@ async def _process_new_symbol(symbol: str) -> None:
     from app.cache.cache import Cache
     
     logger.info(f"[NEW SYMBOL] Starting background processing for: {symbol}")
+    
+    # Wait for the main transaction to commit (race condition prevention)
+    await asyncio.sleep(0.5)
+    
+    # Verify symbol exists before proceeding
+    exists = await fetch_one("SELECT 1 FROM symbols WHERE symbol = $1", symbol.upper())
+    if not exists:
+        logger.error(f"[NEW SYMBOL] FAILED: Symbol {symbol} not found in database - aborting")
+        return
     
     # Set fetch_status to 'fetching' so UI shows loading state
     await execute(
