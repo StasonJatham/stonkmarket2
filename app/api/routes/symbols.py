@@ -401,7 +401,13 @@ async def _process_new_symbol(symbol: str) -> None:
         # Step 6: Generate AI bio (swipe card) - optional
         bio = None
         try:
-            bio = await generate_bio(symbol=symbol, dip_pct=dip_pct)
+            bio = await generate_bio(
+                symbol=symbol,
+                name=name,
+                sector=sector,
+                summary=full_summary,
+                dip_pct=dip_pct,
+            )
             if bio:
                 steps_completed.append("ai_bio")
                 logger.info(f"[NEW SYMBOL] Step 6: Generated AI bio")
@@ -410,14 +416,22 @@ async def _process_new_symbol(symbol: str) -> None:
         except Exception as e:
             logger.warning(f"[NEW SYMBOL] Step 6 FAILED: AI bio error for {symbol}: {e}")
         
-        # Step 7: Generate AI rating - optional
+        # Step 7: Generate AI rating - optional (includes fetching fundamentals)
         rating_data = None
         try:
+            from app.services.fundamentals import get_fundamentals_for_analysis
+            fundamentals = await get_fundamentals_for_analysis(symbol)
+            
             rating_data = await rate_dip(
                 symbol=symbol,
                 current_price=current_price,
                 ref_high=ath_price,
                 dip_pct=dip_pct,
+                days_below=0,  # New symbol, just added
+                name=name,
+                sector=sector,
+                summary=full_summary,
+                **fundamentals,  # Include all fundamental metrics
             )
             if rating_data:
                 steps_completed.append("ai_rating")

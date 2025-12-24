@@ -345,9 +345,55 @@ def _build_prompt(task: TaskType, context: dict[str, Any]) -> str:
     if days := context.get("days_below"):
         parts.append(f"Days in dip: {days}")
     
-    # Fundamentals (RATING only)
+    # Valuation metrics
     if pe := context.get("pe_ratio"):
-        parts.append(f"P/E: {pe:.1f}")
+        parts.append(f"P/E Ratio: {pe:.1f}")
+    if forward_pe := context.get("forward_pe"):
+        parts.append(f"Forward P/E: {forward_pe:.1f}")
+    if peg := context.get("peg_ratio"):
+        parts.append(f"PEG Ratio: {peg}")
+    if ptb := context.get("price_to_book"):
+        parts.append(f"Price/Book: {ptb}")
+    if ev_ebitda := context.get("ev_to_ebitda"):
+        parts.append(f"EV/EBITDA: {ev_ebitda}")
+    
+    # Profitability
+    if profit_margin := context.get("profit_margin"):
+        parts.append(f"Profit Margin: {profit_margin}")
+    if gross_margin := context.get("gross_margin"):
+        parts.append(f"Gross Margin: {gross_margin}")
+    if roe := context.get("return_on_equity"):
+        parts.append(f"ROE: {roe}")
+    
+    # Growth
+    if rev_growth := context.get("revenue_growth"):
+        parts.append(f"Revenue Growth: {rev_growth}")
+    if earn_growth := context.get("earnings_growth"):
+        parts.append(f"Earnings Growth: {earn_growth}")
+    
+    # Financial health
+    if debt_equity := context.get("debt_to_equity"):
+        parts.append(f"Debt/Equity: {debt_equity}")
+    if current_ratio := context.get("current_ratio"):
+        parts.append(f"Current Ratio: {current_ratio}")
+    if fcf := context.get("free_cash_flow"):
+        parts.append(f"Free Cash Flow: {fcf}")
+    
+    # Analyst sentiment
+    if recommendation := context.get("recommendation"):
+        parts.append(f"Analyst Rating: {recommendation}")
+    if target_price := context.get("target_mean_price"):
+        parts.append(f"Analyst Target Price: ${target_price:.2f}")
+    if num_analysts := context.get("num_analyst_opinions"):
+        parts.append(f"Number of Analysts: {num_analysts}")
+    
+    # Risk indicators
+    if beta := context.get("beta"):
+        parts.append(f"Beta: {beta}")
+    if short_pct := context.get("short_percent_of_float"):
+        parts.append(f"Short % of Float: {short_pct}")
+    
+    # Market cap (for size context)
     if cap := context.get("market_cap"):
         if cap > 1e12:
             parts.append(f"Market Cap: ${cap/1e12:.1f}T")

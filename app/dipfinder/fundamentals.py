@@ -53,6 +53,14 @@ class QualityMetrics:
     earnings_growth: Optional[float] = None
     market_cap: Optional[float] = None
     avg_volume: Optional[float] = None
+    
+    # New factors from stored fundamentals
+    pe_ratio: Optional[float] = None
+    forward_pe: Optional[float] = None
+    peg_ratio: Optional[float] = None
+    return_on_equity: Optional[float] = None
+    recommendation: Optional[str] = None
+    target_upside: Optional[float] = None  # (target - current) / current
 
     # Sub-scores (0-100)
     profitability_score: float = 50.0
@@ -60,10 +68,12 @@ class QualityMetrics:
     cash_generation_score: float = 50.0
     growth_score: float = 50.0
     liquidity_score: float = 50.0
+    valuation_score: float = 50.0  # NEW: P/E, PEG, Forward P/E
+    analyst_score: float = 50.0     # NEW: Recommendations, target price
 
     # Data quality
     fields_available: int = 0
-    fields_total: int = 10
+    fields_total: int = 14  # Updated to include new fields
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON/DB storage."""
@@ -80,11 +90,19 @@ class QualityMetrics:
             "earnings_growth": self.earnings_growth,
             "market_cap": self.market_cap,
             "avg_volume": self.avg_volume,
+            "pe_ratio": self.pe_ratio,
+            "forward_pe": self.forward_pe,
+            "peg_ratio": self.peg_ratio,
+            "return_on_equity": self.return_on_equity,
+            "recommendation": self.recommendation,
+            "target_upside": round(self.target_upside, 4) if self.target_upside else None,
             "profitability_score": round(self.profitability_score, 2),
             "balance_sheet_score": round(self.balance_sheet_score, 2),
             "cash_generation_score": round(self.cash_generation_score, 2),
             "growth_score": round(self.growth_score, 2),
             "liquidity_score": round(self.liquidity_score, 2),
+            "valuation_score": round(self.valuation_score, 2),
+            "analyst_score": round(self.analyst_score, 2),
             "fields_available": self.fields_available,
             "fields_total": self.fields_total,
         }
@@ -368,6 +386,159 @@ def _compute_liquidity_score(info: Dict[str, Any]) -> tuple[float, Dict[str, Any
     return score, factors
 
 
+def _compute_valuation_score(info: Dict[str, Any]) -> tuple[float, Dict[str, Any]]:
+    """
+    Compute valuation sub-score using P/E, Forward P/E, and PEG ratios.
+    
+    For dip buying, we want reasonably valued stocks, not overvalued ones.
+    Lower P/E generally indicates better value, but very low can signal trouble.
+    """
+    pe_ratio = _safe_float(info.get("trailingPE") or info.get("pe_ratio"))
+    forward_pe = _safe_float(info.get("forwardPE") or info.get("forward_pe"))
+    peg_ratio = _safe_float(info.get("trailingPegRatio") or info.get("peg_ratio"))
+    
+    factors = {
+        "pe_ratio": pe_ratio,
+        "forward_pe": forward_pe,
+        "peg_ratio": peg_ratio,
+    }
+    
+    scores = []
+    
+    # P/E Score (10-20 is ideal, <5 might be troubled, >40 is expensive)
+    if pe_ratio is not None and pe_ratio > 0:
+        if pe_ratio < 5:
+            pe_score = 40.0  # Very low, might be value trap
+        elif pe_ratio < 10:
+            pe_score = 70.0 + (pe_ratio - 5) * 4  # 70-90
+        elif pe_ratio <= 20:
+            pe_score = 90.0  # Sweet spot
+        elif pe_ratio <= 30:
+            pe_score = 90.0 - (pe_ratio - 20) * 2  # 90-70
+        elif pe_ratio <= 50:
+            pe_score = 70.0 - (pe_ratio - 30) * 1.5  # 70-40
+        else:
+            pe_score = max(20.0, 40.0 - (pe_ratio - 50) * 0.5)
+        scores.append(pe_score)
+    
+    # Forward P/E Score (lower is better, indicates expected growth)
+    if forward_pe is not None and forward_pe > 0:
+        if forward_pe < pe_ratio if pe_ratio else True:
+            # Forward P/E lower than trailing = expected growth
+            if forward_pe < 15:
+                fpe_score = 90.0
+            elif forward_pe < 25:
+                fpe_score = 75.0
+            else:
+                fpe_score = 55.0
+        else:
+            # Forward P/E higher = expected slowdown
+            fpe_score = 45.0
+        scores.append(fpe_score)
+    
+    # PEG Score (1.0 = fair value, <1 = undervalued, >2 = overvalued)
+    if peg_ratio is not None and peg_ratio > 0:
+        if peg_ratio < 0.5:
+            peg_score = 95.0  # Very undervalued
+        elif peg_ratio <= 1.0:
+            peg_score = 80.0 + (1.0 - peg_ratio) * 30  # 80-95
+        elif peg_ratio <= 1.5:
+            peg_score = 60.0 + (1.5 - peg_ratio) * 40  # 60-80
+        elif peg_ratio <= 2.5:
+            peg_score = 40.0 + (2.5 - peg_ratio) * 20  # 40-60
+        else:
+            peg_score = max(20.0, 40.0 - (peg_ratio - 2.5) * 10)
+        scores.append(peg_score)
+    
+    score = sum(scores) / len(scores) if scores else 50.0
+    
+    return score, factors
+
+
+def _compute_analyst_score(info: Dict[str, Any]) -> tuple[float, Dict[str, Any]]:
+    """
+    Compute analyst sentiment sub-score from recommendations and target prices.
+    
+    Strong buy/buy ratings with upside to target = high score
+    """
+    recommendation = info.get("recommendationKey") or info.get("recommendation")
+    target_price = _safe_float(info.get("targetMeanPrice") or info.get("target_mean_price"))
+    current_price = _safe_float(info.get("regularMarketPrice") or info.get("currentPrice") or info.get("current_price"))
+    num_analysts = _safe_float(info.get("numberOfAnalystOpinions") or info.get("num_analyst_opinions"))
+    
+    target_upside = None
+    if target_price and current_price and current_price > 0:
+        target_upside = (target_price - current_price) / current_price
+    
+    factors = {
+        "recommendation": recommendation,
+        "target_upside": target_upside,
+        "num_analysts": num_analysts,
+    }
+    
+    scores = []
+    weights = []
+    
+    # Recommendation score (weight more heavily)
+    if recommendation:
+        rec_lower = recommendation.lower()
+        if rec_lower in ("strong_buy", "strongbuy"):
+            rec_score = 95.0
+        elif rec_lower == "buy":
+            rec_score = 80.0
+        elif rec_lower == "hold":
+            rec_score = 55.0
+        elif rec_lower in ("underperform", "sell"):
+            rec_score = 30.0
+        elif rec_lower in ("strong_sell", "strongsell"):
+            rec_score = 15.0
+        else:
+            rec_score = 50.0
+        scores.append(rec_score)
+        weights.append(0.50)
+    
+    # Target upside score
+    if target_upside is not None:
+        if target_upside > 0.50:  # >50% upside
+            upside_score = 95.0
+        elif target_upside > 0.25:  # >25% upside
+            upside_score = 85.0
+        elif target_upside > 0.10:  # >10% upside
+            upside_score = 70.0
+        elif target_upside > 0:  # Any upside
+            upside_score = 55.0
+        elif target_upside > -0.10:  # Up to 10% downside
+            upside_score = 40.0
+        else:  # >10% downside to target
+            upside_score = 25.0
+        scores.append(upside_score)
+        weights.append(0.35)
+    
+    # Analyst coverage score (more analysts = more reliable)
+    if num_analysts is not None:
+        if num_analysts >= 20:
+            coverage_score = 80.0
+        elif num_analysts >= 10:
+            coverage_score = 70.0
+        elif num_analysts >= 5:
+            coverage_score = 55.0
+        elif num_analysts >= 1:
+            coverage_score = 40.0
+        else:
+            coverage_score = 30.0
+        scores.append(coverage_score)
+        weights.append(0.15)
+    
+    if not scores:
+        return 50.0, factors
+    
+    # Weighted average
+    total_weight = sum(weights)
+    score = sum(s * w for s, w in zip(scores, weights)) / total_weight
+    
+    return score, factors
+
+
 def _fetch_info_sync(ticker: str) -> Dict[str, Any]:
     """Synchronously fetch yfinance info (for thread pool)."""
     try:
@@ -483,6 +654,7 @@ async def compute_quality_score(
     ticker: str,
     info: Optional[Dict[str, Any]] = None,
     config: Optional[DipFinderConfig] = None,
+    fundamentals: Optional[Dict[str, Any]] = None,
 ) -> QualityMetrics:
     """
     Compute quality score for a stock.
@@ -491,6 +663,7 @@ async def compute_quality_score(
         ticker: Stock ticker symbol
         info: Pre-fetched yfinance info (fetches if None)
         config: Optional config
+        fundamentals: Pre-fetched fundamentals from stock_fundamentals table
 
     Returns:
         QualityMetrics with score and contributing factors
@@ -499,6 +672,15 @@ async def compute_quality_score(
         info = await fetch_stock_info(ticker, config)
 
     if not info:
+        info = {}
+    
+    # Merge stored fundamentals into info for scoring (stored fundamentals take precedence)
+    if fundamentals:
+        merged_info = {**info, **fundamentals}
+    else:
+        merged_info = info
+
+    if not merged_info:
         return QualityMetrics(
             ticker=ticker,
             score=50.0,  # Neutral if no data
@@ -506,20 +688,24 @@ async def compute_quality_score(
         )
 
     # Compute sub-scores
-    prof_score, prof_factors = _compute_profitability_score(info)
-    bs_score, bs_factors = _compute_balance_sheet_score(info)
-    cash_score, cash_factors = _compute_cash_generation_score(info)
-    growth_score, growth_factors = _compute_growth_score(info)
-    liq_score, liq_factors = _compute_liquidity_score(info)
+    prof_score, prof_factors = _compute_profitability_score(merged_info)
+    bs_score, bs_factors = _compute_balance_sheet_score(merged_info)
+    cash_score, cash_factors = _compute_cash_generation_score(merged_info)
+    growth_score, growth_factors = _compute_growth_score(merged_info)
+    liq_score, liq_factors = _compute_liquidity_score(merged_info)
+    val_score, val_factors = _compute_valuation_score(merged_info)
+    analyst_score, analyst_factors = _compute_analyst_score(merged_info)
 
-    # Weighted final score
-    # Profitability and cash generation are most important for dip buying
+    # Weighted final score - adjusted to include valuation and analyst sentiment
+    # For dip buying: profitability, valuation, and analyst sentiment matter most
     final_score = (
-        prof_score * 0.25
-        + bs_score * 0.15
-        + cash_score * 0.25
-        + growth_score * 0.15
-        + liq_score * 0.20
+        prof_score * 0.20
+        + bs_score * 0.10
+        + cash_score * 0.20
+        + growth_score * 0.10
+        + liq_score * 0.10
+        + val_score * 0.15      # NEW: Valuation (P/E, PEG)
+        + analyst_score * 0.15  # NEW: Analyst consensus
     )
 
     # Count available fields
@@ -529,8 +715,13 @@ async def compute_quality_score(
         **cash_factors,
         **growth_factors,
         **liq_factors,
+        **val_factors,
+        **analyst_factors,
     }
     fields_available = sum(1 for v in all_factors.values() if v is not None)
+    
+    # Calculate target upside for the return object
+    target_upside = analyst_factors.get("target_upside")
 
     return QualityMetrics(
         ticker=ticker,
@@ -545,13 +736,21 @@ async def compute_quality_score(
         earnings_growth=growth_factors.get("earnings_growth"),
         market_cap=liq_factors.get("market_cap"),
         avg_volume=liq_factors.get("avg_volume"),
+        pe_ratio=val_factors.get("pe_ratio"),
+        forward_pe=val_factors.get("forward_pe"),
+        peg_ratio=val_factors.get("peg_ratio"),
+        return_on_equity=_safe_float(merged_info.get("returnOnEquity") or merged_info.get("return_on_equity")),
+        recommendation=analyst_factors.get("recommendation"),
+        target_upside=target_upside,
         profitability_score=prof_score,
         balance_sheet_score=bs_score,
         cash_generation_score=cash_score,
         growth_score=growth_score,
         liquidity_score=liq_score,
+        valuation_score=val_score,
+        analyst_score=analyst_score,
         fields_available=fields_available,
-        fields_total=10,
+        fields_total=14,
     )
 
 

@@ -79,6 +79,7 @@ class JobScheduler:
                 "Generate dip analysis weekly Sunday 4am",
             ),
             "batch_poll": ("*/5 * * * *", "Poll for completed batch jobs every 5 min"),
+            "fundamentals_refresh": ("0 2 1 * *", "Refresh stock fundamentals monthly 1st at 2am"),
             "cleanup": ("0 0 * * *", "Clean up expired data daily midnight"),
         }
 

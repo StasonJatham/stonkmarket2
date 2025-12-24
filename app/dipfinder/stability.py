@@ -234,42 +234,144 @@ def _score_typical_dip(typical_dip: Optional[float]) -> float:
 
 
 def _compute_fundamental_stability_score(info: Dict[str, Any]) -> float:
-    """Compute fundamental stability from yfinance info."""
+    """
+    Compute fundamental stability from yfinance info or stored fundamentals.
+    
+    Uses multiple metrics to assess financial stability:
+    - Free cash flow (positive = stable)
+    - Profit margins (higher = more stable business)
+    - Debt levels (lower = less risk)
+    - Current ratio (>1.5 = can meet obligations)
+    - Analyst consensus (buy ratings indicate stability)
+    - Insider/institutional holdings (high = confidence)
+    """
     scores = []
+    weights = []
 
-    # Positive free cash flow is stable
-    fcf = info.get("freeCashflow")
+    # 1. Free cash flow (positive = stable) - weight 0.20
+    fcf = info.get("freeCashflow") or info.get("free_cash_flow")
     if fcf is not None:
         if fcf > 0:
-            scores.append(75.0)
+            # Normalize by revenue if available for scale
+            revenue = info.get("totalRevenue") or info.get("revenue")
+            if revenue and revenue > 0:
+                fcf_margin = fcf / revenue
+                if fcf_margin > 0.15:  # >15% FCF margin = excellent
+                    scores.append(90.0)
+                elif fcf_margin > 0.08:
+                    scores.append(75.0)
+                else:
+                    scores.append(60.0)
+            else:
+                scores.append(70.0)  # Positive FCF without scale context
         else:
-            scores.append(35.0)
+            scores.append(30.0)  # Negative FCF is concerning
+        weights.append(0.20)
 
-    # Non-tiny profit margins are stable
-    margin = info.get("profitMargins")
+    # 2. Profit margins (higher = more stable) - weight 0.20
+    margin = info.get("profitMargins") or info.get("profit_margin")
     if margin is not None:
-        if margin > 0.10:
-            scores.append(80.0)
+        if margin > 0.20:
+            scores.append(90.0)
+        elif margin > 0.10:
+            scores.append(75.0)
         elif margin > 0.05:
-            scores.append(65.0)
+            scores.append(60.0)
         elif margin > 0:
-            scores.append(50.0)
-        else:
-            scores.append(30.0)
-
-    # Low debt to equity is stable
-    de = info.get("debtToEquity")
-    if de is not None:
-        if de < 50:
-            scores.append(80.0)
-        elif de < 100:
-            scores.append(65.0)
-        elif de < 200:
             scores.append(45.0)
         else:
-            scores.append(30.0)
+            scores.append(25.0)  # Negative margins
+        weights.append(0.20)
 
-    return sum(scores) / len(scores) if scores else 50.0
+    # 3. Debt to equity (lower = less risk) - weight 0.15
+    de = info.get("debtToEquity") or info.get("debt_to_equity")
+    if de is not None:
+        # Note: de can be stored as ratio (0.5) or percentage (50)
+        # Normalize to ratio form
+        if de > 10:  # Likely percentage form
+            de = de / 100
+        
+        if de < 0.3:
+            scores.append(90.0)
+        elif de < 0.5:
+            scores.append(80.0)
+        elif de < 1.0:
+            scores.append(65.0)
+        elif de < 2.0:
+            scores.append(45.0)
+        else:
+            scores.append(25.0)
+        weights.append(0.15)
+
+    # 4. Current ratio (liquidity) - weight 0.10
+    cr = info.get("currentRatio") or info.get("current_ratio")
+    if cr is not None:
+        if cr >= 2.0:
+            scores.append(90.0)
+        elif cr >= 1.5:
+            scores.append(75.0)
+        elif cr >= 1.0:
+            scores.append(55.0)
+        else:
+            scores.append(30.0)  # May struggle with short-term obligations
+        weights.append(0.10)
+
+    # 5. Analyst consensus (buy/hold = stable) - weight 0.15
+    recommendation = info.get("recommendationKey") or info.get("recommendation")
+    if recommendation:
+        rec_lower = recommendation.lower()
+        if rec_lower in ("strong_buy", "strongbuy"):
+            scores.append(95.0)
+        elif rec_lower == "buy":
+            scores.append(80.0)
+        elif rec_lower == "hold":
+            scores.append(60.0)
+        elif rec_lower in ("sell", "underperform"):
+            scores.append(35.0)
+        elif rec_lower in ("strong_sell", "strongsell"):
+            scores.append(20.0)
+        else:
+            scores.append(50.0)  # Unknown recommendation
+        weights.append(0.15)
+
+    # 6. Return on Equity (profitability/efficiency) - weight 0.10
+    roe = info.get("returnOnEquity") or info.get("return_on_equity")
+    if roe is not None:
+        if roe > 0.25:
+            scores.append(90.0)
+        elif roe > 0.15:
+            scores.append(75.0)
+        elif roe > 0.08:
+            scores.append(60.0)
+        elif roe > 0:
+            scores.append(45.0)
+        else:
+            scores.append(25.0)
+        weights.append(0.10)
+
+    # 7. Revenue growth (consistent growth = stable business) - weight 0.10
+    rev_growth = info.get("revenueGrowth") or info.get("revenue_growth")
+    if rev_growth is not None:
+        if rev_growth > 0.20:
+            scores.append(85.0)  # Strong growth
+        elif rev_growth > 0.05:
+            scores.append(75.0)  # Healthy growth
+        elif rev_growth > -0.05:
+            scores.append(55.0)  # Stable
+        elif rev_growth > -0.15:
+            scores.append(35.0)  # Declining
+        else:
+            scores.append(20.0)  # Significant decline
+        weights.append(0.10)
+
+    if not scores:
+        return 50.0  # No data available
+    
+    # Weighted average
+    total_weight = sum(weights)
+    weighted_score = sum(s * w for s, w in zip(scores, weights)) / total_weight
+    
+    return weighted_score
 
 
 def compute_stability_score(

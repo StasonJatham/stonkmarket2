@@ -375,6 +375,32 @@ async def batch_poll_job() -> str:
         raise
 
 
+@register_job("fundamentals_refresh")
+async def fundamentals_refresh_job() -> str:
+    """
+    Refresh stock fundamentals from Yahoo Finance.
+
+    Schedule: Monthly on the 1st at 2am (idempotent - only refreshes expired data)
+
+    Fundamentals include P/E ratio, margins, growth rates, analyst ratings, etc.
+    These metrics change slowly and are used for AI analysis.
+    """
+    from app.services.fundamentals import refresh_all_fundamentals
+
+    logger.info("Starting fundamentals_refresh job")
+
+    try:
+        result = await refresh_all_fundamentals(batch_size=5)
+
+        message = f"Fundamentals refresh: {result['refreshed']} updated, {result['failed']} failed, {result['skipped']} skipped"
+        logger.info(f"fundamentals_refresh: {message}")
+        return message
+
+    except Exception as e:
+        logger.error(f"fundamentals_refresh failed: {e}")
+        raise
+
+
 @register_job("cleanup")
 async def cleanup_job() -> str:
     """

@@ -11,6 +11,7 @@ from app.repositories import dip_votes as dip_votes_repo
 from app.schemas.swipe import DipCard, DipStats, VoteCounts
 from app.services.openai_client import generate_bio, rate_dip
 from app.services import stock_info
+from app.services.fundamentals import get_fundamentals_for_analysis
 
 logger = get_logger("swipe")
 
@@ -107,14 +108,19 @@ async def get_dip_card_with_fresh_ai(symbol: str, force_refresh: bool = False) -
         dip_pct=card.dip_pct,
     )
 
+    # Get fundamentals for richer AI analysis
+    fundamentals = await get_fundamentals_for_analysis(symbol)
+
     rating_result = await rate_dip(
         symbol=symbol,
         current_price=card.current_price,
         ref_high=card.ref_high,
         dip_pct=card.dip_pct,
+        days_below=card.days_below,
         name=info.get("name") if info else None,
         sector=info.get("sector") if info else None,
         summary=info.get("summary") if info else None,
+        **fundamentals,  # Include all fundamental metrics
     )
 
     # Cache the results
@@ -190,15 +196,20 @@ async def regenerate_ai_field(
             card = card.model_copy(update={"swipe_bio": bio})
 
     elif field == "rating":
+        # Get fundamentals for richer AI analysis
+        fundamentals = await get_fundamentals_for_analysis(symbol)
+        
         # Regenerate AI rating
         rating_result = await rate_dip(
             symbol=symbol,
             current_price=card.current_price,
             ref_high=card.ref_high,
             dip_pct=card.dip_pct,
+            days_below=card.days_below,
             name=info.get("name") if info else None,
             sector=info.get("sector") if info else None,
             summary=info.get("summary") if info else None,
+            **fundamentals,  # Include all fundamental metrics
         )
         if rating_result:
             await dip_votes_repo.upsert_ai_analysis(
