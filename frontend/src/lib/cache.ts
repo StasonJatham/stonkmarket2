@@ -144,6 +144,10 @@ class ApiCache {
    */
   set<T>(key: string, data: T, options: CacheOptions = {}): void {
     const ttl = options.ttl ?? DEFAULT_TTL;
+    
+    // Skip caching if TTL is 0 (real-time mode)
+    if (ttl === 0) return;
+    
     const now = Date.now();
     
     const entry: CacheEntry<T> = {
@@ -188,6 +192,13 @@ class ApiCache {
     fetcher: () => Promise<T>,
     options: CacheOptions = {}
   ): Promise<T> {
+    const ttl = options.ttl ?? DEFAULT_TTL;
+    
+    // TTL=0 means real-time mode - skip cache entirely
+    if (ttl === 0) {
+      return this.dedupe(key, fetcher);
+    }
+    
     const cached = this.get<T>(key);
     
     // Return fresh cached data immediately
@@ -307,14 +318,13 @@ class ApiCache {
 // Singleton instance
 export const apiCache = new ApiCache();
 
-// Cache TTL constants for different data types
+// Cache TTL constants for different data types (0 = no cache, real-time)
 export const CACHE_TTL = {
-  RANKING: 30 * 60 * 1000,      // 30 minutes - data only changes when job runs
-  CHART: 60 * 60 * 1000,        // 1 hour - historical data, invalidated when job runs
+  RANKING: 0,                   // Real-time - no frontend cache
+  CHART: 0,                     // Real-time - no frontend cache
   STOCK_INFO: 60 * 60 * 1000,   // 1 hour - rarely changes
-  BENCHMARK: 60 * 1000,         // 1 minute - benchmark config, updates immediately
+  BENCHMARK: 60 * 1000,         // 1 minute - benchmark config
   CRON_JOBS: 60 * 1000,         // 1 minute - admin data
-  SYMBOLS: 24 * 60 * 60 * 1000, // 24 hours - symbol list, invalidated on add/delete
+  SYMBOLS: 0,                   // Real-time - no frontend cache
   SETTINGS: 60 * 60 * 1000,     // 1 hour - runtime settings
-  SUGGESTIONS: 5 * 60 * 1000,   // 5 minutes - suggestion settings
-} as const;
+  SUGGESTIONS: 0,               // Real-time - no frontend cache
