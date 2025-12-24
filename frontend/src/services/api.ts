@@ -6,6 +6,8 @@ const API_BASE = '/api';
 
 // ETag storage for conditional requests
 const etagStore = new Map<string, string>();
+// Data store for 304 responses - keeps last response even when cache TTL=0
+const etagDataStore = new Map<string, unknown>();
 
 interface FetchOptions extends RequestInit {
   useEtag?: boolean;
@@ -34,13 +36,19 @@ async function fetchAPI<T>(endpoint: string, options: FetchOptions = {}): Promis
 
   // Handle 304 Not Modified - return cached data
   if (response.status === 304) {
-    const cacheKey = `api:${endpoint}`;
-    const cached = apiCache.get<T>(cacheKey);
+    // First try ETag data store (always populated on 200 with ETag)
+    const etagData = etagDataStore.get(endpoint);
+    if (etagData !== undefined) {
+      return etagData as T;
+    }
+    // Fallback to regular cache
+    const cached = apiCache.get<T>(`api:${endpoint}`);
     if (cached) {
       return cached.data;
     }
-    // If no cache, fall through to error (shouldn't happen normally)
-    throw new Error('Received 304 but no cached data available');
+    // No cached data - clear the stale ETag and refetch without If-None-Match
+    etagStore.delete(endpoint);
+    return fetchAPI<T>(endpoint, { ...options, useEtag: false });
   }
 
   if (!response.ok) {
@@ -48,13 +56,36 @@ async function fetchAPI<T>(endpoint: string, options: FetchOptions = {}): Promis
     throw new Error(error.message || error.detail || `HTTP ${response.status}`);
   }
 
-  // Store ETag from response if present
+  const data = await response.json();
+
+  // Store ETag and data from response if present
   const etag = response.headers.get('ETag');
   if (etag) {
     etagStore.set(endpoint, etag);
+    etagDataStore.set(endpoint, data);
   }
 
-  return response.json();
+  return data;
+}
+
+/**
+ * Invalidate ETag cache for specific endpoints or patterns.
+ * Call this after mutations to ensure fresh data on next fetch.
+ */
+function invalidateEtagCache(pattern?: string | RegExp): void {
+  if (!pattern) {
+    etagStore.clear();
+    etagDataStore.clear();
+    return;
+  }
+  
+  const regex = typeof pattern === 'string' ? new RegExp(pattern) : pattern;
+  for (const key of etagStore.keys()) {
+    if (regex.test(key)) {
+      etagStore.delete(key);
+      etagDataStore.delete(key);
+    }
+  }
 }
 
 // Types
@@ -748,8 +779,10 @@ export async function createSymbol(data: { symbol: string; min_dip_pct?: number;
     method: 'POST',
     body: JSON.stringify(data),
   });
-  // Invalidate symbols cache on add
+  // Invalidate symbols and ranking cache on add
   apiCache.invalidate(/^symbols/);
+  apiCache.invalidate(/^ranking/);
+  invalidateEtagCache(/\/symbols|\/dips\/ranking/);
   return result;
 }
 
@@ -758,8 +791,10 @@ export async function updateSymbol(symbol: string, data: { min_dip_pct?: number;
     method: 'PUT',
     body: JSON.stringify(data),
   });
-  // Invalidate symbols cache on update
+  // Invalidate symbols and ranking cache on update
   apiCache.invalidate(/^symbols/);
+  apiCache.invalidate(/^ranking/);
+  invalidateEtagCache(/\/symbols|\/dips\/ranking/);
   return result;
 }
 
@@ -767,8 +802,10 @@ export async function deleteSymbol(symbol: string): Promise<void> {
   await fetchAPI(`/symbols/${symbol}`, {
     method: 'DELETE',
   });
-  // Invalidate symbols cache on delete
+  // Invalidate symbols and ranking cache on delete
   apiCache.invalidate(/^symbols/);
+  apiCache.invalidate(/^ranking/);
+  invalidateEtagCache(/\/symbols|\/dips\/ranking/);
 }
 
 // =============================================================================
@@ -1076,6 +1113,7 @@ export async function updateRuntimeSettings(updates: Partial<RuntimeSettings>): 
   });
   // Invalidate settings caches on update
   apiCache.invalidate(/^(runtime-settings|suggestion-settings|benchmarks)/);
+  invalidateEtagCache(/\/admin\/settings|\/dips\/ranking|\/dips\/benchmarks/);
   // Also clear the module-level benchmark config cache
   clearBenchmarkConfigCache();
   return result;
@@ -1252,8 +1290,10 @@ export async function approveSuggestion(suggestionId: number): Promise<{ message
   const result = await fetchAPI<{ message: string; symbol: string }>(`/suggestions/${suggestionId}/approve`, {
     method: 'POST',
   });
-  // Invalidate symbols cache so the new stock appears in symbol manager
+  // Invalidate symbols and ranking cache so the new stock appears immediately
   apiCache.invalidate(/^symbols/);
+  apiCache.invalidate(/^ranking/);
+  invalidateEtagCache(/\/symbols|\/dips\/ranking/);
   return result;
 }
 

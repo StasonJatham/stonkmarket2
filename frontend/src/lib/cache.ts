@@ -318,14 +318,15 @@ class ApiCache {
 // Singleton instance
 export const apiCache = new ApiCache();
 
-// Cache TTL constants for different data types (0 = no cache, real-time)
+// Cache TTL constants for different data types
+// Short TTLs with stale-while-revalidate give instant UI + fresh data
 export const CACHE_TTL = {
-  RANKING: 0,                   // Real-time - no frontend cache
-  CHART: 0,                     // Real-time - no frontend cache
-  STOCK_INFO: 60 * 60 * 1000,   // 1 hour - rarely changes
+  RANKING: 30 * 1000,           // 30 seconds - quick refresh, stale-while-revalidate handles instant display
+  CHART: 60 * 1000,             // 1 minute - chart data changes less frequently
+  STOCK_INFO: 5 * 60 * 1000,    // 5 minutes - stock metadata rarely changes
   BENCHMARK: 60 * 1000,         // 1 minute - benchmark config
-  CRON_JOBS: 60 * 1000,         // 1 minute - admin data
-  SYMBOLS: 0,                   // Real-time - no frontend cache
-  SETTINGS: 60 * 60 * 1000,     // 1 hour - runtime settings
-  SUGGESTIONS: 0,               // Real-time - no frontend cache
+  CRON_JOBS: 30 * 1000,         // 30 seconds - admin wants near real-time
+  SYMBOLS: 30 * 1000,           // 30 seconds - symbol list, invalidated on mutations
+  SETTINGS: 5 * 60 * 1000,      // 5 minutes - runtime settings
+  SUGGESTIONS: 30 * 1000,       // 30 seconds - suggestions change with votes
 } as const;

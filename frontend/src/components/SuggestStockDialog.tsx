@@ -38,7 +38,23 @@ interface StockPreview {
   summary?: string;
 }
 
-export function SuggestStockDialog() {
+interface SuggestStockDialogProps {
+  /** Button variant */
+  variant?: 'default' | 'outline' | 'ghost' | 'secondary';
+  /** Button size */
+  size?: 'default' | 'sm' | 'lg' | 'icon';
+  /** Additional button classes */
+  className?: string;
+  /** Show text label (default: hidden on mobile) */
+  showLabel?: boolean;
+}
+
+export function SuggestStockDialog({ 
+  variant = 'outline', 
+  size = 'sm', 
+  className = '',
+  showLabel = false,
+}: SuggestStockDialogProps = {}) {
   const { getActiveColors } = useTheme();
   const [open, setOpen] = useState(false);
   const [symbol, setSymbol] = useState('');
@@ -157,9 +173,9 @@ export function SuggestStockDialog() {
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
-        <Button variant="outline" size="sm" className="gap-2">
+        <Button variant={variant} size={size} className={`gap-2 ${className}`}>
           <Lightbulb className="h-4 w-4" />
-          <span className="hidden sm:inline">Suggest</span>
+          <span className={showLabel ? '' : 'hidden sm:inline'}>Suggest</span>
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-md">

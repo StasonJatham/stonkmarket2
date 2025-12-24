@@ -4,9 +4,11 @@ import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '@/context/AuthContext';
+import { useTheme } from '@/context/ThemeContext';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { SuggestStockDialog } from '@/components/SuggestStockDialog';
-import { TrendingUp, Settings, LogOut, Heart, BarChart3 } from 'lucide-react';
+import { ColorPickerInline } from '@/components/ui/color-picker';
+import { TrendingUp, Settings, LogOut, Heart, BarChart3, Eye, EyeOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 const navLinks = [
@@ -22,6 +24,7 @@ const adminLinks = [
 
 export function Header() {
   const { user, logout } = useAuth();
+  const { colorblindMode, setColorblindMode, customColors, setCustomColors, resetColors } = useTheme();
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -194,7 +197,7 @@ export function Header() {
                 transition={{ delay: 0.25 }}
                 className="pt-8 border-t border-border w-48 space-y-3"
               >
-                <SuggestStockDialog />
+                <SuggestStockDialog size="lg" className="w-full" showLabel />
                 {user ? (
                   <Button
                     variant="outline"
@@ -212,6 +215,38 @@ export function Header() {
                     </Button>
                   </Link>
                 )}
+              </motion.div>
+
+              {/* Color Settings */}
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.3 }}
+                className="pt-6 border-t border-border/50 w-48"
+              >
+                <div className="flex flex-col items-center gap-4 text-muted-foreground">
+                  {/* Color pickers */}
+                  <div className={`flex items-center gap-2 ${colorblindMode ? 'opacity-40 pointer-events-none' : ''}`}>
+                    <span className="text-xs">Chart Colors</span>
+                    <ColorPickerInline
+                      upColor={customColors.up}
+                      downColor={customColors.down}
+                      onUpChange={(color) => setCustomColors({ ...customColors, up: color })}
+                      onDownChange={(color) => setCustomColors({ ...customColors, down: color })}
+                      onReset={resetColors}
+                    />
+                  </div>
+                  
+                  {/* Colorblind toggle */}
+                  <button 
+                    onClick={() => setColorblindMode(!colorblindMode)}
+                    className="inline-flex items-center gap-2 hover:text-foreground transition-colors"
+                    title={colorblindMode ? 'Disable colorblind mode' : 'Enable colorblind mode'}
+                  >
+                    {colorblindMode ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+                    <span className="text-sm">Colorblind Mode</span>
+                  </button>
+                </div>
               </motion.div>
             </motion.nav>
           </motion.div>

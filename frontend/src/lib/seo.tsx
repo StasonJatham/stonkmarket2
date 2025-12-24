@@ -65,16 +65,48 @@ function setCanonicalLink(url: string): void {
 }
 
 /**
+ * Validate JSON-LD data has required @context property
+ */
+function isValidJsonLd(item: unknown): item is Record<string, unknown> {
+  return (
+    typeof item === 'object' &&
+    item !== null &&
+    '@context' in item &&
+    typeof (item as Record<string, unknown>)['@context'] === 'string'
+  );
+}
+
+/**
  * Inject JSON-LD structured data
  */
 function setJsonLd(data: Record<string, unknown> | Record<string, unknown>[]): void {
   // Remove existing JSON-LD scripts (except the base organization one)
   document.querySelectorAll('script[type="application/ld+json"][data-seo="page"]').forEach(el => el.remove());
   
+  // Validate and filter the data
+  let validData: Record<string, unknown> | Record<string, unknown>[];
+  
+  if (Array.isArray(data)) {
+    // Filter out any invalid items from the array
+    const validItems = data.filter(isValidJsonLd);
+    if (validItems.length === 0) {
+      console.warn('SEO: No valid JSON-LD items to inject');
+      return;
+    }
+    validData = validItems;
+  } else {
+    // Single object - validate it
+    if (!isValidJsonLd(data)) {
+      console.warn('SEO: Invalid JSON-LD data, missing @context', data);
+      return;
+    }
+    validData = data;
+  }
+  
   const script = document.createElement('script');
   script.type = 'application/ld+json';
   script.setAttribute('data-seo', 'page');
-  script.textContent = JSON.stringify(data);
+  script.textContent = JSON.stringify(validData);
   document.head.appendChild(script);
 }
 

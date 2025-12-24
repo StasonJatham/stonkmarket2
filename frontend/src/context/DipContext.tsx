@@ -31,19 +31,27 @@ export function DipProvider({ children }: { children: ReactNode }) {
 
   // Load ticker stocks once on mount (always ALL stocks)
   useEffect(() => {
-    const loadTickerStocks = async () => {
+    const loadTickerStocks = async (retryCount = 0) => {
       setIsLoadingTicker(true);
       try {
         const data = await getRanking(false, true); // Always showAll=true for ticker
         setTickerStocks(data.ranking.slice(0, 40));
       } catch (err) {
         console.error('Failed to load ticker stocks:', err);
+        // Retry once with skipCache=true if first attempt fails
+        if (retryCount === 0) {
+          console.log('Retrying ticker load with fresh data...');
+          setTimeout(() => loadTickerStocks(1), 500);
+          return; // Don't set isLoadingTicker to false yet
+        }
       } finally {
-        setIsLoadingTicker(false);
+        if (retryCount > 0 || !tickerStocks.length) {
+          setIsLoadingTicker(false);
+        }
       }
     };
     loadTickerStocks();
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const refreshRanking = useCallback(async (skipCache = false, showAll?: boolean) => {
     const useShowAll = showAll ?? showAllStocks;
