@@ -1,0 +1,121 @@
+# Production-like test environment for Playwright testing
+# Usage: docker compose -f docker-compose.test.yml up --build
+# This mimics production settings but works locally without HTTPS
+
+services:
+  # FastAPI backend - production-like (no hot reload)
+  # Named "stonkmarket" to match nginx config upstream
+  stonkmarket:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: stonkmarket-api-test
+    command: >
+      uvicorn app.main:app
+      --host 0.0.0.0
+      --port 8000
+      --workers 2
+    env_file:
+      - .env
+    environment:
+      - ENVIRONMENT=testing
+      - DEBUG=false
+      - DATABASE_URL=postgresql://stonkmarket:stonkmarket@postgres:5432/stonkmarket
+      - VALKEY_URL=redis://valkey:6379/0
+      - ADMIN_USER=${ADMIN_USER:-admin}
+      - ADMIN_PASS=${ADMIN_PASS:-testpass123}
+      - AUTH_SECRET=${AUTH_SECRET:-test-secret-for-e2e-testing}
+      - SCHEDULER_ENABLED=true
+      - LOG_LEVEL=INFO
+      - CORS_ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - LOGO_DEV_PUBLIC_KEY=${LOGO_DEV_PUBLIC_KEY:-}
+      - LOGO_DEV_SECRET_KEY=${LOGO_DEV_SECRET_KEY:-}
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount source code (read-only, no hot reload)
+      - ./app:/app/app:ro
+      - ./migrations:/app/migrations:ro
+      - ./tests:/app/tests:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - stonkmarket-test
+
+  # React frontend - production build served by nginx
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: stonkmarket-frontend-test
+    ports:
+      - "5173:80"
+    environment:
+      - NODE_ENV=production
+    depends_on:
+      stonkmarket:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - stonkmarket-test
+
+  postgres:
+    image: postgres:17-alpine
+    container_name: stonkmarket-postgres-test
+    environment:
+      POSTGRES_USER: stonkmarket
+      POSTGRES_PASSWORD: stonkmarket
+      POSTGRES_DB: stonkmarket
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data_test:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stonkmarket -d stonkmarket"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - stonkmarket-test
+
+  valkey:
+    image: valkey/valkey:8.1-alpine
+    container_name: stonkmarket-valkey-test
+    ports:
+      - "6379:6379"
+    volumes:
+      - valkey_data_test:/data
+    command: valkey-server --appendonly yes --maxmemory 128mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - stonkmarket-test
+
+networks:
+  stonkmarket-test:
+    driver: bridge
+
+volumes:
+  postgres_data_test:
+  valkey_data_test:

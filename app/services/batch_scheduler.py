@@ -43,13 +43,14 @@ async def get_dips_needing_analysis() -> list[dict]:
     rows = await fetch_all(
         """
         SELECT ds.symbol, ds.current_price, ds.ath_price, ds.dip_percentage, ds.first_seen,
+               ds.classification, ds.excess_dip, ds.quality_score, ds.stability_score,
                s.name, s.sector, s.summary_ai,
                f.pe_ratio, f.forward_pe, f.peg_ratio, f.price_to_book, f.ev_to_ebitda,
                f.profit_margin, f.gross_margin, f.return_on_equity,
                f.revenue_growth, f.earnings_growth,
                f.debt_to_equity, f.current_ratio, f.free_cash_flow,
                f.recommendation, f.target_mean_price, f.num_analyst_opinions,
-               f.beta, f.short_percent_of_float
+               f.beta, f.short_percent_of_float, f.held_percent_institutions
         FROM dip_state ds
         LEFT JOIN symbols s ON s.symbol = ds.symbol
         LEFT JOIN stock_fundamentals f ON ds.symbol = f.symbol
@@ -121,6 +122,11 @@ async def schedule_batch_dip_analysis() -> Optional[str]:
                 if dip["dip_percentage"]
                 else None,
                 "days_below": days_below,
+                # Dip classification and scores
+                "dip_classification": dip.get("classification"),
+                "excess_dip": float(dip["excess_dip"]) if dip.get("excess_dip") else None,
+                "quality_score": float(dip["quality_score"]) if dip.get("quality_score") else None,
+                "stability_score": float(dip["stability_score"]) if dip.get("stability_score") else None,
                 # Fundamentals from database
                 "pe_ratio": float(dip["pe_ratio"]) if dip.get("pe_ratio") else None,
                 "forward_pe": float(dip["forward_pe"]) if dip.get("forward_pe") else None,
@@ -140,6 +146,7 @@ async def schedule_batch_dip_analysis() -> Optional[str]:
                 "num_analyst_opinions": dip.get("num_analyst_opinions"),
                 "beta": fmt_ratio(dip.get("beta")),
                 "short_percent_of_float": fmt_pct(dip.get("short_percent_of_float")),
+                "institutional_ownership": fmt_pct(dip.get("held_percent_institutions")),
             }
         )
 

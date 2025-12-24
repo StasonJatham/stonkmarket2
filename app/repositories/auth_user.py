@@ -181,12 +181,16 @@ async def seed_admin_from_env() -> None:
         else:
             logger.debug(f"Admin user '{username}' already exists with correct password")
     else:
-        # Create admin user
+        # Create admin user (use ON CONFLICT for race condition safety with multiple workers)
         password_hash = hash_password(password)
         await execute(
             """
             INSERT INTO auth_user(username, password_hash, is_admin, created_at, updated_at)
             VALUES ($1, $2, TRUE, NOW(), NOW())
+            ON CONFLICT (username) DO UPDATE SET
+                password_hash = EXCLUDED.password_hash,
+                is_admin = TRUE,
+                updated_at = NOW()
             """,
             username.lower(),
             password_hash,

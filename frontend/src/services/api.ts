@@ -122,6 +122,7 @@ export interface StockInfo {
   market_cap: number | null;
   pe_ratio: number | null;
   forward_pe: number | null;
+  peg_ratio: number | null;
   dividend_yield: number | null;
   beta: number | null;
   avg_volume: number | null;
@@ -129,6 +130,16 @@ export interface StockInfo {
   summary_ai: string | null;  // AI-generated short summary (~300 chars)
   website: string | null;
   recommendation: string | null;
+  // Extended fundamentals
+  profit_margin: number | null;
+  gross_margin: number | null;
+  return_on_equity: number | null;
+  debt_to_equity: number | null;
+  current_ratio: number | null;
+  revenue_growth: number | null;
+  free_cash_flow: number | null;
+  target_mean_price: number | null;
+  num_analyst_opinions: number | null;
 }
 
 export interface ChartDataPoint {

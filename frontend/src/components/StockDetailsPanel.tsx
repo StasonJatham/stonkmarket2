@@ -30,6 +30,10 @@ import {
   Percent,
   Target,
   Sparkles,
+  PiggyBank,
+  Scale,
+  Banknote,
+  Users,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { StockLogo } from '@/components/StockLogo';
@@ -229,31 +233,41 @@ export function StockDetailsPanel({
               {stock.name || stock.symbol}
             </p>
           </div>
-
-          {/* Period Selector */}
-          <div className="flex items-center justify-between mt-2 md:mt-4">
-            <div className="flex gap-1">
-              {periods.map((p) => (
-                <Button
-                  key={p.days}
-                  variant={chartPeriod === p.days ? 'default' : 'ghost'}
-                  size="sm"
-                  className="h-7 px-2.5 text-xs"
-                  onClick={() => onPeriodChange(p.days)}
-                >
-                  {p.label}
-                </Button>
-              ))}
-            </div>
-          </div>
         </CardHeader>
 
         {/* Scrollable Content - Chart + Data */}
         <ScrollArea className="flex-1 min-h-0">
           {/* Chart Section */}
           <div className="px-3 md:px-6 py-2">
-            {/* Dip Summary Banner */}
-            {stock && (
+            {/* Period Selector + Dip Summary */}
+            <div className="flex items-center justify-between mb-2">
+              {/* Period Selector */}
+              <div className="flex gap-1">
+                {periods.map((p) => (
+                  <Button
+                    key={p.days}
+                    variant={chartPeriod === p.days ? 'default' : 'ghost'}
+                    size="sm"
+                    className="h-6 px-2 text-xs"
+                    onClick={() => onPeriodChange(p.days)}
+                  >
+                    {p.label}
+                  </Button>
+                ))}
+              </div>
+              {/* Compact Dip Info */}
+              {stock && (
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="font-medium text-danger">-{(stock.depth * 100).toFixed(1)}%</span>
+                  {stock.days_since_dip && (
+                    <span className="text-muted-foreground">{stock.days_since_dip}d</span>
+                  )}
+                </div>
+              )}
+            </div>
+            
+            {/* Recovery Banner */}
+            {chartData[0]?.since_dip !== null && chartData[0]?.since_dip !== undefined && (
               <div className="flex items-center gap-3 py-1 px-2 rounded-md border border-border/50 bg-muted/30 mb-2 text-xs">
                 <div className="flex items-center gap-1.5">
                   <TrendingDown className="h-3 w-3 text-muted-foreground" />
@@ -266,15 +280,13 @@ export function StockDetailsPanel({
                     <span className="text-muted-foreground">{stock.days_since_dip}d</span>
                   </div>
                 )}
-                {chartData[0]?.since_dip !== null && chartData[0]?.since_dip !== undefined && (
-                  <div className="flex items-center gap-1.5 ml-auto">
-                    <Target className="h-3 w-3 text-muted-foreground" />
-                    <span className="text-muted-foreground">Recovery:</span>
-                    <span className={`font-medium ${chartData[chartData.length - 1]?.since_dip && chartData[chartData.length - 1].since_dip! > 0 ? 'text-success' : 'text-danger'}`}>
-                      {chartData[chartData.length - 1]?.since_dip ? (chartData[chartData.length - 1].since_dip! * 100).toFixed(1) : '0'}%
-                    </span>
-                  </div>
-                )}
+                <div className="flex items-center gap-1.5 ml-auto">
+                  <Target className="h-3 w-3 text-muted-foreground" />
+                  <span className="text-muted-foreground">Recovery:</span>
+                  <span className={`font-medium ${chartData[chartData.length - 1]?.since_dip && chartData[chartData.length - 1].since_dip! > 0 ? 'text-success' : 'text-danger'}`}>
+                    {chartData[chartData.length - 1]?.since_dip ? (chartData[chartData.length - 1].since_dip! * 100).toFixed(1) : '0'}%
+                  </span>
+                </div>
               </div>
             )}
 
@@ -497,12 +509,21 @@ export function StockDetailsPanel({
               <>
                 <Separator className="my-3" />
                 
+                {/* Valuation & Risk Metrics */}
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-2 md:gap-3 mb-3">
                   {stockInfo.forward_pe !== null && stockInfo.forward_pe !== undefined && (
                     <StatItem
                       icon={Activity}
                       label="Forward P/E"
                       value={stockInfo.forward_pe.toFixed(2)}
+                    />
+                  )}
+                  {stockInfo.peg_ratio !== null && stockInfo.peg_ratio !== undefined && (
+                    <StatItem
+                      icon={Activity}
+                      label="PEG Ratio"
+                      value={stockInfo.peg_ratio.toFixed(2)}
+                      valueColor={stockInfo.peg_ratio < 1 ? 'text-success' : stockInfo.peg_ratio > 2 ? 'text-danger' : undefined}
                     />
                   )}
                   {stockInfo.dividend_yield !== null && stockInfo.dividend_yield !== undefined && (
@@ -521,6 +542,104 @@ export function StockDetailsPanel({
                     />
                   )}
                 </div>
+
+                {/* Profitability Metrics */}
+                {(stockInfo.profit_margin !== null || stockInfo.gross_margin !== null || stockInfo.return_on_equity !== null) && (
+                  <>
+                    <p className="text-xs font-medium text-muted-foreground mb-2">Profitability</p>
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2 md:gap-3 mb-3">
+                      {stockInfo.profit_margin !== null && stockInfo.profit_margin !== undefined && (
+                        <StatItem
+                          icon={Percent}
+                          label="Profit Margin"
+                          value={`${(stockInfo.profit_margin * 100).toFixed(1)}%`}
+                          valueColor={stockInfo.profit_margin > 0.15 ? 'text-success' : stockInfo.profit_margin < 0.05 ? 'text-danger' : undefined}
+                        />
+                      )}
+                      {stockInfo.gross_margin !== null && stockInfo.gross_margin !== undefined && (
+                        <StatItem
+                          icon={Percent}
+                          label="Gross Margin"
+                          value={`${(stockInfo.gross_margin * 100).toFixed(1)}%`}
+                          valueColor={stockInfo.gross_margin > 0.4 ? 'text-success' : stockInfo.gross_margin < 0.2 ? 'text-danger' : undefined}
+                        />
+                      )}
+                      {stockInfo.return_on_equity !== null && stockInfo.return_on_equity !== undefined && (
+                        <StatItem
+                          icon={PiggyBank}
+                          label="ROE"
+                          value={`${(stockInfo.return_on_equity * 100).toFixed(1)}%`}
+                          valueColor={stockInfo.return_on_equity > 0.15 ? 'text-success' : stockInfo.return_on_equity < 0.05 ? 'text-danger' : undefined}
+                        />
+                      )}
+                      {stockInfo.revenue_growth !== null && stockInfo.revenue_growth !== undefined && (
+                        <StatItem
+                          icon={TrendingUp}
+                          label="Revenue Growth"
+                          value={`${(stockInfo.revenue_growth * 100).toFixed(1)}%`}
+                          valueColor={stockInfo.revenue_growth > 0 ? 'text-success' : 'text-danger'}
+                        />
+                      )}
+                    </div>
+                  </>
+                )}
+
+                {/* Financial Health Metrics */}
+                {(stockInfo.debt_to_equity !== null || stockInfo.current_ratio !== null || stockInfo.free_cash_flow !== null) && (
+                  <>
+                    <p className="text-xs font-medium text-muted-foreground mb-2">Financial Health</p>
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2 md:gap-3 mb-3">
+                      {stockInfo.debt_to_equity !== null && stockInfo.debt_to_equity !== undefined && (
+                        <StatItem
+                          icon={Scale}
+                          label="Debt/Equity"
+                          value={stockInfo.debt_to_equity.toFixed(2)}
+                          valueColor={stockInfo.debt_to_equity < 50 ? 'text-success' : stockInfo.debt_to_equity > 150 ? 'text-danger' : undefined}
+                        />
+                      )}
+                      {stockInfo.current_ratio !== null && stockInfo.current_ratio !== undefined && (
+                        <StatItem
+                          icon={Scale}
+                          label="Current Ratio"
+                          value={stockInfo.current_ratio.toFixed(2)}
+                          valueColor={stockInfo.current_ratio > 1.5 ? 'text-success' : stockInfo.current_ratio < 1 ? 'text-danger' : undefined}
+                        />
+                      )}
+                      {stockInfo.free_cash_flow !== null && stockInfo.free_cash_flow !== undefined && (
+                        <StatItem
+                          icon={Banknote}
+                          label="Free Cash Flow"
+                          value={formatMarketCap(stockInfo.free_cash_flow)}
+                          valueColor={stockInfo.free_cash_flow > 0 ? 'text-success' : 'text-danger'}
+                        />
+                      )}
+                    </div>
+                  </>
+                )}
+
+                {/* Analyst Info */}
+                {(stockInfo.target_mean_price !== null || stockInfo.num_analyst_opinions !== null) && (
+                  <>
+                    <p className="text-xs font-medium text-muted-foreground mb-2">Analyst Estimates</p>
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2 md:gap-3 mb-3">
+                      {stockInfo.target_mean_price !== null && stockInfo.target_mean_price !== undefined && (
+                        <StatItem
+                          icon={Target}
+                          label="Price Target"
+                          value={`$${stockInfo.target_mean_price.toFixed(2)}`}
+                          valueColor={stockInfo.target_mean_price > stock.last_price ? 'text-success' : 'text-danger'}
+                        />
+                      )}
+                      {stockInfo.num_analyst_opinions !== null && stockInfo.num_analyst_opinions !== undefined && (
+                        <StatItem
+                          icon={Users}
+                          label="Analysts"
+                          value={stockInfo.num_analyst_opinions.toString()}
+                        />
+                      )}
+                    </div>
+                  </>
+                )}
                 
                 <div className="space-y-3">
                   {stockInfo.sector && (

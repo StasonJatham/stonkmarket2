@@ -185,8 +185,13 @@ class YFinancePriceProvider:
             if cached is not None:
                 # Reconstruct DataFrame from cached dict
                 try:
+                    # Extract the index dates we stored
+                    index_dates = cached.pop("_index_dates", None)
                     df = pd.DataFrame(cached)
-                    df.index = pd.to_datetime(df.index)
+                    if index_dates is not None:
+                        df.index = pd.to_datetime(index_dates)
+                    else:
+                        df.index = pd.to_datetime(df.index)
                     results[ticker] = df
                 except Exception:
                     tickers_to_fetch.append(ticker)
@@ -230,9 +235,13 @@ class YFinancePriceProvider:
 
                         # Cache the result
                         cache_key = f"{ticker}:{start_date}:{end_date}"
-                        cache_data = ticker_df.to_dict()
-                        # Convert index to strings for JSON
-                        cache_data["index"] = [str(idx) for idx in ticker_df.index]
+                        # Reset index to convert Timestamps to ISO strings before caching
+                        # pandas Timestamps as dict keys cause JSON serialization failures
+                        df_for_cache = ticker_df.copy()
+                        df_for_cache.index = df_for_cache.index.strftime("%Y-%m-%d")
+                        cache_data = df_for_cache.to_dict()
+                        # Store original index for reconstruction
+                        cache_data["_index_dates"] = list(df_for_cache.index)
                         await self._cache.set(
                             cache_key, cache_data, ttl=self.config.price_cache_ttl
                         )

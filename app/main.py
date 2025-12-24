@@ -23,61 +23,75 @@ logger = get_logger("main")
 
 
 async def run_migrations() -> None:
-    """Run all pending database migrations from the migrations folder."""
-    # Ensure migrations tracking table exists
-    await execute("""
-        CREATE TABLE IF NOT EXISTS schema_migrations (
-            version VARCHAR(50) PRIMARY KEY,
-            applied_at TIMESTAMPTZ DEFAULT NOW()
-        );
-    """)
+    """Run all pending database migrations from the migrations folder.
     
-    # Find migrations directory (relative to app)
-    migrations_dir = Path(__file__).parent.parent / "migrations"
-    if not migrations_dir.exists():
-        logger.info("No migrations directory found, skipping migrations")
+    Uses PostgreSQL advisory lock to ensure only one worker runs migrations at a time.
+    """
+    # Try to acquire advisory lock (non-blocking)
+    # Lock ID 1 is reserved for migrations
+    lock_result = await fetch_one("SELECT pg_try_advisory_lock(1) as acquired")
+    if not lock_result or not lock_result.get("acquired"):
+        logger.info("Another worker is running migrations, skipping")
         return
     
-    # Get all .sql files sorted by name
-    migration_files = sorted(migrations_dir.glob("*.sql"))
-    if not migration_files:
-        logger.info("No migration files found")
-        return
-    
-    applied_count = 0
-    for migration_file in migration_files:
-        version = migration_file.stem  # e.g., "005_add_symbol_type_and_dip_start"
+    try:
+        # Ensure migrations tracking table exists
+        await execute("""
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                version VARCHAR(50) PRIMARY KEY,
+                applied_at TIMESTAMPTZ DEFAULT NOW()
+            );
+        """)
         
-        # Check if already applied
-        result = await fetch_one(
-            "SELECT version FROM schema_migrations WHERE version = $1",
-            version
-        )
-        if result:
-            continue
+        # Find migrations directory (relative to app)
+        migrations_dir = Path(__file__).parent.parent / "migrations"
+        if not migrations_dir.exists():
+            logger.info("No migrations directory found, skipping migrations")
+            return
         
-        # Run migration
-        logger.info(f"Running migration: {version}")
-        try:
-            sql = migration_file.read_text()
-            await execute(sql)
+        # Get all .sql files sorted by name
+        migration_files = sorted(migrations_dir.glob("*.sql"))
+        if not migration_files:
+            logger.info("No migration files found")
+            return
+        
+        applied_count = 0
+        for migration_file in migration_files:
+            version = migration_file.stem  # e.g., "005_add_symbol_type_and_dip_start"
             
-            # Mark as applied
-            await execute(
-                "INSERT INTO schema_migrations (version) VALUES ($1)",
+            # Check if already applied
+            result = await fetch_one(
+                "SELECT version FROM schema_migrations WHERE version = $1",
                 version
             )
-            applied_count += 1
-            logger.info(f"Migration {version} applied successfully")
-        except Exception as e:
-            logger.error(f"Migration {version} failed: {e}")
-            # Don't raise - allow app to start, admin can fix manually
-            break
-    
-    if applied_count > 0:
-        logger.info(f"Applied {applied_count} migration(s)")
-    else:
-        logger.info("All migrations already applied")
+            if result:
+                continue
+            
+            # Run migration
+            logger.info(f"Running migration: {version}")
+            try:
+                sql = migration_file.read_text()
+                await execute(sql)
+                
+                # Mark as applied
+                await execute(
+                    "INSERT INTO schema_migrations (version) VALUES ($1)",
+                    version
+                )
+                applied_count += 1
+                logger.info(f"Migration {version} applied successfully")
+            except Exception as e:
+                logger.error(f"Migration {version} failed: {e}")
+                # Don't raise - allow app to start, admin can fix manually
+                break
+        
+        if applied_count > 0:
+            logger.info(f"Applied {applied_count} migration(s)")
+        else:
+            logger.info("All migrations already applied")
+    finally:
+        # Always release the advisory lock
+        await execute("SELECT pg_advisory_unlock(1)")
 
 
 @asynccontextmanager

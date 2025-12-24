@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Path, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Path, Query, status
 from pydantic import BaseModel
 
 from app.api.dependencies import require_user
@@ -91,6 +91,198 @@ async def validate_symbol(
     await _validation_cache.set(cache_key, result.model_dump(), ttl=ttl)
 
     return result
+
+
+class SymbolSearchResult(BaseModel):
+    """Result item from symbol search."""
+    symbol: str
+    name: Optional[str] = None
+    sector: Optional[str] = None
+    quote_type: Optional[str] = None
+    market_cap: Optional[float] = None
+    pe_ratio: Optional[float] = None
+    source: Optional[str] = None  # "local", "cache", or "api"
+
+
+class SymbolSearchResponse(BaseModel):
+    """Response for symbol search."""
+    query: str
+    results: List[SymbolSearchResult]
+    count: int
+
+
+@router.get(
+    "/search/{query}",
+    response_model=SymbolSearchResponse,
+    summary="Search for symbols",
+    description="Search for stock symbols by name or ticker. Searches local database first, then yfinance API with caching.",
+)
+async def search_symbols(
+    query: str = Path(..., min_length=2, max_length=50, description="Search query"),
+    limit: int = Query(10, ge=1, le=50, description="Maximum results to return"),
+    local_only: bool = Query(False, description="Only search local database"),
+) -> SymbolSearchResponse:
+    """
+    Search for stock symbols.
+    
+    Strategy:
+    1. Search local symbols table first (instant)
+    2. Check search cache for API results
+    3. If not cached, query yfinance API and cache results
+    """
+    from app.services.symbol_search import search_symbols as do_search
+    
+    results = await do_search(query, max_results=limit, local_only=local_only)
+    
+    return SymbolSearchResponse(
+        query=query,
+        results=[SymbolSearchResult(**r) for r in results],
+        count=len(results),
+    )
+
+
+class SymbolAutocompleteResult(BaseModel):
+    """Simple result for autocomplete."""
+    symbol: str
+    name: Optional[str] = None
+
+
+@router.get(
+    "/autocomplete/{partial}",
+    response_model=List[SymbolAutocompleteResult],
+    summary="Autocomplete symbols",
+    description="Get autocomplete suggestions for partial symbol/name input. Optimized for speed.",
+)
+async def autocomplete_symbols(
+    partial: str = Path(..., min_length=1, max_length=20, description="Partial input"),
+    limit: int = Query(5, ge=1, le=10, description="Maximum suggestions"),
+) -> List[SymbolAutocompleteResult]:
+    """Get autocomplete suggestions for symbol input."""
+    from app.services.symbol_search import get_symbol_suggestions
+    
+    results = await get_symbol_suggestions(partial, limit=limit)
+    return [SymbolAutocompleteResult(**r) for r in results]
+
+
+class SymbolFundamentalsResponse(BaseModel):
+    """Fundamentals data for a symbol."""
+    symbol: str
+    pe_ratio: Optional[float] = None
+    forward_pe: Optional[float] = None
+    peg_ratio: Optional[float] = None
+    price_to_book: Optional[float] = None
+    profit_margin: Optional[str] = None
+    gross_margin: Optional[str] = None
+    return_on_equity: Optional[str] = None
+    debt_to_equity: Optional[str] = None
+    current_ratio: Optional[str] = None
+    revenue_growth: Optional[str] = None
+    earnings_growth: Optional[str] = None
+    free_cash_flow: Optional[str] = None
+    recommendation: Optional[str] = None
+    target_mean_price: Optional[float] = None
+    num_analyst_opinions: Optional[int] = None
+    beta: Optional[str] = None
+    next_earnings_date: Optional[str] = None
+    source: str = "database"  # "database" or "api"
+
+
+@router.get(
+    "/fundamentals/{symbol}",
+    response_model=SymbolFundamentalsResponse,
+    summary="Get symbol fundamentals",
+    description="Get fundamental financial data for a symbol. Uses cached data from database when available, otherwise fetches from yfinance.",
+)
+async def get_symbol_fundamentals(
+    symbol: str = Path(..., min_length=1, max_length=10, description="Stock symbol"),
+) -> SymbolFundamentalsResponse:
+    """Get fundamental data for a symbol."""
+    from app.services.fundamentals import (
+        get_fundamentals_from_db,
+        fetch_fundamentals_live,
+    )
+    
+    symbol_upper = symbol.upper().strip()
+    source = "database"
+    
+    # Try database first (for tracked symbols)
+    db_data = await get_fundamentals_from_db(symbol_upper)
+    
+    if db_data:
+        # Format the database data
+        def fmt_pct(val):
+            if val is None:
+                return None
+            return f"{float(val) * 100:.1f}%"
+        
+        def fmt_ratio(val):
+            if val is None:
+                return None
+            return f"{float(val):.2f}"
+        
+        def fmt_large_num(val):
+            if val is None:
+                return None
+            val = int(val)
+            if val >= 1e12:
+                return f"${val / 1e12:.1f}T"
+            if val >= 1e9:
+                return f"${val / 1e9:.1f}B"
+            if val >= 1e6:
+                return f"${val / 1e6:.1f}M"
+            return f"${val:,.0f}"
+        
+        data = {
+            "pe_ratio": db_data.get("pe_ratio"),
+            "forward_pe": db_data.get("forward_pe"),
+            "peg_ratio": fmt_ratio(db_data.get("peg_ratio")),
+            "price_to_book": fmt_ratio(db_data.get("price_to_book")),
+            "profit_margin": fmt_pct(db_data.get("profit_margin")),
+            "gross_margin": fmt_pct(db_data.get("gross_margin")),
+            "return_on_equity": fmt_pct(db_data.get("return_on_equity")),
+            "debt_to_equity": fmt_ratio(db_data.get("debt_to_equity")),
+            "current_ratio": fmt_ratio(db_data.get("current_ratio")),
+            "revenue_growth": fmt_pct(db_data.get("revenue_growth")),
+            "earnings_growth": fmt_pct(db_data.get("earnings_growth")),
+            "free_cash_flow": fmt_large_num(db_data.get("free_cash_flow")),
+            "recommendation": db_data.get("recommendation"),
+            "target_mean_price": db_data.get("target_mean_price"),
+            "num_analyst_opinions": db_data.get("num_analyst_opinions"),
+            "beta": fmt_ratio(db_data.get("beta")),
+            "next_earnings_date": str(db_data.get("next_earnings_date")) if db_data.get("next_earnings_date") else None,
+        }
+    else:
+        # Not in database, fetch live from yfinance (without storing)
+        data = await fetch_fundamentals_live(symbol_upper)
+        source = "api"
+    
+    if not data:
+        raise NotFoundError(
+            message="Fundamentals not available",
+            details={"symbol": symbol_upper, "reason": "Symbol may be an ETF/index or not found"}
+        )
+    
+    return SymbolFundamentalsResponse(
+        symbol=symbol_upper,
+        pe_ratio=data.get("pe_ratio"),
+        forward_pe=data.get("forward_pe"),
+        peg_ratio=float(data["peg_ratio"]) if data.get("peg_ratio") else None,
+        price_to_book=float(data["price_to_book"]) if data.get("price_to_book") else None,
+        profit_margin=data.get("profit_margin"),
+        gross_margin=data.get("gross_margin"),
+        return_on_equity=data.get("return_on_equity"),
+        debt_to_equity=data.get("debt_to_equity"),
+        current_ratio=data.get("current_ratio"),
+        revenue_growth=data.get("revenue_growth"),
+        earnings_growth=data.get("earnings_growth"),
+        free_cash_flow=data.get("free_cash_flow"),
+        recommendation=data.get("recommendation"),
+        target_mean_price=data.get("target_mean_price"),
+        num_analyst_opinions=data.get("num_analyst_opinions"),
+        beta=data.get("beta"),
+        next_earnings_date=data.get("next_earnings_date"),
+        source=source,
+    )
 
 
 @router.get(

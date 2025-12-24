@@ -302,6 +302,112 @@ async def _store_fundamentals(data: dict[str, Any]) -> None:
     logger.debug(f"Stored fundamentals for {symbol}")
 
 
+async def fetch_fundamentals_live(symbol: str) -> Optional[dict[str, Any]]:
+    """
+    Fetch fundamentals from Yahoo Finance without storing to database.
+    
+    Use this for symbols that aren't tracked (not in symbols table).
+    For tracked symbols, use get_fundamentals() which caches data.
+    
+    Args:
+        symbol: Stock symbol
+        
+    Returns:
+        Dict with formatted fundamental metrics, or None if not available
+    """
+    symbol = symbol.upper()
+    
+    if _is_etf_or_index(symbol):
+        return None
+    
+    loop = asyncio.get_event_loop()
+    data = await loop.run_in_executor(_executor, _fetch_fundamentals_sync, symbol)
+    
+    if not data:
+        return None
+    
+    # Format the data the same way as get_fundamentals_for_analysis
+    def fmt_pct(val: Optional[float]) -> Optional[str]:
+        if val is None:
+            return None
+        return f"{val * 100:.1f}%"
+    
+    def fmt_ratio(val: Optional[float]) -> Optional[str]:
+        if val is None:
+            return None
+        return f"{val:.2f}"
+    
+    def fmt_large_num(val: Optional[int]) -> Optional[str]:
+        if val is None:
+            return None
+        if val >= 1e12:
+            return f"${val / 1e12:.1f}T"
+        if val >= 1e9:
+            return f"${val / 1e9:.1f}B"
+        if val >= 1e6:
+            return f"${val / 1e6:.1f}M"
+        return f"${val:,.0f}"
+    
+    return {
+        # Valuation
+        "pe_ratio": data.get("pe_ratio"),
+        "forward_pe": data.get("forward_pe"),
+        "peg_ratio": fmt_ratio(data.get("peg_ratio")),
+        "price_to_book": fmt_ratio(data.get("price_to_book")),
+        "ev_to_ebitda": fmt_ratio(data.get("ev_to_ebitda")),
+        # Profitability
+        "profit_margin": fmt_pct(data.get("profit_margin")),
+        "operating_margin": fmt_pct(data.get("operating_margin")),
+        "gross_margin": fmt_pct(data.get("gross_margin")),
+        "return_on_equity": fmt_pct(data.get("return_on_equity")),
+        "return_on_assets": fmt_pct(data.get("return_on_assets")),
+        # Financial Health
+        "debt_to_equity": fmt_ratio(data.get("debt_to_equity")),
+        "current_ratio": fmt_ratio(data.get("current_ratio")),
+        "free_cash_flow": fmt_large_num(data.get("free_cash_flow")),
+        "total_debt": fmt_large_num(data.get("total_debt")),
+        "total_cash": fmt_large_num(data.get("total_cash")),
+        # Growth
+        "revenue_growth": fmt_pct(data.get("revenue_growth")),
+        "earnings_growth": fmt_pct(data.get("earnings_growth")),
+        # Analyst
+        "recommendation": data.get("recommendation"),
+        "num_analyst_opinions": data.get("num_analyst_opinions"),
+        "target_mean_price": data.get("target_mean_price"),
+        # Risk
+        "beta": fmt_ratio(data.get("beta")),
+        "short_percent_of_float": fmt_pct(data.get("short_percent_of_float")),
+        # Earnings
+        "next_earnings_date": str(data.get("next_earnings_date")) if data.get("next_earnings_date") else None,
+        "eps_trailing": data.get("eps_trailing"),
+        "eps_forward": data.get("eps_forward"),
+    }
+
+
+async def get_fundamentals_from_db(symbol: str) -> Optional[dict[str, Any]]:
+    """
+    Get fundamentals from database cache only (no fetching).
+    
+    Use this when you want to check if data exists without triggering
+    a yfinance fetch. Useful for untracked symbols.
+    """
+    symbol = symbol.upper()
+    
+    if _is_etf_or_index(symbol):
+        return None
+    
+    row = await fetch_one(
+        """
+        SELECT * FROM stock_fundamentals
+        WHERE symbol = $1 AND expires_at > NOW()
+        """,
+        symbol,
+    )
+    if row:
+        return dict(row)
+    return None
+
+
 async def get_fundamentals(symbol: str, force_refresh: bool = False) -> Optional[dict[str, Any]]:
     """
     Get fundamentals for a symbol, fetching from Yahoo Finance if expired.

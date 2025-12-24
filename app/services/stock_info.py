@@ -72,12 +72,23 @@ def get_stock_info(symbol: str) -> Optional[StockInfo]:
             market_cap=info.get("totalAssets") if is_etf_or_index else info.get("marketCap"),
             pe_ratio=None if is_etf_or_index else info.get("trailingPE"),
             forward_pe=None if is_etf_or_index else info.get("forwardPE"),
+            peg_ratio=None if is_etf_or_index else info.get("trailingPegRatio"),
             dividend_yield=dividend_yield,  # ETFs can have dividend yield
             beta=info.get("beta"),
             avg_volume=info.get("averageVolume"),
             summary=info.get("longBusinessSummary"),
             website=info.get("website"),
             recommendation=None if is_etf_or_index else info.get("recommendationKey"),
+            # Extended fundamentals
+            profit_margin=None if is_etf_or_index else info.get("profitMargins"),
+            gross_margin=None if is_etf_or_index else info.get("grossMargins"),
+            return_on_equity=None if is_etf_or_index else info.get("returnOnEquity"),
+            debt_to_equity=None if is_etf_or_index else info.get("debtToEquity"),
+            current_ratio=None if is_etf_or_index else info.get("currentRatio"),
+            revenue_growth=None if is_etf_or_index else info.get("revenueGrowth"),
+            free_cash_flow=None if is_etf_or_index else info.get("freeCashflow"),
+            target_mean_price=None if is_etf_or_index else info.get("targetMeanPrice"),
+            num_analyst_opinions=None if is_etf_or_index else info.get("numberOfAnalystOpinions"),
         )
         _INFO_CACHE[symbol] = (now, stock_info)
         return stock_info

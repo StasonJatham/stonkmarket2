@@ -222,24 +222,33 @@ You MUST:
 
 Return JSON with:
 - rating: "strong_buy" | "buy" | "hold" | "sell" | "strong_sell"
-- reasoning: Brief explanation (under 400 chars). Cite at least 2 concrete context facts (e.g., dip %, days in dip, P/E, sector).
+- reasoning: Brief explanation (under 400 chars). Cite at least 2 concrete context facts (e.g., dip %, days in dip, P/E, dip type, quality score).
 - confidence: integer 1–10.
 
 Decision rubric (apply in order):
 1) Structural red flags in the given text → "sell" or "strong_sell" (only if clearly stated).
-2) Dip depth:
+2) Dip Type (if provided):
+   - MARKET_DIP: Be cautious - stock is down with the market, may fall further. Reduce rating one level.
+   - STOCK_SPECIFIC: Stock is underperforming market - investigate quality. Use Quality Score.
+   - MIXED: Both factors at play - use standard rubric.
+3) Dip depth:
    - >= 20% → candidate for "strong_buy"
    - 10–19.9% → candidate for "buy"
    - < 10% → candidate for "hold"
-3) Valuation sanity check (use P/E only if provided):
-   - P/E > 50 → downgrade one level (e.g., buy→hold, strong_buy→buy) unless dip >= 25% AND the business description implies category leadership.
-   - P/E 0–50 → no downgrade.
-4) Dip persistence:
+4) Quality Score (if provided):
+   - Quality >= 70 → supports conviction (+1 confidence)
+   - Quality < 40 → downgrade one level
+5) Stability Score (if provided):
+   - Stability < 30 → reduce conviction (-1 confidence), volatile stock
+6) Valuation sanity check:
+   - P/E > 50 AND EV/EBITDA > 25 → downgrade one level unless dip >= 25%
+   - Use EV/EBITDA as primary for mature companies (Market Cap > $100B)
+7) Dip persistence:
    - Days in dip >= 30 → supports conviction (+1 confidence)
    - Days in dip < 14 → reduce conviction (-1 confidence)
 
 Confidence rule:
-Start at 7. +1 if dip >= 15%. +1 if days in dip >= 30. -1 if key fundamentals are missing (e.g., no P/E). Clamp 1–10.""",
+Start at 7. +1 if dip >= 15%. +1 if Quality Score >= 70. +1 if days in dip >= 30. -1 if key fundamentals are missing. -1 if Stability < 30. Clamp 1–10.""",
 
     TaskType.SUMMARY: """You turn very long, jargon-heavy finance descriptions into plain-English summaries for everyday readers.
 
@@ -345,6 +354,16 @@ def _build_prompt(task: TaskType, context: dict[str, Any]) -> str:
     if days := context.get("days_below"):
         parts.append(f"Days in dip: {days}")
     
+    # Dip classification and computed scores (NEW)
+    if dip_class := context.get("dip_classification"):
+        parts.append(f"Dip Type: {dip_class}")  # MARKET_DIP, STOCK_SPECIFIC, MIXED
+    if excess_dip := context.get("excess_dip"):
+        parts.append(f"Excess Dip vs Market: {excess_dip:.1f}%")
+    if quality := context.get("quality_score"):
+        parts.append(f"Quality Score: {quality:.0f}/100")
+    if stability := context.get("stability_score"):
+        parts.append(f"Stability Score: {stability:.0f}/100")
+    
     # Valuation metrics
     if pe := context.get("pe_ratio"):
         parts.append(f"P/E Ratio: {pe:.1f}")
@@ -392,6 +411,8 @@ def _build_prompt(task: TaskType, context: dict[str, Any]) -> str:
         parts.append(f"Beta: {beta}")
     if short_pct := context.get("short_percent_of_float"):
         parts.append(f"Short % of Float: {short_pct}")
+    if inst_pct := context.get("institutional_ownership"):
+        parts.append(f"Institutional Ownership: {inst_pct}")
     
     # Market cap (for size context)
     if cap := context.get("market_cap"):

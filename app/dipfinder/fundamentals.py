@@ -58,9 +58,13 @@ class QualityMetrics:
     pe_ratio: Optional[float] = None
     forward_pe: Optional[float] = None
     peg_ratio: Optional[float] = None
+    ev_to_ebitda: Optional[float] = None  # NEW: Better valuation metric for mature companies
     return_on_equity: Optional[float] = None
+    return_on_assets: Optional[float] = None  # NEW: Less distorted than ROE
     recommendation: Optional[str] = None
     target_upside: Optional[float] = None  # (target - current) / current
+    short_percent_of_float: Optional[float] = None  # NEW: Short interest risk indicator
+    institutional_ownership: Optional[float] = None  # NEW: Smart money confidence
 
     # Sub-scores (0-100)
     profitability_score: float = 50.0
@@ -68,12 +72,13 @@ class QualityMetrics:
     cash_generation_score: float = 50.0
     growth_score: float = 50.0
     liquidity_score: float = 50.0
-    valuation_score: float = 50.0  # NEW: P/E, PEG, Forward P/E
+    valuation_score: float = 50.0  # NEW: P/E, PEG, Forward P/E, EV/EBITDA
     analyst_score: float = 50.0     # NEW: Recommendations, target price
+    risk_score: float = 50.0        # NEW: Short interest, institutional ownership
 
     # Data quality
     fields_available: int = 0
-    fields_total: int = 14  # Updated to include new fields
+    fields_total: int = 16  # Updated to include new fields
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON/DB storage."""
@@ -93,9 +98,13 @@ class QualityMetrics:
             "pe_ratio": self.pe_ratio,
             "forward_pe": self.forward_pe,
             "peg_ratio": self.peg_ratio,
+            "ev_to_ebitda": self.ev_to_ebitda,
             "return_on_equity": self.return_on_equity,
+            "return_on_assets": self.return_on_assets,
             "recommendation": self.recommendation,
             "target_upside": round(self.target_upside, 4) if self.target_upside else None,
+            "short_percent_of_float": self.short_percent_of_float,
+            "institutional_ownership": self.institutional_ownership,
             "profitability_score": round(self.profitability_score, 2),
             "balance_sheet_score": round(self.balance_sheet_score, 2),
             "cash_generation_score": round(self.cash_generation_score, 2),
@@ -103,6 +112,7 @@ class QualityMetrics:
             "liquidity_score": round(self.liquidity_score, 2),
             "valuation_score": round(self.valuation_score, 2),
             "analyst_score": round(self.analyst_score, 2),
+            "risk_score": round(self.risk_score, 2),
             "fields_available": self.fields_available,
             "fields_total": self.fields_total,
         }
@@ -397,10 +407,13 @@ def _compute_valuation_score(info: Dict[str, Any]) -> tuple[float, Dict[str, Any
     forward_pe = _safe_float(info.get("forwardPE") or info.get("forward_pe"))
     peg_ratio = _safe_float(info.get("trailingPegRatio") or info.get("peg_ratio"))
     
+    ev_ebitda = _safe_float(info.get("enterpriseToEbitda") or info.get("ev_to_ebitda"))
+    
     factors = {
         "pe_ratio": pe_ratio,
         "forward_pe": forward_pe,
         "peg_ratio": peg_ratio,
+        "ev_to_ebitda": ev_ebitda,
     }
     
     scores = []
@@ -449,6 +462,23 @@ def _compute_valuation_score(info: Dict[str, Any]) -> tuple[float, Dict[str, Any
         else:
             peg_score = max(20.0, 40.0 - (peg_ratio - 2.5) * 10)
         scores.append(peg_score)
+    
+    # EV/EBITDA Score (8-15 is reasonable, <8 = cheap, >25 = expensive)
+    # Better metric for mature companies than P/E (includes debt, ignores accounting)
+    if ev_ebitda is not None and ev_ebitda > 0:
+        if ev_ebitda < 6:
+            ev_score = 95.0  # Very cheap
+        elif ev_ebitda < 10:
+            ev_score = 85.0  # Cheap
+        elif ev_ebitda < 15:
+            ev_score = 75.0  # Reasonable
+        elif ev_ebitda < 20:
+            ev_score = 60.0  # Getting expensive
+        elif ev_ebitda < 30:
+            ev_score = 45.0  # Expensive
+        else:
+            ev_score = max(20.0, 45.0 - (ev_ebitda - 30) * 0.5)
+        scores.append(ev_score)
     
     score = sum(scores) / len(scores) if scores else 50.0
     
@@ -528,6 +558,68 @@ def _compute_analyst_score(info: Dict[str, Any]) -> tuple[float, Dict[str, Any]]
             coverage_score = 30.0
         scores.append(coverage_score)
         weights.append(0.15)
+    
+    if not scores:
+        return 50.0, factors
+    
+    # Weighted average
+    total_weight = sum(weights)
+    score = sum(s * w for s, w in zip(scores, weights)) / total_weight
+    
+    return score, factors
+
+
+def _compute_risk_score(info: Dict[str, Any]) -> tuple[float, Dict[str, Any]]:
+    """
+    Compute risk sub-score from short interest and institutional ownership.
+    
+    High short interest = bearish sentiment / risk
+    High institutional ownership = smart money confidence / stability
+    """
+    short_pct = _safe_float(info.get("shortPercentOfFloat") or info.get("short_percent_of_float"))
+    inst_pct = _safe_float(info.get("heldPercentInstitutions") or info.get("held_percent_institutions"))
+    
+    factors = {
+        "short_percent_of_float": short_pct,
+        "institutional_ownership": inst_pct,
+    }
+    
+    scores = []
+    weights = []
+    
+    # Short interest score (lower is better - inverse scoring)
+    # High short interest can mean: bearish sentiment, potential squeeze, or troubled company
+    if short_pct is not None:
+        if short_pct < 0.02:  # <2% = minimal short interest
+            short_score = 90.0
+        elif short_pct < 0.05:  # <5% = low short interest
+            short_score = 80.0
+        elif short_pct < 0.10:  # <10% = moderate short interest
+            short_score = 65.0
+        elif short_pct < 0.20:  # <20% = elevated short interest
+            short_score = 45.0
+        elif short_pct < 0.30:  # <30% = high short interest (squeeze candidate)
+            short_score = 35.0
+        else:  # >30% = very high short interest (significant bearish bets)
+            short_score = 25.0
+        scores.append(short_score)
+        weights.append(0.40)
+    
+    # Institutional ownership score (higher is better)
+    # High institutional ownership = smart money confidence
+    if inst_pct is not None:
+        if inst_pct > 0.80:  # >80% = very high institutional confidence
+            inst_score = 90.0
+        elif inst_pct > 0.60:  # >60% = solid institutional backing
+            inst_score = 80.0
+        elif inst_pct > 0.40:  # >40% = moderate institutional interest
+            inst_score = 65.0
+        elif inst_pct > 0.20:  # >20% = some institutional presence
+            inst_score = 50.0
+        else:  # <20% = retail-dominated, potentially more volatile
+            inst_score = 35.0
+        scores.append(inst_score)
+        weights.append(0.60)
     
     if not scores:
         return 50.0, factors
@@ -695,17 +787,20 @@ async def compute_quality_score(
     liq_score, liq_factors = _compute_liquidity_score(merged_info)
     val_score, val_factors = _compute_valuation_score(merged_info)
     analyst_score, analyst_factors = _compute_analyst_score(merged_info)
+    risk_score, risk_factors = _compute_risk_score(merged_info)
 
-    # Weighted final score - adjusted to include valuation and analyst sentiment
-    # For dip buying: profitability, valuation, and analyst sentiment matter most
+    # Weighted final score - adjusted weights based on professional review
+    # For dip buying: FCF is king, valuation matters, risk indicators important
+    # Reduced analyst weight (lagging indicator), added risk score
     final_score = (
-        prof_score * 0.20
-        + bs_score * 0.10
-        + cash_score * 0.20
-        + growth_score * 0.10
-        + liq_score * 0.10
-        + val_score * 0.15      # NEW: Valuation (P/E, PEG)
-        + analyst_score * 0.15  # NEW: Analyst consensus
+        prof_score * 0.20       # Profitability
+        + bs_score * 0.10       # Balance sheet
+        + cash_score * 0.20     # Cash generation (FCF is key for dip buying)
+        + growth_score * 0.10   # Growth
+        + liq_score * 0.05      # Liquidity (less important for large caps)
+        + val_score * 0.15      # Valuation (P/E, PEG, EV/EBITDA)
+        + analyst_score * 0.10  # Analyst consensus (reduced - lagging indicator)
+        + risk_score * 0.10     # NEW: Short interest + institutional ownership
     )
 
     # Count available fields
@@ -717,6 +812,7 @@ async def compute_quality_score(
         **liq_factors,
         **val_factors,
         **analyst_factors,
+        **risk_factors,
     }
     fields_available = sum(1 for v in all_factors.values() if v is not None)
     
@@ -739,9 +835,13 @@ async def compute_quality_score(
         pe_ratio=val_factors.get("pe_ratio"),
         forward_pe=val_factors.get("forward_pe"),
         peg_ratio=val_factors.get("peg_ratio"),
+        ev_to_ebitda=val_factors.get("ev_to_ebitda"),
         return_on_equity=_safe_float(merged_info.get("returnOnEquity") or merged_info.get("return_on_equity")),
+        return_on_assets=_safe_float(merged_info.get("returnOnAssets") or merged_info.get("return_on_assets")),
         recommendation=analyst_factors.get("recommendation"),
         target_upside=target_upside,
+        short_percent_of_float=risk_factors.get("short_percent_of_float"),
+        institutional_ownership=risk_factors.get("institutional_ownership"),
         profitability_score=prof_score,
         balance_sheet_score=bs_score,
         cash_generation_score=cash_score,
@@ -749,8 +849,9 @@ async def compute_quality_score(
         liquidity_score=liq_score,
         valuation_score=val_score,
         analyst_score=analyst_score,
+        risk_score=risk_score,
         fields_available=fields_available,
-        fields_total=14,
+        fields_total=16,
     )
 
 

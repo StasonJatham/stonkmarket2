@@ -68,6 +68,7 @@ class StockInfo(BaseModel):
     market_cap: Optional[float] = Field(None, description="Market capitalization")
     pe_ratio: Optional[float] = Field(None, description="Trailing P/E ratio")
     forward_pe: Optional[float] = Field(None, description="Forward P/E ratio")
+    peg_ratio: Optional[float] = Field(None, description="PEG ratio (P/E to Growth)")
     dividend_yield: Optional[float] = Field(None, description="Dividend yield")
     beta: Optional[float] = Field(None, description="Beta")
     avg_volume: Optional[int] = Field(None, description="Average volume")
@@ -75,5 +76,15 @@ class StockInfo(BaseModel):
     summary_ai: Optional[str] = Field(None, description="AI-generated short summary (~300 chars)")
     website: Optional[str] = Field(None, description="Company website")
     recommendation: Optional[str] = Field(None, description="Analyst recommendation")
+    # Extended fundamentals
+    profit_margin: Optional[float] = Field(None, description="Profit margin (decimal)")
+    gross_margin: Optional[float] = Field(None, description="Gross margin (decimal)")
+    return_on_equity: Optional[float] = Field(None, description="Return on equity (decimal)")
+    debt_to_equity: Optional[float] = Field(None, description="Debt to equity ratio")
+    current_ratio: Optional[float] = Field(None, description="Current ratio")
+    revenue_growth: Optional[float] = Field(None, description="Revenue growth (decimal)")
+    free_cash_flow: Optional[int] = Field(None, description="Free cash flow")
+    target_mean_price: Optional[float] = Field(None, description="Analyst target mean price")
+    num_analyst_opinions: Optional[int] = Field(None, description="Number of analyst opinions")
 
     model_config = {"from_attributes": True}

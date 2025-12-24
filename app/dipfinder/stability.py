@@ -335,9 +335,13 @@ def _compute_fundamental_stability_score(info: Dict[str, Any]) -> float:
         weights.append(0.15)
 
     # 6. Return on Equity (profitability/efficiency) - weight 0.10
+    # NOTE: ROE > 50% is often due to buybacks/leverage, not true quality
+    # Cap at 50% to avoid distortion from highly leveraged companies like Apple
     roe = info.get("returnOnEquity") or info.get("return_on_equity")
     if roe is not None:
-        if roe > 0.25:
+        if roe > 0.50:  # Very high ROE = likely leverage, cap the score
+            scores.append(75.0)  # Don't over-reward leverage
+        elif roe > 0.25:
             scores.append(90.0)
         elif roe > 0.15:
             scores.append(75.0)
@@ -347,6 +351,21 @@ def _compute_fundamental_stability_score(info: Dict[str, Any]) -> float:
             scores.append(45.0)
         else:
             scores.append(25.0)
+        weights.append(0.10)
+    
+    # 8. Institutional Ownership (smart money confidence) - weight 0.10
+    inst_pct = info.get("heldPercentInstitutions") or info.get("held_percent_institutions")
+    if inst_pct is not None:
+        if inst_pct > 0.80:  # >80% institutional = very stable
+            scores.append(90.0)
+        elif inst_pct > 0.60:  # >60% = solid institutional backing
+            scores.append(80.0)
+        elif inst_pct > 0.40:  # >40% = moderate institutional interest
+            scores.append(65.0)
+        elif inst_pct > 0.20:  # >20% = some institutional presence
+            scores.append(50.0)
+        else:  # <20% = retail-dominated, more volatile
+            scores.append(35.0)
         weights.append(0.10)
 
     # 7. Revenue growth (consistent growth = stable business) - weight 0.10
