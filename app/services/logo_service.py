@@ -113,7 +113,8 @@ async def _fetch_favicon_fallback(
     timeout: float = 5.0,
 ) -> Optional[bytes]:
     """
-    Fetch favicon as fallback using Google's favicon service.
+    Fetch favicon as fallback using DuckDuckGo's icon service.
+    Falls back to UI Avatars if favicon not available.
     
     Args:
         website: Company website URL (from yfinance)
@@ -123,32 +124,46 @@ async def _fetch_favicon_fallback(
     Returns:
         Image bytes or None
     """
-    # Extract domain from website URL - no hardcoded fallback mappings
+    from urllib.parse import urlparse
+    
+    # Extract domain from website URL
     domain = None
     if website:
         try:
-            from urllib.parse import urlparse
             parsed = urlparse(website)
             domain = parsed.netloc or parsed.path.split('/')[0]
+            # Remove www. prefix for cleaner domain
+            if domain.startswith("www."):
+                domain = domain[4:]
         except Exception:
             pass
     
-    # No domain means no website available from yfinance - can't fetch favicon
-    if not domain:
-        logger.debug(f"No website available for {symbol}, skipping favicon fallback")
-        return None
-    
-    # Google favicon service
-    url = f"https://www.google.com/s2/favicons?domain={domain}&sz=128"
-    
-    try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        # Try DuckDuckGo icons first (reliable, no API key needed)
+        if domain:
+            try:
+                # DuckDuckGo icon service
+                url = f"https://icons.duckduckgo.com/ip3/{domain}.ico"
+                response = await client.get(url)
+                if response.status_code == 200 and len(response.content) > 100:
+                    content_type = response.headers.get("content-type", "")
+                    if "image" in content_type or response.content[:4] in (b'\x00\x00\x01\x00', b'\x89PNG'):
+                        logger.debug(f"Fetched icon for {symbol} from DuckDuckGo ({domain})")
+                        return response.content
+            except Exception as e:
+                logger.debug(f"DuckDuckGo icon failed for {symbol}: {e}")
+        
+        # Final fallback: UI Avatars (always works, generates placeholder)
+        try:
+            # Generate a consistent color from symbol
+            color = hashlib.md5(symbol.encode()).hexdigest()[:6]
+            url = f"https://ui-avatars.com/api/?name={symbol}&background={color}&color=fff&size=128&format=png&bold=true"
             response = await client.get(url)
             if response.status_code == 200:
-                logger.debug(f"Fetched favicon for {symbol} from {domain}")
+                logger.debug(f"Generated avatar for {symbol}")
                 return response.content
-    except Exception as e:
-        logger.debug(f"Favicon fallback failed for {symbol}: {e}")
+        except Exception as e:
+            logger.debug(f"UI Avatars fallback failed for {symbol}: {e}")
     
     return None
 

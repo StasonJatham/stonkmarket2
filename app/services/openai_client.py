@@ -156,10 +156,10 @@ class TaskConfig:
 TASK_CONFIGS: dict[TaskType, TaskConfig] = {
     TaskType.BIO: TaskConfig(
         min_chars=150,
-        max_chars=200,
+        max_chars=300,
         reasoning_overhead=100,
         max_emojis=2,
-        default_max_tokens=150,  # 200 chars / 4 + buffer
+        default_max_tokens=200,  # 300 chars / 4 + buffer
     ),
     TaskType.RATING: TaskConfig(
         min_chars=0,

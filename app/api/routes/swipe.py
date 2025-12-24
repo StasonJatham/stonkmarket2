@@ -7,6 +7,7 @@ from typing import Literal, Optional
 from fastapi import APIRouter, Query, Request, Header
 
 from app.core.exceptions import NotFoundError, ValidationError
+from app.core.security import decode_access_token
 from app.core.client_identity import (
     get_vote_identifier,
     check_vote_allowed,

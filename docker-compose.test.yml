@@ -29,8 +29,8 @@ services:
       - LOG_LEVEL=INFO
       - CORS_ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - LOGO_DEV_PUBLIC_KEY=${LOGO_DEV_PUBLIC_KEY:-}
-      - LOGO_DEV_SECRET_KEY=${LOGO_DEV_SECRET_KEY:-}
+      - LOGO_DEV_PUBLIC_KEY=${LOGO_DEV_PUBLIC_KEY:-pk_D27n9b3FSs24Q1yRf4_PHg}
+      - LOGO_DEV_SECRET_KEY=${LOGO_DEV_SECRET_KEY:-sk_TO9TyvXqRq6b5fC5B-PVTQ}
     ports:
       - "8000:8000"
     volumes:
