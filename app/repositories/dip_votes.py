@@ -59,6 +59,7 @@ async def add_vote(
     vote_type: str,
     vote_weight: int = 1,
     api_key_id: Optional[int] = None,
+    skip_cooldown: bool = False,
 ) -> tuple[bool, Optional[str]]:
     """
     Add a vote for a dip.
@@ -69,6 +70,7 @@ async def add_vote(
         vote_type: 'buy' or 'sell'
         vote_weight: Vote weight multiplier (default 1, API key users get 10)
         api_key_id: Optional API key ID if using authenticated voting
+        skip_cooldown: If True, skip cooldown check (for admins)
 
     Returns:
         Tuple of (success, error_message)
@@ -76,12 +78,13 @@ async def add_vote(
     if vote_type not in ("buy", "sell"):
         return False, "Invalid vote type. Must be 'buy' or 'sell'"
 
-    # Check cooldown
-    cooldown = await get_vote_cooldown_remaining(symbol, fingerprint)
-    if cooldown:
-        hours = cooldown // 3600
-        minutes = (cooldown % 3600) // 60
-        return False, f"Vote cooldown active. Try again in {hours}h {minutes}m"
+    # Check cooldown (unless skipped for admin)
+    if not skip_cooldown:
+        cooldown = await get_vote_cooldown_remaining(symbol, fingerprint)
+        if cooldown:
+            hours = cooldown // 3600
+            minutes = (cooldown % 3600) // 60
+            return False, f"Vote cooldown active. Try again in {hours}h {minutes}m"
 
     # Check symbol is tracked (exists in symbols table, doesn't need to be in dip_state)
     exists = await fetch_val(

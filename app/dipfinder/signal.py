@@ -404,7 +404,8 @@ def compute_signal(
         )
 
     # Determine alert level
-    should_alert = (
+    # Convert to native Python bool to avoid numpy bool issues with database
+    should_alert = bool(
         final_score >= config.alert_good
         and dip_metrics.is_meaningful
         and quality_metrics.score >= config.quality_gate

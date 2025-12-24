@@ -7,12 +7,12 @@ import hashlib
 from datetime import datetime, timedelta
 from typing import List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, Header
 
 from app.api.dependencies import require_admin
 from app.core.exceptions import ValidationError, NotFoundError
 from app.core.logging import get_logger
-from app.core.security import TokenData
+from app.core.security import TokenData, decode_access_token
 from app.core.client_identity import (
     get_client_fingerprint,
     get_server_fingerprint,
@@ -65,6 +65,7 @@ async def suggest_stock(
     request: Request,
     background_tasks: BackgroundTasks,
     symbol: str = Query(..., min_length=1, max_length=10, description="Stock symbol (1-10 chars, letters/numbers/dots only)"),
+    authorization: Optional[str] = Header(default=None),
 ):
     """
     Suggest a new stock to be tracked.
@@ -72,7 +73,19 @@ async def suggest_stock(
     Public endpoint - no auth required.
     If stock already suggested, adds a vote instead.
     Uses multi-layer fingerprinting for abuse prevention.
+    Admins bypass cooldown restrictions.
     """
+    # Check if admin (bypass cooldown)
+    is_admin = False
+    if authorization and authorization.startswith("Bearer "):
+        try:
+            token = authorization.split(" ", 1)[1]
+            token_data = decode_access_token(token)
+            if token_data and token_data.is_admin:
+                is_admin = True
+        except Exception:
+            pass  # Not a valid token, continue as anonymous
+    
     # Validate symbol format
     symbol = _validate_symbol_format(symbol)
     
@@ -87,15 +100,17 @@ async def suggest_stock(
     )
 
     if existing:
-        # Already exists - try to add a vote
-        check = await check_vote_allowed(request, symbol)
-        if not check.allowed:
-            raise ValidationError(message=check.reason, details={"symbol": symbol})
+        # Already exists - try to add a vote (admins bypass cooldown)
+        if not is_admin:
+            check = await check_vote_allowed(request, symbol)
+            if not check.allowed:
+                raise ValidationError(message=check.reason, details={"symbol": symbol})
 
         suggestion_id = existing["id"]
 
-        # Record vote for tracking
-        await record_vote(request, symbol)
+        # Record vote for tracking (skip for admins to avoid polluting rate limit data)
+        if not is_admin:
+            await record_vote(request, symbol)
 
         # Also store in database for historical record
         await execute(
@@ -142,9 +157,11 @@ async def suggest_stock(
         }
 
     # NEW SUGGESTION - check rate limit first
-    can_suggest, reason = await check_can_suggest(request)
-    if not can_suggest:
-        raise ValidationError(message=reason, details={"symbol": symbol})
+    # Check suggestion limits (admins bypass)
+    if not is_admin:
+        can_suggest, reason = await check_can_suggest(request)
+        if not can_suggest:
+            raise ValidationError(message=reason, details={"symbol": symbol})
 
     # Fetch stock info from yfinance
     loop = asyncio.get_event_loop()
@@ -178,11 +195,13 @@ async def suggest_stock(
         stock_info["fetch_error"],
     )
 
-    # Record suggestion for rate limiting
-    await record_suggestion(request)
+    # Record suggestion for rate limiting (skip for admins)
+    if not is_admin:
+        await record_suggestion(request)
     
-    # Record vote (suggesting also counts as voting)
-    await record_vote(request, symbol)
+    # Record vote (suggesting also counts as voting - skip for admins)
+    if not is_admin:
+        await record_vote(request, symbol)
 
     # Add initial vote to database
     await execute(
@@ -213,6 +232,7 @@ async def vote_for_suggestion(
     request: Request,
     symbol: str,
     background_tasks: BackgroundTasks,
+    authorization: Optional[str] = Header(default=None),
 ):
     """
     Vote for an existing stock suggestion.
@@ -220,17 +240,30 @@ async def vote_for_suggestion(
     Public endpoint - no auth required.
     Uses server-side fingerprinting for abuse prevention.
     Vote cooldown: 7 days per stock per user/device/IP.
+    Admins bypass the cooldown entirely.
     """
     symbol = symbol.strip().upper()
     
-    # === Risk Assessment + Cooldown Check ===
-    check = await check_vote_allowed(request, symbol)
+    # Check if admin - bypass cooldown for admins
+    is_admin = False
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.split(" ", 1)[1]
+        try:
+            token_data = decode_access_token(token)
+            if token_data and token_data.is_admin:
+                is_admin = True
+        except Exception:
+            pass
     
-    if not check.allowed:
-        raise ValidationError(
-            check.reason,
-            details={"retry_after": 3600}
-        )
+    # === Risk Assessment + Cooldown Check (skip for admin) ===
+    if not is_admin:
+        check = await check_vote_allowed(request, symbol)
+        
+        if not check.allowed:
+            raise ValidationError(
+                check.reason,
+                details={"retry_after": 3600}
+            )
 
     # Get suggestion
     suggestion = await fetch_one(

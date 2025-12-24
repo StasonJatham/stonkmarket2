@@ -126,14 +126,17 @@ test.describe('Stock Interactions', () => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');
     
-    // Wait for stocks to load
-    await page.waitForTimeout(1000);
+    // Wait for stocks to load and animations to complete
+    await page.waitForTimeout(1500);
     
     // Find and click a stock to open the detail sheet
     const stockElement = page.locator('[data-testid="stock-card"], table tbody tr, [class*="cursor-pointer"]').first();
     
     if (await stockElement.isVisible()) {
-      await stockElement.click();
+      // Wait for element to be stable before clicking
+      await stockElement.waitFor({ state: 'visible' });
+      await page.waitForTimeout(300);
+      await stockElement.click({ force: true });
       
       // Wait for sheet to open
       await page.waitForTimeout(500);

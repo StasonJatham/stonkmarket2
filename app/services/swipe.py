@@ -322,6 +322,7 @@ async def vote_on_dip(
     vote_type: str,
     vote_weight: int = 1,
     api_key_id: Optional[int] = None,
+    skip_cooldown: bool = False,
 ) -> tuple[bool, Optional[str]]:
     """
     Record a vote on a dip.
@@ -332,6 +333,7 @@ async def vote_on_dip(
         vote_type: 'buy' or 'sell'
         vote_weight: Vote weight multiplier (default 1, API key users get 10)
         api_key_id: Optional API key ID if using authenticated voting
+        skip_cooldown: If True, skip cooldown check (for admins)
 
     Returns:
         Tuple of (success, error_message)
@@ -342,6 +344,7 @@ async def vote_on_dip(
         vote_type=vote_type,
         vote_weight=vote_weight,
         api_key_id=api_key_id,
+        skip_cooldown=skip_cooldown,
     )
 
 

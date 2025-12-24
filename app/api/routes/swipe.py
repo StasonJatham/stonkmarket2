@@ -91,13 +91,14 @@ async def get_dip_card(
     "/cards/{symbol}/vote",
     response_model=DipVoteResponse,
     summary="Vote on a dip",
-    description="Submit a buy/sell vote for a stock dip. API key holders get 10x vote weight.",
+    description="Submit a buy/sell vote for a stock dip. API key holders get 10x vote weight. Admins bypass cooldown.",
 )
 async def vote_on_dip(
     request: Request,
     symbol: str,
     payload: DipVoteRequest,
     x_api_key: Optional[str] = Header(default=None, alias="X-API-Key"),
+    authorization: Optional[str] = Header(default=None),
 ) -> DipVoteResponse:
     """
     Vote on a stock dip.
@@ -106,16 +107,30 @@ async def vote_on_dip(
 
     Vote cooldown: Each user can only vote once per stock every 7 days.
     Users are identified by a fingerprint combining IP + browser headers.
-
+    
+    Admins bypass the cooldown entirely.
     API key holders get 10x vote weight. Use X-API-Key header for authenticated voting.
     """
     symbol = symbol.upper()
     
-    # === Check if vote is allowed (cooldown + risk assessment) ===
-    check = await check_vote_allowed(request, symbol)
+    # Check if admin - bypass cooldown for admins
+    is_admin = False
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.split(" ", 1)[1]
+        try:
+            token_data = decode_access_token(token)
+            if token_data and token_data.is_admin:
+                is_admin = True
+        except Exception:
+            pass
     
-    if not check.allowed:
-        raise ValidationError(check.reason, details={"retry_after": 3600})
+    # === Check if vote is allowed (cooldown + risk assessment) ===
+    check = None
+    if not is_admin:
+        check = await check_vote_allowed(request, symbol)
+        
+        if not check.allowed:
+            raise ValidationError(check.reason, details={"retry_after": 3600})
     
     # Get voter identifier
     vote_id = get_vote_identifier(request, symbol)
@@ -130,8 +145,8 @@ async def vote_on_dip(
             vote_weight = key_data.get("vote_weight", 10)
             api_key_id = key_data.get("id")
     
-    # Reduce vote weight for high-risk votes (soft penalty)
-    if check.reduce_weight:
+    # Reduce vote weight for high-risk votes (soft penalty) - skip for admin
+    if check and check.reduce_weight:
         vote_weight = max(1, vote_weight // 2)
 
     success, error = await swipe.vote_on_dip(
@@ -140,6 +155,7 @@ async def vote_on_dip(
         vote_type=payload.vote_type,
         vote_weight=vote_weight,
         api_key_id=api_key_id,
+        skip_cooldown=is_admin,
     )
 
     if not success:
