@@ -1,319 +1,58 @@
 """
-Unified yfinance service - single source of truth for all Yahoo Finance data.
+DEPRECATED: Legacy yfinance module - Façade delegating to unified YFinanceService.
 
-This module centralizes ALL yfinance API calls to:
-1. Enforce rate limiting consistently
-2. Maximize cache hit rate across the app
-3. Save ALL search results to local DB for future instant lookups
-4. Minimize duplicate yfinance calls
+This module maintains backward compatibility for existing imports.
+All new code should import directly from app.services.data_providers.
 
-Usage:
-    from app.services.yfinance import (
-        get_ticker_info,
-        get_price_history,
-        search_tickers,
-        get_fundamentals_data,
-    )
+Usage (old - still works):
+    from app.services.yfinance import get_ticker_info, search_tickers
     
-    # Get stock info (uses cache, rate limited)
-    info = await get_ticker_info("AAPL")
-    
-    # Search for symbols (saves results to DB)
-    results = await search_tickers("apple")
-    
-    # Get price history
-    prices = await get_price_history("AAPL", period="1y")
+Usage (new - preferred):
+    from app.services.data_providers import get_yfinance_service
+    service = get_yfinance_service()
+    info = await service.get_ticker_info("AAPL")
 """
 
 from __future__ import annotations
 
-import asyncio
-import time
-from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone, timedelta, date
-from typing import Any, Optional, Literal
-
-import yfinance as yf
+import warnings
+from datetime import datetime, timezone, timedelta
+from typing import Any, Optional
 
 from app.core.logging import get_logger
-from app.core.rate_limiter import get_yfinance_limiter
 from app.database.connection import fetch_one, fetch_all, execute
+from app.services.data_providers import get_yfinance_service
 
 logger = get_logger("services.yfinance")
 
-# Thread pool for blocking yfinance calls
-_executor = ThreadPoolExecutor(max_workers=4)
-
-# In-memory cache with TTL (for very frequent calls within same request cycle)
-_INFO_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
-_PRICE_CACHE: dict[str, tuple[float, list[dict]]] = {}
-
-# Cache TTLs
-INFO_CACHE_TTL = 300  # 5 minutes for in-memory
-PRICE_CACHE_TTL = 60  # 1 minute for prices
+# Emit deprecation warning once per session
+_WARNED = False
 
 
-# =============================================================================
-# Type Helpers
-# =============================================================================
+def _emit_deprecation_warning():
+    """Emit deprecation warning once."""
+    global _WARNED
+    if not _WARNED:
+        warnings.warn(
+            "app.services.yfinance is deprecated. Use app.services.data_providers.get_yfinance_service() instead.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+        _WARNED = True
 
 
-def _safe_float(value: Any) -> Optional[float]:
-    """Safely convert value to float."""
-    if value is None:
-        return None
-    try:
-        f = float(value)
-        if f != f or f == float('inf') or f == float('-inf'):
-            return None
-        return f
-    except (ValueError, TypeError):
-        return None
-
-
-def _safe_int(value: Any) -> Optional[int]:
-    """Safely convert value to int."""
-    if value is None:
-        return None
-    try:
-        return int(value)
-    except (ValueError, TypeError):
-        return None
-
-
+# Re-export utility functions for compatibility
 def is_etf_or_index(symbol: str, quote_type: Optional[str] = None) -> bool:
-    """
-    Check if symbol is an ETF, index, or fund.
-    
-    Uses quote_type from yfinance when available, otherwise infers from symbol pattern.
-    This is dynamic - any ETF/fund added by users will be properly detected.
-    """
-    # Index symbols start with ^
+    """Check if symbol is an ETF, index, or fund."""
     if symbol.startswith("^"):
         return True
-    
-    # Check quote type if provided
     if quote_type:
-        quote_type_upper = quote_type.upper()
-        return quote_type_upper in ("ETF", "INDEX", "MUTUALFUND", "TRUST")
+        return quote_type.upper() in ("ETF", "INDEX", "MUTUALFUND", "TRUST")
+    return False
 
 
 # =============================================================================
-# Core yfinance API Calls (Sync - run in thread pool)
-# =============================================================================
-
-
-def _fetch_ticker_info_sync(symbol: str) -> Optional[dict[str, Any]]:
-    """
-    Fetch complete ticker info from yfinance (blocking).
-    
-    This is the single source of truth for ticker data.
-    Returns a normalized dict with all available fields.
-    """
-    limiter = get_yfinance_limiter()
-    if not limiter.acquire_sync():
-        logger.warning(f"Rate limit timeout for {symbol}")
-        return None
-    
-    try:
-        ticker = yf.Ticker(symbol)
-        info = ticker.info or {}
-        
-        if not info or not info.get("symbol"):
-            return None
-        
-        quote_type = (info.get("quoteType") or "EQUITY").upper()
-        # Dynamic ETF detection from quote_type
-        is_etf = is_etf_or_index(symbol, quote_type)
-        
-        # Get IPO year from first trade date
-        ipo_year = None
-        first_trade_ms = info.get("firstTradeDateMilliseconds")
-        if first_trade_ms:
-            ipo_year = datetime.fromtimestamp(first_trade_ms / 1000, tz=timezone.utc).year
-        
-        # Normalize dividend yield (yfinance returns as decimal e.g. 0.17 = 0.17%)
-        raw_div_yield = info.get("dividendYield")
-        dividend_yield = raw_div_yield / 100 if raw_div_yield else None
-        
-        return {
-            # Identity
-            "symbol": symbol.upper(),
-            "name": info.get("shortName") or info.get("longName"),
-            "quote_type": quote_type,
-            "exchange": info.get("exchange"),
-            "currency": info.get("currency"),
-            "website": info.get("website"),
-            "sector": None if is_etf else info.get("sector"),
-            "industry": None if is_etf else info.get("industry"),
-            "summary": info.get("longBusinessSummary"),
-            "ipo_year": ipo_year,
-            "is_etf": is_etf,  # Include ETF flag for downstream use
-            
-            # Price
-            "current_price": _safe_float(info.get("regularMarketPrice") or info.get("previousClose")),
-            "previous_close": _safe_float(info.get("previousClose")),
-            "fifty_two_week_high": _safe_float(info.get("fiftyTwoWeekHigh")),
-            "fifty_two_week_low": _safe_float(info.get("fiftyTwoWeekLow")),
-            "fifty_day_average": _safe_float(info.get("fiftyDayAverage")),
-            "two_hundred_day_average": _safe_float(info.get("twoHundredDayAverage")),
-            
-            # Market
-            "market_cap": _safe_int(info.get("totalAssets") if is_etf else info.get("marketCap")),
-            "avg_volume": _safe_int(info.get("averageVolume")),
-            "volume": _safe_int(info.get("volume")),
-            
-            # Valuation (skip for ETFs)
-            "pe_ratio": None if is_etf else _safe_float(info.get("trailingPE")),
-            "forward_pe": None if is_etf else _safe_float(info.get("forwardPE")),
-            "peg_ratio": None if is_etf else _safe_float(info.get("trailingPegRatio")),
-            "price_to_book": None if is_etf else _safe_float(info.get("priceToBook")),
-            "price_to_sales": None if is_etf else _safe_float(info.get("priceToSalesTrailing12Months")),
-            "enterprise_value": None if is_etf else _safe_int(info.get("enterpriseValue")),
-            "ev_to_ebitda": None if is_etf else _safe_float(info.get("enterpriseToEbitda")),
-            "ev_to_revenue": None if is_etf else _safe_float(info.get("enterpriseToRevenue")),
-            
-            # Profitability
-            "profit_margin": None if is_etf else _safe_float(info.get("profitMargins")),
-            "operating_margin": None if is_etf else _safe_float(info.get("operatingMargins")),
-            "gross_margin": None if is_etf else _safe_float(info.get("grossMargins")),
-            "ebitda_margin": None if is_etf else _safe_float(info.get("ebitdaMargins")),
-            "return_on_equity": None if is_etf else _safe_float(info.get("returnOnEquity")),
-            "return_on_assets": None if is_etf else _safe_float(info.get("returnOnAssets")),
-            
-            # Financial Health
-            "debt_to_equity": None if is_etf else _safe_float(info.get("debtToEquity")),
-            "current_ratio": None if is_etf else _safe_float(info.get("currentRatio")),
-            "quick_ratio": None if is_etf else _safe_float(info.get("quickRatio")),
-            "total_cash": None if is_etf else _safe_int(info.get("totalCash")),
-            "total_debt": None if is_etf else _safe_int(info.get("totalDebt")),
-            "free_cash_flow": None if is_etf else _safe_int(info.get("freeCashflow")),
-            "operating_cash_flow": None if is_etf else _safe_int(info.get("operatingCashflow")),
-            
-            # Per Share
-            "book_value": None if is_etf else _safe_float(info.get("bookValue")),
-            "eps_trailing": None if is_etf else _safe_float(info.get("trailingEps")),
-            "eps_forward": None if is_etf else _safe_float(info.get("forwardEps")),
-            "revenue_per_share": None if is_etf else _safe_float(info.get("revenuePerShare")),
-            "dividend_yield": dividend_yield,
-            
-            # Growth
-            "revenue_growth": None if is_etf else _safe_float(info.get("revenueGrowth")),
-            "earnings_growth": None if is_etf else _safe_float(info.get("earningsGrowth")),
-            "earnings_quarterly_growth": None if is_etf else _safe_float(info.get("earningsQuarterlyGrowth")),
-            
-            # Shares
-            "shares_outstanding": None if is_etf else _safe_int(info.get("sharesOutstanding")),
-            "float_shares": None if is_etf else _safe_int(info.get("floatShares")),
-            "held_percent_insiders": None if is_etf else _safe_float(info.get("heldPercentInsiders")),
-            "held_percent_institutions": None if is_etf else _safe_float(info.get("heldPercentInstitutions")),
-            "short_ratio": None if is_etf else _safe_float(info.get("shortRatio")),
-            "short_percent_of_float": None if is_etf else _safe_float(info.get("shortPercentOfFloat")),
-            
-            # Risk
-            "beta": _safe_float(info.get("beta")),
-            
-            # Analyst
-            "recommendation": None if is_etf else info.get("recommendationKey"),
-            "recommendation_mean": None if is_etf else _safe_float(info.get("recommendationMean")),
-            "num_analyst_opinions": None if is_etf else _safe_int(info.get("numberOfAnalystOpinions")),
-            "target_high_price": None if is_etf else _safe_float(info.get("targetHighPrice")),
-            "target_low_price": None if is_etf else _safe_float(info.get("targetLowPrice")),
-            "target_mean_price": None if is_etf else _safe_float(info.get("targetMeanPrice")),
-            "target_median_price": None if is_etf else _safe_float(info.get("targetMedianPrice")),
-            
-            # Revenue
-            "revenue": None if is_etf else _safe_int(info.get("totalRevenue")),
-            "ebitda": None if is_etf else _safe_int(info.get("ebitda")),
-            "net_income": None if is_etf else _safe_int(info.get("netIncomeToCommon")),
-        }
-        
-    except Exception as e:
-        logger.error(f"Failed to fetch ticker info for {symbol}: {e}")
-        return None
-
-
-def _fetch_price_history_sync(
-    symbol: str,
-    period: str = "1y",
-    interval: str = "1d",
-) -> Optional[list[dict]]:
-    """Fetch price history from yfinance (blocking)."""
-    limiter = get_yfinance_limiter()
-    if not limiter.acquire_sync():
-        logger.warning(f"Rate limit timeout for price history: {symbol}")
-        return None
-    
-    try:
-        ticker = yf.Ticker(symbol)
-        hist = ticker.history(period=period, interval=interval)
-        
-        if hist.empty:
-            return None
-        
-        prices = []
-        for idx, row in hist.iterrows():
-            prices.append({
-                "date": idx.strftime("%Y-%m-%d"),
-                "open": round(row["Open"], 2),
-                "high": round(row["High"], 2),
-                "low": round(row["Low"], 2),
-                "close": round(row["Close"], 2),
-                "volume": int(row["Volume"]),
-            })
-        
-        return prices
-        
-    except Exception as e:
-        logger.error(f"Failed to fetch price history for {symbol}: {e}")
-        return None
-
-
-def _search_tickers_sync(query: str, max_results: int = 10) -> list[dict[str, Any]]:
-    """
-    Search yfinance for symbols matching query (blocking).
-    
-    Returns list of matches with symbol, name, exchange, quote_type.
-    """
-    limiter = get_yfinance_limiter()
-    if not limiter.acquire_sync():
-        logger.warning(f"Rate limit timeout for search: {query}")
-        return []
-    
-    try:
-        search = yf.Search(
-            query,
-            max_results=max_results,
-            news_count=0,
-            enable_fuzzy_query=True,
-        )
-        
-        results = []
-        if hasattr(search, 'quotes') and search.quotes:
-            for quote in search.quotes[:max_results]:
-                quote_type = (quote.get("quoteType") or "").upper()
-                if quote_type not in ("EQUITY", "ETF", "INDEX"):
-                    continue
-                
-                results.append({
-                    "symbol": quote.get("symbol", ""),
-                    "name": quote.get("shortname") or quote.get("longname") or quote.get("symbol"),
-                    "exchange": quote.get("exchange", ""),
-                    "quote_type": quote_type,
-                    "sector": quote.get("sector"),
-                    "industry": quote.get("industry"),
-                    "score": quote.get("score", 0),
-                })
-        
-        return results
-        
-    except Exception as e:
-        logger.error(f"yfinance search failed for '{query}': {e}")
-        return []
-
-
-# =============================================================================
-# Async Public API
+# Async Public API - Delegates to YFinanceService
 # =============================================================================
 
 
@@ -324,31 +63,11 @@ async def get_ticker_info(
     """
     Get complete ticker info for a symbol.
     
-    Uses in-memory cache first, then fetches from yfinance.
-    
-    Args:
-        symbol: Stock symbol
-        use_cache: Whether to use in-memory cache
-        
-    Returns:
-        Dict with all ticker info fields, or None if invalid
+    DEPRECATED: Use get_yfinance_service().get_ticker_info() instead.
     """
-    symbol = symbol.strip().upper()
-    
-    # Check in-memory cache
-    if use_cache:
-        cached = _INFO_CACHE.get(symbol)
-        if cached and time.time() - cached[0] < INFO_CACHE_TTL:
-            return cached[1]
-    
-    # Fetch from yfinance
-    loop = asyncio.get_event_loop()
-    info = await loop.run_in_executor(_executor, _fetch_ticker_info_sync, symbol)
-    
-    if info:
-        _INFO_CACHE[symbol] = (time.time(), info)
-    
-    return info
+    _emit_deprecation_warning()
+    service = get_yfinance_service()
+    return await service.get_ticker_info(symbol, skip_cache=not use_cache)
 
 
 async def get_price_history(
@@ -360,32 +79,28 @@ async def get_price_history(
     """
     Get price history for a symbol.
     
-    Args:
-        symbol: Stock symbol
-        period: Time period (1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y, 10y, ytd, max)
-        interval: Data interval (1m, 2m, 5m, 15m, 30m, 60m, 90m, 1h, 1d, 5d, 1wk, 1mo, 3mo)
-        use_cache: Whether to use in-memory cache
-        
-    Returns:
-        List of OHLCV dicts
+    DEPRECATED: Use get_yfinance_service().get_price_history() instead.
+    
+    Returns list of OHLCV dicts for backward compatibility.
     """
-    symbol = symbol.strip().upper()
-    cache_key = f"{symbol}:{period}:{interval}"
+    _emit_deprecation_warning()
+    service = get_yfinance_service()
+    df, _ = await service.get_price_history(symbol, period=period, interval=interval)
     
-    # Check cache
-    if use_cache:
-        cached = _PRICE_CACHE.get(cache_key)
-        if cached and time.time() - cached[0] < PRICE_CACHE_TTL:
-            return cached[1]
+    if df is None or df.empty:
+        return None
     
-    # Fetch
-    loop = asyncio.get_event_loop()
-    prices = await loop.run_in_executor(
-        _executor, _fetch_price_history_sync, symbol, period, interval
-    )
-    
-    if prices:
-        _PRICE_CACHE[cache_key] = (time.time(), prices)
+    # Convert DataFrame to list of dicts for backward compatibility
+    prices = []
+    for idx, row in df.iterrows():
+        prices.append({
+            "date": idx.strftime("%Y-%m-%d") if hasattr(idx, "strftime") else str(idx)[:10],
+            "open": round(float(row.get("Open", 0)), 2),
+            "high": round(float(row.get("High", 0)), 2),
+            "low": round(float(row.get("Low", 0)), 2),
+            "close": round(float(row.get("Close", 0)), 2),
+            "volume": int(row.get("Volume", 0)),
+        })
     
     return prices
 
@@ -398,23 +113,16 @@ async def search_tickers(
     """
     Search for tickers matching query.
     
-    IMPORTANT: This function saves ALL search results to the database
-    so future searches can use local data for instant results.
+    DEPRECATED: Use get_yfinance_service().search_tickers() instead.
     
     Search strategy:
     1. Search local symbols table first (instant)
     2. Check search cache for previous API results
     3. Query yfinance API if needed
     4. Save ALL results to local DB for future queries
-    
-    Args:
-        query: Search query (symbol or company name)
-        max_results: Maximum results to return
-        save_to_db: Whether to save results to DB (default True)
-        
-    Returns:
-        List of matching symbols with metadata
     """
+    _emit_deprecation_warning()
+    
     if len(query.strip()) < 2:
         return []
     
@@ -444,19 +152,13 @@ async def search_tickers(
                 results.append(r)
         return results[:max_results]
     
-    # 3. Query yfinance API
-    loop = asyncio.get_event_loop()
-    api_results = await loop.run_in_executor(
-        _executor, _search_tickers_sync, query, max_results
-    )
+    # 3. Query via unified service
+    service = get_yfinance_service()
+    api_results = await service.search_tickers(query, max_results=max_results, save_to_db=save_to_db)
     
-    # 4. Save to cache and optionally to symbols table
+    # 4. Save to cache
     if api_results:
         await _save_search_cache(normalized, api_results)
-        
-        if save_to_db:
-            # Save search results to symbol_search_results table for future local lookups
-            await _save_search_results_to_db(api_results)
         
         for r in api_results:
             if r["symbol"] not in seen_symbols:
@@ -471,11 +173,9 @@ async def validate_symbol(symbol: str) -> Optional[dict[str, Any]]:
     """
     Validate a symbol exists and get basic info.
     
-    Checks local DB first, then yfinance.
-    
-    Returns:
-        Dict with symbol info if valid, None otherwise
+    DEPRECATED: Use get_yfinance_service().validate_symbol() instead.
     """
+    _emit_deprecation_warning()
     symbol = symbol.strip().upper()
     
     # Check local first
@@ -499,8 +199,9 @@ async def validate_symbol(symbol: str) -> Optional[dict[str, Any]]:
             "source": "local",
         }
     
-    # Fall back to yfinance
-    info = await get_ticker_info(symbol)
+    # Fall back to unified service
+    service = get_yfinance_service()
+    info = await service.get_ticker_info(symbol)
     if info and info.get("current_price"):
         return {
             "symbol": info["symbol"],
@@ -519,55 +220,50 @@ async def get_fundamentals_data(symbol: str) -> Optional[dict[str, Any]]:
     """
     Get fundamentals data for a symbol.
     
-    This is the complete fundamentals dict from ticker info,
-    filtered to just fundamental metrics.
-    
-    Args:
-        symbol: Stock symbol
-        
-    Returns:
-        Dict with fundamental metrics
+    DEPRECATED: Use get_yfinance_service().get_ticker_info() instead.
     """
-    info = await get_ticker_info(symbol)
+    _emit_deprecation_warning()
+    service = get_yfinance_service()
+    info = await service.get_ticker_info(symbol)
     if not info:
         return None
     
     # Return subset focused on fundamentals
     return {
         "symbol": info["symbol"],
-        "name": info["name"],
+        "name": info.get("name"),
         # Valuation
-        "pe_ratio": info["pe_ratio"],
-        "forward_pe": info["forward_pe"],
-        "peg_ratio": info["peg_ratio"],
-        "price_to_book": info["price_to_book"],
-        "price_to_sales": info["price_to_sales"],
-        "ev_to_ebitda": info["ev_to_ebitda"],
+        "pe_ratio": info.get("pe_ratio"),
+        "forward_pe": info.get("forward_pe"),
+        "peg_ratio": info.get("peg_ratio"),
+        "price_to_book": info.get("price_to_book"),
+        "price_to_sales": info.get("price_to_sales"),
+        "ev_to_ebitda": info.get("ev_to_ebitda"),
         # Profitability
-        "profit_margin": info["profit_margin"],
-        "operating_margin": info["operating_margin"],
-        "gross_margin": info["gross_margin"],
-        "return_on_equity": info["return_on_equity"],
-        "return_on_assets": info["return_on_assets"],
+        "profit_margin": info.get("profit_margin"),
+        "operating_margin": info.get("operating_margin"),
+        "gross_margin": info.get("gross_margin"),
+        "return_on_equity": info.get("return_on_equity"),
+        "return_on_assets": info.get("return_on_assets"),
         # Health
-        "debt_to_equity": info["debt_to_equity"],
-        "current_ratio": info["current_ratio"],
-        "free_cash_flow": info["free_cash_flow"],
+        "debt_to_equity": info.get("debt_to_equity"),
+        "current_ratio": info.get("current_ratio"),
+        "free_cash_flow": info.get("free_cash_flow"),
         # Growth
-        "revenue_growth": info["revenue_growth"],
-        "earnings_growth": info["earnings_growth"],
+        "revenue_growth": info.get("revenue_growth"),
+        "earnings_growth": info.get("earnings_growth"),
         # Analyst
-        "recommendation": info["recommendation"],
-        "target_mean_price": info["target_mean_price"],
-        "num_analyst_opinions": info["num_analyst_opinions"],
+        "recommendation": info.get("recommendation"),
+        "target_mean_price": info.get("target_mean_price"),
+        "num_analyst_opinions": info.get("num_analyst_opinions"),
         # Risk
-        "beta": info["beta"],
-        "short_percent_of_float": info["short_percent_of_float"],
+        "beta": info.get("beta"),
+        "short_percent_of_float": info.get("short_percent_of_float"),
     }
 
 
 # =============================================================================
-# Database Helpers
+# Database Helpers (kept for local search which is still useful)
 # =============================================================================
 
 
@@ -666,67 +362,20 @@ async def _save_search_cache(query: str, results: list[dict]) -> None:
         logger.warning(f"Failed to cache search results: {e}")
 
 
-async def _save_search_results_to_db(results: list[dict]) -> None:
-    """
-    Save search results to symbol_search_results table.
-    
-    This enables future searches to find these symbols locally.
-    """
-    expires_at = datetime.now(timezone.utc) + timedelta(days=30)
-    
-    for r in results:
-        if not r.get("symbol"):
-            continue
-        
-        try:
-            await execute(
-                """
-                INSERT INTO symbol_search_results (
-                    symbol, name, sector, industry, exchange, 
-                    quote_type, market_cap, expires_at
-                )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                ON CONFLICT (symbol) DO UPDATE SET
-                    name = COALESCE(EXCLUDED.name, symbol_search_results.name),
-                    sector = COALESCE(EXCLUDED.sector, symbol_search_results.sector),
-                    industry = COALESCE(EXCLUDED.industry, symbol_search_results.industry),
-                    exchange = COALESCE(EXCLUDED.exchange, symbol_search_results.exchange),
-                    quote_type = COALESCE(EXCLUDED.quote_type, symbol_search_results.quote_type),
-                    market_cap = COALESCE(EXCLUDED.market_cap, symbol_search_results.market_cap),
-                    expires_at = GREATEST(EXCLUDED.expires_at, symbol_search_results.expires_at),
-                    updated_at = NOW()
-                """,
-                r["symbol"],
-                r.get("name"),
-                r.get("sector"),
-                r.get("industry"),
-                r.get("exchange"),
-                r.get("quote_type"),
-                r.get("market_cap"),
-                expires_at,
-            )
-        except Exception as e:
-            logger.debug(f"Failed to save search result {r.get('symbol')}: {e}")
-
-
 # =============================================================================
-# Cache Management
+# Cache Management - Delegates to unified service's cache
 # =============================================================================
 
 
 def clear_info_cache(symbol: Optional[str] = None) -> None:
-    """Clear in-memory info cache."""
-    if symbol:
-        _INFO_CACHE.pop(symbol.upper(), None)
-    else:
-        _INFO_CACHE.clear()
+    """Clear in-memory info cache (no-op, unified service manages its own cache)."""
+    _emit_deprecation_warning()
+    # The unified service handles its own cache management
+    pass
 
 
 def clear_price_cache(symbol: Optional[str] = None) -> None:
-    """Clear in-memory price cache."""
-    if symbol:
-        keys_to_remove = [k for k in _PRICE_CACHE if k.startswith(symbol.upper() + ":")]
-        for k in keys_to_remove:
-            _PRICE_CACHE.pop(k, None)
-    else:
-        _PRICE_CACHE.clear()
+    """Clear in-memory price cache (no-op, unified service manages its own cache)."""
+    _emit_deprecation_warning()
+    # The unified service handles its own cache management
+    pass

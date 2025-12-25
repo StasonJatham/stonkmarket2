@@ -1,4 +1,7 @@
-"""Stock fundamentals service - fetches and stores financial metrics from Yahoo Finance.
+"""Stock fundamentals service - fetches and stores financial metrics.
+
+MIGRATED: Now uses unified YFinanceService for yfinance calls.
+Fundamentals storage to stock_fundamentals table is kept for longer-term caching.
 
 Fundamentals are refreshed monthly (vs prices which update daily).
 This data is used for AI analysis to make better buy/hold/sell recommendations.
@@ -23,36 +26,23 @@ Usage:
 from __future__ import annotations
 
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, date, timedelta, timezone
 from typing import Any, Optional
 
-import yfinance as yf
-
 from app.core.logging import get_logger
-from app.core.rate_limiter import get_yfinance_limiter
 from app.database.connection import fetch_one, fetch_all, execute
+from app.services.data_providers import get_yfinance_service
 
 logger = get_logger("services.fundamentals")
 
-_executor = ThreadPoolExecutor(max_workers=4)
-
 
 def _is_etf_or_index(symbol: str, quote_type: Optional[str] = None) -> bool:
-    """
-    Check if symbol is an ETF or index (no fundamentals available).
-    
-    Uses quote_type from yfinance when available, otherwise infers from symbol pattern.
-    """
-    # Index symbols start with ^
+    """Check if symbol is an ETF or index (no fundamentals available)."""
     if symbol.startswith("^"):
         return True
-    
-    # Check quote type if provided
     if quote_type:
         quote_type_upper = quote_type.upper()
         return quote_type_upper in ("ETF", "INDEX", "MUTUALFUND", "TRUST")
-    
     return False
 
 
@@ -62,7 +52,6 @@ def _safe_float(value: Any) -> Optional[float]:
         return None
     try:
         f = float(value)
-        # Check for inf/nan
         if f != f or f == float('inf') or f == float('-inf'):
             return None
         return f
@@ -80,114 +69,105 @@ def _safe_int(value: Any) -> Optional[int]:
         return None
 
 
-def _fetch_fundamentals_sync(symbol: str) -> Optional[dict[str, Any]]:
-    """Fetch fundamentals from Yahoo Finance (synchronous, runs in thread pool)."""
-    # Check for obvious index symbols first
+async def _fetch_fundamentals_from_service(symbol: str) -> Optional[dict[str, Any]]:
+    """
+    Fetch fundamentals via unified YFinanceService.
+    
+    Converts the ticker info response to fundamentals format.
+    """
     if symbol.startswith("^"):
         logger.debug(f"Skipping fundamentals for index: {symbol}")
         return None
     
-    # Rate limit
-    limiter = get_yfinance_limiter()
-    if not limiter.acquire_sync():
-        logger.warning(f"Rate limit timeout for fundamentals: {symbol}")
+    service = get_yfinance_service()
+    
+    # Get ticker info - includes all fundamental data
+    info = await service.get_ticker_info(symbol)
+    if not info:
         return None
     
-    try:
-        ticker = yf.Ticker(symbol)
-        info = ticker.info or {}
-        
-        # Dynamic ETF/fund detection using quote_type
-        quote_type = info.get("quoteType")
-        if _is_etf_or_index(symbol, quote_type):
-            logger.debug(f"Skipping fundamentals for {quote_type}: {symbol}")
-            return None
-        
-        # Parse earnings calendar
-        next_earnings_date = None
-        earnings_estimate_high = None
-        earnings_estimate_low = None
-        earnings_estimate_avg = None
-        
-        try:
-            calendar = ticker.calendar
-            if calendar:
-                # calendar can be dict or DataFrame
-                if isinstance(calendar, dict):
-                    earnings_dates = calendar.get("Earnings Date", [])
-                    if earnings_dates and len(earnings_dates) > 0:
-                        next_earnings_date = earnings_dates[0]
-                    earnings_estimate_high = calendar.get("Earnings High")
-                    earnings_estimate_low = calendar.get("Earnings Low")
-                    earnings_estimate_avg = calendar.get("Earnings Average")
-        except Exception as e:
-            logger.debug(f"Could not get earnings calendar for {symbol}: {e}")
-        
-        return {
-            "symbol": symbol.upper(),
-            # Valuation
-            "pe_ratio": _safe_float(info.get("trailingPE")),
-            "forward_pe": _safe_float(info.get("forwardPE")),
-            "peg_ratio": _safe_float(info.get("trailingPegRatio")),
-            "price_to_book": _safe_float(info.get("priceToBook")),
-            "price_to_sales": _safe_float(info.get("priceToSalesTrailing12Months")),
-            "enterprise_value": _safe_int(info.get("enterpriseValue")),
-            "ev_to_ebitda": _safe_float(info.get("enterpriseToEbitda")),
-            "ev_to_revenue": _safe_float(info.get("enterpriseToRevenue")),
-            # Profitability
-            "profit_margin": _safe_float(info.get("profitMargins")),
-            "operating_margin": _safe_float(info.get("operatingMargins")),
-            "gross_margin": _safe_float(info.get("grossMargins")),
-            "ebitda_margin": _safe_float(info.get("ebitdaMargins")),
-            "return_on_equity": _safe_float(info.get("returnOnEquity")),
-            "return_on_assets": _safe_float(info.get("returnOnAssets")),
-            # Financial Health
-            "debt_to_equity": _safe_float(info.get("debtToEquity")),
-            "current_ratio": _safe_float(info.get("currentRatio")),
-            "quick_ratio": _safe_float(info.get("quickRatio")),
-            "total_cash": _safe_int(info.get("totalCash")),
-            "total_debt": _safe_int(info.get("totalDebt")),
-            "free_cash_flow": _safe_int(info.get("freeCashflow")),
-            "operating_cash_flow": _safe_int(info.get("operatingCashflow")),
-            # Per Share
-            "book_value": _safe_float(info.get("bookValue")),
-            "eps_trailing": _safe_float(info.get("trailingEps")),
-            "eps_forward": _safe_float(info.get("forwardEps")),
-            "revenue_per_share": _safe_float(info.get("revenuePerShare")),
-            # Growth
-            "revenue_growth": _safe_float(info.get("revenueGrowth")),
-            "earnings_growth": _safe_float(info.get("earningsGrowth")),
-            "earnings_quarterly_growth": _safe_float(info.get("earningsQuarterlyGrowth")),
-            # Shares & Ownership
-            "shares_outstanding": _safe_int(info.get("sharesOutstanding")),
-            "float_shares": _safe_int(info.get("floatShares")),
-            "held_percent_insiders": _safe_float(info.get("heldPercentInsiders")),
-            "held_percent_institutions": _safe_float(info.get("heldPercentInstitutions")),
-            "short_ratio": _safe_float(info.get("shortRatio")),
-            "short_percent_of_float": _safe_float(info.get("shortPercentOfFloat")),
-            # Risk
-            "beta": _safe_float(info.get("beta")),
-            # Analyst Ratings
-            "recommendation": info.get("recommendationKey"),
-            "recommendation_mean": _safe_float(info.get("recommendationMean")),
-            "num_analyst_opinions": _safe_int(info.get("numberOfAnalystOpinions")),
-            "target_high_price": _safe_float(info.get("targetHighPrice")),
-            "target_low_price": _safe_float(info.get("targetLowPrice")),
-            "target_mean_price": _safe_float(info.get("targetMeanPrice")),
-            "target_median_price": _safe_float(info.get("targetMedianPrice")),
-            # Revenue & Earnings
-            "revenue": _safe_int(info.get("totalRevenue")),
-            "ebitda": _safe_int(info.get("ebitda")),
-            "net_income": _safe_int(info.get("netIncomeToCommon")),
-            # Earnings Calendar
-            "next_earnings_date": next_earnings_date,
-            "earnings_estimate_high": _safe_float(earnings_estimate_high),
-            "earnings_estimate_low": _safe_float(earnings_estimate_low),
-            "earnings_estimate_avg": _safe_float(earnings_estimate_avg),
-        }
-    except Exception as e:
-        logger.error(f"Failed to fetch fundamentals for {symbol}: {e}")
+    # Check if ETF/fund
+    quote_type = info.get("quote_type")
+    if _is_etf_or_index(symbol, quote_type):
+        logger.debug(f"Skipping fundamentals for {quote_type}: {symbol}")
         return None
+    
+    # Get calendar for earnings dates
+    calendar, _ = await service.get_calendar(symbol)
+    
+    next_earnings_date = None
+    earnings_estimate_high = None
+    earnings_estimate_low = None
+    earnings_estimate_avg = None
+    
+    if calendar:
+        next_earnings_date = calendar.get("next_earnings_date")
+        earnings_estimate_high = calendar.get("earnings_estimate_high")
+        earnings_estimate_low = calendar.get("earnings_estimate_low")
+        earnings_estimate_avg = calendar.get("earnings_estimate_avg")
+    
+    return {
+        "symbol": symbol.upper(),
+        # Valuation
+        "pe_ratio": _safe_float(info.get("pe_ratio")),
+        "forward_pe": _safe_float(info.get("forward_pe")),
+        "peg_ratio": _safe_float(info.get("peg_ratio")),
+        "price_to_book": _safe_float(info.get("price_to_book")),
+        "price_to_sales": _safe_float(info.get("price_to_sales")),
+        "enterprise_value": _safe_int(info.get("enterprise_value")),
+        "ev_to_ebitda": _safe_float(info.get("ev_to_ebitda")),
+        "ev_to_revenue": _safe_float(info.get("ev_to_revenue")),
+        # Profitability
+        "profit_margin": _safe_float(info.get("profit_margin")),
+        "operating_margin": _safe_float(info.get("operating_margin")),
+        "gross_margin": _safe_float(info.get("gross_margin")),
+        "ebitda_margin": _safe_float(info.get("ebitda_margin")),
+        "return_on_equity": _safe_float(info.get("return_on_equity")),
+        "return_on_assets": _safe_float(info.get("return_on_assets")),
+        # Financial Health
+        "debt_to_equity": _safe_float(info.get("debt_to_equity")),
+        "current_ratio": _safe_float(info.get("current_ratio")),
+        "quick_ratio": _safe_float(info.get("quick_ratio")),
+        "total_cash": _safe_int(info.get("total_cash")),
+        "total_debt": _safe_int(info.get("total_debt")),
+        "free_cash_flow": _safe_int(info.get("free_cash_flow")),
+        "operating_cash_flow": _safe_int(info.get("operating_cash_flow")),
+        # Per Share
+        "book_value": _safe_float(info.get("book_value")),
+        "eps_trailing": _safe_float(info.get("eps_trailing")),
+        "eps_forward": _safe_float(info.get("eps_forward")),
+        "revenue_per_share": _safe_float(info.get("revenue_per_share")),
+        # Growth
+        "revenue_growth": _safe_float(info.get("revenue_growth")),
+        "earnings_growth": _safe_float(info.get("earnings_growth")),
+        "earnings_quarterly_growth": _safe_float(info.get("earnings_quarterly_growth")),
+        # Shares & Ownership
+        "shares_outstanding": _safe_int(info.get("shares_outstanding")),
+        "float_shares": _safe_int(info.get("float_shares")),
+        "held_percent_insiders": _safe_float(info.get("held_percent_insiders")),
+        "held_percent_institutions": _safe_float(info.get("held_percent_institutions")),
+        "short_ratio": _safe_float(info.get("short_ratio")),
+        "short_percent_of_float": _safe_float(info.get("short_percent_of_float")),
+        # Risk
+        "beta": _safe_float(info.get("beta")),
+        # Analyst Ratings
+        "recommendation": info.get("recommendation"),
+        "recommendation_mean": _safe_float(info.get("recommendation_mean")),
+        "num_analyst_opinions": _safe_int(info.get("num_analyst_opinions")),
+        "target_high_price": _safe_float(info.get("target_high_price")),
+        "target_low_price": _safe_float(info.get("target_low_price")),
+        "target_mean_price": _safe_float(info.get("target_mean_price")),
+        "target_median_price": _safe_float(info.get("target_median_price")),
+        # Revenue & Earnings
+        "revenue": _safe_int(info.get("revenue")),
+        "ebitda": _safe_int(info.get("ebitda")),
+        "net_income": _safe_int(info.get("net_income")),
+        # Earnings Calendar
+        "next_earnings_date": next_earnings_date,
+        "earnings_estimate_high": _safe_float(earnings_estimate_high),
+        "earnings_estimate_low": _safe_float(earnings_estimate_low),
+        "earnings_estimate_avg": _safe_float(earnings_estimate_avg),
+    }
 
 
 async def _store_fundamentals(data: dict[str, Any]) -> None:
@@ -322,12 +302,10 @@ async def fetch_fundamentals_live(symbol: str) -> Optional[dict[str, Any]]:
     """
     symbol = symbol.upper()
     
-    # Skip obvious indexes (ETFs handled in _fetch_fundamentals_sync after fetching quote_type)
     if symbol.startswith("^"):
         return None
     
-    loop = asyncio.get_event_loop()
-    data = await loop.run_in_executor(_executor, _fetch_fundamentals_sync, symbol)
+    data = await _fetch_fundamentals_from_service(symbol)
     
     if not data:
         return None
@@ -399,7 +377,6 @@ async def get_fundamentals_from_db(symbol: str) -> Optional[dict[str, Any]]:
     """
     symbol = symbol.upper()
     
-    # Skip obvious indexes
     if symbol.startswith("^"):
         return None
     
@@ -428,7 +405,6 @@ async def get_fundamentals(symbol: str, force_refresh: bool = False) -> Optional
     """
     symbol = symbol.upper()
     
-    # Skip obvious indexes (ETFs handled in _fetch_fundamentals_sync after fetching quote_type)
     if symbol.startswith("^"):
         return None
     
@@ -444,9 +420,8 @@ async def get_fundamentals(symbol: str, force_refresh: bool = False) -> Optional
         if row:
             return dict(row)
     
-    # Fetch fresh data
-    loop = asyncio.get_event_loop()
-    data = await loop.run_in_executor(_executor, _fetch_fundamentals_sync, symbol)
+    # Fetch via unified service
+    data = await _fetch_fundamentals_from_service(symbol)
     
     if data:
         await _store_fundamentals(data)
@@ -607,3 +582,14 @@ async def get_pe_ratio(symbol: str) -> Optional[float]:
     # Fall back to fundamentals
     data = await get_fundamentals(symbol)
     return data.get("pe_ratio") if data else None
+
+
+# Backward compatibility - export for tests that import _fetch_fundamentals_sync
+# Tests should be updated to use the async version instead
+async def _fetch_fundamentals_sync_compat(symbol: str) -> Optional[dict[str, Any]]:
+    """Backward compatible sync-style function (actually async)."""
+    return await _fetch_fundamentals_from_service(symbol)
+
+
+# For tests importing the old name
+_fetch_fundamentals_sync = _fetch_fundamentals_sync_compat

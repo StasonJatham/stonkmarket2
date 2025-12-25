@@ -25,6 +25,7 @@ Usage:
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, Literal
@@ -37,6 +38,69 @@ from app.services import stock_info
 from app.services.openai_client import generate, TaskType
 
 logger = get_logger("ai_agents")
+
+
+def _compute_input_hash(fundamentals: dict[str, Any], stock_data: dict[str, Any]) -> str:
+    """
+    Compute hash of input data for change detection.
+    
+    Combines fundamentals and stock info into a single hash.
+    Used to skip AI analysis if input data hasn't changed.
+    """
+    # Combine key data points that affect AI analysis
+    key_data = {
+        "fundamentals": {
+            k: v for k, v in fundamentals.items() 
+            if v is not None and k in (
+                "pe_ratio", "forward_pe", "peg_ratio", "price_to_book", 
+                "profit_margin", "operating_margin", "return_on_equity",
+                "debt_to_equity", "revenue_growth", "earnings_growth",
+                "beta", "recommendation",
+            )
+        },
+        "stock": {
+            k: v for k, v in stock_data.items()
+            if v is not None and k in ("name", "sector", "industry")
+        },
+    }
+    content = json.dumps(key_data, sort_keys=True, default=str)
+    return hashlib.sha256(content.encode()).hexdigest()[:16]
+
+
+async def _get_stored_input_hash(symbol: str) -> Optional[str]:
+    """Get the stored input hash for a symbol's agent analysis."""
+    row = await fetch_one(
+        """
+        SELECT input_version_hash 
+        FROM analysis_versions 
+        WHERE symbol = $1 AND analysis_type = 'agent_analysis'
+        """,
+        symbol,
+    )
+    return row["input_version_hash"] if row else None
+
+
+async def _store_analysis_version(
+    symbol: str, 
+    input_hash: str,
+    batch_job_id: Optional[str] = None,
+) -> None:
+    """Store/update the analysis version after successful analysis."""
+    expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+    
+    await execute(
+        """
+        INSERT INTO analysis_versions (symbol, analysis_type, input_version_hash, generated_at, expires_at, batch_job_id)
+        VALUES ($1, 'agent_analysis', $2, NOW(), $3, $4)
+        ON CONFLICT (symbol, analysis_type) DO UPDATE SET
+            input_version_hash = EXCLUDED.input_version_hash,
+            generated_at = EXCLUDED.generated_at,
+            expires_at = EXCLUDED.expires_at,
+            batch_job_id = EXCLUDED.batch_job_id
+        """,
+        symbol, input_hash, expires_at, batch_job_id,
+    )
+
 
 # Agent definitions with their investment philosophy
 AGENTS = {
@@ -282,17 +346,22 @@ async def run_agent_analysis(
     symbol: str,
     agents: Optional[list[str]] = None,
     store_result: bool = True,
+    force: bool = False,
 ) -> Optional[AgentAnalysisResult]:
     """
     Run AI agent analysis on a single stock.
+    
+    Uses input version tracking to skip analysis if data hasn't changed.
     
     Args:
         symbol: Stock symbol
         agents: List of agent IDs to run (default: all agents)
         store_result: Whether to store result in database
+        force: Force re-analysis even if input hasn't changed
         
     Returns:
-        AgentAnalysisResult with all verdicts and aggregated signal
+        AgentAnalysisResult with all verdicts and aggregated signal,
+        or None if skipped or failed
     """
     symbol = symbol.upper()
     logger.info(f"Running agent analysis for {symbol}")
@@ -313,6 +382,16 @@ async def run_agent_analysis(
     if not metrics_text.strip():
         logger.warning(f"No data available for {symbol}")
         return None
+    
+    # Compute input hash for version checking
+    input_hash = _compute_input_hash(fundamentals, stock_data)
+    
+    # Check if we can skip (input unchanged)
+    if not force:
+        stored_hash = await _get_stored_input_hash(symbol)
+        if stored_hash == input_hash:
+            logger.info(f"Skipping {symbol}: input data unchanged (hash={input_hash[:8]})")
+            return None  # Signal that we skipped
     
     # Run agents
     agent_ids = agents or list(AGENTS.keys())
@@ -342,6 +421,8 @@ async def run_agent_analysis(
     # Store in database
     if store_result:
         await _store_agent_analysis(result)
+        # Store the input hash for future change detection
+        await _store_analysis_version(symbol, input_hash)
     
     logger.info(f"Agent analysis complete for {symbol}: {overall_signal} ({overall_confidence}%)")
     return result
@@ -449,40 +530,359 @@ async def get_symbols_needing_analysis() -> list[str]:
     return [r["symbol"] for r in rows]
 
 
-async def run_all_agent_analyses() -> dict[str, Any]:
+async def run_all_agent_analyses(force: bool = False) -> dict[str, Any]:
     """
     Run agent analysis for all symbols needing it.
     
+    Uses input version checking to skip symbols whose input data
+    hasn't changed since last analysis.
+    
+    Args:
+        force: Force re-analysis even if input hasn't changed
+    
     Returns:
-        Dict with counts of analyzed/failed symbols
+        Dict with counts of analyzed/skipped/failed symbols
     """
     symbols = await get_symbols_needing_analysis()
     
     if not symbols:
         logger.info("No symbols need agent analysis")
-        return {"analyzed": 0, "failed": 0, "symbols": []}
+        return {"analyzed": 0, "skipped": 0, "failed": 0, "symbols": []}
     
     logger.info(f"Running agent analysis for {len(symbols)} symbols")
     
     analyzed = []
+    skipped = []
     failed = []
     
     for symbol in symbols:
         try:
-            result = await run_agent_analysis(symbol)
+            result = await run_agent_analysis(symbol, force=force)
             if result:
                 analyzed.append(symbol)
             else:
-                failed.append(symbol)
+                # None result means skipped (input unchanged) or no data
+                skipped.append(symbol)
         except Exception as e:
             logger.error(f"Agent analysis failed for {symbol}: {e}")
             failed.append(symbol)
     
     return {
         "analyzed": len(analyzed),
+        "skipped": len(skipped),
         "failed": len(failed),
         "symbols": analyzed,
+        "skipped_symbols": skipped,
         "failed_symbols": failed,
+    }
+
+
+# =============================================================================
+# BATCH API INTEGRATION
+# =============================================================================
+
+
+def _build_agent_prompt(agent_id: str, symbol: str, metrics_text: str) -> str:
+    """Build prompt for a single agent analysis."""
+    agent = AGENTS.get(agent_id)
+    if not agent:
+        return ""
+    
+    return f"""You are {agent['name']}, the legendary investor. Analyze this stock using your investment philosophy.
+
+YOUR PHILOSOPHY: {agent['philosophy']}
+KEY FACTORS YOU FOCUS ON: {', '.join(agent['focus'])}
+
+STOCK: {symbol}
+
+FINANCIAL DATA:
+{metrics_text}
+
+Provide your analysis as JSON with these exact fields:
+{{
+    "signal": "bullish" | "bearish" | "neutral",
+    "confidence": 0-100,
+    "reasoning": "2-3 sentence explanation in your voice",
+    "key_factors": ["factor1", "factor2", "factor3"]
+}}
+
+Be specific about what the numbers tell you. If data is missing, factor that into your confidence level."""
+
+
+async def prepare_batch_items(symbols: list[str]) -> tuple[list[dict[str, Any]], dict[str, str]]:
+    """
+    Prepare batch items for agent analysis.
+    
+    For each symbol, creates 5 items (one per agent).
+    Returns items and a map of symbol -> input_hash for version tracking.
+    
+    Args:
+        symbols: List of symbols to analyze
+        
+    Returns:
+        Tuple of (batch_items, input_hashes)
+        - batch_items: List of dicts with prompt, symbol, agent_id
+        - input_hashes: Map of symbol -> computed input hash
+    """
+    items = []
+    input_hashes: dict[str, str] = {}
+    
+    for symbol in symbols:
+        symbol = symbol.upper()
+        
+        # Get fundamentals
+        fundamentals = await get_fundamentals_for_analysis(symbol)
+        if not fundamentals:
+            fundamentals = {}
+        
+        # Get stock info
+        info = await stock_info.get_stock_info_async(symbol)
+        stock_data = info if info else {}
+        
+        # Format metrics
+        metrics_text = _format_metrics_for_prompt(fundamentals, stock_data)
+        
+        if not metrics_text.strip():
+            logger.warning(f"No data for {symbol}, skipping batch item")
+            continue
+        
+        # Compute and store input hash
+        input_hash = _compute_input_hash(fundamentals, stock_data)
+        input_hashes[symbol] = input_hash
+        
+        # Create item for each agent
+        for agent_id in AGENTS.keys():
+            prompt = _build_agent_prompt(agent_id, symbol, metrics_text)
+            items.append({
+                "symbol": symbol,
+                "agent_id": agent_id,
+                "prompt": prompt,
+                "input_hash": input_hash,
+            })
+    
+    return items, input_hashes
+
+
+async def submit_agent_batch(symbols: list[str]) -> Optional[tuple[str, dict[str, str]]]:
+    """
+    Submit a batch job for agent analysis on multiple symbols.
+    
+    Each symbol gets 5 prompts (one per agent). Batch API provides
+    50% cost savings compared to real-time API.
+    
+    Args:
+        symbols: List of symbols to analyze
+        
+    Returns:
+        Tuple of (batch_job_id, input_hashes) or None on failure
+    """
+    from app.services.openai_client import submit_batch, TaskType
+    
+    # Prepare batch items
+    items, input_hashes = await prepare_batch_items(symbols)
+    
+    if not items:
+        logger.warning("No valid items for batch")
+        return None
+    
+    logger.info(f"Submitting batch with {len(items)} items for {len(input_hashes)} symbols")
+    
+    # Submit using existing batch infrastructure
+    batch_id = await submit_batch(
+        task=TaskType.RATING,  # Use RATING for structured JSON output
+        items=items,
+    )
+    
+    if not batch_id:
+        return None
+    
+    # Store batch job ID for each symbol
+    for symbol, input_hash in input_hashes.items():
+        await _store_analysis_version(symbol, input_hash, batch_job_id=batch_id)
+    
+    return batch_id, input_hashes
+
+
+async def collect_agent_batch(batch_id: str) -> dict[str, AgentAnalysisResult]:
+    """
+    Collect results from a completed agent analysis batch.
+    
+    Processes the batch results, aggregates verdicts per symbol,
+    and stores the final analysis in the database.
+    
+    Args:
+        batch_id: The batch job ID
+        
+    Returns:
+        Dict of symbol -> AgentAnalysisResult
+    """
+    from app.services.openai_client import collect_batch
+    
+    results = await collect_batch(batch_id)
+    if not results:
+        return {}
+    
+    # Group results by symbol
+    symbol_verdicts: dict[str, list[AgentVerdict]] = {}
+    
+    for item in results:
+        if item.get("failed"):
+            logger.warning(f"Batch item failed: {item.get('custom_id')}")
+            continue
+        
+        custom_id = item.get("custom_id", "")
+        result_data = item.get("result")
+        
+        # Parse custom_id format: "agent_{agent_id}_{symbol}_{batch_run_id}"
+        parts = custom_id.split("_")
+        if len(parts) >= 4 and parts[0] == "agent":
+            agent_id = parts[1]  # e.g., "warren" from "warren_buffett"
+            # Handle multi-part agent IDs like "warren_buffett"
+            # Find the symbol by looking for uppercase after the agent parts
+            # Better approach: find first all-caps part
+            symbol = None
+            for i, part in enumerate(parts[2:], start=2):
+                if part.isupper() or (part.isalnum() and part[0].isupper()):
+                    symbol = part
+                    # Agent ID is everything between "agent" and symbol
+                    agent_id = "_".join(parts[1:i])
+                    break
+            if not symbol:
+                logger.warning(f"Could not parse symbol from custom_id: {custom_id}")
+                continue
+        else:
+            # Legacy format or unknown
+            logger.warning(f"Unknown custom_id format: {custom_id}")
+            continue
+        
+        if not result_data or not isinstance(result_data, dict):
+            continue
+        
+        # Get agent info
+        agent = AGENTS.get(agent_id)
+        agent_name = agent["name"] if agent else agent_id
+        
+        # Initialize symbol's verdict list
+        if symbol not in symbol_verdicts:
+            symbol_verdicts[symbol] = []
+        
+        # Build verdict from result
+        verdict = AgentVerdict(
+            agent_id=agent_id,
+            agent_name=agent_name,
+            signal=result_data.get("signal", "neutral"),
+            confidence=min(100, max(0, int(result_data.get("confidence", 50)))),
+            reasoning=result_data.get("reasoning", ""),
+            key_factors=result_data.get("key_factors", []),
+        )
+        symbol_verdicts[symbol].append(verdict)
+    
+    # Build final results
+    final_results: dict[str, AgentAnalysisResult] = {}
+    
+    for symbol, verdicts in symbol_verdicts.items():
+        if not verdicts:
+            continue
+        
+        overall_signal, overall_confidence, summary = _aggregate_signals(verdicts)
+        
+        result = AgentAnalysisResult(
+            symbol=symbol,
+            verdicts=verdicts,
+            overall_signal=overall_signal,
+            overall_confidence=overall_confidence,
+            summary=summary,
+            analyzed_at=datetime.now(timezone.utc),
+        )
+        
+        # Store in database
+        await _store_agent_analysis(result)
+        final_results[symbol] = result
+    
+    return final_results
+
+
+async def run_all_agent_analyses_batch() -> dict[str, Any]:
+    """
+    Run agent analysis for all symbols using Batch API.
+    
+    This is the batch version of run_all_agent_analyses().
+    Provides ~50% cost savings by using OpenAI's Batch API.
+    
+    Workflow:
+    1. Get symbols needing analysis
+    2. Check input hashes to skip unchanged symbols
+    3. Submit batch job for remaining symbols
+    4. Return batch_id for later polling
+    
+    Returns:
+        Dict with batch_id, symbol counts, etc.
+    """
+    symbols = await get_symbols_needing_analysis()
+    
+    if not symbols:
+        logger.info("No symbols need agent analysis")
+        return {
+            "batch_id": None,
+            "submitted": 0,
+            "skipped": 0,
+            "message": "No symbols need analysis",
+        }
+    
+    logger.info(f"Preparing batch analysis for {len(symbols)} symbols")
+    
+    # Filter symbols where input has changed
+    symbols_to_analyze = []
+    skipped = []
+    
+    for symbol in symbols:
+        symbol = symbol.upper()
+        
+        # Get current data to compute hash
+        fundamentals = await get_fundamentals_for_analysis(symbol)
+        info = await stock_info.get_stock_info_async(symbol)
+        
+        if not fundamentals and not info:
+            skipped.append(symbol)
+            continue
+        
+        current_hash = _compute_input_hash(fundamentals or {}, info or {})
+        stored_hash = await _get_stored_input_hash(symbol)
+        
+        if stored_hash == current_hash:
+            logger.debug(f"Skipping {symbol}: input unchanged")
+            skipped.append(symbol)
+        else:
+            symbols_to_analyze.append(symbol)
+    
+    if not symbols_to_analyze:
+        return {
+            "batch_id": None,
+            "submitted": 0,
+            "skipped": len(skipped),
+            "message": "All symbols have unchanged input data",
+        }
+    
+    # Submit batch
+    result = await submit_agent_batch(symbols_to_analyze)
+    
+    if not result:
+        return {
+            "batch_id": None,
+            "submitted": 0,
+            "skipped": len(skipped),
+            "error": "Failed to submit batch",
+        }
+    
+    batch_id, input_hashes = result
+    
+    return {
+        "batch_id": batch_id,
+        "submitted": len(symbols_to_analyze),
+        "skipped": len(skipped),
+        "symbols": symbols_to_analyze,
+        "skipped_symbols": skipped,
+        "message": f"Batch {batch_id} submitted with {len(symbols_to_analyze)} symbols",
     }
 
 

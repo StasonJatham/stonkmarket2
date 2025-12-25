@@ -1,8 +1,8 @@
 """DipFinder service with price provider and caching.
 
+MIGRATED: Now uses unified YFinanceService for yfinance calls.
 Orchestrates the full signal computation pipeline with:
 - Price data fetching/caching
-- Rate-limited yfinance access
 - Signal caching
 - Database persistence
 - Background job integration
@@ -13,16 +13,15 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Protocol
 
 import pandas as pd
-import yfinance as yf
 
 from app.cache.cache import Cache
 from app.core.logging import get_logger
 from app.database.connection import fetch_all, fetch_one, execute, execute_many
+from app.services.data_providers import get_yfinance_service
 
 from .config import DipFinderConfig, get_dipfinder_config
 from .dip import DipMetrics
@@ -31,13 +30,6 @@ from .stability import compute_stability_score, StabilityMetrics
 from .signal import compute_signal, DipSignal
 
 logger = get_logger("dipfinder.service")
-
-# Thread pool for yfinance calls
-_executor = ThreadPoolExecutor(max_workers=4)
-
-# Rate limiting for yfinance downloads
-_last_download_time: float = 0.0
-_download_lock = asyncio.Lock()
 
 
 class PriceProvider(Protocol):
@@ -63,100 +55,13 @@ class PriceProvider(Protocol):
 
 
 class YFinancePriceProvider:
-    """Price provider using yfinance with caching and rate limiting."""
+    """Price provider using unified YFinanceService with caching."""
 
     def __init__(self, config: Optional[DipFinderConfig] = None):
         """Initialize provider with optional config."""
         self.config = config or get_dipfinder_config()
         self._cache = Cache(prefix="prices", default_ttl=self.config.price_cache_ttl)
-
-    def _normalize_yf_dataframe(self, df: pd.DataFrame, ticker: str) -> pd.DataFrame:
-        """Normalize yfinance DataFrame to handle MultiIndex columns."""
-        if df.empty:
-            return df
-
-        # Handle MultiIndex columns (newer yfinance versions)
-        if isinstance(df.columns, pd.MultiIndex):
-            # Get the ticker-specific columns
-            ticker_upper = ticker.upper()
-            try:
-                # For single ticker downloads, columns are like ('Close', 'AAPL')
-                if ticker_upper in df.columns.get_level_values(1):
-                    df = df.xs(ticker_upper, axis=1, level=1)
-                elif ticker_upper in df.columns.get_level_values(0):
-                    df = df[ticker_upper]
-            except Exception:
-                # Fallback: droplevel if we can
-                try:
-                    df.columns = df.columns.droplevel(1)
-                except Exception:
-                    pass
-
-        # Ensure we have proper column names
-        expected_cols = {"Close", "Open", "High", "Low", "Volume"}
-        if not any(col in df.columns for col in expected_cols):
-            # Try to find columns with these names at any level
-            for col in list(df.columns):
-                if isinstance(col, tuple) and len(col) > 0:
-                    df = df.rename(columns={col: col[0]})
-
-        return df
-
-    def _download_prices_sync(
-        self,
-        tickers: List[str],
-        start: str,
-        end: str,
-    ) -> pd.DataFrame:
-        """Synchronously download prices (for thread pool)."""
-        try:
-            if len(tickers) == 1:
-                df = yf.download(
-                    tickers[0],
-                    start=start,
-                    end=end,
-                    auto_adjust=True,
-                    progress=False,
-                    timeout=30,
-                )
-            else:
-                df = yf.download(
-                    " ".join(tickers),
-                    start=start,
-                    end=end,
-                    auto_adjust=True,
-                    group_by="ticker",
-                    progress=False,
-                    timeout=30,
-                )
-            return df
-        except Exception as e:
-            logger.warning(f"yfinance download failed for {tickers}: {e}")
-            return pd.DataFrame()
-
-    async def _rate_limited_download(
-        self,
-        tickers: List[str],
-        start: str,
-        end: str,
-    ) -> pd.DataFrame:
-        """Download with rate limiting."""
-        global _last_download_time
-
-        async with _download_lock:
-            elapsed = time.time() - _last_download_time
-            if elapsed < self.config.yf_batch_delay:
-                await asyncio.sleep(self.config.yf_batch_delay - elapsed)
-            _last_download_time = time.time()
-
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            _executor,
-            self._download_prices_sync,
-            tickers,
-            start,
-            end,
-        )
+        self._service = get_yfinance_service()
 
     async def get_prices(
         self,
@@ -178,14 +83,13 @@ class YFinancePriceProvider:
         results: Dict[str, pd.DataFrame] = {}
         tickers_to_fetch: List[str] = []
 
-        # Check cache first
+        # Check local cache first
         for ticker in tickers:
             cache_key = f"{ticker}:{start_date}:{end_date}"
             cached = await self._cache.get(cache_key)
             if cached is not None:
                 # Reconstruct DataFrame from cached dict
                 try:
-                    # Extract the index dates we stored
                     index_dates = cached.pop("_index_dates", None)
                     df = pd.DataFrame(cached)
                     if index_dates is not None:
@@ -201,53 +105,25 @@ class YFinancePriceProvider:
         if not tickers_to_fetch:
             return results
 
-        # Batch download
-        start_str = start_date.isoformat()
-        end_str = end_date.isoformat()
+        # Use unified service for batch download
+        batch_results = await self._service.get_price_history_batch(
+            tickers_to_fetch, start_date, end_date
+        )
 
-        # Process in batches to respect rate limits
-        batch_size = self.config.yf_batch_size
-        for i in range(0, len(tickers_to_fetch), batch_size):
-            batch = tickers_to_fetch[i : i + batch_size]
-            df = await self._rate_limited_download(batch, start_str, end_str)
+        # Process results and cache
+        for ticker, (df, version) in batch_results.items():
+            if df is not None and not df.empty:
+                results[ticker] = df
 
-            if df.empty:
-                continue
-
-            # Extract individual ticker data
-            for ticker in batch:
-                try:
-                    if len(batch) == 1:
-                        ticker_df = self._normalize_yf_dataframe(df, ticker)
-                    elif isinstance(df.columns, pd.MultiIndex):
-                        if ticker in df.columns.get_level_values(0):
-                            ticker_df = df[ticker]
-                        elif ticker.upper() in df.columns.get_level_values(1):
-                            # New yfinance format: ('Price', 'TICKER')
-                            ticker_df = df.xs(ticker.upper(), axis=1, level=1)
-                        else:
-                            continue
-                    else:
-                        ticker_df = df
-
-                    if not ticker_df.empty:
-                        results[ticker] = ticker_df
-
-                        # Cache the result
-                        cache_key = f"{ticker}:{start_date}:{end_date}"
-                        # Reset index to convert Timestamps to ISO strings before caching
-                        # pandas Timestamps as dict keys cause JSON serialization failures
-                        df_for_cache = ticker_df.copy()
-                        df_for_cache.index = df_for_cache.index.strftime("%Y-%m-%d")
-                        cache_data = df_for_cache.to_dict()
-                        # Store original index for reconstruction
-                        cache_data["_index_dates"] = list(df_for_cache.index)
-                        await self._cache.set(
-                            cache_key, cache_data, ttl=self.config.price_cache_ttl
-                        )
-
-                except Exception as e:
-                    logger.warning(f"Failed to extract data for {ticker}: {e}")
+                # Cache the result
+                cache_key = f"{ticker}:{start_date}:{end_date}"
+                df_for_cache = df.copy()
+                df_for_cache.index = df_for_cache.index.strftime("%Y-%m-%d")
+                cache_data = df_for_cache.to_dict()
+                cache_data["_index_dates"] = list(df_for_cache.index)
+                await self._cache.set(
+                    cache_key, cache_data, ttl=self.config.price_cache_ttl
+                )
 
         return results
 

@@ -71,6 +71,7 @@ class JobScheduler:
 
         # Define default schedules for registered jobs
         default_schedules = {
+            "initial_data_ingest": ("*/15 * * * *", "Process queued symbols every 15 min"),
             "data_grab": ("0 23 * * 1-5", "Fetch stock data Mon-Fri 11pm"),
             "cache_warmup": ("*/30 * * * *", "Pre-cache chart data every 30 min"),
             "batch_ai_swipe": ("0 3 * * 0", "Generate swipe bios weekly Sunday 3am"),

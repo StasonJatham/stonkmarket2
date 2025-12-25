@@ -52,7 +52,7 @@ from openai import AsyncOpenAI, APITimeoutError, APIConnectionError, RateLimitEr
 from app.core.logging import get_logger
 from app.repositories import api_keys as api_keys_repo
 from app.repositories import api_usage as api_usage_repo
-from app.services.text_cleaner import clean_ai_text
+from app.services.text_cleaner import clean_ai_text, truncate_summary
 
 logger = get_logger("openai")
 
@@ -169,10 +169,10 @@ TASK_CONFIGS: dict[TaskType, TaskConfig] = {
         default_max_tokens=400,  # JSON with reasoning needs more
     ),
     TaskType.SUMMARY: TaskConfig(
-        min_chars=350,
-        max_chars=500,
+        min_chars=280,
+        max_chars=420,  # Target 300-400, allow buffer up to 420
         reasoning_overhead=150,
-        default_max_tokens=300,  # 500 chars / 4 + buffer
+        default_max_tokens=250,  # 400 chars / 4 + buffer
     ),
 }
 
@@ -254,14 +254,14 @@ Start at 7. +1 if dip >= 15%. +1 if Quality Score >= 70. +1 if days in dip >= 30
 
 HARD OUTPUT RULES:
 - Output only the summary text.
-- 350–500 characters total (strict). Silently count characters and adjust until within range.
+- 300–400 characters total (STRICT). Count characters carefully. Aim for ~350.
 - Plain language. Short, clear sentences. Avoid acronyms unless universally known (e.g., iPhone, Windows).
 - No list dumping. No semicolons. No parentheses.
-- Must include: (1) what they do + who uses it, (2) 2–4 recognizable examples, (3) one "why it matters/why people pay" benefit.
+- Must include: (1) what they do + who uses it, (2) 2–3 recognizable examples, (3) one "why it matters" benefit.
 
 LONG-INPUT HANDLING (critical):
 - The provided description will often be VERY long and repetitive, with many product names.
-- First extract 3–6 core facts (mentally): what they sell, who uses it, and the 2–4 most recognizable examples.
+- First extract 3–5 core facts (mentally): what they sell, who uses it, and the 2–3 most recognizable examples.
 - Ignore deep sub-products, internal product names, and "segment"/category dumps.
 - Never mirror the input structure; rewrite from scratch in simple words.
 
@@ -277,8 +277,9 @@ BANNED WORDS/PHRASES:
 segment, portfolio, suite, ecosystem, enterprise, leverage, synergies, robust, innovative, solutions, worldwide, platform (use "service" instead).
 
 LENGTH CONTROL:
-- If too long: remove extra examples first, then shorten the benefit.
-- If too short: add a clearer "why people pay" benefit, not more product names.""",
+- If over 400 chars: remove examples first, then shorten benefit.
+- If under 300 chars: add a clearer "why people pay" benefit.
+- Final output MUST be 300-400 characters.""",
 }
 
 
@@ -290,7 +291,13 @@ def _build_prompt(task: TaskType, context: dict[str, Any]) -> str:
     - BIO: Company identity only, no numbers. Just a "mood" flag if currently down.
     - SUMMARY: Company name + full description only, no price/fundamentals.
     - RATING: Full data including dip %, days, P/E, etc.
+    
+    If context contains a "prompt" key, use that directly (for custom prompts).
     """
+    # Support custom prompts (e.g., from AI agents)
+    if "prompt" in context:
+        return context["prompt"]
+    
     parts = []
     
     # === BIO: Company identity only, no financial numbers ===
@@ -1100,19 +1107,30 @@ async def summarize_company(
     name: Optional[str] = None,
     description: str = "",
 ) -> Optional[str]:
-    """Summarize a company description to 350-500 characters."""
+    """
+    Summarize a company description to 300-400 characters.
+    
+    The prompt targets 300-400 chars. If the AI returns slightly more,
+    we truncate at sentence boundary up to 500 chars (DB limit).
+    """
     if not description or len(description) < 50:
         return description
     
-    return await generate(
+    result = await generate(
         task=TaskType.SUMMARY,
         context={
             "symbol": symbol,
             "name": name,
             "description": description,
         },
-        max_tokens=300,  # Target: 350-500 chars (~90-125 tokens)
+        max_tokens=250,  # Target: 300-400 chars (~75-100 tokens)
     )
+    
+    # Apply truncation fallback if AI exceeded limit
+    if result:
+        result = truncate_summary(result, max_chars=500, target_chars=400)
+    
+    return result
 
 
 # =============================================================================
@@ -1163,9 +1181,15 @@ async def submit_batch(
     # Build JSONL
     jsonl_lines = []
     for i, item in enumerate(items):
-        # Include index and batch_run_id to prevent collisions
+        # Build custom_id - include agent_id if present for agent batch items
         symbol = item.get('symbol', 'unknown')
-        custom_id = f"{task.value}_{i}_{symbol}_{batch_run_id}"
+        agent_id = item.get('agent_id', '')
+        if agent_id:
+            # Agent batch format: "agent_{agent_id}_{symbol}_{batch_run_id}"
+            custom_id = f"agent_{agent_id}_{symbol}_{batch_run_id}"
+        else:
+            # Standard format: "{task}_{index}_{symbol}_{batch_run_id}"
+            custom_id = f"{task.value}_{i}_{symbol}_{batch_run_id}"
         prompt = _build_prompt(task, item)
         
         # For RATING, we use structured outputs (no hint needed)

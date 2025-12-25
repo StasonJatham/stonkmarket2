@@ -102,7 +102,7 @@ class SymbolSearchResult(BaseModel):
     market_cap: Optional[float] = None
     pe_ratio: Optional[float] = None
     source: Optional[str] = None  # "local", "cached", or "api"
-    score: Optional[float] = None  # Relevance score
+    score: Optional[float] = None  # Relevance score (0-1)
 
 
 class SymbolSearchResponse(BaseModel):
@@ -112,6 +112,7 @@ class SymbolSearchResponse(BaseModel):
     count: int
     suggest_fresh_search: bool = False
     search_type: str = "local"  # "local" or "api"
+    next_cursor: Optional[str] = None  # Cursor for pagination
 
 
 @router.get(
@@ -124,22 +125,34 @@ async def search_symbols(
     query: str = Path(..., min_length=2, max_length=50, description="Search query"),
     limit: int = Query(10, ge=1, le=50, description="Maximum results to return"),
     fresh: bool = Query(False, description="Force fresh search from yfinance API"),
+    cursor: Optional[str] = Query(None, description="Pagination cursor from previous response"),
 ) -> SymbolSearchResponse:
     """
     Search for stock symbols.
     
     LOCAL-FIRST STRATEGY:
     1. Search local DB first (symbols + cached results) - instant
-    2. If not enough results, suggest_fresh_search=True in response
-    3. Client can re-request with fresh=True to query API
+    2. Use trigram similarity for fuzzy name matching
+    3. If not enough results, suggest_fresh_search=True in response
+    4. Client can re-request with fresh=True to query API
+    
+    PAGINATION:
+    - Pass next_cursor from previous response to get next page
+    - Results are sorted by relevance score descending
     
     When fresh=True:
     - Queries yfinance API directly
     - Saves ALL results to DB for future local searches
+    - Pagination not supported for fresh API search
     """
     from app.services.symbol_search import search_symbols as do_search
     
-    result = await do_search(query, max_results=limit, force_api=fresh)
+    result = await do_search(
+        query, 
+        max_results=limit, 
+        force_api=fresh,
+        cursor=cursor,
+    )
     
     return SymbolSearchResponse(
         query=query,
@@ -147,6 +160,7 @@ async def search_symbols(
         count=result["count"],
         suggest_fresh_search=result["suggest_fresh_search"],
         search_type=result["search_type"],
+        next_cursor=result.get("next_cursor"),
     )
 
 

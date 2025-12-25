@@ -1,38 +1,28 @@
-"""Fundamentals module for quality scoring using yfinance.
+"""Fundamentals module for quality scoring.
 
-Fetches stock info from yfinance with caching and rate limiting.
+MIGRATED: Now uses unified YFinanceService for yfinance calls.
 Computes quality score (0-100) from profitability, balance sheet,
 cash generation, and growth metrics.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 import time
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
-import yfinance as yf
-
 from app.core.logging import get_logger
 from app.database.connection import fetch_one, execute
+from app.services.data_providers import get_yfinance_service
 
 from .config import DipFinderConfig, get_dipfinder_config
 
 logger = get_logger("dipfinder.fundamentals")
 
-# Thread pool for yfinance calls (not async native)
-_executor = ThreadPoolExecutor(max_workers=4)
-
-# In-memory cache for yfinance info
+# In-memory cache for yfinance info (kept for backward compat, but unified service has its own cache)
 _info_cache: Dict[str, tuple[float, Dict[str, Any]]] = {}
-
-# Rate limiting state
-_last_info_request_time: float = 0.0
-_info_request_lock = asyncio.Lock()
 
 
 @dataclass
@@ -631,15 +621,13 @@ def _compute_risk_score(info: Dict[str, Any]) -> tuple[float, Dict[str, Any]]:
     return score, factors
 
 
-def _fetch_info_sync(ticker: str) -> Dict[str, Any]:
-    """Synchronously fetch yfinance info (for thread pool)."""
-    try:
-        t = yf.Ticker(ticker)
-        info = t.info or {}
-        return info
-    except Exception as e:
-        logger.warning(f"Failed to fetch info for {ticker}: {e}")
-        return {}
+# DEPRECATED: _fetch_info_sync removed - use unified YFinanceService
+# Kept as stub for any direct callers
+async def _fetch_info_async(ticker: str) -> Dict[str, Any]:
+    """Fetch yfinance info via unified service."""
+    service = get_yfinance_service()
+    info = await service.get_ticker_info(ticker)
+    return info or {}
 
 
 async def _get_cached_info_from_db(ticker: str) -> Optional[Dict[str, Any]]:
@@ -647,18 +635,18 @@ async def _get_cached_info_from_db(ticker: str) -> Optional[Dict[str, Any]]:
     try:
         row = await fetch_one(
             """
-            SELECT info_data, expires_at
+            SELECT data, expires_at
             FROM yfinance_info_cache
             WHERE symbol = $1 AND expires_at > NOW()
             """,
             ticker.upper(),
         )
 
-        if row and row["info_data"]:
+        if row and row["data"]:
             return (
-                row["info_data"]
-                if isinstance(row["info_data"], dict)
-                else json.loads(row["info_data"])
+                row["data"]
+                if isinstance(row["data"], dict)
+                else json.loads(row["data"])
             )
 
         return None
@@ -673,10 +661,10 @@ async def _save_info_to_db(ticker: str, info: Dict[str, Any], ttl_seconds: int) 
         expires_at = datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
         await execute(
             """
-            INSERT INTO yfinance_info_cache (symbol, info_data, fetched_at, expires_at)
+            INSERT INTO yfinance_info_cache (symbol, data, fetched_at, expires_at)
             VALUES ($1, $2, NOW(), $3)
             ON CONFLICT (symbol) DO UPDATE SET
-                info_data = $2,
+                data = $2,
                 fetched_at = NOW(),
                 expires_at = $3
             """,
@@ -702,8 +690,6 @@ async def fetch_stock_info(
     Returns:
         yfinance info dictionary
     """
-    global _last_info_request_time
-
     if config is None:
         config = get_dipfinder_config()
 
@@ -715,29 +701,12 @@ async def fetch_stock_info(
     if cached and now - cached[0] < config.info_cache_ttl:
         return cached[1]
 
-    # Check database cache
-    db_cached = await _get_cached_info_from_db(ticker)
-    if db_cached:
-        _info_cache[ticker] = (now, db_cached)
-        return db_cached
-
-    # Rate limiting
-    async with _info_request_lock:
-        elapsed = time.time() - _last_info_request_time
-        if elapsed < config.yf_info_delay:
-            await asyncio.sleep(config.yf_info_delay - elapsed)
-        _last_info_request_time = time.time()
-
-    # Fetch from yfinance (in thread pool)
-    loop = asyncio.get_event_loop()
-    info = await loop.run_in_executor(_executor, _fetch_info_sync, ticker)
+    # Use unified YFinanceService (handles caching, rate limiting, and DB persistence)
+    info = await _fetch_info_async(ticker)
 
     if info:
-        # Cache in memory
+        # Cache in local memory for this module
         _info_cache[ticker] = (time.time(), info)
-
-        # Cache in database
-        await _save_info_to_db(ticker, info, config.info_cache_ttl)
 
     return info
 

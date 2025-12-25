@@ -6,7 +6,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Any
 
-from app.database.connection import fetch_one, fetch_all, execute
+from app.database.connection import fetch_all, execute
 
 
 async def record_usage(

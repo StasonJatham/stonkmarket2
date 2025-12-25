@@ -625,6 +625,10 @@ async def approve_suggestion(
            ON CONFLICT (symbol) DO NOTHING""",
         symbol,
     )
+    
+    # Queue for initial data ingest (high priority since user is waiting)
+    from app.jobs.definitions import add_to_ingest_queue
+    await add_to_ingest_queue(symbol, priority=5)
 
     # Schedule background task to fetch data and generate AI content
     background_tasks.add_task(_process_approved_symbol, symbol)

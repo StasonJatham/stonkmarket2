@@ -28,6 +28,26 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator, Optional, Any
 
 import asyncpg
+
+
+# =============================================================================
+# DATABASE URL UTILITIES
+# =============================================================================
+
+def get_async_database_url(url: str) -> str:
+    """Convert database URL to SQLAlchemy async format.
+    
+    Converts: postgresql://user:pass@host:port/db
+    To:       postgresql+asyncpg://user:pass@host:port/db
+    
+    This is a shared utility used by both connection.py and alembic/env.py
+    to ensure consistent URL handling.
+    """
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    elif url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+asyncpg://", 1)
+    return url
 from asyncpg import Pool, Connection, Record
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
@@ -132,6 +152,28 @@ async def execute_many(query: str, args: list) -> None:
         await conn.executemany(query, args)
 
 
+@asynccontextmanager
+async def transaction() -> AsyncIterator[Connection]:
+    """Execute multiple queries in a transaction.
+    
+    Usage:
+        async with transaction() as conn:
+            await conn.execute("INSERT INTO ...", ...)
+            await conn.execute("UPDATE ...", ...)
+            # Auto-commits on success, rolls back on exception
+    
+    This ensures atomicity for multi-step operations that must succeed
+    or fail together. Use this instead of multiple fetch_one/execute calls
+    when operations depend on each other.
+    """
+    pool = await get_pg_pool()
+    if pool is None:
+        raise RuntimeError("PostgreSQL pool not available")
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            yield conn
+
+
 # =============================================================================
 # SQLALCHEMY ASYNC ENGINE & SESSIONS
 # =============================================================================
@@ -142,17 +184,8 @@ _session_factory: Optional[async_sessionmaker[AsyncSession]] = None
 
 
 def _get_sqlalchemy_url() -> str:
-    """Convert DATABASE_URL to SQLAlchemy async format.
-    
-    Converts: postgresql://user:pass@host:port/db
-    To:       postgresql+asyncpg://user:pass@host:port/db
-    """
-    url = settings.database_url
-    if url.startswith("postgresql://"):
-        return url.replace("postgresql://", "postgresql+asyncpg://", 1)
-    elif url.startswith("postgres://"):
-        return url.replace("postgres://", "postgresql+asyncpg://", 1)
-    return url
+    """Get SQLAlchemy async database URL from settings."""
+    return get_async_database_url(settings.database_url)
 
 
 async def init_sqlalchemy_engine() -> AsyncEngine:
@@ -168,6 +201,7 @@ async def init_sqlalchemy_engine() -> AsyncEngine:
             pool_size=settings.db_pool_min_size,
             max_overflow=settings.db_pool_max_size - settings.db_pool_min_size,
             pool_pre_ping=True,  # Check connection health
+            pool_recycle=3600,  # Recycle connections after 1 hour (prevents stale connections)
             echo=False,  # Set True for SQL logging during debug
         )
         

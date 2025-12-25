@@ -1,11 +1,34 @@
-"""Database models (dataclasses for ORM-like usage)."""
+"""Database models (dataclasses for ORM-like usage).
+
+DEPRECATION NOTICE:
+-------------------
+This module contains legacy dataclass models for asyncpg record mapping.
+These are being phased out in favor of SQLAlchemy ORM models in `orm.py`.
+
+Most classes here have equivalent ORM models:
+- DipState -> orm.DipState
+- SymbolConfig -> Use repository's SymbolConfig class directly
+- CronJobConfig -> Use repository's CronJobConfig class directly
+- AuthUser -> orm.AuthUser (but this legacy version is still used by auth_user repository)
+
+New code should import from `app.database.orm` instead.
+"""
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 from decimal import Decimal
+
+# Emit deprecation warning when module is imported
+warnings.warn(
+    "app.database.models is deprecated. Use app.database.orm for ORM models "
+    "or import model classes directly from their repositories.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 
 @dataclass

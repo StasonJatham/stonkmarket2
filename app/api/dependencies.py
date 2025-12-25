@@ -29,6 +29,7 @@ __all__ = [
     "require_admin",
     "rate_limit_auth",
     "rate_limit_api",
+    "get_db",
 ]
 
 
@@ -179,3 +180,28 @@ async def rate_limit_api(
 
     limiter = get_api_rate_limiter(authenticated=is_authenticated)
     await check_rate_limit(identifier, limiter=limiter)
+
+
+# =============================================================================
+# DATABASE SESSION DEPENDENCY
+# =============================================================================
+
+from typing import AsyncIterator
+from sqlalchemy.ext.asyncio import AsyncSession
+
+
+async def get_db() -> AsyncIterator[AsyncSession]:
+    """FastAPI dependency for database sessions (request-scoped).
+    
+    Usage:
+        @router.get("/items")
+        async def list_items(db: AsyncSession = Depends(get_db)):
+            result = await db.execute(select(Item))
+            return result.scalars().all()
+    
+    The session is automatically committed on success and rolled back on error.
+    """
+    from app.database.connection import get_session
+    
+    async with get_session() as session:
+        yield session

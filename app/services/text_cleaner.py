@@ -142,3 +142,65 @@ def detect_ai_artifacts(text: str) -> list[tuple[str, int, str]]:
 def has_ai_artifacts(text: str) -> bool:
     """Check if text contains any common AI artifacts."""
     return any(char in AI_REPLACEMENTS for char in text)
+
+
+def truncate_summary(
+    text: str,
+    max_chars: int = 500,
+    target_chars: int = 400,
+) -> str:
+    """
+    Truncate AI summary to fit within database limits.
+    
+    Tries to truncate at sentence boundaries for cleaner output.
+    Falls back to word boundaries if no sentence break found.
+    
+    Args:
+        text: The summary text to truncate
+        max_chars: Absolute maximum (DB column limit)
+        target_chars: Preferred length if truncation needed
+        
+    Returns:
+        Truncated text, guaranteed <= max_chars
+    """
+    if not text or len(text) <= max_chars:
+        return text
+    
+    # If slightly over target but within max, accept it
+    if len(text) <= max_chars:
+        return text
+    
+    # Try to find a good sentence break point
+    # Look for sentence endings (. ! ?) near target
+    search_start = max(0, target_chars - 50)
+    search_end = min(len(text), target_chars + 50)
+    search_region = text[search_start:search_end]
+    
+    # Find last sentence break in search region
+    last_break = -1
+    for i, char in enumerate(search_region):
+        if char in '.!?' and i + search_start < target_chars + 30:
+            last_break = i
+    
+    if last_break > 0:
+        # Found a sentence break - use it
+        truncated = text[:search_start + last_break + 1].strip()
+        if len(truncated) <= max_chars:
+            return truncated
+    
+    # No good sentence break - truncate at word boundary
+    truncated = text[:target_chars]
+    
+    # Find last space to avoid cutting mid-word
+    last_space = truncated.rfind(' ')
+    if last_space > target_chars - 50:  # Don't go too far back
+        truncated = truncated[:last_space]
+    
+    # Add ellipsis if we truncated
+    truncated = truncated.rstrip('.,;:!? ') + '...'
+    
+    # Final safety check
+    if len(truncated) > max_chars:
+        truncated = truncated[:max_chars - 3] + '...'
+    
+    return truncated

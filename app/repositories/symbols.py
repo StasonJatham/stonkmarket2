@@ -117,6 +117,10 @@ async def upsert_symbol(
     min_days: int = 5,
 ) -> SymbolConfig:
     """Create or update a symbol."""
+    # Check if symbol already exists
+    existing = await get_symbol(symbol.upper())
+    is_new = existing is None
+    
     await execute(
         """
         INSERT INTO symbols (symbol, min_dip_pct, min_days, is_active, added_at, updated_at)
@@ -132,19 +136,15 @@ async def upsert_symbol(
         int(min_days),
     )
     
+    # If this is a new symbol, queue it for initial data ingest
+    if is_new:
+        from app.jobs.definitions import add_to_ingest_queue
+        await add_to_ingest_queue(symbol.upper(), priority=0)
+    
     # Invalidate caches since symbol config changed
     await invalidate_symbol_caches(symbol.upper())
     
     return await get_symbol(symbol.upper())  # type: ignore
-
-
-async def create_symbol(
-    symbol: str,
-    min_dip_pct: float = 0.15,
-    min_days: int = 5,
-) -> SymbolConfig:
-    """Create a new symbol (alias for upsert)."""
-    return await upsert_symbol(symbol, min_dip_pct, min_days)
 
 
 async def update_symbol(

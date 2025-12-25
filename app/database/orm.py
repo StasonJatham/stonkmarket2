@@ -22,7 +22,7 @@ from typing import Optional, List, Any
 from sqlalchemy import (
     String, Integer, BigInteger, Boolean, Text, DateTime, Date,
     Numeric, ForeignKey, Index, CheckConstraint, UniqueConstraint,
-    LargeBinary, func, text,
+    LargeBinary, func, text, MetaData,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import (
@@ -30,9 +30,19 @@ from sqlalchemy.orm import (
 )
 
 
+# Naming convention for constraints and indexes (deterministic names for Alembic)
+NAMING_CONVENTION = {
+    "ix": "ix_%(column_0_label)s",
+    "uq": "uq_%(table_name)s_%(column_0_name)s",
+    "ck": "ck_%(table_name)s_%(constraint_name)s",
+    "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+    "pk": "pk_%(table_name)s",
+}
+
+
 class Base(DeclarativeBase):
-    """Base class for all ORM models."""
-    pass
+    """Base class for all ORM models with naming convention."""
+    metadata = MetaData(naming_convention=NAMING_CONVENTION)
 
 
 # =============================================================================
@@ -126,7 +136,7 @@ class Symbol(Base):
     name: Mapped[Optional[str]] = mapped_column(String(255))
     sector: Mapped[Optional[str]] = mapped_column(String(100))
     market_cap: Mapped[Optional[int]] = mapped_column(BigInteger)
-    summary_ai: Mapped[Optional[str]] = mapped_column(String(350))
+    summary_ai: Mapped[Optional[str]] = mapped_column(String(500))  # AI-generated summary (300-400 target, 500 max)
     symbol_type: Mapped[str] = mapped_column(String(20), default="stock")  # stock, etf, index
     min_dip_pct: Mapped[Decimal] = mapped_column(Numeric(5, 4), default=Decimal("0.15"))
     min_days: Mapped[int] = mapped_column(Integer, default=5)
@@ -296,7 +306,7 @@ class DipVote(Base):
     )
 
 
-class DipAiAnalysis(Base):
+class DipAIAnalysis(Base):
     """AI-generated analysis for dips."""
     __tablename__ = "dip_ai_analysis"
 
@@ -368,6 +378,10 @@ class BatchJob(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     job_metadata: Mapped[Optional[dict]] = mapped_column("metadata", JSONB)  # Named 'metadata' in DB
+    task_custom_ids: Mapped[Optional[dict]] = mapped_column(JSONB)  # Map custom_id → task metadata
+
+    # Relationship to errors
+    errors: Mapped[List["BatchTaskError"]] = relationship(back_populates="batch_job")
 
     __table_args__ = (
         CheckConstraint(
@@ -377,6 +391,41 @@ class BatchJob(Base):
         Index("idx_batch_jobs_status", "status"),
         Index("idx_batch_jobs_type", "job_type"),
         Index("idx_batch_jobs_created", "created_at", postgresql_ops={"created_at": "DESC"}),
+    )
+
+
+class BatchTaskError(Base):
+    """Failed batch task for retry tracking."""
+    __tablename__ = "batch_task_errors"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    batch_id: Mapped[str] = mapped_column(String(100), ForeignKey("batch_jobs.batch_id"), nullable=False)
+    custom_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(20), nullable=False)
+    task_type: Mapped[str] = mapped_column(String(50), nullable=False)  # e.g., 'agent_analysis', 'rating', 'bio'
+    agent_id: Mapped[Optional[str]] = mapped_column(String(50))  # For agent batch tasks
+    error_type: Mapped[str] = mapped_column(String(50), nullable=False)  # e.g., 'api_error', 'validation_error', 'timeout'
+    error_message: Mapped[Optional[str]] = mapped_column(Text)
+    original_request: Mapped[Optional[dict]] = mapped_column(JSONB)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0)
+    max_retries: Mapped[int] = mapped_column(Integer, default=3)
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending, retrying, resolved, abandoned
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    last_retry_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    # Relationship
+    batch_job: Mapped["BatchJob"] = relationship(back_populates="errors")
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'retrying', 'resolved', 'abandoned')",
+            name="ck_batch_task_errors_status"
+        ),
+        Index("idx_batch_task_errors_batch", "batch_id"),
+        Index("idx_batch_task_errors_symbol", "symbol"),
+        Index("idx_batch_task_errors_status", "status"),
+        Index("idx_batch_task_errors_pending", "status", "created_at", postgresql_where=text("status = 'pending'")),
     )
 
 
@@ -570,12 +619,12 @@ class DipfinderHistory(Base):
 
 
 class YfinanceInfoCache(Base):
-    """YFinance info cache."""
+    """YFinance info cache (L3 persistent cache)."""
     __tablename__ = "yfinance_info_cache"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     symbol: Mapped[str] = mapped_column(String(20), unique=True, nullable=False)
-    info_data: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    data: Mapped[dict] = mapped_column(JSONB, nullable=False)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
@@ -722,16 +771,115 @@ class SymbolSearchResult(Base):
     sector: Mapped[Optional[str]] = mapped_column(String(100))
     industry: Mapped[Optional[str]] = mapped_column(String(100))
     market_cap: Mapped[Optional[int]] = mapped_column(BigInteger)
-    search_query: Mapped[str] = mapped_column(String(100), nullable=False)
+    search_query: Mapped[Optional[str]] = mapped_column(String(100))
     relevance_score: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2))
+    confidence_score: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(4, 3), comment="Combined score (0-1) from relevance, recency, and data quality"
+    )
+    last_seen_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), comment="Last time this result was returned in a search"
+    )
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
-        UniqueConstraint("symbol", "search_query", name="uq_search_result"),
+        UniqueConstraint("symbol", name="uq_symbol_search_result"),
         Index("idx_search_results_symbol", "symbol"),
         Index("idx_search_results_query", "search_query"),
         Index("idx_search_results_expires", "expires_at"),
+        # Note: trigram index on name and cursor index are created via migration
+    )
+
+
+class SymbolSearchLog(Base):
+    """Log all search queries for analytics."""
+    __tablename__ = "symbol_search_log"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    query: Mapped[str] = mapped_column(String(100), nullable=False)
+    query_normalized: Mapped[str] = mapped_column(String(100), nullable=False)  # Uppercase, trimmed
+    result_count: Mapped[int] = mapped_column(Integer, default=0)
+    source: Mapped[str] = mapped_column(String(20), nullable=False)  # local, api, mixed
+    latency_ms: Mapped[Optional[int]] = mapped_column(Integer)
+    user_fingerprint: Mapped[Optional[str]] = mapped_column(String(64))
+    searched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("source IN ('local', 'api', 'mixed')", name="ck_search_log_source"),
+        Index("idx_search_log_query", "query_normalized"),
+        Index("idx_search_log_searched", "searched_at", postgresql_ops={"searched_at": "DESC"}),
+    )
+
+
+# =============================================================================
+# DATA VERSIONING & CHANGE DETECTION
+# =============================================================================
+
+
+class DataVersion(Base):
+    """Track data versions for change detection (prices, fundamentals, calendar)."""
+    __tablename__ = "data_versions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(20), nullable=False)
+    source: Mapped[str] = mapped_column(String(20), nullable=False)  # prices, fundamentals, calendar
+    version_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    version_metadata: Mapped[Optional[dict]] = mapped_column(JSONB)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        CheckConstraint("source IN ('prices', 'fundamentals', 'calendar')", name="ck_data_version_source"),
+        UniqueConstraint("symbol", "source", name="uq_data_version_symbol_source"),
+        Index("idx_data_versions_symbol", "symbol"),
+        Index("idx_data_versions_source", "source"),
+        Index("idx_data_versions_updated", "updated_at", postgresql_ops={"updated_at": "DESC"}),
+    )
+
+
+class AnalysisVersion(Base):
+    """Track analysis versions to skip unchanged symbols."""
+    __tablename__ = "analysis_versions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(20), nullable=False)
+    analysis_type: Mapped[str] = mapped_column(String(50), nullable=False)  # bio, rating, agent_buffett, etc.
+    input_version_hash: Mapped[str] = mapped_column(String(64), nullable=False)  # Combined hash of input data
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    batch_job_id: Mapped[Optional[str]] = mapped_column(String(100))
+
+    __table_args__ = (
+        UniqueConstraint("symbol", "analysis_type", name="uq_analysis_version_symbol_type"),
+        Index("idx_analysis_versions_symbol", "symbol"),
+        Index("idx_analysis_versions_type", "analysis_type"),
+        Index("idx_analysis_versions_expires", "expires_at"),
+    )
+
+
+# =============================================================================
+# SYMBOL INGEST QUEUE
+# =============================================================================
+
+
+class SymbolIngestQueue(Base):
+    """Queue for newly added symbols awaiting initial data fetch."""
+    __tablename__ = "symbol_ingest_queue"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(20), unique=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending, processing, completed, failed
+    priority: Mapped[int] = mapped_column(Integer, default=0)  # Higher = more urgent
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=3)
+    last_error: Mapped[Optional[str]] = mapped_column(Text)
+    queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    processing_started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        CheckConstraint("status IN ('pending', 'processing', 'completed', 'failed')", name="ck_ingest_queue_status"),
+        Index("idx_ingest_queue_status", "status"),
+        Index("idx_ingest_queue_pending", "status", "queued_at", postgresql_where=text("status = 'pending'")),
     )
 
 

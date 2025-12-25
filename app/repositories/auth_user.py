@@ -2,10 +2,44 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Optional
 
 from app.database.connection import fetch_one, execute
-from app.database.models import AuthUser
+
+
+@dataclass
+class AuthUser:
+    """Authentication user with MFA support."""
+
+    id: int
+    username: str
+    password_hash: str
+    is_admin: bool = False
+    mfa_secret: Optional[str] = None
+    mfa_enabled: bool = False
+    mfa_backup_codes: Optional[str] = None  # JSON list of hashed backup codes
+    updated_at: Optional[datetime] = None
+
+    @classmethod
+    def from_row(cls, row) -> "AuthUser":
+        """Create from database row."""
+        keys = list(row.keys())
+        updated = None
+        if "updated_at" in keys and row["updated_at"]:
+            val = row["updated_at"]
+            updated = val if isinstance(val, datetime) else datetime.fromisoformat(str(val))
+        return cls(
+            id=row["id"],
+            username=row["username"],
+            password_hash=row["password_hash"],
+            is_admin=row.get("is_admin", False) or False,
+            mfa_secret=row.get("mfa_secret"),
+            mfa_enabled=row.get("mfa_enabled", False) or False,
+            mfa_backup_codes=row.get("mfa_backup_codes"),
+            updated_at=updated,
+        )
 
 
 async def get_user(username: str) -> Optional[AuthUser]:

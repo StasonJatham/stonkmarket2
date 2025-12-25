@@ -280,14 +280,3 @@ async def upsert_ai_analysis(
         )
 
     return dict(row) if row else {"symbol": symbol.upper()}
-
-
-async def delete_expired_analyses() -> int:
-    """Delete expired AI analyses."""
-    result = await execute("DELETE FROM dip_ai_analysis WHERE expires_at < NOW()")
-
-    try:
-        count = int(result.split()[-1])
-        return count
-    except (ValueError, IndexError):
-        return 0

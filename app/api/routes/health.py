@@ -115,3 +115,77 @@ async def cache_stats() -> dict:
     from app.cache.metrics import cache_metrics
     
     return cache_metrics.get_summary()
+
+
+@router.get(
+    "/db",
+    summary="Database health details",
+    description="Get detailed database health and connection pool statistics.",
+)
+async def db_health_details() -> dict:
+    """
+    Get detailed database health information.
+
+    Returns connection pool stats, database version, and diagnostic info.
+    Useful for monitoring pool utilization and identifying connection issues.
+    """
+    result = {
+        "status": "unknown",
+        "pool": None,
+        "database": None,
+        "error": None,
+    }
+
+    try:
+        pool = await get_pg_pool()
+        if pool is None:
+            result["status"] = "unhealthy"
+            result["error"] = "Connection pool not initialized"
+            return result
+
+        # Pool statistics
+        result["pool"] = {
+            "size": pool.get_size(),
+            "free_size": pool.get_idle_size(),
+            "used_size": pool.get_size() - pool.get_idle_size(),
+            "min_size": pool.get_min_size(),
+            "max_size": pool.get_max_size(),
+        }
+
+        # Database diagnostics
+        async with pool.acquire() as conn:
+            # Get PostgreSQL version
+            version = await conn.fetchval("SELECT version()")
+
+            # Get current connections
+            stats = await conn.fetchrow("""
+                SELECT
+                    numbackends as active_connections,
+                    xact_commit as transactions_committed,
+                    xact_rollback as transactions_rolled_back,
+                    blks_read as blocks_read,
+                    blks_hit as blocks_hit,
+                    tup_returned as rows_returned,
+                    tup_fetched as rows_fetched
+                FROM pg_stat_database
+                WHERE datname = current_database()
+            """)
+
+            result["database"] = {
+                "version": version,
+                "active_connections": stats["active_connections"] if stats else None,
+                "cache_hit_ratio": (
+                    round(stats["blocks_hit"] / (stats["blocks_read"] + stats["blocks_hit"]) * 100, 2)
+                    if stats and (stats["blocks_read"] + stats["blocks_hit"]) > 0
+                    else None
+                ),
+            }
+
+        result["status"] = "healthy"
+
+    except Exception as e:
+        logger.warning(f"Database health check failed: {e}")
+        result["status"] = "unhealthy"
+        result["error"] = str(e)
+
+    return result

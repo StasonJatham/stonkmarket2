@@ -15,6 +15,7 @@ from alembic import context
 
 # Import your models' Base for autogenerate support
 from app.database.orm import Base
+from app.database.connection import get_async_database_url
 from app.core.config import settings
 
 # this is the Alembic Config object
@@ -30,12 +31,7 @@ target_metadata = Base.metadata
 
 def get_url() -> str:
     """Get database URL from settings, converted to async format."""
-    url = settings.database_url
-    if url.startswith("postgresql://"):
-        return url.replace("postgresql://", "postgresql+asyncpg://", 1)
-    elif url.startswith("postgres://"):
-        return url.replace("postgres://", "postgresql+asyncpg://", 1)
-    return url
+    return get_async_database_url(settings.database_url)
 
 
 def run_migrations_offline() -> None:

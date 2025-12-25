@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 
-from app.database.connection import get_pg_connection, fetch_one, fetch_all, execute
+from app.database.connection import get_pg_connection, fetch_one, fetch_all, execute, transaction
 from app.core.logging import get_logger
 
 logger = get_logger("user_api_keys")
@@ -95,11 +95,14 @@ async def validate_api_key(key: str) -> Optional[dict]:
 
     Returns:
         Key details dict if valid, None if invalid/expired/inactive.
+    
+    Note: Uses a transaction to ensure atomic SELECT + UPDATE for usage tracking.
     """
     key_hash = hash_api_key(key)
     now = datetime.now(timezone.utc)
 
-    async with get_pg_connection() as conn:
+    # Use transaction to ensure atomic read + update
+    async with transaction() as conn:
         row = await conn.fetchrow(
             """
             SELECT id, key_prefix, name, user_id, vote_weight, rate_limit_bypass,
@@ -108,13 +111,14 @@ async def validate_api_key(key: str) -> Optional[dict]:
             WHERE key_hash = $1
               AND is_active = TRUE
               AND (expires_at IS NULL OR expires_at > $2)
+            FOR UPDATE
             """,
             key_hash,
             now,
         )
 
         if row:
-            # Update last used and usage count
+            # Update last used and usage count atomically
             await conn.execute(
                 """
                 UPDATE user_api_keys
