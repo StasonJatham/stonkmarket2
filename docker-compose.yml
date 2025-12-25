@@ -1,35 +1,8 @@
-services:
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    container_name: stonkmarket-frontend
-    ports:
-      - "8083:80"
-    depends_on:
-      stonkmarket:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-    restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          cpus: "0.5"
-          memory: 128M
-        reservations:
-          cpus: "0.1"
-          memory: 32M
-    networks:
-      - stonkmarket
-    security_opt:
-      - no-new-privileges:true
+# Production docker-compose
+# Usage: docker compose up -d
 
-  stonkmarket:
+services:
+  api:
     build:
       context: .
       dockerfile: Dockerfile
@@ -44,22 +17,10 @@ services:
       --timeout 120
       --graceful-timeout 30
     env_file:
-      - .env
+      - .env.production
     environment:
-      - ENVIRONMENT=${ENVIRONMENT:-production}
-      - DEBUG=${DEBUG:-false}
-      - DATABASE_URL=${DATABASE_URL:-postgresql://stonkmarket:stonkmarket@postgres:5432/stonkmarket}
-      - VALKEY_URL=${VALKEY_URL:-redis://valkey:6379/0}
-      - ADMIN_USER=${ADMIN_USER:-admin}
-      - ADMIN_PASS=${ADMIN_PASS:-}
-      - AUTH_SECRET=${AUTH_SECRET:-}
-      - SCHEDULER_ENABLED=${SCHEDULER_ENABLED:-true}
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-https://stonkmarket.de}
-      # API keys (seeded to DB on first startup)
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - LOGO_DEV_PUBLIC_KEY=${LOGO_DEV_PUBLIC_KEY:-}
-      - LOGO_DEV_SECRET_KEY=${LOGO_DEV_SECRET_KEY:-}
+      - ENVIRONMENT=production
+      - DEBUG=false
     expose:
       - "8000"
     depends_on:
@@ -90,18 +51,45 @@ services:
     tmpfs:
       - /tmp:mode=1777
 
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: stonkmarket-frontend
+    ports:
+      - "8083:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+        reservations:
+          cpus: "0.1"
+          memory: 32M
+    networks:
+      - stonkmarket
+    security_opt:
+      - no-new-privileges:true
+
   postgres:
     image: postgres:17-alpine
     container_name: stonkmarket-postgres
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-stonkmarket}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-stonkmarket}
-      POSTGRES_DB: ${POSTGRES_DB:-stonkmarket}
+    env_file:
+      - .env.production
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      # Schema is now managed by Alembic migrations
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-stonkmarket} -d ${POSTGRES_DB:-stonkmarket}"]
+      test: ["CMD-SHELL", "pg_isready -U stonkmarket -d stonkmarket"]
       interval: 10s
       timeout: 5s
       retries: 5

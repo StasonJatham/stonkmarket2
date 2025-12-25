@@ -114,7 +114,7 @@ class TestSymbolValidation:
         # Either 422 from path validation or handled in endpoint
         assert response.status_code in [
             status.HTTP_200_OK,  # May return valid=False
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
         ]
 
 

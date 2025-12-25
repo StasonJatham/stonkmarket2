@@ -98,12 +98,12 @@ class TestChartEndpoint:
     def test_chart_with_invalid_days_too_low(self, client: TestClient):
         """GET /chart with days < 7 returns validation error."""
         response = client.get("/dips/AAPL/chart?days=5")
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     def test_chart_with_invalid_days_too_high(self, client: TestClient):
         """GET /chart with days > 1825 returns validation error."""
         response = client.get("/dips/AAPL/chart?days=2000")
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
 class TestStockInfoEndpoint:

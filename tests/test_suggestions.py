@@ -39,7 +39,7 @@ class TestCreateSuggestionEndpoint:
     def test_create_suggestion_without_body_returns_422(self, client: TestClient):
         """POST /suggestions without body returns validation error."""
         response = client.post("/suggestions")
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     def test_create_suggestion_with_invalid_symbol(self, client: TestClient):
         """POST /suggestions with invalid symbol format returns error."""
@@ -49,7 +49,7 @@ class TestCreateSuggestionEndpoint:
         )
         assert response.status_code in [
             status.HTTP_400_BAD_REQUEST,
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
         ]
 
 
@@ -62,7 +62,7 @@ class TestVoteSuggestionEndpoint:
         # 404 if not found, 422 if vote validation fails
         assert response.status_code in [
             status.HTTP_404_NOT_FOUND,
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
         ]
 
     def test_vote_is_put_method(self, client: TestClient):

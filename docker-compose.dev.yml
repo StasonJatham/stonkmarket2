@@ -1,8 +1,7 @@
-# Development docker-compose with hot reloading for FastAPI and React
+# Development docker-compose - mirrors production but with hot reload
 # Usage: docker compose -f docker-compose.dev.yml up --build
 
 services:
-  # FastAPI backend with hot reload
   api:
     build:
       context: .
@@ -15,26 +14,17 @@ services:
       --reload
       --reload-dir /app/app
     env_file:
-      - .env
+      - .env.production
     environment:
       - ENVIRONMENT=development
       - DEBUG=true
-      - DATABASE_URL=${DATABASE_URL:-postgresql://stonkmarket:stonkmarket@postgres:5432/stonkmarket}
-      - VALKEY_URL=${VALKEY_URL:-redis://valkey:6379/0}
-      - ADMIN_USER=${ADMIN_USER:-admin}
-      - ADMIN_PASS=${ADMIN_PASS:-changeme}
-      - AUTH_SECRET=${AUTH_SECRET:-dev-secret-change-in-production}
-      - SCHEDULER_ENABLED=${SCHEDULER_ENABLED:-true}
-      - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
+      - LOG_LEVEL=DEBUG
       - CORS_ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
     ports:
       - "8000:8000"
     volumes:
-      # Mount source code for hot reloading
       - ./app:/app/app:ro
       - ./tests:/app/tests:ro
-      # Mount Alembic for migrations
       - ./alembic:/app/alembic
       - ./alembic.ini:/app/alembic.ini:ro
       - ./entrypoint.sh:/app/entrypoint.sh:ro
@@ -50,9 +40,8 @@ services:
       retries: 3
       start_period: 20s
     networks:
-      - stonkmarket-dev
+      - stonkmarket
 
-  # React frontend with Vite hot reload
   frontend:
     build:
       context: ./frontend
@@ -65,7 +54,6 @@ services:
     ports:
       - "5173:5173"
     volumes:
-      # Mount source code for hot reloading
       - ./frontend/src:/app/src:ro
       - ./frontend/index.html:/app/index.html:ro
       - ./frontend/vite.config.ts:/app/vite.config.ts:ro
@@ -76,20 +64,17 @@ services:
     depends_on:
       - api
     networks:
-      - stonkmarket-dev
+      - stonkmarket
 
   postgres:
     image: postgres:17-alpine
     container_name: stonkmarket-postgres-dev
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-stonkmarket}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-stonkmarket}
-      POSTGRES_DB: ${POSTGRES_DB:-stonkmarket}
+    env_file:
+      - .env.production
     ports:
       - "5432:5432"
     volumes:
       - postgres_data_dev:/var/lib/postgresql/data
-      # Schema is now managed by Alembic migrations
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U stonkmarket -d stonkmarket"]
       interval: 5s
@@ -97,7 +82,14 @@ services:
       retries: 5
       start_period: 5s
     networks:
-      - stonkmarket-dev
+      - stonkmarket
+    command: >
+      postgres
+      -c shared_buffers=128MB
+      -c effective_cache_size=256MB
+      -c maintenance_work_mem=64MB
+      -c work_mem=16MB
+      -c max_connections=100
 
   valkey:
     image: valkey/valkey:8.1-alpine
@@ -107,6 +99,8 @@ services:
       --appendonly yes
       --maxmemory 128mb
       --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
     volumes:
       - valkey_data_dev:/data
     healthcheck:
@@ -116,7 +110,7 @@ services:
       retries: 5
       start_period: 3s
     networks:
-      - stonkmarket-dev
+      - stonkmarket
 
 volumes:
   postgres_data_dev:
@@ -125,6 +119,6 @@ volumes:
     driver: local
 
 networks:
-  stonkmarket-dev:
+  stonkmarket:
     name: stonkmarket_dev_net
     driver: bridge

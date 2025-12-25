@@ -15,17 +15,17 @@ class TestLoginEndpoint:
     def test_login_without_body_returns_422(self, client: TestClient):
         """Login without request body returns validation error."""
         response = client.post("/auth/login")
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     def test_login_with_empty_username_returns_422(self, client: TestClient):
         """Login with empty username returns validation error."""
         response = client.post("/auth/login", json={"username": "", "password": "test"})
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     def test_login_with_empty_password_returns_422(self, client: TestClient):
         """Login with empty password returns validation error."""
         response = client.post("/auth/login", json={"username": "test", "password": ""})
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     def test_login_with_nonexistent_user_returns_401(self, client: TestClient):
         """Login with non-existent user returns authentication error."""

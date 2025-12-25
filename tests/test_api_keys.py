@@ -40,7 +40,7 @@ class TestCreateAPIKeyEndpoint:
         # 401 if test admin doesn't exist in DB, 422 if auth passes but no body
         assert response.status_code in [
             status.HTTP_401_UNAUTHORIZED,
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
         ]
 
 

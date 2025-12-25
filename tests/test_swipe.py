@@ -70,7 +70,7 @@ class TestSwipeVoteEndpoint:
     def test_vote_without_body_returns_422(self, client: TestClient):
         """PUT /swipe/cards/{symbol}/vote without body returns 422."""
         response = client.put("/swipe/cards/AAPL/vote")
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     def test_vote_with_invalid_vote_type_returns_422(self, client: TestClient):
         """PUT /swipe/cards/{symbol}/vote with invalid vote type returns 422."""
@@ -78,7 +78,7 @@ class TestSwipeVoteEndpoint:
             "/swipe/cards/AAPL/vote",
             json={"vote_type": "invalid"},
         )
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     def test_vote_requires_fingerprint(self, client: TestClient):
         """PUT /swipe/cards/{symbol}/vote works without special fingerprint header."""
@@ -94,7 +94,7 @@ class TestSwipeVoteEndpoint:
         assert response.status_code in [
             status.HTTP_200_OK,
             status.HTTP_404_NOT_FOUND,
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             status.HTTP_429_TOO_MANY_REQUESTS,
         ]
 

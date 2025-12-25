@@ -11,9 +11,12 @@ import pytest_asyncio
 from fastapi.testclient import TestClient
 from httpx import AsyncClient
 
-# Suppress asyncpg connection cleanup warnings during tests
+# Suppress asyncpg and asyncio connection cleanup warnings during tests
 warnings.filterwarnings("ignore", message=".*Event loop is closed.*")
 warnings.filterwarnings("ignore", message=".*connection was closed.*")
+warnings.filterwarnings("ignore", message=".*unclosed connection.*", category=ResourceWarning)
+warnings.filterwarnings("ignore", message=".*unclosed transport.*", category=ResourceWarning)
+warnings.filterwarnings("ignore", category=pytest.PytestUnraisableExceptionWarning)
 
 # Configure asyncio
 pytest_plugins = ["pytest_asyncio"]

@@ -818,7 +818,7 @@ class TestRealYFinanceData:
 
         # Fetch both stock and benchmark
         tickers = ["AAPL", "SPY"]
-        data = yf.download(tickers, period="6mo", progress=False)
+        data = yf.download(tickers, period="6mo", progress=False, auto_adjust=True)
 
         if data.empty:
             pytest.skip("Could not fetch data")
@@ -922,7 +922,7 @@ class TestRealYFinanceData:
 
         # Get data for a volatile stock and SPY
         tickers = ["TSLA", "SPY"]
-        data = yf.download(tickers, period="1y", progress=False)
+        data = yf.download(tickers, period="1y", progress=False, auto_adjust=True)
 
         if data.empty:
             pytest.skip("Could not fetch data")
