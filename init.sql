@@ -594,3 +594,28 @@ JOIN symbols s ON ds.ticker = s.symbol
 WHERE ds.should_alert = TRUE
   AND ds.as_of_date >= CURRENT_DATE - INTERVAL '7 days'
 ORDER BY ds.final_score DESC;
+
+-- ============================================================================
+-- AI AGENT ANALYSIS
+-- ============================================================================
+
+-- Store analysis from AI investor personas (Warren Buffett, Peter Lynch, etc.)
+CREATE TABLE IF NOT EXISTS ai_agent_analysis (
+    id SERIAL PRIMARY KEY,
+    symbol VARCHAR(20) UNIQUE NOT NULL,
+    -- Verdicts from individual agents stored as JSONB array
+    verdicts JSONB NOT NULL DEFAULT '[]'::jsonb,
+    -- Aggregated signal
+    overall_signal VARCHAR(20) NOT NULL CHECK (overall_signal IN ('bullish', 'bearish', 'neutral')),
+    overall_confidence INTEGER NOT NULL CHECK (overall_confidence >= 0 AND overall_confidence <= 100),
+    summary TEXT,
+    -- Timestamps
+    analyzed_at TIMESTAMPTZ DEFAULT NOW(),
+    expires_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_agent_analysis_symbol ON ai_agent_analysis(symbol);
+CREATE INDEX IF NOT EXISTS idx_ai_agent_analysis_expires ON ai_agent_analysis(expires_at);
+CREATE INDEX IF NOT EXISTS idx_ai_agent_analysis_signal ON ai_agent_analysis(overall_signal);

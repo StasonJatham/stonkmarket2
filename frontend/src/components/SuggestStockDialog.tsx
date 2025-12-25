@@ -24,10 +24,28 @@ import {
   Building2,
   Sparkles,
   Send,
+  Globe,
 } from 'lucide-react';
-import { searchSymbols, validateSymbol, suggestStock, type SymbolSearchResult } from '@/services/api';
+import { 
+  searchSymbols, 
+  searchStoredSuggestions, 
+  validateSymbol, 
+  suggestStock, 
+  type SymbolSearchResult,
+  type StoredSearchResult,
+} from '@/services/api';
 import { useTheme } from '@/context/ThemeContext';
 import { StockLogo } from '@/components/StockLogo';
+
+// Combined result type for unified display
+interface SearchResult {
+  symbol: string;
+  name: string | null;
+  sector?: string | null;
+  source: 'tracked' | 'suggestion' | 'yfinance';
+  quote_type?: string | null;
+  vote_count?: number | null;
+}
 
 interface StockPreview {
   symbol: string;
@@ -52,8 +70,11 @@ export function SuggestStockDialog({
   const { getActiveColors } = useTheme();
   const [open, setOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<SymbolSearchResult[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
+  const [storedResults, setStoredResults] = useState<StoredSearchResult[]>([]);
+  const [yfinanceResults, setYfinanceResults] = useState<SymbolSearchResult[]>([]);
+  const [isSearchingStored, setIsSearchingStored] = useState(false);
+  const [isSearchingYfinance, setIsSearchingYfinance] = useState(false);
+  const [hasSearchedYfinance, setHasSearchedYfinance] = useState(false);
   const [isValidating, setIsValidating] = useState(false);
   const [stockPreview, setStockPreview] = useState<StockPreview | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -65,35 +86,56 @@ export function SuggestStockDialog({
 
   const colors = getActiveColors();
 
-  // Debounced search
-  const handleSearch = useCallback(async (query: string) => {
-    if (query.length < 2) {
-      setSearchResults([]);
+  // Debounced search for stored/cached results only
+  const handleStoredSearch = useCallback(async (query: string) => {
+    if (query.length < 1) {
+      setStoredResults([]);
       return;
     }
 
-    setIsSearching(true);
+    setIsSearchingStored(true);
     try {
-      const results = await searchSymbols(query, 8);
-      setSearchResults(results);
+      const results = await searchStoredSuggestions(query, 8);
+      setStoredResults(results);
     } catch {
-      setSearchResults([]);
+      setStoredResults([]);
     } finally {
-      setIsSearching(false);
+      setIsSearchingStored(false);
     }
   }, []);
 
+  // Manual yfinance search (triggered by button)
+  const handleYfinanceSearch = useCallback(async () => {
+    if (searchQuery.length < 2) return;
+    
+    setIsSearchingYfinance(true);
+    setHasSearchedYfinance(true);
+    try {
+      const results = await searchSymbols(searchQuery, 8);
+      setYfinanceResults(results);
+    } catch {
+      setYfinanceResults([]);
+    } finally {
+      setIsSearchingYfinance(false);
+    }
+  }, [searchQuery]);
+
+  // Debounce stored search
   useEffect(() => {
     if (searchTimeoutRef.current) {
       clearTimeout(searchTimeoutRef.current);
     }
 
-    if (searchQuery.length >= 2) {
+    // Reset yfinance results when query changes
+    setYfinanceResults([]);
+    setHasSearchedYfinance(false);
+
+    if (searchQuery.length >= 1) {
       searchTimeoutRef.current = setTimeout(() => {
-        handleSearch(searchQuery);
-      }, 300);
+        handleStoredSearch(searchQuery);
+      }, 150); // Fast debounce for cached results
     } else {
-      setSearchResults([]);
+      setStoredResults([]);
     }
 
     return () => {
@@ -101,11 +143,13 @@ export function SuggestStockDialog({
         clearTimeout(searchTimeoutRef.current);
       }
     };
-  }, [searchQuery, handleSearch]);
+  }, [searchQuery, handleStoredSearch]);
 
   const resetState = () => {
     setSearchQuery('');
-    setSearchResults([]);
+    setStoredResults([]);
+    setYfinanceResults([]);
+    setHasSearchedYfinance(false);
     setStockPreview(null);
     setValidationError(null);
     setIsSubmitting(false);
@@ -121,9 +165,12 @@ export function SuggestStockDialog({
     setOpen(newOpen);
   };
 
-  const handleSelectStock = async (result: SymbolSearchResult) => {
+  // Handle selection from either stored or yfinance results
+  const handleSelectStock = async (result: SearchResult) => {
     setSearchQuery('');
-    setSearchResults([]);
+    setStoredResults([]);
+    setYfinanceResults([]);
+    setHasSearchedYfinance(false);
     setIsValidating(true);
     setValidationError(null);
 
@@ -153,6 +200,42 @@ export function SuggestStockDialog({
       setIsValidating(false);
     }
   };
+
+  // Combine and dedupe results for display
+  const combinedResults: SearchResult[] = (() => {
+    const seen = new Set<string>();
+    const results: SearchResult[] = [];
+    
+    // Add stored results first (tracked and suggestions)
+    for (const r of storedResults) {
+      if (!seen.has(r.symbol)) {
+        seen.add(r.symbol);
+        results.push({
+          symbol: r.symbol,
+          name: r.name,
+          sector: r.sector,
+          source: r.source,
+          vote_count: r.vote_count,
+        });
+      }
+    }
+    
+    // Add yfinance results (excluding already shown)
+    for (const r of yfinanceResults) {
+      if (!seen.has(r.symbol)) {
+        seen.add(r.symbol);
+        results.push({
+          symbol: r.symbol,
+          name: r.name,
+          sector: r.sector,
+          source: 'yfinance',
+          quote_type: r.quote_type,
+        });
+      }
+    }
+    
+    return results;
+  })();
 
   const handleSubmit = async () => {
     if (!stockPreview) return;
@@ -241,25 +324,45 @@ export function SuggestStockDialog({
               {!stockPreview ? (
                 <div className="space-y-3">
                   <Label>Search for a Stock</Label>
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input
-                      ref={inputRef}
-                      placeholder="Type company name or symbol..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="pl-10"
-                    />
-                    {isSearching && (
-                      <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 animate-spin" />
-                    )}
+                  <div className="flex gap-2">
+                    <div className="relative flex-1">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        ref={inputRef}
+                        placeholder="Type company name or symbol..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && searchQuery.length >= 2) {
+                            handleYfinanceSearch();
+                          }
+                        }}
+                        className="pl-10"
+                      />
+                      {isSearchingStored && (
+                        <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 animate-spin" />
+                      )}
+                    </div>
+                    <Button
+                      variant="secondary"
+                      size="icon"
+                      onClick={handleYfinanceSearch}
+                      disabled={searchQuery.length < 2 || isSearchingYfinance}
+                      title="Search Yahoo Finance for more results"
+                    >
+                      {isSearchingYfinance ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Globe className="h-4 w-4" />
+                      )}
+                    </Button>
                   </div>
                   
                   {/* Search Results */}
-                  {searchResults.length > 0 && (
+                  {combinedResults.length > 0 && (
                     <ScrollArea className="h-[250px] rounded-md border">
                       <div className="p-2 space-y-1">
-                        {searchResults.map((result) => (
+                        {combinedResults.map((result) => (
                           <button
                             key={result.symbol}
                             onClick={() => handleSelectStock(result)}
@@ -269,8 +372,18 @@ export function SuggestStockDialog({
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2">
                                 <span className="font-semibold">{result.symbol}</span>
-                                {result.quote_type && (
+                                {result.source === 'tracked' && (
+                                  <Badge variant="default" className="text-[10px] px-1 py-0 bg-success/20 text-success">
+                                    Tracked
+                                  </Badge>
+                                )}
+                                {result.source === 'suggestion' && (
                                   <Badge variant="secondary" className="text-[10px] px-1 py-0">
+                                    Suggested {result.vote_count ? `(${result.vote_count} votes)` : ''}
+                                  </Badge>
+                                )}
+                                {result.source === 'yfinance' && result.quote_type && (
+                                  <Badge variant="outline" className="text-[10px] px-1 py-0">
                                     {result.quote_type}
                                   </Badge>
                                 )}
@@ -290,13 +403,37 @@ export function SuggestStockDialog({
                     </ScrollArea>
                   )}
                   
-                  {searchQuery.length >= 2 && searchResults.length === 0 && !isSearching && (
+                  {/* No stored results - prompt for yfinance search */}
+                  {searchQuery.length >= 2 && storedResults.length === 0 && !isSearchingStored && !hasSearchedYfinance && (
+                    <div className="text-center py-4 space-y-2">
+                      <p className="text-sm text-muted-foreground">
+                        Not in our database yet.
+                      </p>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleYfinanceSearch}
+                        disabled={isSearchingYfinance}
+                        className="gap-2"
+                      >
+                        {isSearchingYfinance ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Globe className="h-4 w-4" />
+                        )}
+                        Search Yahoo Finance
+                      </Button>
+                    </div>
+                  )}
+                  
+                  {/* No yfinance results either */}
+                  {searchQuery.length >= 2 && combinedResults.length === 0 && hasSearchedYfinance && !isSearchingYfinance && (
                     <p className="text-sm text-muted-foreground text-center py-4">
                       No stocks found. Try a different search term.
                     </p>
                   )}
                   
-                  {searchQuery.length < 2 && (
+                  {searchQuery.length < 1 && (
                     <p className="text-xs text-muted-foreground">
                       Search by company name (e.g., "Apple") or ticker symbol (e.g., "AAPL")
                     </p>

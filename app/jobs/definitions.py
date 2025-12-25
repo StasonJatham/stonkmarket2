@@ -401,6 +401,32 @@ async def fundamentals_refresh_job() -> str:
         raise
 
 
+@register_job("ai_agents_analysis")
+async def ai_agents_analysis_job() -> str:
+    """
+    Run AI agent analysis (Warren Buffett, Peter Lynch, etc.) on stocks.
+
+    Schedule: Weekly Sunday 5am (after fundamentals_refresh)
+
+    Each agent analyzes stocks using their investment philosophy.
+    Results are stored for frontend display.
+    """
+    from app.services.ai_agents import run_all_agent_analyses
+
+    logger.info("Starting ai_agents_analysis job")
+
+    try:
+        result = await run_all_agent_analyses()
+
+        message = f"Agent analysis: {result['analyzed']} analyzed, {result['failed']} failed"
+        logger.info(f"ai_agents_analysis: {message}")
+        return message
+
+    except Exception as e:
+        logger.error(f"ai_agents_analysis failed: {e}")
+        raise
+
+
 @register_job("cleanup")
 async def cleanup_job() -> str:
     """
@@ -427,6 +453,11 @@ async def cleanup_job() -> str:
         await execute(
             "DELETE FROM dip_ai_analysis WHERE expires_at IS NOT NULL AND expires_at < NOW()"
         )
+        
+        # Expired AI agent analyses
+        await execute(
+            "DELETE FROM ai_agent_analysis WHERE expires_at IS NOT NULL AND expires_at < NOW()"
+        )
 
         # Expired user API keys
         await execute(
@@ -440,3 +471,4 @@ async def cleanup_job() -> str:
     except Exception as e:
         logger.error(f"cleanup failed: {e}")
         raise
+

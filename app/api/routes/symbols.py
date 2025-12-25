@@ -658,6 +658,18 @@ async def _process_new_symbol(symbol: str) -> None:
             except Exception as e:
                 logger.error(f"[NEW SYMBOL] Step 8 FAILED: Could not store AI analysis for {symbol}: {e}")
         
+        # Step 8.5: Run AI agent analysis (Warren Buffett, Peter Lynch, etc.)
+        try:
+            from app.services.ai_agents import run_agent_analysis
+            agent_result = await run_agent_analysis(symbol)
+            if agent_result:
+                steps_completed.append("ai_agents")
+                logger.info(f"[NEW SYMBOL] Step 8.5: AI agents: {agent_result.overall_signal} ({agent_result.overall_confidence}%)")
+            else:
+                logger.warning(f"[NEW SYMBOL] Step 8.5: No agent analysis generated")
+        except Exception as e:
+            logger.warning(f"[NEW SYMBOL] Step 8.5 FAILED: AI agents error for {symbol}: {e}")
+        
         # Step 9: Invalidate caches so the stock appears immediately
         try:
             # Invalidate ranking cache
@@ -769,3 +781,146 @@ async def regenerate_ai_summary(
         logger.info(f"Regenerated AI summary for {symbol}: {len(new_summary)} chars")
     
     return AISummaryResponse(symbol=symbol, summary_ai=new_summary)
+
+
+# =============================================================================
+# AI AGENT ANALYSIS ENDPOINTS
+# =============================================================================
+
+
+class AgentVerdictResponse(BaseModel):
+    """Individual agent verdict."""
+    agent_id: str
+    agent_name: str
+    signal: str
+    confidence: int
+    reasoning: str
+    key_factors: list[str]
+
+
+class AgentAnalysisResponse(BaseModel):
+    """Complete agent analysis for a stock."""
+    symbol: str
+    verdicts: list[AgentVerdictResponse]
+    overall_signal: str
+    overall_confidence: int
+    summary: str
+    analyzed_at: Optional[str] = None
+    expires_at: Optional[str] = None
+
+
+class AgentInfoResponse(BaseModel):
+    """Information about an available agent."""
+    id: str
+    name: str
+    philosophy: str
+    focus: list[str]
+
+
+@router.get(
+    "/{symbol}/agents",
+    response_model=AgentAnalysisResponse,
+    summary="Get AI agent analysis",
+    description="Get analysis from AI investor personas (Warren Buffett, Peter Lynch, etc.)",
+)
+async def get_agent_analysis_endpoint(
+    symbol: str = Depends(_validate_symbol_path),
+    force_refresh: bool = Query(False, description="Force new analysis even if cached"),
+) -> AgentAnalysisResponse:
+    """Get AI agent analysis for a symbol."""
+    from app.services.ai_agents import get_agent_analysis, run_agent_analysis
+    
+    # Verify symbol exists
+    sym = await symbol_repo.get_symbol(symbol)
+    if not sym:
+        raise NotFoundError(f"Symbol {symbol} not found")
+    
+    # Get existing analysis
+    if not force_refresh:
+        analysis = await get_agent_analysis(symbol)
+        if analysis:
+            return AgentAnalysisResponse(**analysis)
+    
+    # Run new analysis
+    result = await run_agent_analysis(symbol)
+    if not result:
+        raise NotFoundError(f"Could not generate agent analysis for {symbol}")
+    
+    return AgentAnalysisResponse(
+        symbol=result.symbol,
+        verdicts=[
+            AgentVerdictResponse(
+                agent_id=v.agent_id,
+                agent_name=v.agent_name,
+                signal=v.signal,
+                confidence=v.confidence,
+                reasoning=v.reasoning,
+                key_factors=v.key_factors,
+            )
+            for v in result.verdicts
+        ],
+        overall_signal=result.overall_signal,
+        overall_confidence=result.overall_confidence,
+        summary=result.summary,
+        analyzed_at=result.analyzed_at.isoformat() if result.analyzed_at else None,
+    )
+
+
+@router.post(
+    "/{symbol}/agents/refresh",
+    response_model=AgentAnalysisResponse,
+    summary="Refresh AI agent analysis",
+    description="Force regenerate agent analysis for a symbol. Requires authentication.",
+    dependencies=[Depends(require_user)],
+)
+async def refresh_agent_analysis_endpoint(
+    symbol: str = Depends(_validate_symbol_path),
+) -> AgentAnalysisResponse:
+    """Regenerate AI agent analysis for a symbol."""
+    from app.services.ai_agents import run_agent_analysis
+    
+    # Verify symbol exists
+    sym = await symbol_repo.get_symbol(symbol)
+    if not sym:
+        raise NotFoundError(f"Symbol {symbol} not found")
+    
+    # Run new analysis
+    result = await run_agent_analysis(symbol)
+    if not result:
+        raise NotFoundError(f"Could not generate agent analysis for {symbol}")
+    
+    logger.info(f"Refreshed agent analysis for {symbol}: {result.overall_signal} ({result.overall_confidence}%)")
+    
+    return AgentAnalysisResponse(
+        symbol=result.symbol,
+        verdicts=[
+            AgentVerdictResponse(
+                agent_id=v.agent_id,
+                agent_name=v.agent_name,
+                signal=v.signal,
+                confidence=v.confidence,
+                reasoning=v.reasoning,
+                key_factors=v.key_factors,
+            )
+            for v in result.verdicts
+        ],
+        overall_signal=result.overall_signal,
+        overall_confidence=result.overall_confidence,
+        summary=result.summary,
+        analyzed_at=result.analyzed_at.isoformat() if result.analyzed_at else None,
+    )
+
+
+@router.get(
+    "/agents/info",
+    response_model=list[AgentInfoResponse],
+    summary="List available AI agents",
+    description="Get information about all available AI investor persona agents.",
+)
+async def list_agents() -> list[AgentInfoResponse]:
+    """List available AI agents and their investment philosophies."""
+    from app.services.ai_agents import get_agent_info
+    
+    agents = get_agent_info()
+    return [AgentInfoResponse(**a) for a in agents]
+

@@ -375,6 +375,75 @@ async def get_top_suggestions(
     ]
 
 
+@router.get("/search", response_model=List[dict])
+async def search_stored_suggestions(
+    q: str = Query(..., min_length=1, max_length=50, description="Search query"),
+    limit: int = Query(10, ge=1, le=20),
+):
+    """
+    Search stored suggestions and tracked symbols for quick autocomplete.
+    
+    This searches only cached/stored data (no yfinance API calls).
+    Returns results from:
+    1. Pending suggestions (community suggested)
+    2. Already tracked symbols
+    
+    Fast endpoint suitable for real-time debounced search.
+    """
+    search_pattern = f"%{q.upper()}%"
+    
+    # Search in suggestions first (pending ones)
+    suggestion_rows = await fetch_all(
+        """SELECT symbol, company_name as name, sector, 'suggestion' as source, vote_score
+           FROM stock_suggestions 
+           WHERE status = 'pending'
+             AND (UPPER(symbol) LIKE $1 OR UPPER(company_name) LIKE $1)
+           ORDER BY vote_score DESC
+           LIMIT $2""",
+        search_pattern, limit,
+    )
+    
+    # Search in tracked symbols (sector is directly on symbols table)
+    symbol_rows = await fetch_all(
+        """SELECT symbol, name, sector, 'tracked' as source, 0 as vote_score
+           FROM symbols
+           WHERE UPPER(symbol) LIKE $1 OR UPPER(name) LIKE $1
+           ORDER BY symbol
+           LIMIT $2""",
+        search_pattern, limit,
+    )
+    
+    # Combine and dedupe (prefer tracked over suggestions)
+    seen_symbols = set()
+    results = []
+    
+    # Add tracked symbols first (they're already in our system)
+    for row in symbol_rows:
+        if row["symbol"] not in seen_symbols:
+            seen_symbols.add(row["symbol"])
+            results.append({
+                "symbol": row["symbol"],
+                "name": row["name"],
+                "sector": row["sector"],
+                "source": "tracked",
+                "vote_count": None,
+            })
+    
+    # Add pending suggestions
+    for row in suggestion_rows:
+        if row["symbol"] not in seen_symbols:
+            seen_symbols.add(row["symbol"])
+            results.append({
+                "symbol": row["symbol"],
+                "name": row["name"],
+                "sector": row["sector"],
+                "source": "suggestion",
+                "vote_count": row["vote_score"],
+            })
+    
+    return results[:limit]
+
+
 @router.get("/pending", response_model=dict)
 async def list_pending_suggestions(
     page: int = Query(1, ge=1),
@@ -969,6 +1038,17 @@ async def _process_approved_symbol(symbol: str) -> None:
             logger.info(f"Generated AI content for {symbol}: bio={'yes' if bio else 'no'}, rating={rating_data.get('rating') if rating_data else 'none'}")
         else:
             logger.warning(f"No AI content generated for {symbol}")
+        
+        # Step 5.5: Run AI agent analysis (Warren Buffett, Peter Lynch, etc.)
+        try:
+            from app.services.ai_agents import run_agent_analysis
+            agent_result = await run_agent_analysis(symbol)
+            if agent_result:
+                logger.info(f"AI agents for {symbol}: {agent_result.overall_signal} ({agent_result.overall_confidence}%)")
+            else:
+                logger.warning(f"No agent analysis generated for {symbol}")
+        except Exception as agent_err:
+            logger.warning(f"AI agents error for {symbol}: {agent_err}")
         
         # Step 6: Mark as fetched and invalidate ranking cache
         # Update both stock_suggestions AND symbols tables

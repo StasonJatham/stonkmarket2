@@ -80,6 +80,7 @@ class JobScheduler:
             ),
             "batch_poll": ("*/5 * * * *", "Poll for completed batch jobs every 5 min"),
             "fundamentals_refresh": ("0 2 1 * *", "Refresh stock fundamentals monthly 1st at 2am"),
+            "ai_agents_analysis": ("0 5 * * 0", "AI agent analysis weekly Sunday 5am"),
             "cleanup": ("0 0 * * *", "Clean up expired data daily midnight"),
         }
 

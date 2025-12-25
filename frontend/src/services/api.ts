@@ -886,6 +886,67 @@ export async function autocompleteSymbols(partial: string, limit = 5): Promise<A
 }
 
 // =============================================================================
+// AI AGENT ANALYSIS
+// =============================================================================
+
+export interface AgentVerdict {
+  agent_id: string;
+  agent_name: string;
+  signal: 'bullish' | 'bearish' | 'neutral';
+  confidence: number;
+  reasoning: string;
+  key_factors: string[];
+}
+
+export interface AgentAnalysis {
+  symbol: string;
+  analyzed_at: string;
+  verdicts: AgentVerdict[];
+  overall_signal: 'bullish' | 'bearish' | 'neutral';
+  overall_confidence: number;
+  bullish_count: number;
+  bearish_count: number;
+  neutral_count: number;
+}
+
+export interface AgentInfo {
+  id: string;
+  name: string;
+  description: string;
+  style: string;
+}
+
+export interface AgentInfoResponse {
+  agents: AgentInfo[];
+  count: number;
+}
+
+export async function getAgentAnalysis(
+  symbol: string,
+  options: { forceRefresh?: boolean } = {}
+): Promise<AgentAnalysis | null> {
+  const params = new URLSearchParams();
+  if (options.forceRefresh) params.append('force_refresh', 'true');
+  const queryString = params.toString();
+  
+  return fetchAPI<AgentAnalysis | null>(`/symbols/${symbol}/agents${queryString ? `?${queryString}` : ''}`);
+}
+
+export async function refreshAgentAnalysis(symbol: string): Promise<AgentAnalysis> {
+  return fetchAPI<AgentAnalysis>(`/symbols/${symbol}/agents/refresh`, {
+    method: 'POST',
+  });
+}
+
+export async function getAgentsInfo(): Promise<AgentInfoResponse> {
+  return apiCache.fetch(
+    'agents-info',
+    () => fetchAPI<AgentInfoResponse>('/symbols/agents/info'),
+    { ttl: CACHE_TTL.STOCK_INFO }  // 5 minutes - agent list rarely changes
+  );
+}
+
+// =============================================================================
 // MFA TYPES & API
 // =============================================================================
 
@@ -1322,6 +1383,27 @@ export async function getSuggestionSettings(): Promise<{ auto_approve_votes: num
     () => fetchAPI<{ auto_approve_votes: number }>('/suggestions/settings'),
     { ttl: CACHE_TTL.SUGGESTIONS }
   );
+}
+
+// Stored search result (from DB, no yfinance call)
+export interface StoredSearchResult {
+  symbol: string;
+  name: string | null;
+  sector: string | null;
+  source: 'tracked' | 'suggestion';
+  vote_count: number | null;
+}
+
+// Fast cached search - searches stored suggestions and tracked symbols
+export async function searchStoredSuggestions(query: string, limit: number = 10): Promise<StoredSearchResult[]> {
+  if (query.length < 1) return [];
+  try {
+    return await fetchAPI<StoredSearchResult[]>(
+      `/suggestions/search?q=${encodeURIComponent(query)}&limit=${limit}`
+    );
+  } catch {
+    return [];
+  }
 }
 
 export async function getPendingSuggestions(page: number = 1, pageSize: number = 20): Promise<SuggestionListResponse> {

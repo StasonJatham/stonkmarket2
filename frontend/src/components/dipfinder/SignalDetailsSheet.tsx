@@ -3,9 +3,11 @@ import { motion } from 'framer-motion';
 import { 
   getStockChart,
   getStockInfo,
+  getAgentAnalysis,
   type DipSignal, 
   type ChartDataPoint,
   type StockInfo,
+  type AgentAnalysis,
 } from '@/services/api';
 import { CHART_LINE_ANIMATION, CHART_TRENDLINE_ANIMATION, CHART_ANIMATION } from '@/lib/chartConfig';
 import { Badge } from '@/components/ui/badge';
@@ -30,6 +32,8 @@ import {
   Minus,
   Info,
   ExternalLink,
+  Bot,
+  Loader2,
 } from 'lucide-react';
 import {
   Area,
@@ -138,8 +142,10 @@ export function SignalDetailsSheet({
 }: SignalDetailsSheetProps) {
   const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
   const [stockInfo, setStockInfo] = useState<StockInfo | null>(null);
+  const [agentAnalysis, setAgentAnalysis] = useState<AgentAnalysis | null>(null);
   const [isLoadingChart, setIsLoadingChart] = useState(false);
   const [isLoadingInfo, setIsLoadingInfo] = useState(false);
+  const [isLoadingAgents, setIsLoadingAgents] = useState(false);
   const [chartTimeframe, setChartTimeframe] = useState(365);
   
   // Unique gradient ID to avoid conflicts
@@ -177,6 +183,28 @@ export function SignalDetailsSheet({
     }
 
     loadInfo();
+  }, [signal, isOpen]);
+
+  // Load agent analysis when signal changes
+  useEffect(() => {
+    if (!signal || !isOpen) return;
+
+    const ticker = signal.ticker;
+    setAgentAnalysis(null);
+    setIsLoadingAgents(true);
+    
+    async function loadAgents() {
+      try {
+        const analysis = await getAgentAnalysis(ticker);
+        setAgentAnalysis(analysis);
+      } catch (err) {
+        console.error('Failed to load agent analysis:', err);
+      } finally {
+        setIsLoadingAgents(false);
+      }
+    }
+
+    loadAgents();
   }, [signal, isOpen]);
 
   // Load chart data when signal or timeframe changes
@@ -846,6 +874,108 @@ export function SignalDetailsSheet({
                 )}
               </motion.div>
             ) : null}
+
+            {/* AI Agent Analysis */}
+            <motion.div variants={itemVariants} className="space-y-4">
+              <div className="flex items-center gap-2">
+                <Bot className="h-4 w-4 text-muted-foreground" />
+                <h3 className="text-sm font-semibold">AI Agent Opinions</h3>
+                {agentAnalysis && (
+                  <Badge 
+                    variant="outline" 
+                    className={
+                      agentAnalysis.overall_signal === 'bullish'
+                        ? (colorblindMode ? 'border-blue-500/50 text-blue-500' : 'border-success/50 text-success')
+                        : agentAnalysis.overall_signal === 'bearish'
+                        ? (colorblindMode ? 'border-orange-500/50 text-orange-500' : 'border-danger/50 text-danger')
+                        : 'border-muted-foreground/50'
+                    }
+                  >
+                    {agentAnalysis.overall_signal.toUpperCase()} ({agentAnalysis.overall_confidence}%)
+                  </Badge>
+                )}
+              </div>
+
+              {isLoadingAgents ? (
+                <div className="bg-muted/20 rounded-xl p-6">
+                  <div className="flex items-center justify-center gap-3 text-muted-foreground">
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                    <span className="text-sm">Consulting investment legends...</span>
+                  </div>
+                </div>
+              ) : agentAnalysis && agentAnalysis.verdicts.length > 0 ? (
+                <div className="space-y-3">
+                  {/* Summary row */}
+                  <div className="flex items-center gap-3 text-sm text-muted-foreground">
+                    <span className={colorblindMode ? 'text-blue-500' : 'text-success'}>
+                      {agentAnalysis.bullish_count} Bullish
+                    </span>
+                    <span className="text-muted-foreground">•</span>
+                    <span className={colorblindMode ? 'text-orange-500' : 'text-danger'}>
+                      {agentAnalysis.bearish_count} Bearish
+                    </span>
+                    <span className="text-muted-foreground">•</span>
+                    <span>{agentAnalysis.neutral_count} Neutral</span>
+                  </div>
+
+                  {/* Agent cards */}
+                  <div className="grid gap-2">
+                    {agentAnalysis.verdicts.map((verdict) => (
+                      <div 
+                        key={verdict.agent_id}
+                        className="bg-muted/20 rounded-xl p-4"
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-sm">{verdict.agent_name}</span>
+                            <Badge 
+                              variant="secondary"
+                              className={`text-xs ${
+                                verdict.signal === 'bullish'
+                                  ? (colorblindMode ? 'bg-blue-500/20 text-blue-500' : 'bg-success/20 text-success')
+                                  : verdict.signal === 'bearish'
+                                  ? (colorblindMode ? 'bg-orange-500/20 text-orange-500' : 'bg-danger/20 text-danger')
+                                  : 'bg-muted text-muted-foreground'
+                              }`}
+                            >
+                              {verdict.signal === 'bullish' && <ThumbsUp className="h-3 w-3 mr-1" />}
+                              {verdict.signal === 'bearish' && <ThumbsDown className="h-3 w-3 mr-1" />}
+                              {verdict.signal === 'neutral' && <Minus className="h-3 w-3 mr-1" />}
+                              {verdict.signal}
+                            </Badge>
+                          </div>
+                          <span className="text-xs text-muted-foreground">
+                            {verdict.confidence}% confident
+                          </span>
+                        </div>
+                        <p className="text-xs text-muted-foreground leading-relaxed">
+                          {verdict.reasoning}
+                        </p>
+                        {verdict.key_factors.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-2">
+                            {verdict.key_factors.slice(0, 3).map((factor, i) => (
+                              <Badge key={i} variant="outline" className="text-[10px] font-normal">
+                                {factor}
+                              </Badge>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  
+                  <p className="text-[10px] text-muted-foreground text-center pt-2">
+                    Analyzed {new Date(agentAnalysis.analyzed_at).toLocaleDateString()} • AI opinions for educational purposes only
+                  </p>
+                </div>
+              ) : (
+                <div className="bg-muted/20 rounded-xl p-4 text-center">
+                  <p className="text-sm text-muted-foreground">
+                    No AI analysis available yet. Analysis runs weekly.
+                  </p>
+                </div>
+              )}
+            </motion.div>
 
             {/* What This Dip Means - Contextual Analysis */}
             <motion.div variants={itemVariants} className="space-y-4">
