@@ -63,8 +63,8 @@ async def validate_symbol(
 
     # Not in cache, validate against Yahoo Finance
     try:
-        # get_stock_info is synchronous, no await needed
-        info = get_stock_info(symbol_upper)
+        # get_stock_info is async
+        info = await get_stock_info(symbol_upper)
         if info and info.name:
             result = SymbolValidationResponse(
                 valid=True,

@@ -3,32 +3,83 @@
 from __future__ import annotations
 
 import asyncio
-import warnings
+import gc
 from typing import AsyncGenerator, Generator
 
 import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
-from httpx import AsyncClient
-
-# Suppress asyncpg and asyncio connection cleanup warnings during tests
-warnings.filterwarnings("ignore", message=".*Event loop is closed.*")
-warnings.filterwarnings("ignore", message=".*connection was closed.*")
-warnings.filterwarnings("ignore", message=".*unclosed connection.*", category=ResourceWarning)
-warnings.filterwarnings("ignore", message=".*unclosed transport.*", category=ResourceWarning)
-warnings.filterwarnings("ignore", category=pytest.PytestUnraisableExceptionWarning)
+from httpx import AsyncClient, ASGITransport
 
 # Configure asyncio
 pytest_plugins = ["pytest_asyncio"]
 
 
+def _force_cleanup():
+    """Force cleanup of pending async resources."""
+    gc.collect()
+
+
+async def _async_cleanup():
+    """Async cleanup of all resources."""
+    from app.database.connection import close_database, _pool as db_pool, _engine
+    from app.cache.client import close_valkey_client, _pool as cache_pool
+    
+    # Close database
+    try:
+        await close_database()
+    except Exception:
+        pass
+    
+    # Close cache
+    try:
+        await close_valkey_client()
+    except Exception:
+        pass
+    
+    # Allow pending tasks to complete
+    await asyncio.sleep(0.05)
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Called after whole test run finished, right before returning exit status."""
+    # Create a fresh event loop for final cleanup
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(_async_cleanup())
+        # Give time for sockets to close
+        loop.run_until_complete(asyncio.sleep(0.1))
+    except Exception:
+        pass
+    finally:
+        # Cancel all pending tasks
+        try:
+            pending = asyncio.all_tasks(loop)
+            for task in pending:
+                task.cancel()
+            if pending:
+                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+        except Exception:
+            pass
+        
+        # Close the loop
+        try:
+            loop.run_until_complete(loop.shutdown_asyncgens())
+        except Exception:
+            pass
+        
+        loop.close()
+    
+    # Final garbage collection
+    gc.collect()
+
+
 @pytest.fixture(scope="function", autouse=True)
-def reset_db_pool():
-    """Reset database pool state between tests."""
+def cleanup_after_test():
+    """Force garbage collection after each test to clean up connections."""
     yield
-    # Give async operations time to complete
-    import time
-    time.sleep(0.01)
+    _force_cleanup()
 
 
 @pytest.fixture
@@ -39,6 +90,7 @@ def client() -> Generator[TestClient, None, None]:
     app = create_api_app()
     with TestClient(app, raise_server_exceptions=False) as test_client:
         yield test_client
+    _force_cleanup()
 
 
 @pytest_asyncio.fixture
@@ -47,7 +99,8 @@ async def async_client() -> AsyncGenerator[AsyncClient, None]:
     from app.api.app import create_api_app
     
     app = create_api_app()
-    async with AsyncClient(app=app, base_url="http://test") as ac:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
 
 

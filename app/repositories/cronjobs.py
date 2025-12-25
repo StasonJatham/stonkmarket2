@@ -92,8 +92,8 @@ async def list_cronjobs_with_stats() -> List[CronJobWithStats]:
             last_run=row.get("last_run"),
             last_status=row.get("last_status"),
             last_duration_ms=row.get("last_duration_ms"),
-            run_count=row.get("run_count", 0),
-            error_count=row.get("error_count", 0),
+            run_count=row.get("run_count") or 0,
+            error_count=row.get("error_count") or 0,
             last_error=row.get("last_error"),
         )
         for row in rows

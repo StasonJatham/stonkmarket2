@@ -304,14 +304,6 @@ async def _store_fundamentals(data: dict[str, Any]) -> None:
         expires_at,
     )
     
-    # Also update the pe_ratio in symbols table for quick access
-    if data["pe_ratio"] is not None:
-        await execute(
-            "UPDATE symbols SET pe_ratio = $2, updated_at = NOW() WHERE symbol = $1",
-            symbol,
-            data["pe_ratio"],
-        )
-    
     logger.debug(f"Stored fundamentals for {symbol}")
 
 

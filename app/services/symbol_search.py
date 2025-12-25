@@ -63,7 +63,7 @@ async def _search_local_db(query: str, limit: int = 10) -> list[dict[str, Any]]:
                 s.sector,
                 COALESCE(s.symbol_type, 'EQUITY') as quote_type,
                 s.market_cap,
-                s.pe_ratio,
+                NULL as pe_ratio,
                 'local' as source,
                 CASE 
                     WHEN UPPER(s.symbol) = $1 THEN 100
@@ -214,8 +214,8 @@ async def lookup_symbol(symbol: str) -> Optional[dict[str, Any]]:
     # Check local symbols with fundamentals
     row = await fetch_one(
         """
-        SELECT s.symbol, s.name, s.sector, s.symbol_type, s.market_cap, s.pe_ratio,
-               f.forward_pe, f.recommendation, f.target_mean_price,
+        SELECT s.symbol, s.name, s.sector, s.symbol_type, s.market_cap,
+               f.pe_ratio, f.forward_pe, f.recommendation, f.target_mean_price,
                f.current_price, f.previous_close
         FROM symbols s
         LEFT JOIN stock_fundamentals f ON s.symbol = f.symbol
