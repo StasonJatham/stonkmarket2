@@ -109,5 +109,5 @@ async def get_stock_info_async(symbol: str) -> Optional[Dict[str, Any]]:
 
 
 def clear_info_cache() -> None:
-    """Clear the stock info cache."""
-    yf_service.clear_info_cache()
+    """Clear the stock info cache (no-op - service manages its own cache)."""
+    pass

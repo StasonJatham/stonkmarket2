@@ -621,8 +621,6 @@ def _compute_risk_score(info: Dict[str, Any]) -> tuple[float, Dict[str, Any]]:
     return score, factors
 
 
-# DEPRECATED: _fetch_info_sync removed - use unified YFinanceService
-# Kept as stub for any direct callers
 async def _fetch_info_async(ticker: str) -> Dict[str, Any]:
     """Fetch yfinance info via unified service."""
     service = get_yfinance_service()

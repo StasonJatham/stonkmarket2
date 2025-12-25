@@ -11,9 +11,12 @@ from typing import Optional
 
 from app.core.exceptions import ValidationError
 from app.core.logging import get_logger
-from app.services import yfinance as yf_service
+from app.services.data_providers import get_yfinance_service
 
 logger = get_logger("services.suggestion_stock_info")
+
+# Get singleton service instance
+_yf_service = get_yfinance_service()
 
 # Symbol validation pattern: 1-10 chars, alphanumeric + dot only
 SYMBOL_PATTERN = re.compile(r'^[A-Z0-9.]{1,10}$')
@@ -59,7 +62,7 @@ async def get_ipo_year(symbol: str) -> Optional[int]:
     Returns:
         Year of IPO/first trade, or None if unavailable
     """
-    info = await yf_service.get_ticker_info(symbol)
+    info = await _yf_service.get_ticker_info(symbol)
     return info.get("ipo_year") if info else None
 
 
@@ -72,7 +75,7 @@ async def get_stock_info_basic(symbol: str) -> dict:
     Returns:
         dict with ipo_year and website keys
     """
-    info = await yf_service.get_ticker_info(symbol)
+    info = await _yf_service.get_ticker_info(symbol)
     if not info:
         return {"ipo_year": None, "website": None}
     
@@ -114,7 +117,7 @@ async def get_stock_info_full(symbol: str) -> dict:
         "fetch_error": None,
     }
     
-    info = await yf_service.get_ticker_info(symbol)
+    info = await _yf_service.get_ticker_info(symbol)
     
     if not info:
         result["fetch_status"] = "invalid"

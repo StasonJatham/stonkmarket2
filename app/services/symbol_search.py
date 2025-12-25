@@ -40,9 +40,12 @@ from typing import Any, Optional
 
 from app.core.logging import get_logger
 from app.database.connection import execute, fetch_all, fetch_one
-from app.services import yfinance as yf_service
+from app.services.data_providers import get_yfinance_service
 
 logger = get_logger("services.symbol_search")
+
+# Get singleton service instance
+_yf_service = get_yfinance_service()
 
 # Minimum query length
 MIN_QUERY_LENGTH = 2
@@ -306,7 +309,7 @@ async def search_symbols(
     
     # If force_api, query yfinance directly (no pagination for API search)
     if force_api:
-        api_results = await yf_service.search_tickers(
+        api_results = await _yf_service.search_tickers(
             query, 
             max_results=max_results * 2,  # Fetch more to filter
             save_to_db=True,  # IMPORTANT: Save all results for future local search
@@ -413,7 +416,7 @@ async def search_symbols(
         }
     
     # Fall back to yfinance validation
-    return await yf_service.validate_symbol(symbol)
+    return await _yf_service.validate_symbol(symbol)
 
 
 async def get_symbol_suggestions(

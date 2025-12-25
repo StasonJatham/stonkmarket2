@@ -17,9 +17,9 @@ from .security import (
     decode_access_token,
     TokenData,
 )
-from .fingerprint import (
+from .client_identity import (
     get_client_ip,
-    get_browser_fingerprint,
+    get_server_fingerprint as get_browser_fingerprint,
     get_request_fingerprint,
     get_vote_identifier,
     get_suggestion_identifier,
