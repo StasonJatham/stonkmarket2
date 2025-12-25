@@ -22,28 +22,26 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     """Add indexes for common query patterns identified in architecture review."""
     # B-tree index for dip_votes.fingerprint (frequent lookups by fingerprint)
-    op.create_index(
-        "idx_dip_votes_fingerprint",
-        "dip_votes",
-        ["fingerprint"],
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS idx_dip_votes_fingerprint "
+        "ON dip_votes (fingerprint)"
     )
 
     # B-tree DESC index for api_usage.recorded_at (ORDER BY recorded_at DESC queries)
-    op.create_index(
-        "idx_api_usage_recorded_at_desc",
-        "api_usage",
-        [sa.text("recorded_at DESC")],
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS idx_api_usage_recorded_at_desc "
+        "ON api_usage (recorded_at DESC)"
     )
 
     # GIN index for batch_jobs.metadata JSONB column (containment queries)
     op.execute(
-        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_batch_jobs_metadata_gin "
+        "CREATE INDEX IF NOT EXISTS idx_batch_jobs_metadata_gin "
         "ON batch_jobs USING GIN (metadata)"
     )
 
     # GIN index for dipfinder_signals.quality_factors JSONB column
     op.execute(
-        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_dipfinder_signals_quality_gin "
+        "CREATE INDEX IF NOT EXISTS idx_dipfinder_signals_quality_gin "
         "ON dipfinder_signals USING GIN (quality_factors)"
     )
 

@@ -1,24 +1,25 @@
 """Data access layer repositories.
 
-Each repository module provides async functions for database operations
-using raw SQL via asyncpg. New code should consider using SQLAlchemy ORM
-models from `app.database.orm` with the `get_session()` context manager.
+Each repository module provides async functions for database operations.
+New code uses SQLAlchemy ORM models from `app.database.orm` with the
+`get_session()` context manager.
 
-ORM-based repositories (recommended for new code):
+ORM-based repositories (recommended):
 - symbols_orm: SQLAlchemy ORM version of symbols repository
+- dip_votes_orm: SQLAlchemy ORM version of dip voting repository
 
-Legacy repositories (raw SQL via asyncpg):
+Legacy repositories (raw SQL via asyncpg - to be migrated):
 - auth_user, cronjobs, symbols, api_keys, api_usage, etc.
 """
 
 from . import auth_user
 from . import cronjobs
 from . import symbols
-from . import symbols_orm  # ORM version (recommended for new code)
+from . import symbols_orm
+from . import dip_votes_orm
 from . import api_keys
 from . import api_usage
 from . import dip_history
-from . import dip_votes
 from . import user_api_keys
 
 __all__ = [
@@ -26,9 +27,9 @@ __all__ = [
     "cronjobs",
     "symbols",
     "symbols_orm",
+    "dip_votes_orm",
     "api_keys",
     "api_usage",
     "dip_history",
-    "dip_votes",
     "user_api_keys",
 ]

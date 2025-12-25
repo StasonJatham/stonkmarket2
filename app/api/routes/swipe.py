@@ -16,7 +16,7 @@ from app.core.client_identity import (
     RiskLevel,
 )
 from app.repositories import user_api_keys
-from app.repositories import dip_votes as dip_votes_repo
+from app.repositories import dip_votes_orm as dip_votes_repo
 from app.schemas.swipe import (
     DipCard,
     DipCardList,

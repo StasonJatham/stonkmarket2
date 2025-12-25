@@ -902,7 +902,7 @@ async def _process_approved_symbol(symbol: str) -> None:
     from datetime import date, timedelta
     from app.services.stock_info import get_stock_info_async
     from app.services.openai_client import generate_bio, rate_dip, summarize_company
-    from app.repositories import dip_votes as dip_votes_repo
+    from app.repositories import dip_votes_orm as dip_votes_repo
     from app.dipfinder.service import get_dipfinder_service
     from app.cache.cache import Cache
     

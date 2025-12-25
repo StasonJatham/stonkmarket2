@@ -7,7 +7,7 @@ from typing import Optional
 
 from app.core.logging import get_logger
 from app.database.connection import fetch_all, fetch_one
-from app.repositories import dip_votes as dip_votes_repo
+from app.repositories import dip_votes_orm as dip_votes_repo
 from app.schemas.swipe import DipCard, DipStats, VoteCounts
 from app.services.openai_client import generate_bio, rate_dip
 from app.services import stock_info

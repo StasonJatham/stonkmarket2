@@ -7,7 +7,7 @@ Provides two interfaces:
 New code should use SQLAlchemy ORM with get_session().
 """
 
-# Legacy asyncpg interface (raw SQL)
+# asyncpg interface (raw SQL - legacy, being migrated to ORM)
 from .connection import (
     init_pg_pool,
     close_pg_pool,
@@ -18,8 +18,8 @@ from .connection import (
     fetch_val,
     execute,
     execute_many,
-    transaction,  # Transaction wrapper for multi-step operations
-    get_async_database_url,  # Shared URL conversion utility
+    transaction,
+    get_async_database_url,
     # SQLAlchemy interface
     init_sqlalchemy_engine,
     close_sqlalchemy_engine,
@@ -29,43 +29,20 @@ from .connection import (
     close_database,
 )
 
-# Legacy dataclass models - DEPRECATED
-# Import directly from repositories instead or use ORM models from .orm
-# Keeping this import for backwards compatibility but it will emit a warning
-import warnings
-with warnings.catch_warnings():
-    warnings.simplefilter("ignore", DeprecationWarning)
-    from .models import (
-        DipState as _DipStateDataclass,
-        SymbolConfig as _SymbolConfigDataclass,
-        CronJobConfig as _CronJobConfigDataclass,
-        AuthUser as _AuthUserDataclass,
-        StockSuggestion as _StockSuggestionDataclass,
-        SuggestionVote as _SuggestionVoteDataclass,
-    )
-
-# Re-export with deprecation notice
-DipState = _DipStateDataclass
-SymbolConfig = _SymbolConfigDataclass
-CronJobConfig = _CronJobConfigDataclass
-AuthUser = _AuthUserDataclass
-StockSuggestion = _StockSuggestionDataclass
-SuggestionVote = _SuggestionVoteDataclass
-
-# SQLAlchemy ORM models (preferred for new code)
+# SQLAlchemy ORM models
 from .orm import (
     Base,
     # Auth & Security
-    AuthUser as AuthUserORM,
+    AuthUser,
     SecureApiKey,
     UserApiKey,
     # Symbols & Dips
     Symbol,
-    DipState as DipStateORM,
+    DipState,
     DipHistory,
     # Suggestions
-    StockSuggestion as StockSuggestionORM,
-    SuggestionVote as SuggestionVoteORM,
+    StockSuggestion,
+    SuggestionVote,
     # Voting
     DipVote,
     DipAIAnalysis,
@@ -93,7 +70,7 @@ from .orm import (
 )
 
 __all__ = [
-    # Legacy asyncpg
+    # asyncpg helpers
     "init_pg_pool",
     "close_pg_pool",
     "get_pg_pool",
@@ -103,6 +80,8 @@ __all__ = [
     "fetch_val",
     "execute",
     "execute_many",
+    "transaction",
+    "get_async_database_url",
     # SQLAlchemy
     "init_sqlalchemy_engine",
     "close_sqlalchemy_engine",
@@ -111,22 +90,15 @@ __all__ = [
     "init_database",
     "close_database",
     "Base",
-    # Legacy dataclass models
-    "DipState",
-    "SymbolConfig",
-    "CronJobConfig",
-    "AuthUser",
-    "StockSuggestion",
-    "SuggestionVote",
     # ORM models
-    "AuthUserORM",
+    "AuthUser",
     "SecureApiKey",
     "UserApiKey",
     "Symbol",
-    "DipStateORM",
+    "DipState",
     "DipHistory",
-    "StockSuggestionORM",
-    "SuggestionVoteORM",
+    "StockSuggestion",
+    "SuggestionVote",
     "DipVote",
     "DipAIAnalysis",
     "ApiUsage",
@@ -137,8 +109,8 @@ __all__ = [
     "DipfinderSignal",
     "DipfinderConfig",
     "DipfinderHistory",
-    "YFinanceInfoCache",
-    "AIAgentAnalysis",
+    "YfinanceInfoCache",
+    "AiAgentAnalysis",
     "StockFundamentals",
     "SymbolSearchResult",
     "SymbolSearchLog",

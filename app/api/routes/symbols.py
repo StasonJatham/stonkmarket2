@@ -487,7 +487,7 @@ async def _process_new_symbol(symbol: str) -> None:
     from app.database.connection import execute, fetch_one
     from app.services.stock_info import get_stock_info_async
     from app.services.openai_client import summarize_company, generate_bio, rate_dip
-    from app.repositories import dip_votes as dip_votes_repo
+    from app.repositories import dip_votes_orm as dip_votes_repo
     from app.dipfinder.service import get_dipfinder_service
     from app.cache.cache import Cache
     

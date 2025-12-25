@@ -10,19 +10,26 @@ from typing import Dict, Optional, Any
 
 from app.core.logging import get_logger
 from app.schemas.dips import StockInfo
-from app.services import yfinance as yf_service
+from app.services.data_providers import get_yfinance_service
 
 logger = get_logger("services.stock_info")
+
+# Get singleton service instance
+_yf_service = get_yfinance_service()
 
 
 def is_index_or_etf(symbol: str, quote_type: Optional[str] = None) -> bool:
     """Check if a symbol is an index, ETF, or fund - detected dynamically from quote_type."""
-    return yf_service.is_etf_or_index(symbol, quote_type)
+    if symbol.startswith("^"):
+        return True
+    if quote_type:
+        return quote_type.upper() in ("ETF", "INDEX", "MUTUALFUND", "TRUST")
+    return False
 
 
 async def get_stock_info(symbol: str) -> Optional[StockInfo]:
     """Fetch detailed stock info using unified yfinance service."""
-    info = await yf_service.get_ticker_info(symbol)
+    info = await _yf_service.get_ticker_info(symbol)
     if not info:
         return None
 
@@ -58,7 +65,7 @@ async def get_stock_info(symbol: str) -> Optional[StockInfo]:
 
 async def get_stock_info_with_prices(symbol: str) -> Optional[Dict[str, Any]]:
     """Fetch stock info including current price and ATH."""
-    info = await yf_service.get_ticker_info(symbol)
+    info = await _yf_service.get_ticker_info(symbol)
     if not info:
         return None
 
