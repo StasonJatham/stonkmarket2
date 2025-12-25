@@ -69,6 +69,36 @@ def _safe_int(value: Any) -> Optional[int]:
         return None
 
 
+def _safe_date(value: Any) -> Optional[date]:
+    """Safely convert value to date, returning None for invalid values.
+    
+    Handles:
+    - datetime objects
+    - date objects  
+    - pandas Timestamp
+    - ISO format strings (YYYY-MM-DD)
+    """
+    if value is None:
+        return None
+    try:
+        # Already a date
+        if isinstance(value, date) and not isinstance(value, datetime):
+            return value
+        # datetime -> date
+        if isinstance(value, datetime):
+            return value.date()
+        # pandas Timestamp
+        if hasattr(value, 'date') and callable(value.date):
+            return value.date()
+        # String in ISO format
+        if isinstance(value, str):
+            # Handle 'YYYY-MM-DD' format
+            return datetime.strptime(value.split('T')[0], '%Y-%m-%d').date()
+        return None
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
 async def _fetch_fundamentals_from_service(symbol: str) -> Optional[dict[str, Any]]:
     """
     Fetch fundamentals via unified YFinanceService.
@@ -86,6 +116,15 @@ async def _fetch_fundamentals_from_service(symbol: str) -> Optional[dict[str, An
     if not info:
         return None
     
+    # Defensive: parse JSON if info came back as string (DB cache issue)
+    if isinstance(info, str):
+        import json
+        try:
+            info = json.loads(info)
+        except (json.JSONDecodeError, TypeError):
+            logger.warning(f"Failed to parse info for {symbol}: not valid JSON")
+            return None
+    
     # Check if ETF/fund
     quote_type = info.get("quote_type")
     if _is_etf_or_index(symbol, quote_type):
@@ -101,7 +140,7 @@ async def _fetch_fundamentals_from_service(symbol: str) -> Optional[dict[str, An
     earnings_estimate_avg = None
     
     if calendar:
-        next_earnings_date = calendar.get("next_earnings_date")
+        next_earnings_date = _safe_date(calendar.get("next_earnings_date"))
         earnings_estimate_high = calendar.get("earnings_estimate_high")
         earnings_estimate_low = calendar.get("earnings_estimate_low")
         earnings_estimate_avg = calendar.get("earnings_estimate_avg")

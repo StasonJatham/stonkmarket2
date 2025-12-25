@@ -512,9 +512,17 @@ class YFinanceService:
             if db_row and db_row.get("data"):
                 logger.debug(f"Cache hit L3 (db) for {symbol}")
                 data = db_row["data"]
-                self._set_in_memory(cache_key, data)
-                await self._info_cache.set(cache_key, data)
-                return data
+                # Defensive: parse JSON if data is string (legacy or codec issue)
+                if isinstance(data, str):
+                    try:
+                        data = json.loads(data)
+                    except (json.JSONDecodeError, TypeError):
+                        logger.warning(f"Invalid JSON in DB cache for {symbol}")
+                        data = None
+                if data:
+                    self._set_in_memory(cache_key, data)
+                    await self._info_cache.set(cache_key, data)
+                    return data
         
         # Cache miss - fetch from yfinance
         logger.debug(f"Cache miss for {symbol}, fetching from yfinance")
@@ -530,14 +538,14 @@ class YFinanceService:
             await execute(
                 """
                 INSERT INTO yfinance_info_cache (symbol, data, expires_at, fetched_at)
-                VALUES ($1, $2, NOW() + INTERVAL '24 hours', NOW())
+                VALUES ($1, $2::jsonb, NOW() + INTERVAL '24 hours', NOW())
                 ON CONFLICT (symbol) DO UPDATE SET
                     data = EXCLUDED.data,
                     expires_at = EXCLUDED.expires_at,
                     fetched_at = EXCLUDED.fetched_at
                 """,
                 symbol,
-                json.dumps(data, default=str),
+                json.dumps(data, default=str),  # Explicit JSON string for JSONB insert
             )
         
         return data

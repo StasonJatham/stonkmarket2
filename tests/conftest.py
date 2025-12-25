@@ -22,8 +22,14 @@ def _force_cleanup():
 
 async def _async_cleanup():
     """Async cleanup of all resources."""
-    from app.database.connection import close_database, _pool as db_pool, _engine
+    from app.database.connection import close_database, _pool as db_pool, _engine, close_sqlalchemy_engine
     from app.cache.client import close_valkey_client, _pool as cache_pool
+    
+    # Close SQLAlchemy engine (ORM)
+    try:
+        await close_sqlalchemy_engine()
+    except Exception:
+        pass
     
     # Close database
     try:
@@ -78,7 +84,28 @@ def pytest_sessionfinish(session, exitstatus):
 @pytest.fixture(scope="function", autouse=True)
 def cleanup_after_test():
     """Force garbage collection after each test to clean up connections."""
+    # Reset SQLAlchemy engine before test to avoid event loop issues
+    import app.database.connection as db_conn
+    import app.services.data_providers.yfinance_service as yf_service
+    import app.cache.client as cache_client
+    
+    db_conn._engine = None
+    db_conn._session_factory = None
+    db_conn._pool = None  # Also reset asyncpg pool
+    yf_service._instance = None  # Reset yfinance singleton
+    cache_client._pool = None  # Reset Valkey pool
+    cache_client._client = None  # Reset Valkey client
+    
     yield
+    
+    # Reset again after test
+    db_conn._engine = None
+    db_conn._session_factory = None
+    db_conn._pool = None
+    yf_service._instance = None
+    cache_client._pool = None
+    cache_client._client = None
+    
     _force_cleanup()
 
 

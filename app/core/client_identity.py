@@ -34,11 +34,21 @@ logger = get_logger("core.client_identity")
 # =============================================================================
 
 CACHE_PREFIX = "stonkmarket:v2:identity"
-VOTE_COOLDOWN_DAYS = 7
-SESSION_TTL_DAYS = 365
 MAX_IPS_PER_FINGERPRINT = 5
 MAX_VOTES_PER_HOUR = 20
 SUSPICIOUS_STOCK_VOTES_THRESHOLD = 10
+
+
+def _get_vote_cooldown_days() -> int:
+    """Get vote cooldown from settings (single source of truth)."""
+    from app.core.config import settings
+    return settings.vote_cooldown_days
+
+
+def _get_session_ttl_seconds() -> int:
+    """Get session TTL from settings (single source of truth)."""
+    from app.core.config import settings
+    return settings.session_ttl
 
 
 class RiskLevel(str, Enum):
@@ -216,7 +226,7 @@ async def check_vote_allowed(
         try:
             vote_data = json.loads(existing_vote)
             vote_time = datetime.fromisoformat(vote_data["voted_at"])
-            cooldown_end = vote_time + timedelta(days=VOTE_COOLDOWN_DAYS)
+            cooldown_end = vote_time + timedelta(days=_get_vote_cooldown_days())
             if datetime.now(timezone.utc) < cooldown_end.replace(tzinfo=timezone.utc):
                 days_left = (cooldown_end.replace(tzinfo=timezone.utc) - datetime.now(timezone.utc)).days + 1
                 return VoteCheck(
@@ -235,7 +245,7 @@ async def check_vote_allowed(
         try:
             vote_data = json.loads(ip_voted)
             vote_time = datetime.fromisoformat(vote_data["voted_at"])
-            cooldown_end = vote_time + timedelta(days=VOTE_COOLDOWN_DAYS)
+            cooldown_end = vote_time + timedelta(days=_get_vote_cooldown_days())
             if datetime.now(timezone.utc) < cooldown_end.replace(tzinfo=timezone.utc):
                 days_left = (cooldown_end.replace(tzinfo=timezone.utc) - datetime.now(timezone.utc)).days + 1
                 return VoteCheck(
@@ -356,7 +366,7 @@ async def record_vote(
     
     now = datetime.now(timezone.utc).isoformat()
     vote_data = json.dumps({"voted_at": now, "symbol": symbol})
-    cooldown_seconds = VOTE_COOLDOWN_DAYS * 86400
+    cooldown_seconds = _get_vote_cooldown_days() * 86400
     
     # Record vote by composite identifier
     vote_id = get_vote_identifier(request, symbol)
@@ -381,7 +391,7 @@ async def record_vote(
     if client_fp:
         fp_ips_key = f"{CACHE_PREFIX}:fp_ips:{_hash(client_fp)}"
         await client.sadd(fp_ips_key, ip_hash)
-        await client.expire(fp_ips_key, SESSION_TTL_DAYS * 86400)
+        await client.expire(fp_ips_key, _get_session_ttl_seconds())
     
     logger.debug(f"Recorded vote: {symbol} from IP {ip_hash[:8]}...")
 

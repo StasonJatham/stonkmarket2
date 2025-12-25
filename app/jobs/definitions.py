@@ -156,21 +156,13 @@ async def initial_data_ingest_job() -> str:
                 if price_version:
                     await yf_service.save_data_version(symbol, price_version)
                 
-                # Fetch ticker info (fundamentals)
-                info = await yf_service.get_ticker_info(symbol)
-                
-                if info:
-                    # Compute fundamentals version
-                    fundamentals_version = DataVersion(
-                        hash=_compute_hash(info),
-                        timestamp=datetime.now(timezone.utc),
-                        source="fundamentals",
-                        metadata={
-                            "pe_ratio": info.get("pe_ratio"),
-                            "market_cap": info.get("market_cap"),
-                        },
-                    )
-                    await yf_service.save_data_version(symbol, fundamentals_version)
+                # Fetch and STORE fundamentals (not just version tracking)
+                from app.services.fundamentals import refresh_fundamentals
+                fundamentals = await refresh_fundamentals(symbol)
+                if fundamentals:
+                    logger.debug(f"Stored fundamentals for {symbol}")
+                else:
+                    logger.warning(f"No fundamentals available for {symbol}")
                 
                 # Get calendar events if available
                 calendar, calendar_version = await yf_service.get_calendar(symbol)

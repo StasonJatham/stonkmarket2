@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
+import inspect
 import time
 from typing import Optional
 
@@ -34,7 +34,7 @@ async def execute_job(name: str) -> str:
     start_time = time.monotonic()
 
     try:
-        if asyncio.iscoroutinefunction(job_func):
+        if inspect.iscoroutinefunction(job_func):
             result = await job_func()
         else:
             result = job_func()

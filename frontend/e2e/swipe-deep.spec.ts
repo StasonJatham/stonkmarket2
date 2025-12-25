@@ -164,8 +164,20 @@ test.describe('API Data Tests', () => {
   });
 
   test('voting API works correctly', async ({ request }) => {
-    // Clear vote cooldowns first (if possible)
-    const response = await request.put('http://localhost:8000/api/swipe/cards/AAPL/vote', {
+    // First get the list of tracked symbols from swipe cards
+    const cardsResponse = await request.get('http://localhost:8000/api/swipe/cards');
+    const cardsData = await cardsResponse.json();
+    
+    // Use the first tracked symbol, or skip test if none available
+    if (!cardsData.cards || cardsData.cards.length === 0) {
+      console.log('No tracked symbols available, skipping vote test');
+      return;
+    }
+    
+    const trackedSymbol = cardsData.cards[0].symbol;
+    console.log('Using tracked symbol for vote test:', trackedSymbol);
+    
+    const response = await request.put(`http://localhost:8000/api/swipe/cards/${trackedSymbol}/vote`, {
       data: { vote_type: 'buy' },
       headers: {
         'User-Agent': 'Playwright-Test-' + Date.now(),

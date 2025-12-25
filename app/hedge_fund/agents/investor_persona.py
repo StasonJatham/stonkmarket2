@@ -384,35 +384,54 @@ class InvestorPersonaAgent(LLMAgentBase):
             if len(closes) >= 252:
                 price_changes["1Y"] = (closes[-1] - closes[-252]) / closes[-252] * 100
         
+        # Helper function for formatting optional values
+        def fmt(val, spec: str) -> str:
+            """Format a value with a format spec, or return 'N/A' if None."""
+            if val is None:
+                return "N/A"
+            return f"{val:{spec}}"
+        
+        def fmt_pct(val) -> str:
+            """Format a percentage value."""
+            if val is None:
+                return "N/A"
+            return f"{val:.1%}"
+        
+        def fmt_money(val) -> str:
+            """Format a money value."""
+            if val is None:
+                return "N/A"
+            return f"${val:,.0f}"
+        
         prompt = f"""Analyze {symbol} ({f.name}) for investment potential.
 
 **Company Overview:**
 - Sector: {f.sector or 'N/A'}
 - Industry: {f.industry or 'N/A'}
-- Market Cap: ${f.market_cap:,.0f if f.market_cap else 'N/A'}
+- Market Cap: {fmt_money(f.market_cap)}
 - Current Price: ${current_price}
 
 **Valuation Metrics:**
-- P/E Ratio: {f.pe_ratio:.2f if f.pe_ratio else 'N/A'}
-- Forward P/E: {f.forward_pe:.2f if f.forward_pe else 'N/A'}
-- PEG Ratio: {f.peg_ratio:.2f if f.peg_ratio else 'N/A'}
-- Price/Book: {f.price_to_book:.2f if f.price_to_book else 'N/A'}
-- EV/EBITDA: {f.ev_to_ebitda:.2f if f.ev_to_ebitda else 'N/A'}
+- P/E Ratio: {fmt(f.pe_ratio, '.2f')}
+- Forward P/E: {fmt(f.forward_pe, '.2f')}
+- PEG Ratio: {fmt(f.peg_ratio, '.2f')}
+- Price/Book: {fmt(f.price_to_book, '.2f')}
+- EV/EBITDA: {fmt(f.ev_to_ebitda, '.2f')}
 
 **Profitability:**
-- Profit Margin: {f.profit_margin:.1% if f.profit_margin else 'N/A'}
-- Operating Margin: {f.operating_margin:.1% if f.operating_margin else 'N/A'}
-- ROE: {f.roe:.1% if f.roe else 'N/A'}
-- ROA: {f.roa:.1% if f.roa else 'N/A'}
+- Profit Margin: {fmt_pct(f.profit_margin)}
+- Operating Margin: {fmt_pct(f.operating_margin)}
+- ROE: {fmt_pct(f.roe)}
+- ROA: {fmt_pct(f.roa)}
 
 **Growth:**
-- Revenue Growth: {f.revenue_growth:.1% if f.revenue_growth else 'N/A'}
-- Earnings Growth: {f.earnings_growth:.1% if f.earnings_growth else 'N/A'}
+- Revenue Growth: {fmt_pct(f.revenue_growth)}
+- Earnings Growth: {fmt_pct(f.earnings_growth)}
 
 **Financial Health:**
-- Current Ratio: {f.current_ratio:.2f if f.current_ratio else 'N/A'}
-- Debt/Equity: {f.debt_to_equity:.2f if f.debt_to_equity else 'N/A'}
-- Free Cash Flow: ${f.free_cash_flow:,.0f if f.free_cash_flow else 'N/A'}
+- Current Ratio: {fmt(f.current_ratio, '.2f')}
+- Debt/Equity: {fmt(f.debt_to_equity, '.2f')}
+- Free Cash Flow: {fmt_money(f.free_cash_flow)}
 
 **Market Performance:**"""
         

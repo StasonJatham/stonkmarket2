@@ -78,16 +78,31 @@ class Cache:
         value: Any,
         ttl: Optional[int] = None,
     ) -> bool:
-        """Set value in cache with TTL."""
+        """Set value in cache with TTL.
+        
+        Args:
+            key: Cache key
+            value: Value to cache
+            ttl: Time-to-live in seconds. 
+                 None = use default_ttl
+                 0 = disable caching (returns True without storing)
+                 >0 = use specified TTL
+        """
+        # TTL=0 means "don't cache" - return success without storing
+        effective_ttl = ttl if ttl is not None else self.default_ttl
+        if effective_ttl == 0:
+            logger.debug(f"Cache disabled (TTL=0) for key: {key}")
+            return True
+            
         client = await get_valkey_client()
         full_key = cache_key(key, prefix=self.prefix)
         start = time.perf_counter()
         try:
             serialized = _serialize(value)
-            await client.set(full_key, serialized, ex=ttl or self.default_ttl)
+            await client.set(full_key, serialized, ex=effective_ttl)
             duration_ms = (time.perf_counter() - start) * 1000
             cache_metrics.record_set(self.prefix, duration_ms)
-            logger.debug(f"Cache set: {full_key}, TTL: {ttl or self.default_ttl}s")
+            logger.debug(f"Cache set: {full_key}, TTL: {effective_ttl}s")
             return True
         except Exception as e:
             cache_metrics.record_error(self.prefix)

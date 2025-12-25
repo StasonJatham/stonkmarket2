@@ -123,11 +123,13 @@ async def _search_local_db(
         param_idx += 2
     
     # Trigram similarity clause for fuzzy name matching
-    trigram_select = ""
-    trigram_join = ""
+    # NOTE: Don't use .replace() on these - it breaks the alias name
+    trigram_select_symbols = ""
+    trigram_select_cached = ""
     if use_trigram:
-        # Add similarity score as a factor
-        trigram_select = f", similarity(name, $1) as name_similarity"
+        # Add similarity score as a factor - use table-specific versions to avoid replace() issues
+        trigram_select_symbols = ", similarity(s.name, $1) as name_similarity"
+        trigram_select_cached = ", similarity(r.name, $1) as name_similarity"
     
     # Fetch one extra to detect if there are more results
     fetch_limit = limit + 1
@@ -152,7 +154,7 @@ async def _search_local_db(
                     WHEN UPPER(s.name) LIKE '%' || $1 || '%' THEN 0.70
                     ELSE 0.50
                 END::numeric as score
-                {trigram_select.replace('name', 's.name') if use_trigram else ', 0 as name_similarity'}
+                {trigram_select_symbols if use_trigram else ', 0 as name_similarity'}
             FROM symbols s
             WHERE s.is_active = TRUE
               AND (
@@ -181,7 +183,7 @@ async def _search_local_db(
                         ELSE 0.40
                     END
                 )::numeric as score
-                {trigram_select.replace('name', 'r.name') if use_trigram else ', 0 as name_similarity'}
+                {trigram_select_cached if use_trigram else ', 0 as name_similarity'}
             FROM symbol_search_results r
             WHERE r.expires_at > NOW()
               AND NOT EXISTS (SELECT 1 FROM symbols s WHERE s.symbol = r.symbol AND s.is_active = TRUE)
@@ -352,6 +354,9 @@ async def search_symbols(
         "search_type": "local",
         "next_cursor": next_cursor.encode() if next_cursor else None,
     }
+
+
+async def lookup_symbol(symbol: str) -> Optional[dict[str, Any]]:
     """
     Lookup a specific symbol to validate and get info.
     
@@ -369,8 +374,7 @@ async def search_symbols(
     row = await fetch_one(
         """
         SELECT s.symbol, s.name, s.sector, s.symbol_type, s.market_cap,
-               f.pe_ratio, f.forward_pe, f.recommendation, f.target_mean_price,
-               f.current_price, f.previous_close
+               f.pe_ratio, f.forward_pe, f.recommendation, f.target_mean_price
         FROM symbols s
         LEFT JOIN stock_fundamentals f ON s.symbol = f.symbol
         WHERE s.symbol = $1 AND s.is_active = TRUE
@@ -389,7 +393,6 @@ async def search_symbols(
             "forward_pe": float(row["forward_pe"]) if row["forward_pe"] else None,
             "recommendation": row["recommendation"],
             "target_mean_price": float(row["target_mean_price"]) if row["target_mean_price"] else None,
-            "current_price": float(row["current_price"]) if row["current_price"] else None,
             "source": "local",
             "valid": True,
         }
@@ -438,7 +441,8 @@ async def get_symbol_suggestions(
     if len(partial.strip()) < 1:
         return []
     
-    results = await _search_local_db(partial, limit=limit)
+    # _search_local_db returns (results, next_cursor) tuple
+    results, _ = await _search_local_db(partial, limit=limit)
     return [{"symbol": r["symbol"], "name": r["name"]} for r in results]
 
 

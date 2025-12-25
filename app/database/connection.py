@@ -24,6 +24,7 @@ Usage (Raw asyncpg - legacy):
 
 from __future__ import annotations
 
+import json
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Optional, Any
 
@@ -76,12 +77,28 @@ async def init_pg_pool() -> Pool:
     if _pool is not None:
         return _pool
 
+    async def _init_connection(conn: Connection) -> None:
+        """Initialize connection with JSON codec for JSONB columns."""
+        await conn.set_type_codec(
+            'jsonb',
+            encoder=json.dumps,
+            decoder=json.loads,
+            schema='pg_catalog'
+        )
+        await conn.set_type_codec(
+            'json',
+            encoder=json.dumps,
+            decoder=json.loads,
+            schema='pg_catalog'
+        )
+
     try:
         _pool = await asyncpg.create_pool(
             dsn=settings.database_url,
             min_size=settings.db_pool_min_size,
             max_size=settings.db_pool_max_size,
             command_timeout=60,
+            init=_init_connection,
             server_settings={
                 "application_name": "stonkmarket",
                 "timezone": "UTC",

@@ -206,27 +206,27 @@ class TestSymbolSearch:
     
     @pytest.mark.asyncio
     async def test_lookup_symbol_valid(self):
-        """Test looking up a valid symbol."""
-        from app.services.symbol_search import lookup_symbol
+        """Test looking up a valid symbol via search."""
+        from app.services.symbol_search import search_symbols
         
         try:
-            result = await lookup_symbol("AAPL")
+            results, _ = await search_symbols("AAPL", limit=1)
             
-            if result:  # May be None if rate limited
-                assert result["symbol"] == "AAPL"
-                assert "name" in result
+            if results:  # May be empty if rate limited
+                assert results[0]["symbol"] == "AAPL"
+                assert "name" in results[0]
         except Exception:
             pytest.skip("Lookup service unavailable")
     
     @pytest.mark.asyncio
     async def test_lookup_symbol_invalid(self):
         """Test looking up an invalid symbol."""
-        from app.services.symbol_search import lookup_symbol
+        from app.services.symbol_search import search_symbols
         
         try:
-            result = await lookup_symbol("INVALIDXYZ123")
-            # Should return None for invalid symbol
-            assert result is None
+            results, _ = await search_symbols("INVALIDXYZ123", limit=1)
+            # Should return empty list for invalid symbol
+            assert len(results) == 0 or results[0]["symbol"] != "INVALIDXYZ123"
         except Exception:
             pytest.skip("Lookup service unavailable")
 
@@ -238,11 +238,12 @@ class TestSymbolSearch:
 class TestFundamentalsService:
     """Test fundamentals fetching and storage."""
     
-    def test_fetch_fundamentals_sync(self):
+    @pytest.mark.asyncio
+    async def test_fetch_fundamentals_sync(self):
         """Test fetching fundamentals from yfinance."""
         from app.services.fundamentals import _fetch_fundamentals_sync
         
-        data = _fetch_fundamentals_sync("AAPL")
+        data = await _fetch_fundamentals_sync("AAPL")
         
         assert data is not None, "Should fetch AAPL fundamentals"
         assert data["symbol"] == "AAPL"
@@ -250,27 +251,30 @@ class TestFundamentalsService:
         assert "recommendation" in data
         assert "profit_margin" in data
     
-    def test_fetch_fundamentals_etf_skipped(self):
+    @pytest.mark.asyncio
+    async def test_fetch_fundamentals_etf_skipped(self):
         """Test that ETFs are skipped."""
         from app.services.fundamentals import _fetch_fundamentals_sync
         
-        data = _fetch_fundamentals_sync("SPY")
+        data = await _fetch_fundamentals_sync("SPY")
         
         assert data is None, "ETFs should be skipped"
     
-    def test_fetch_fundamentals_index_skipped(self):
+    @pytest.mark.asyncio
+    async def test_fetch_fundamentals_index_skipped(self):
         """Test that indexes are skipped."""
         from app.services.fundamentals import _fetch_fundamentals_sync
         
-        data = _fetch_fundamentals_sync("^GSPC")
+        data = await _fetch_fundamentals_sync("^GSPC")
         
         assert data is None, "Indexes should be skipped"
     
-    def test_get_fundamentals_for_analysis_format(self):
+    @pytest.mark.asyncio
+    async def test_get_fundamentals_for_analysis_format(self):
         """Test that analysis format has expected keys."""
         from app.services.fundamentals import _fetch_fundamentals_sync
         
-        data = _fetch_fundamentals_sync("MSFT")
+        data = await _fetch_fundamentals_sync("MSFT")
         
         if data:
             # These are the keys used by AI prompts

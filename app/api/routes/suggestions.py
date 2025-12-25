@@ -37,8 +37,89 @@ logger = get_logger("api.routes.suggestions")
 
 router = APIRouter(prefix="/suggestions", tags=["suggestions"])
 
-# Vote cooldown in days (now managed in anon_session.py)
-VOTE_COOLDOWN_DAYS = 7
+
+# =============================================================================
+# Auto-approval helper
+# =============================================================================
+
+
+async def _check_and_apply_auto_approval(
+    suggestion_id: int,
+    symbol: str,
+    new_score: int,
+    background_tasks: BackgroundTasks,
+) -> bool:
+    """Check all auto-approval conditions and approve if met.
+    
+    Returns True if auto-approved, False otherwise.
+    
+    Conditions (all must be met):
+    1. auto_approve_enabled must be True
+    2. Vote count >= auto_approve_votes threshold
+    3. Unique voters (by fingerprint) >= auto_approve_unique_voters
+    4. Suggestion age >= auto_approve_min_age_hours
+    """
+    from app.core.config import settings
+    
+    # 1. Check if auto-approval is enabled
+    if not settings.auto_approve_enabled:
+        logger.debug(f"Auto-approval disabled for {symbol}")
+        return False
+    
+    # 2. Check vote count threshold (runtime-configurable)
+    auto_approve_threshold = get_runtime_setting("auto_approve_votes", settings.auto_approve_votes)
+    if new_score < auto_approve_threshold:
+        logger.debug(f"Auto-approval: {symbol} has {new_score} votes, need {auto_approve_threshold}")
+        return False
+    
+    # 3. Check unique voter count
+    unique_voters_result = await fetch_one(
+        """SELECT COUNT(DISTINCT fingerprint) as unique_voters 
+           FROM suggestion_votes WHERE suggestion_id = $1""",
+        suggestion_id,
+    )
+    unique_voters = unique_voters_result["unique_voters"] if unique_voters_result else 0
+    
+    if unique_voters < settings.auto_approve_unique_voters:
+        logger.debug(
+            f"Auto-approval: {symbol} has {unique_voters} unique voters, "
+            f"need {settings.auto_approve_unique_voters}"
+        )
+        return False
+    
+    # 4. Check suggestion age
+    age_result = await fetch_one(
+        """SELECT EXTRACT(EPOCH FROM (NOW() - created_at)) / 3600 as age_hours
+           FROM stock_suggestions WHERE id = $1""",
+        suggestion_id,
+    )
+    age_hours = float(age_result["age_hours"]) if age_result else 0
+    
+    if age_hours < settings.auto_approve_min_age_hours:
+        logger.debug(
+            f"Auto-approval: {symbol} is {age_hours:.1f}h old, "
+            f"need {settings.auto_approve_min_age_hours}h"
+        )
+        return False
+    
+    # All conditions met - auto-approve
+    await execute(
+        """UPDATE stock_suggestions 
+           SET status = 'approved', approved_by = NULL, reviewed_at = NOW()
+           WHERE id = $1 AND status = 'pending'""",
+        suggestion_id,
+    )
+    
+    logger.info(
+        f"Auto-approved {symbol}: {new_score} votes (>={auto_approve_threshold}), "
+        f"{unique_voters} unique voters (>={settings.auto_approve_unique_voters}), "
+        f"{age_hours:.1f}h old (>={settings.auto_approve_min_age_hours}h)"
+    )
+    
+    # Trigger background processing for data + AI
+    background_tasks.add_task(_process_approved_symbol, symbol)
+    
+    return True
 
 
 # =============================================================================
@@ -53,8 +134,9 @@ async def get_suggestion_settings():
     
     Returns auto-approval threshold and other public settings.
     """
+    from app.core.config import settings
     return {
-        "auto_approve_votes": get_runtime_setting("auto_approve_votes", 10),
+        "auto_approve_votes": get_runtime_setting("auto_approve_votes", settings.auto_approve_votes),
     }
 
 
@@ -131,20 +213,14 @@ async def suggest_stock(
         
         # Check for auto-approval if still pending
         if current_status == "pending":
-            auto_approve_threshold = get_runtime_setting("auto_approve_votes", 10)
-            if new_score >= auto_approve_threshold:
-                # Auto-approve the suggestion
-                await execute(
-                    """UPDATE stock_suggestions 
-                       SET status = 'approved', approved_by = NULL, reviewed_at = NOW()
-                       WHERE id = $1 AND status = 'pending'""",
-                    suggestion_id,
-                )
+            auto_approved = await _check_and_apply_auto_approval(
+                suggestion_id=suggestion_id,
+                symbol=symbol,
+                new_score=new_score,
+                background_tasks=background_tasks,
+            )
+            if auto_approved:
                 current_status = "approved"
-                auto_approved = True
-                logger.info(f"Auto-approved suggestion {symbol} with {new_score} votes (threshold: {auto_approve_threshold})")
-                # Trigger background processing for data + AI
-                background_tasks.add_task(_process_approved_symbol, symbol)
 
         return {
             "message": "Vote added successfully",

@@ -860,10 +860,13 @@ export interface SymbolSearchResponse {
   count: number;
 }
 
-export async function searchSymbols(query: string, limit = 10): Promise<SymbolSearchResult[]> {
+export async function searchSymbols(query: string, limit = 10, fresh = true): Promise<SymbolSearchResult[]> {
   if (query.length < 2) return [];
   try {
-    const response = await fetchAPI<SymbolSearchResponse>(`/symbols/search/${encodeURIComponent(query)}?limit=${limit}`);
+    const params = new URLSearchParams();
+    params.append('limit', limit.toString());
+    if (fresh) params.append('fresh', 'true');
+    const response = await fetchAPI<SymbolSearchResponse>(`/symbols/search/${encodeURIComponent(query)}?${params.toString()}`);
     return response.results;
   } catch {
     return [];

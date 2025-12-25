@@ -219,42 +219,44 @@ function GuestSuggestionsView() {
               </p>
             </div>
 
-            <AnimatePresence>
-              {validationResult && (
-                <motion.div 
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: 'auto' }}
-                  exit={{ opacity: 0, height: 0 }}
-                  className={`flex items-center gap-2 p-3 rounded-lg ${validationResult.valid ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'}`}
-                >
-                  {validationResult.valid ? (
-                    <>
-                      <CheckCircle className="h-4 w-4" />
-                      <span>Valid: {validationResult.name}</span>
-                    </>
-                  ) : (
-                    <>
-                      <XCircle className="h-4 w-4" />
-                      <span>{validationResult.error}</span>
-                    </>
-                  )}
-                </motion.div>
-              )}
-            </AnimatePresence>
-
-            <AnimatePresence>
-              {submitResult && (
-                <motion.div 
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: 'auto' }}
-                  exit={{ opacity: 0, height: 0 }}
-                  className={`flex items-center gap-2 p-3 rounded-lg ${submitResult.success ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'}`}
-                >
-                  {submitResult.success ? <CheckCircle className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
-                  <span>{submitResult.message}</span>
-                </motion.div>
-              )}
-            </AnimatePresence>
+            {/* Reserved space for validation/submit results to prevent layout shift */}
+            <div className="min-h-[52px]">
+              <AnimatePresence mode="wait">
+                {validationResult && (
+                  <motion.div 
+                    key="validation"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className={`flex items-center gap-2 p-3 rounded-lg ${validationResult.valid ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'}`}
+                  >
+                    {validationResult.valid ? (
+                      <>
+                        <CheckCircle className="h-4 w-4 flex-shrink-0" />
+                        <span className="truncate">Valid: {validationResult.name}</span>
+                      </>
+                    ) : (
+                      <>
+                        <XCircle className="h-4 w-4 flex-shrink-0" />
+                        <span>{validationResult.error}</span>
+                      </>
+                    )}
+                  </motion.div>
+                )}
+                {submitResult && !validationResult && (
+                  <motion.div 
+                    key="submit"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className={`flex items-center gap-2 p-3 rounded-lg ${submitResult.success ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'}`}
+                  >
+                    {submitResult.success ? <CheckCircle className="h-4 w-4 flex-shrink-0" /> : <AlertCircle className="h-4 w-4 flex-shrink-0" />}
+                    <span>{submitResult.message}</span>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
 
             <Button
               onClick={handleSubmit}

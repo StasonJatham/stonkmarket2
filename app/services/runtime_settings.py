@@ -23,6 +23,8 @@ CACHE_AFFECTING_SETTINGS = {
 }
 
 # Default settings (used if database is empty or unavailable)
+# NOTE: auto_approve_votes comes from settings.auto_approve_votes (default 50)
+# to keep a single source of truth in app/core/config.py
 DEFAULT_SETTINGS: Dict[str, Any] = {
     "signal_threshold_strong_buy": 80.0,
     "signal_threshold_buy": 60.0,
@@ -31,7 +33,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "ai_batch_size": 0,  # 0 = process all stocks
     "ai_model": "gpt-5-mini",
     "suggestion_cleanup_days": 30,
-    "auto_approve_votes": 10,
+    "auto_approve_votes": 50,  # Matches settings.auto_approve_votes default
     # Cache TTLs in seconds - shorter for frequently changing data
     "cache_ttl_symbols": 0,        # 0 = no cache - real-time
     "cache_ttl_suggestions": 0,    # 0 = no cache - real-time

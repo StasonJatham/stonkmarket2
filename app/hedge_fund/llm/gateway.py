@@ -102,12 +102,12 @@ class OpenAIGateway:
     LLM Gateway using OpenAI APIs.
     
     Supports both realtime (Responses API) and batch modes.
-    Wraps the existing openai_client.py infrastructure.
+    Uses direct OpenAI client for custom persona analysis.
     """
 
     def __init__(
         self,
-        model: str = "gpt-5-mini",
+        model: str = "gpt-4o-mini",
         default_temperature: float = 0.7,
         default_max_tokens: int = 1000,
         batch_poll_interval: float = 30.0,
@@ -120,75 +120,109 @@ class OpenAIGateway:
         self.batch_max_wait = batch_max_wait
 
     async def run_realtime(self, task: LLMTask) -> LLMResult:
-        """Execute a single task using the Responses API."""
-        from app.services import openai_client
+        """Execute a single task using the OpenAI Responses API directly."""
+        import time
+        from app.services.openai_client import _get_client
 
         try:
-            # Build instructions from context
-            system_prompt = task.context.get("system_prompt", "")
+            client = await _get_client()
+            if not client:
+                return LLMResult(
+                    custom_id=task.custom_id,
+                    agent_id=task.agent_id,
+                    symbol=task.symbol,
+                    content="",
+                    error="OpenAI client not configured - check OPENAI_API_KEY",
+                    failed=True,
+                )
+
+            # Build messages
+            system_prompt = task.context.get("system_prompt", "You are an expert investment analyst.")
             
-            # Use structured output for JSON
-            use_structured = task.require_json
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": task.prompt},
+            ]
             
-            # Call existing client
-            import time
             start = time.monotonic()
             
-            if use_structured:
-                result = await openai_client.get_investment_analysis(
+            # Build request params
+            params: dict = {
+                "model": self.model,
+                "messages": messages,
+                "max_tokens": task.max_tokens or self.default_max_tokens,
+            }
+            
+            # Add structured output for JSON responses
+            if task.require_json:
+                params["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "investment_signal",
+                        "strict": True,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "signal": {
+                                    "type": "string",
+                                    "enum": ["strong_buy", "buy", "hold", "sell", "strong_sell"],
+                                },
+                                "confidence": {
+                                    "type": "integer",
+                                    "description": "Confidence level from 1-10",
+                                },
+                                "reasoning": {
+                                    "type": "string",
+                                    "description": "Detailed explanation of the investment thesis",
+                                },
+                                "key_factors": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "description": "Top 3-5 factors driving the recommendation",
+                                },
+                            },
+                            "required": ["signal", "confidence", "reasoning", "key_factors"],
+                            "additionalProperties": False,
+                        },
+                    },
+                }
+            
+            # Make the API call
+            response = await client.chat.completions.create(**params)
+            
+            latency = (time.monotonic() - start) * 1000
+            
+            if not response.choices:
+                return LLMResult(
+                    custom_id=task.custom_id,
+                    agent_id=task.agent_id,
                     symbol=task.symbol,
-                    context=task.prompt,
-                    agent_name=task.context.get("agent_name", "analyst"),
-                    system_override=system_prompt if system_prompt else None,
+                    content="",
+                    error="No response choices from OpenAI",
+                    failed=True,
+                    latency_ms=latency,
                 )
-                latency = (time.monotonic() - start) * 1000
-                
-                if result and not result.get("error"):
-                    return LLMResult(
-                        custom_id=task.custom_id,
-                        agent_id=task.agent_id,
-                        symbol=task.symbol,
-                        content=json.dumps(result),
-                        parsed_json=result,
-                        latency_ms=latency,
-                    )
-                else:
-                    return LLMResult(
-                        custom_id=task.custom_id,
-                        agent_id=task.agent_id,
-                        symbol=task.symbol,
-                        content="",
-                        error=result.get("error", "Unknown error") if result else "No response",
-                        failed=True,
-                        latency_ms=latency,
-                    )
-            else:
-                # Plain text response
-                result = await openai_client.generate_text(
-                    prompt=task.prompt,
-                    system=system_prompt,
-                    max_tokens=task.max_tokens,
-                )
-                latency = (time.monotonic() - start) * 1000
-                
-                if result:
-                    return LLMResult(
-                        custom_id=task.custom_id,
-                        agent_id=task.agent_id,
-                        symbol=task.symbol,
-                        content=result,
-                        latency_ms=latency,
-                    )
-                else:
-                    return LLMResult(
-                        custom_id=task.custom_id,
-                        agent_id=task.agent_id,
-                        symbol=task.symbol,
-                        content="",
-                        error="No response from LLM",
-                        failed=True,
-                        latency_ms=latency,
-                    )
+            
+            content = response.choices[0].message.content or ""
+            tokens_used = response.usage.total_tokens if response.usage else 0
+            
+            # Parse JSON if required
+            parsed_json = None
+            if task.require_json and content:
+                try:
+                    parsed_json = json.loads(content)
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Failed to parse JSON response: {e}")
+            
+            return LLMResult(
+                custom_id=task.custom_id,
+                agent_id=task.agent_id,
+                symbol=task.symbol,
+                content=content,
+                parsed_json=parsed_json,
+                tokens_used=tokens_used,
+                latency_ms=latency,
+            )
 
         except Exception as e:
             logger.error(f"Realtime LLM error for {task.symbol}: {e}")

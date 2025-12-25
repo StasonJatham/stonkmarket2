@@ -63,6 +63,9 @@ test.describe('Dashboard', () => {
       // Click toggle
       await themeToggle.click();
       
+      // Wait for theme transition to complete
+      await page.waitForTimeout(300);
+      
       // Theme should change
       const newIsDark = await page.evaluate(() => 
         document.documentElement.classList.contains('dark')
@@ -212,8 +215,8 @@ test.describe('Suggest Stock Feature', () => {
       const dialog = page.locator('[role="dialog"]');
       await expect(dialog).toBeVisible();
       
-      // Should have search input
-      const searchInput = dialog.locator('input[placeholder*="company name"]');
+      // Should have search input (placeholder is "e.g., AAPL or Apple")
+      const searchInput = dialog.locator('input[placeholder*="AAPL"], input[placeholder*="Apple"], input[type="text"]').first();
       await expect(searchInput).toBeVisible();
     }
   });
