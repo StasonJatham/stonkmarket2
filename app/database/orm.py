@@ -574,7 +574,7 @@ class DipfinderConfig(Base):
     __tablename__ = "dipfinder_config"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    symbol: Mapped[str] = mapped_column(String(20), unique=True, nullable=False)
+    symbol: Mapped[str] = mapped_column(String(20), ForeignKey("symbols.symbol", ondelete="CASCADE"), unique=True, nullable=False)
     min_dip_abs: Mapped[Decimal] = mapped_column(Numeric(5, 4), default=Decimal("0.10"))
     min_persist_days: Mapped[int] = mapped_column(Integer, default=2)
     dip_percentile_threshold: Mapped[Decimal] = mapped_column(Numeric(5, 4), default=Decimal("0.80"))
