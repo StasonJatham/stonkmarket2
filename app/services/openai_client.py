@@ -42,7 +42,7 @@ import re
 import tempfile
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Literal, Optional, TypedDict
@@ -439,7 +439,7 @@ async def _get_client() -> Optional[AsyncOpenAI]:
     
     # Reuse existing client if still valid
     if _client and _client_created_at:
-        if datetime.utcnow() - _client_created_at < CLIENT_TTL:
+        if datetime.now(timezone.utc) - _client_created_at < CLIENT_TTL:
             return _client
     
     # Get API key from env or database
@@ -456,7 +456,7 @@ async def _get_client() -> Optional[AsyncOpenAI]:
         timeout=DEFAULT_TIMEOUT,
         max_retries=0,  # We handle retries ourselves
     )
-    _client_created_at = datetime.utcnow()
+    _client_created_at = datetime.now(timezone.utc)
     return _client
 
 
@@ -906,7 +906,7 @@ async def generate(
     
     # Retry loop with exponential backoff + jitter
     last_error: Optional[Exception] = None
-    start_time = datetime.utcnow()
+    start_time = datetime.now(timezone.utc)
     incomplete_count = 0
     token_boost_applied = False
     
@@ -952,7 +952,7 @@ async def generate(
                     continue
             
             # Record metrics
-            duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+            duration_ms = int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)
             metrics = UsageMetrics(
                 input_tokens=response.usage.input_tokens,
                 output_tokens=response.usage.output_tokens,
@@ -1042,7 +1042,7 @@ async def generate(
                 await asyncio.sleep(delay)
     
     # All retries exhausted
-    duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+    duration_ms = int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)
     await _record_usage(task, model, UsageMetrics(duration_ms=duration_ms), success=False)
     logger.error(f"All retries failed for {task.value}: {last_error}")
     return None

@@ -4,7 +4,7 @@ Pydantic schemas for the hedge fund analysis module.
 All data structures used across agents, orchestrator, and LLM gateway.
 """
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from enum import Enum
 from typing import Any, Optional
@@ -202,7 +202,7 @@ class MarketData(BaseModel):
     prices: PriceSeries
     fundamentals: Fundamentals
     calendar: Optional[CalendarEvents] = None
-    fetched_at: datetime = Field(default_factory=datetime.utcnow)
+    fetched_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 # =============================================================================
@@ -226,7 +226,7 @@ class AgentSignal(BaseModel):
     metrics: Optional[dict[str, Any]] = Field(
         None, description="Relevant metrics/calculations"
     )
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     @field_validator("confidence", mode="before")
     @classmethod
@@ -249,7 +249,7 @@ class PerTickerReport(BaseModel):
     bearish_count: int = 0
     neutral_count: int = 0
     summary: Optional[str] = None
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     @property
     def agent_agreement(self) -> float:
@@ -293,7 +293,7 @@ class AnalysisBundle(BaseModel):
     successful_agents: int
     failed_agents: int
     execution_time_seconds: float
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     errors: list[str] = Field(default_factory=list)
 
 

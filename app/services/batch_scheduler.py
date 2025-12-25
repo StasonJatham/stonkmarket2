@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from app.database.connection import fetch_all, execute
@@ -339,7 +339,7 @@ async def _store_dip_analysis(symbol: str, content: dict | str, batch_id: str) -
         rating = None
         reasoning = str(content)
 
-    expires_at = datetime.utcnow() + timedelta(days=7)
+    expires_at = datetime.now(timezone.utc) + timedelta(days=7)
 
     await execute(
         """
@@ -427,7 +427,7 @@ async def run_realtime_analysis_for_new_stock(
         )
 
         # Store the analysis
-        expires_at = datetime.utcnow() + timedelta(days=7)
+        expires_at = datetime.now(timezone.utc) + timedelta(days=7)
 
         await execute(
             """

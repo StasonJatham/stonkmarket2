@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from app.database.connection import get_pg_connection, fetch_all
@@ -27,7 +27,7 @@ async def get_dip_changes(
     Returns:
         List of change records with symbol, action, price info, and timestamp
     """
-    since = datetime.utcnow() - timedelta(hours=hours)
+    since = datetime.now(timezone.utc) - timedelta(hours=hours)
 
     if action:
         rows = await fetch_all(
@@ -77,7 +77,7 @@ async def get_dip_changes_summary(hours: int = 24) -> dict:
     Returns:
         Summary with counts of added, removed, updated dips
     """
-    since = datetime.utcnow() - timedelta(hours=hours)
+    since = datetime.now(timezone.utc) - timedelta(hours=hours)
 
     async with get_pg_connection() as conn:
         row = await conn.fetchrow(
@@ -113,7 +113,7 @@ async def get_dip_changes_summary(hours: int = 24) -> dict:
 
 async def get_symbols_added_since(hours: int = 24) -> list[str]:
     """Get list of symbols added in the last X hours."""
-    since = datetime.utcnow() - timedelta(hours=hours)
+    since = datetime.now(timezone.utc) - timedelta(hours=hours)
 
     rows = await fetch_all(
         """
@@ -129,7 +129,7 @@ async def get_symbols_added_since(hours: int = 24) -> list[str]:
 
 async def get_symbols_removed_since(hours: int = 24) -> list[str]:
     """Get list of symbols removed in the last X hours."""
-    since = datetime.utcnow() - timedelta(hours=hours)
+    since = datetime.now(timezone.utc) - timedelta(hours=hours)
 
     rows = await fetch_all(
         """
@@ -145,7 +145,7 @@ async def get_symbols_removed_since(hours: int = 24) -> list[str]:
 
 async def get_symbol_history(symbol: str, days: int = 30) -> list[dict]:
     """Get the history of changes for a specific symbol."""
-    since = datetime.utcnow() - timedelta(days=days)
+    since = datetime.now(timezone.utc) - timedelta(days=days)
 
     rows = await fetch_all(
         """
@@ -207,7 +207,7 @@ async def cleanup_old_history(days: int = 90) -> int:
     Returns:
         Number of records deleted
     """
-    cutoff = datetime.utcnow() - timedelta(days=days)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
     async with get_pg_connection() as conn:
         result = await conn.execute(

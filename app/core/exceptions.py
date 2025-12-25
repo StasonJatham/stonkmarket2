@@ -73,7 +73,7 @@ class AuthorizationError(AppException):
 class ValidationError(AppException):
     """Validation failed."""
 
-    status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
+    status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
     error_code = "VALIDATION_ERROR"
     message = "Validation failed"
 

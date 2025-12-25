@@ -14,7 +14,7 @@ import asyncio
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Protocol
 
 import pandas as pd
@@ -528,7 +528,7 @@ class DipFinderService:
         Returns:
             List of history records
         """
-        since = datetime.utcnow() - timedelta(days=days)
+        since = datetime.now(timezone.utc) - timedelta(days=days)
 
         rows = await fetch_all(
             """
@@ -609,7 +609,7 @@ class DipFinderService:
     async def _save_signal_to_db(self, signal: DipSignal) -> None:
         """Save signal to database."""
         try:
-            expires_at = datetime.utcnow() + timedelta(days=7)
+            expires_at = datetime.now(timezone.utc) + timedelta(days=7)
             
             # Convert as_of_date string to date object if needed
             as_of_date = signal.as_of_date

@@ -18,7 +18,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Optional, Any
 
@@ -217,8 +217,8 @@ async def check_vote_allowed(
             vote_data = json.loads(existing_vote)
             vote_time = datetime.fromisoformat(vote_data["voted_at"])
             cooldown_end = vote_time + timedelta(days=VOTE_COOLDOWN_DAYS)
-            if datetime.utcnow() < cooldown_end:
-                days_left = (cooldown_end - datetime.utcnow()).days + 1
+            if datetime.now(timezone.utc) < cooldown_end.replace(tzinfo=timezone.utc):
+                days_left = (cooldown_end.replace(tzinfo=timezone.utc) - datetime.now(timezone.utc)).days + 1
                 return VoteCheck(
                     allowed=False,
                     reason=f"Already voted. Try again in {days_left} days.",
@@ -236,8 +236,8 @@ async def check_vote_allowed(
             vote_data = json.loads(ip_voted)
             vote_time = datetime.fromisoformat(vote_data["voted_at"])
             cooldown_end = vote_time + timedelta(days=VOTE_COOLDOWN_DAYS)
-            if datetime.utcnow() < cooldown_end:
-                days_left = (cooldown_end - datetime.utcnow()).days + 1
+            if datetime.now(timezone.utc) < cooldown_end.replace(tzinfo=timezone.utc):
+                days_left = (cooldown_end.replace(tzinfo=timezone.utc) - datetime.now(timezone.utc)).days + 1
                 return VoteCheck(
                     allowed=False,
                     reason=f"Vote recorded from your network. Try again in {days_left} days.",
@@ -354,7 +354,7 @@ async def record_vote(
     ip_hash = _hash(ip)
     client_fp = get_client_fingerprint(request)
     
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     vote_data = json.dumps({"voted_at": now, "symbol": symbol})
     cooldown_seconds = VOTE_COOLDOWN_DAYS * 86400
     
@@ -437,7 +437,7 @@ async def _log_suspicious(
     server_fp = get_server_fingerprint(request)
     
     entry = {
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "symbol": symbol,
         "ip_hash": ip_hash,
         "server_fp": server_fp[:16],

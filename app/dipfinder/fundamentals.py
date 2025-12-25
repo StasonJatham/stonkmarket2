@@ -12,7 +12,7 @@ import json
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
 import yfinance as yf
@@ -670,7 +670,7 @@ async def _get_cached_info_from_db(ticker: str) -> Optional[Dict[str, Any]]:
 async def _save_info_to_db(ticker: str, info: Dict[str, Any], ttl_seconds: int) -> None:
     """Save info to database cache."""
     try:
-        expires_at = datetime.utcnow() + timedelta(seconds=ttl_seconds)
+        expires_at = datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
         await execute(
             """
             INSERT INTO yfinance_info_cache (symbol, info_data, fetched_at, expires_at)

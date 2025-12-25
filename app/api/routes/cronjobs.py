@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Path, Query
@@ -200,7 +200,7 @@ async def run_cronjob(
             status="ok",
             message=message,
             duration_ms=duration_ms,
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         )
     except Exception as exc:
         duration_ms = int((time.monotonic() - start_time) * 1000)
@@ -213,5 +213,5 @@ async def run_cronjob(
             status="error",
             message=str(exc),
             duration_ms=duration_ms,
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         )

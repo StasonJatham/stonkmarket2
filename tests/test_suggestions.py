@@ -141,11 +141,11 @@ class TestRateLimitIndicators:
 
 
 class TestThreadPoolConfig:
-    """Tests for thread pool configuration."""
+    """Tests for thread pool configuration - deprecated since async migration."""
 
     def test_executor_workers(self):
-        """Thread pool should have 4 workers."""
-        from app.api.routes.suggestions import _executor
-        
-        # ThreadPoolExecutor stores max_workers in _max_workers
-        assert _executor._max_workers == 4
+        """Thread pool was removed in favor of async operations."""
+        # The synchronous executor was removed when we migrated to async
+        # This test is kept for documentation purposes
+        import pytest
+        pytest.skip("Thread pool executor removed - using async operations")

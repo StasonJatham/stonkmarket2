@@ -130,7 +130,7 @@ def _fetch_ticker_info_sync(symbol: str) -> Optional[dict[str, Any]]:
         ipo_year = None
         first_trade_ms = info.get("firstTradeDateMilliseconds")
         if first_trade_ms:
-            ipo_year = datetime.utcfromtimestamp(first_trade_ms / 1000).year
+            ipo_year = datetime.fromtimestamp(first_trade_ms / 1000, tz=timezone.utc).year
         
         # Normalize dividend yield (yfinance returns as decimal e.g. 0.17 = 0.17%)
         raw_div_yield = info.get("dividendYield")

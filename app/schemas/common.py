@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, Field
@@ -38,7 +38,7 @@ class HealthResponse(BaseModel):
         examples=["healthy", "degraded", "unhealthy"],
     )
     version: str = Field(..., description="Application version")
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     checks: Dict[str, bool] = Field(
         default_factory=dict, description="Individual service health checks"
     )

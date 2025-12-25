@@ -5,7 +5,7 @@ Provides dynamic sitemap.xml generation for the SPA,
 including all indexed routes and stock-specific pages.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, Response
 from fastapi.responses import PlainTextResponse
@@ -33,7 +33,7 @@ STATIC_ROUTES = [
 def format_date(dt: Optional[datetime]) -> str:
     """Format datetime as W3C date for sitemap."""
     if dt is None:
-        dt = datetime.utcnow()
+        dt = datetime.now(timezone.utc)
     return dt.strftime("%Y-%m-%d")
 
 
@@ -52,7 +52,7 @@ async def get_sitemap() -> Response:
     - All static SPA routes (dashboard, swipe, privacy, etc.)
     - Dynamic stock pages if we add /stocks/:symbol routes in future
     """
-    now = format_date(datetime.utcnow())
+    now = format_date(datetime.now(timezone.utc))
     
     # Start XML
     xml_parts = [

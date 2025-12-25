@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from app.core.config import settings
@@ -29,7 +29,7 @@ async def get_vote_cooldown_remaining(
         Seconds remaining on cooldown, or None if can vote
     """
     cooldown_days = settings.vote_cooldown_days
-    cutoff = datetime.utcnow() - timedelta(days=cooldown_days)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=cooldown_days)
 
     row = await fetch_one(
         """
@@ -48,7 +48,7 @@ async def get_vote_cooldown_remaining(
 
     last_vote = row["created_at"]
     cooldown_end = last_vote + timedelta(days=cooldown_days)
-    remaining = (cooldown_end - datetime.utcnow()).total_seconds()
+    remaining = (cooldown_end - datetime.now(timezone.utc)).total_seconds()
 
     return int(remaining) if remaining > 0 else None
 
@@ -203,7 +203,7 @@ async def get_user_vote_for_symbol(
 ) -> Optional[dict]:
     """Get user's existing vote for a symbol within cooldown period."""
     cooldown_days = settings.vote_cooldown_days
-    cutoff = datetime.utcnow() - timedelta(days=cooldown_days)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=cooldown_days)
     
     row = await fetch_one(
         """
@@ -249,7 +249,7 @@ async def upsert_ai_analysis(
     expires_hours: int = 168,  # 7 days
 ) -> dict:
     """Create or update AI analysis for a symbol."""
-    expires_at = datetime.utcnow() + timedelta(hours=expires_hours)
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=expires_hours)
 
     async with get_pg_connection() as conn:
         row = await conn.fetchrow(

@@ -51,7 +51,7 @@ async def close_valkey_client() -> None:
     """Close Valkey client and connection pool."""
     global _client, _pool
     if _client is not None:
-        await _client.close()
+        await _client.aclose()
         _client = None
     if _pool is not None:
         await _pool.disconnect()

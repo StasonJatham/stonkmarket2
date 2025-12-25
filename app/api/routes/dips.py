@@ -460,7 +460,7 @@ async def get_stock_info_endpoint(
     if cached:
         return StockInfo(**cached)
 
-    info = get_stock_info(symbol)
+    info = await get_stock_info(symbol)
     if info is None:
         raise ExternalServiceError(
             message="Could not fetch stock information",

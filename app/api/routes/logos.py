@@ -30,7 +30,7 @@ router = APIRouter()
 )
 async def get_stock_logo(
     symbol: str,
-    theme: str = Query("light", regex="^(light|dark)$", description="Logo theme variant"),
+    theme: str = Query("light", pattern="^(light|dark)$", description="Logo theme variant"),
 ):
     """
     Get stock logo by symbol.

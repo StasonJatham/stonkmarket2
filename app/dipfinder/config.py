@@ -10,12 +10,14 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import List, Optional
 
-from pydantic import Field
+from pydantic import ConfigDict, Field
 from pydantic_settings import BaseSettings
 
 
 class DipFinderSettings(BaseSettings):
     """DipFinder settings from environment."""
+
+    model_config = ConfigDict(extra="ignore")
 
     # Available windows for dip calculation
     dipfinder_windows: List[int] = Field(
@@ -127,10 +129,6 @@ class DipFinderSettings(BaseSettings):
     dipfinder_history_years: int = Field(
         default=5, ge=1, le=10, description="Years of price history to fetch"
     )
-
-    class Config:
-        env_prefix = ""
-        extra = "ignore"
 
 
 @dataclass

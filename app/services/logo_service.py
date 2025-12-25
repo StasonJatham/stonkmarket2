@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple
 from enum import Enum
 
@@ -202,7 +202,7 @@ async def get_logo(
     if row and row[cache_column]:
         fetched_at = row.get("logo_fetched_at")
         if fetched_at:
-            age = datetime.utcnow() - fetched_at.replace(tzinfo=None)
+            age = datetime.now(timezone.utc) - fetched_at.replace(tzinfo=timezone.utc)
             if age < timedelta(days=settings.logo_cache_days):
                 return bytes(row[cache_column])
     

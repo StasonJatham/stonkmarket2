@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Any
 
 from app.database.connection import fetch_one, fetch_all, execute
@@ -42,7 +42,7 @@ async def get_usage_summary(
     days: int = 30,
 ) -> dict[str, Any]:
     """Get usage summary for the last N days."""
-    cutoff = datetime.utcnow() - timedelta(days=days)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
     rows = await fetch_all(
         """
@@ -90,7 +90,7 @@ async def get_daily_costs(
     days: int = 30,
 ) -> list[dict[str, Any]]:
     """Get daily cost breakdown."""
-    cutoff = datetime.utcnow() - timedelta(days=days)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
     rows = await fetch_all(
         """

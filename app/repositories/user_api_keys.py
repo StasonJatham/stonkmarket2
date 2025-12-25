@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import secrets
 import hashlib
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 
@@ -57,7 +57,7 @@ async def create_user_api_key(
         The full_key is only returned once and should be given to the user.
     """
     full_key, key_hash, key_prefix = generate_api_key()
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     expires_at = None
     if expires_days:
         expires_at = now + timedelta(days=expires_days)
@@ -97,7 +97,7 @@ async def validate_api_key(key: str) -> Optional[dict]:
         Key details dict if valid, None if invalid/expired/inactive.
     """
     key_hash = hash_api_key(key)
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     async with get_pg_connection() as conn:
         row = await conn.fetchrow(

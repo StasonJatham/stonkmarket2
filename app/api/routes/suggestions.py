@@ -31,8 +31,6 @@ from app.services.suggestion_stock_info import (
     get_stock_info_basic as _get_stock_info,
     get_ipo_year as _get_ipo_year,
     get_stock_info_full_async,
-    RATE_LIMIT_INDICATORS,
-    _executor,
 )
 
 logger = get_logger("api.routes.suggestions")

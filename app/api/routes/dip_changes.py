@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from hashlib import sha256
 
@@ -106,7 +106,7 @@ async def check_rate_limit(
 
         if last_request:
             last_time = datetime.fromisoformat(last_request)
-            elapsed = (datetime.utcnow() - last_time).total_seconds()
+            elapsed = (datetime.now(timezone.utc) - last_time.replace(tzinfo=timezone.utc)).total_seconds()
             remaining = FREE_RATE_LIMIT_SECONDS - elapsed
 
             if remaining > 0:
@@ -121,13 +121,13 @@ async def check_rate_limit(
 
         # Set rate limit
         await cache_manager.set(
-            rate_key, datetime.utcnow().isoformat(), ttl=FREE_RATE_LIMIT_SECONDS
+            rate_key, datetime.now(timezone.utc).isoformat(), ttl=FREE_RATE_LIMIT_SECONDS
         )
 
         return {
             "allowed": True,
             "remaining": 0,
-            "reset_at": (datetime.utcnow().timestamp() + FREE_RATE_LIMIT_SECONDS),
+            "reset_at": (datetime.now(timezone.utc).timestamp() + FREE_RATE_LIMIT_SECONDS),
             "is_premium": False,
         }
 

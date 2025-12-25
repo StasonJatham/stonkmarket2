@@ -367,7 +367,7 @@ class BatchJob(Base):
     actual_cost_usd: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 6))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    metadata: Mapped[Optional[dict]] = mapped_column(JSONB)
+    job_metadata: Mapped[Optional[dict]] = mapped_column("metadata", JSONB)  # Named 'metadata' in DB
 
     __table_args__ = (
         CheckConstraint(
