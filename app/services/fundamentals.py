@@ -37,13 +37,23 @@ logger = get_logger("services.fundamentals")
 
 _executor = ThreadPoolExecutor(max_workers=4)
 
-# Known ETF symbols that don't have fundamentals
-_KNOWN_ETFS = {"SPY", "QQQ", "IWM", "DIA", "URTH", "VTI", "VOO", "VEA", "VWO", "EFA", "EEM"}
 
-
-def _is_etf_or_index(symbol: str) -> bool:
-    """Check if symbol is an ETF or index (no fundamentals)."""
-    return symbol.startswith("^") or symbol.upper() in _KNOWN_ETFS
+def _is_etf_or_index(symbol: str, quote_type: Optional[str] = None) -> bool:
+    """
+    Check if symbol is an ETF or index (no fundamentals available).
+    
+    Uses quote_type from yfinance when available, otherwise infers from symbol pattern.
+    """
+    # Index symbols start with ^
+    if symbol.startswith("^"):
+        return True
+    
+    # Check quote type if provided
+    if quote_type:
+        quote_type_upper = quote_type.upper()
+        return quote_type_upper in ("ETF", "INDEX", "MUTUALFUND", "TRUST")
+    
+    return False
 
 
 def _safe_float(value: Any) -> Optional[float]:
@@ -72,8 +82,9 @@ def _safe_int(value: Any) -> Optional[int]:
 
 def _fetch_fundamentals_sync(symbol: str) -> Optional[dict[str, Any]]:
     """Fetch fundamentals from Yahoo Finance (synchronous, runs in thread pool)."""
-    if _is_etf_or_index(symbol):
-        logger.debug(f"Skipping fundamentals for ETF/index: {symbol}")
+    # Check for obvious index symbols first
+    if symbol.startswith("^"):
+        logger.debug(f"Skipping fundamentals for index: {symbol}")
         return None
     
     # Rate limit
@@ -86,8 +97,10 @@ def _fetch_fundamentals_sync(symbol: str) -> Optional[dict[str, Any]]:
         ticker = yf.Ticker(symbol)
         info = ticker.info or {}
         
-        if not info or info.get("quoteType") in ("ETF", "INDEX", "MUTUALFUND"):
-            logger.debug(f"Skipping fundamentals for non-stock: {symbol}")
+        # Dynamic ETF/fund detection using quote_type
+        quote_type = info.get("quoteType")
+        if _is_etf_or_index(symbol, quote_type):
+            logger.debug(f"Skipping fundamentals for {quote_type}: {symbol}")
             return None
         
         # Parse earnings calendar
@@ -317,7 +330,8 @@ async def fetch_fundamentals_live(symbol: str) -> Optional[dict[str, Any]]:
     """
     symbol = symbol.upper()
     
-    if _is_etf_or_index(symbol):
+    # Skip obvious indexes (ETFs handled in _fetch_fundamentals_sync after fetching quote_type)
+    if symbol.startswith("^"):
         return None
     
     loop = asyncio.get_event_loop()
@@ -393,7 +407,8 @@ async def get_fundamentals_from_db(symbol: str) -> Optional[dict[str, Any]]:
     """
     symbol = symbol.upper()
     
-    if _is_etf_or_index(symbol):
+    # Skip obvious indexes
+    if symbol.startswith("^"):
         return None
     
     row = await fetch_one(
@@ -421,7 +436,8 @@ async def get_fundamentals(symbol: str, force_refresh: bool = False) -> Optional
     """
     symbol = symbol.upper()
     
-    if _is_etf_or_index(symbol):
+    # Skip obvious indexes (ETFs handled in _fetch_fundamentals_sync after fetching quote_type)
+    if symbol.startswith("^"):
         return None
     
     # Check database cache

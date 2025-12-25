@@ -101,7 +101,8 @@ class SymbolSearchResult(BaseModel):
     quote_type: Optional[str] = None
     market_cap: Optional[float] = None
     pe_ratio: Optional[float] = None
-    source: Optional[str] = None  # "local", "cache", or "api"
+    source: Optional[str] = None  # "local", "cached", or "api"
+    score: Optional[float] = None  # Relevance score
 
 
 class SymbolSearchResponse(BaseModel):
@@ -109,35 +110,43 @@ class SymbolSearchResponse(BaseModel):
     query: str
     results: List[SymbolSearchResult]
     count: int
+    suggest_fresh_search: bool = False
+    search_type: str = "local"  # "local" or "api"
 
 
 @router.get(
     "/search/{query}",
     response_model=SymbolSearchResponse,
     summary="Search for symbols",
-    description="Search for stock symbols by name or ticker. Searches local database first, then yfinance API with caching.",
+    description="Search for stock symbols by name or ticker. Local-first with option for fresh API search.",
 )
 async def search_symbols(
     query: str = Path(..., min_length=2, max_length=50, description="Search query"),
     limit: int = Query(10, ge=1, le=50, description="Maximum results to return"),
-    local_only: bool = Query(False, description="Only search local database"),
+    fresh: bool = Query(False, description="Force fresh search from yfinance API"),
 ) -> SymbolSearchResponse:
     """
     Search for stock symbols.
     
-    Strategy:
-    1. Search local symbols table first (instant)
-    2. Check search cache for API results
-    3. If not cached, query yfinance API and cache results
+    LOCAL-FIRST STRATEGY:
+    1. Search local DB first (symbols + cached results) - instant
+    2. If not enough results, suggest_fresh_search=True in response
+    3. Client can re-request with fresh=True to query API
+    
+    When fresh=True:
+    - Queries yfinance API directly
+    - Saves ALL results to DB for future local searches
     """
     from app.services.symbol_search import search_symbols as do_search
     
-    results = await do_search(query, max_results=limit, local_only=local_only)
+    result = await do_search(query, max_results=limit, force_api=fresh)
     
     return SymbolSearchResponse(
         query=query,
-        results=[SymbolSearchResult(**r) for r in results],
-        count=len(results),
+        results=[SymbolSearchResult(**r) for r in result["results"]],
+        count=result["count"],
+        suggest_fresh_search=result["suggest_fresh_search"],
+        search_type=result["search_type"],
     )
 
 

@@ -1477,3 +1477,33 @@ export async function backfillSuggestions(
     { method: 'POST' }
   );
 }
+
+// =============================================================================
+// BATCH JOBS API
+// =============================================================================
+
+export type BatchJobStatus = 'pending' | 'validating' | 'in_progress' | 'finalizing' | 'completed' | 'failed' | 'expired' | 'cancelled';
+
+export interface BatchJob {
+  id: number;
+  batch_id: string;
+  job_type: string;
+  status: BatchJobStatus;
+  total_requests: number;
+  completed_requests: number;
+  failed_requests: number;
+  estimated_cost_usd: number | null;
+  actual_cost_usd: number | null;
+  created_at: string | null;
+  completed_at: string | null;
+}
+
+export interface BatchJobListResponse {
+  jobs: BatchJob[];
+  total: number;
+  active_count: number;
+}
+
+export async function getBatchJobs(limit: number = 20, includeCompleted: boolean = true): Promise<BatchJobListResponse> {
+  return fetchAPI<BatchJobListResponse>(`/admin/settings/batch-jobs?limit=${limit}&include_completed=${includeCompleted}`);
+}

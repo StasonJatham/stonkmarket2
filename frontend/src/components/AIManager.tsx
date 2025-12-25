@@ -41,6 +41,7 @@ import {
   Eye,
   FileText,
 } from 'lucide-react';
+import { BatchJobsPanel } from '@/components/BatchJobsPanel';
 
 function getRatingBadge(rating: string | null) {
   if (!rating) {
@@ -171,7 +172,12 @@ export function AIManager() {
   const cardsWithRating = dipCards.filter(c => c.ai_rating).length;
 
   return (
-    <Card>
+    <div className="space-y-6">
+      {/* Batch Jobs Panel */}
+      <BatchJobsPanel />
+      
+      {/* AI Content Manager */}
+      <Card>
       <CardHeader>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
@@ -488,5 +494,6 @@ export function AIManager() {
         </DialogContent>
       </Dialog>
     </Card>
+    </div>
   );
 }

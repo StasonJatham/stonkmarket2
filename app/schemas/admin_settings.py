@@ -137,3 +137,37 @@ class SystemStatusResponse(BaseModel):
     logo_dev_configured: bool
     total_symbols: int
     pending_suggestions: int
+
+
+class BatchJobResponse(BaseModel):
+    """Response for a single batch job."""
+
+    id: int
+    batch_id: str
+    job_type: str = Field(..., description="Type of batch job: 'rating', 'bio', etc.")
+    status: str = Field(
+        ...,
+        description="Job status: pending, validating, in_progress, finalizing, completed, failed, expired, cancelled"
+    )
+    total_requests: int = Field(default=0, description="Total items in batch")
+    completed_requests: int = Field(default=0, description="Successfully completed items")
+    failed_requests: int = Field(default=0, description="Failed items")
+    estimated_cost_usd: Optional[float] = Field(default=None, description="Estimated cost in USD")
+    actual_cost_usd: Optional[float] = Field(default=None, description="Actual cost in USD")
+    created_at: Optional[str] = None
+    completed_at: Optional[str] = None
+
+    @property
+    def progress_pct(self) -> float:
+        """Calculate progress percentage."""
+        if self.total_requests == 0:
+            return 0
+        return round((self.completed_requests / self.total_requests) * 100, 1)
+
+
+class BatchJobListResponse(BaseModel):
+    """Response for batch job list."""
+
+    jobs: List[BatchJobResponse]
+    total: int
+    active_count: int = Field(default=0, description="Number of actively processing jobs")

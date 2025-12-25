@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 from fastapi import APIRouter, Depends
 
@@ -18,6 +18,8 @@ from app.schemas.admin_settings import (
     RuntimeSettingsUpdate,
     CronJobSummary,
     SystemStatusResponse,
+    BatchJobResponse,
+    BatchJobListResponse,
 )
 from app.services.runtime_settings import (
     get_all_runtime_settings,
@@ -210,3 +212,81 @@ async def get_suspicious_votes(
         "entries": entries,
         "count": len(entries),
     }
+
+
+@router.get(
+    "/batch-jobs",
+    response_model=BatchJobListResponse,
+    summary="Get batch job status",
+    description="Get list of AI batch jobs with their current status.",
+)
+async def get_batch_jobs(
+    limit: int = 20,
+    include_completed: bool = True,
+    user: TokenData = Depends(require_admin),
+) -> BatchJobListResponse:
+    """Get batch job status for admin monitoring."""
+    # Build query based on filters
+    if include_completed:
+        rows = await fetch_all(
+            """
+            SELECT 
+                id, batch_id, job_type, status, 
+                total_requests, completed_requests, failed_requests,
+                estimated_cost_usd, actual_cost_usd,
+                created_at, completed_at
+            FROM batch_jobs
+            ORDER BY created_at DESC
+            LIMIT $1
+            """,
+            limit,
+        )
+    else:
+        rows = await fetch_all(
+            """
+            SELECT 
+                id, batch_id, job_type, status, 
+                total_requests, completed_requests, failed_requests,
+                estimated_cost_usd, actual_cost_usd,
+                created_at, completed_at
+            FROM batch_jobs
+            WHERE status NOT IN ('completed', 'failed', 'expired', 'cancelled')
+            ORDER BY created_at DESC
+            LIMIT $1
+            """,
+            limit,
+        )
+    
+    jobs = []
+    for row in rows:
+        jobs.append(
+            BatchJobResponse(
+                id=row["id"],
+                batch_id=row["batch_id"],
+                job_type=row["job_type"],
+                status=row["status"],
+                total_requests=row["total_requests"] or 0,
+                completed_requests=row["completed_requests"] or 0,
+                failed_requests=row["failed_requests"] or 0,
+                estimated_cost_usd=float(row["estimated_cost_usd"]) if row["estimated_cost_usd"] else None,
+                actual_cost_usd=float(row["actual_cost_usd"]) if row["actual_cost_usd"] else None,
+                created_at=row["created_at"],
+                completed_at=row["completed_at"],
+            )
+        )
+    
+    # Count active jobs
+    active_row = await fetch_one(
+        """
+        SELECT COUNT(*) as count 
+        FROM batch_jobs 
+        WHERE status IN ('pending', 'validating', 'in_progress', 'finalizing')
+        """
+    )
+    active_count = active_row["count"] if active_row else 0
+    
+    return BatchJobListResponse(
+        jobs=jobs,
+        total=len(jobs),
+        active_count=active_count,
+    )
