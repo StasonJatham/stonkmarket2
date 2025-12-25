@@ -20,10 +20,19 @@ RUN apt-get update \
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code (will be overridden by volume mount)
+# Copy application code and Alembic config (will be overridden by volume mount)
 COPY app ./app
+COPY alembic ./alembic
+COPY alembic.ini ./
+COPY entrypoint.sh ./
+
+# Make entrypoint executable
+RUN chmod +x entrypoint.sh
 
 EXPOSE 8000
+
+# Entrypoint runs migrations before starting the app
+ENTRYPOINT ["./entrypoint.sh"]
 
 # Default command - will be overridden in docker-compose
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

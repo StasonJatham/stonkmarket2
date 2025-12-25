@@ -33,8 +33,11 @@ services:
     volumes:
       # Mount source code for hot reloading
       - ./app:/app/app:ro
-      - ./migrations:/app/migrations:ro
       - ./tests:/app/tests:ro
+      # Mount Alembic for migrations
+      - ./alembic:/app/alembic
+      - ./alembic.ini:/app/alembic.ini:ro
+      - ./entrypoint.sh:/app/entrypoint.sh:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -86,7 +89,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data_dev:/var/lib/postgresql/data
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      # Schema is now managed by Alembic migrations
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U stonkmarket -d stonkmarket"]
       interval: 5s

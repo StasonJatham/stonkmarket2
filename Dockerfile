@@ -49,10 +49,14 @@ WORKDIR /app
 COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
-# Copy application code and migrations
+# Copy application code and Alembic migrations
 COPY --chown=appuser:appgroup app/ ./app/
-COPY --chown=appuser:appgroup migrations/ ./migrations/
-COPY --chown=appuser:appgroup init.sql ./
+COPY --chown=appuser:appgroup alembic/ ./alembic/
+COPY --chown=appuser:appgroup alembic.ini ./
+COPY --chown=appuser:appgroup entrypoint.sh ./
+
+# Make entrypoint executable
+RUN chmod +x entrypoint.sh
 
 # Switch to non-root user
 USER appuser
@@ -62,6 +66,9 @@ EXPOSE 8000
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:8000/api/health/live || exit 1
+
+# Entrypoint runs migrations before starting the app
+ENTRYPOINT ["./entrypoint.sh"]
 
 # Default command
 CMD ["gunicorn", "-k", "uvicorn.workers.UvicornWorker", "-w", "2", "app.main:app", "--bind", "0.0.0.0:8000", "--access-logfile", "-", "--forwarded-allow-ips", "*", "--timeout", "120", "--graceful-timeout", "30"]

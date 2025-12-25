@@ -99,6 +99,27 @@ dev-down: ## Stop development server
 	docker compose -f docker-compose.dev.yml down
 
 # ============================================================================
+# Database Migrations (Alembic)
+# ============================================================================
+db-migrate: ## Run pending migrations
+	alembic upgrade head
+
+db-rollback: ## Rollback last migration
+	alembic downgrade -1
+
+db-revision: ## Create new migration (usage: make db-revision msg="description")
+	alembic revision --autogenerate -m "$(msg)"
+
+db-current: ## Show current migration version
+	alembic current
+
+db-history: ## Show migration history
+	alembic history --verbose
+
+db-stamp: ## Stamp database with a specific revision (usage: make db-stamp rev="001_baseline")
+	alembic stamp $(rev)
+
+# ============================================================================
 # CI
 # ============================================================================
 ci: quality test ## Run all CI checks (quality + tests)
