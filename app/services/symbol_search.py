@@ -127,6 +127,7 @@ def _lookup_symbol_sync(symbol: str) -> Optional[dict[str, Any]]:
 
 async def _get_cached_search_results(query: str) -> Optional[list[dict[str, Any]]]:
     """Get cached search results from database."""
+    import json
     normalized = _normalize_query(query)
     
     row = await fetch_one(
@@ -139,13 +140,18 @@ async def _get_cached_search_results(query: str) -> Optional[list[dict[str, Any]
     )
     
     if row and row["results"]:
-        return row["results"]
+        results = row["results"]
+        # Handle case where asyncpg returns JSONB as string
+        if isinstance(results, str):
+            results = json.loads(results)
+        return results
     
     return None
 
 
 async def _cache_search_results(query: str, results: list[dict[str, Any]]) -> None:
     """Cache search results in database."""
+    import json
     normalized = _normalize_query(query)
     expires_at = datetime.now(timezone.utc) + timedelta(days=SEARCH_CACHE_TTL_DAYS)
     
@@ -153,14 +159,14 @@ async def _cache_search_results(query: str, results: list[dict[str, Any]]) -> No
         await execute(
             """
             INSERT INTO symbol_search_cache (query, results, expires_at)
-            VALUES ($1, $2, $3)
+            VALUES ($1, $2::jsonb, $3)
             ON CONFLICT (query) DO UPDATE SET
                 results = EXCLUDED.results,
                 expires_at = EXCLUDED.expires_at,
                 updated_at = NOW()
             """,
             normalized,
-            results,
+            json.dumps(results),
             expires_at,
         )
     except Exception as e:

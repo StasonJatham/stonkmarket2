@@ -43,7 +43,7 @@ async def get_dips_needing_analysis() -> list[dict]:
     rows = await fetch_all(
         """
         SELECT ds.symbol, ds.current_price, ds.ath_price, ds.dip_percentage, ds.first_seen,
-               ds.classification, ds.excess_dip, ds.quality_score, ds.stability_score,
+               sig.dip_class as classification, sig.excess_dip, sig.quality_score, sig.stability_score,
                s.name, s.sector, s.summary_ai,
                f.pe_ratio, f.forward_pe, f.peg_ratio, f.price_to_book, f.ev_to_ebitda,
                f.profit_margin, f.gross_margin, f.return_on_equity,
@@ -54,6 +54,13 @@ async def get_dips_needing_analysis() -> list[dict]:
         FROM dip_state ds
         LEFT JOIN symbols s ON s.symbol = ds.symbol
         LEFT JOIN stock_fundamentals f ON ds.symbol = f.symbol
+        LEFT JOIN LATERAL (
+            SELECT dip_class, excess_dip, quality_score, stability_score
+            FROM dipfinder_signals
+            WHERE ticker = ds.symbol
+            ORDER BY as_of_date DESC
+            LIMIT 1
+        ) sig ON true
         LEFT JOIN dip_ai_analysis ai ON ds.symbol = ai.symbol
         WHERE ai.symbol IS NULL 
            OR ai.expires_at < NOW()

@@ -842,6 +842,50 @@ export async function validateSymbol(symbol: string): Promise<SymbolValidationRe
 }
 
 // =============================================================================
+// SYMBOL SEARCH & AUTOCOMPLETE (yfinance)
+// =============================================================================
+
+export interface SymbolSearchResult {
+  symbol: string;
+  name: string | null;
+  sector?: string | null;
+  quote_type?: string | null;
+  market_cap?: number | null;
+  source?: string;
+}
+
+export interface SymbolSearchResponse {
+  query: string;
+  results: SymbolSearchResult[];
+  count: number;
+}
+
+export async function searchSymbols(query: string, limit = 10): Promise<SymbolSearchResult[]> {
+  if (query.length < 2) return [];
+  try {
+    const response = await fetchAPI<SymbolSearchResponse>(`/symbols/search/${encodeURIComponent(query)}?limit=${limit}`);
+    return response.results;
+  } catch {
+    return [];
+  }
+}
+
+export interface AutocompleteResult {
+  symbol: string;
+  name: string | null;
+}
+
+export async function autocompleteSymbols(partial: string, limit = 5): Promise<AutocompleteResult[]> {
+  if (partial.length < 1) return [];
+  try {
+    const results = await fetchAPI<AutocompleteResult[]>(`/symbols/autocomplete/${encodeURIComponent(partial)}?limit=${limit}`);
+    return results;
+  } catch {
+    return [];
+  }
+}
+
+// =============================================================================
 // MFA TYPES & API
 // =============================================================================
 

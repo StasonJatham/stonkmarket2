@@ -971,9 +971,16 @@ async def _process_approved_symbol(symbol: str) -> None:
             logger.warning(f"No AI content generated for {symbol}")
         
         # Step 6: Mark as fetched and invalidate ranking cache
+        # Update both stock_suggestions AND symbols tables
         await execute(
             """UPDATE stock_suggestions 
                SET fetch_status = 'fetched', fetched_at = NOW()
+               WHERE symbol = $1""",
+            symbol.upper(),
+        )
+        await execute(
+            """UPDATE symbols 
+               SET fetch_status = 'fetched', fetch_error = NULL, updated_at = NOW()
                WHERE symbol = $1""",
             symbol.upper(),
         )

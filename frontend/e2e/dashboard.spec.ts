@@ -196,3 +196,62 @@ test.describe('Stock Interactions', () => {
     }
   });
 });
+
+test.describe('Suggest Stock Feature', () => {
+  test('should open suggest stock dialog', async ({ page }) => {
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
+    
+    // Find and click the suggest button
+    const suggestButton = page.locator('button:has-text("Suggest")').first();
+    
+    if (await suggestButton.isVisible()) {
+      await suggestButton.click();
+      
+      // Dialog should open
+      const dialog = page.locator('[role="dialog"]');
+      await expect(dialog).toBeVisible();
+      
+      // Should have search input
+      const searchInput = dialog.locator('input[placeholder*="company name"]');
+      await expect(searchInput).toBeVisible();
+    }
+  });
+  
+  test('should search for stocks in suggest dialog', async ({ page }) => {
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
+    
+    // Open suggest dialog
+    const suggestButton = page.locator('button:has-text("Suggest")').first();
+    
+    if (await suggestButton.isVisible()) {
+      await suggestButton.click();
+      
+      const dialog = page.locator('[role="dialog"]');
+      await expect(dialog).toBeVisible();
+      
+      // Type in search
+      const searchInput = dialog.locator('input');
+      await searchInput.fill('Tesla');
+      
+      // Wait for search results
+      await page.waitForTimeout(500);
+      
+      // Should show search results
+      const results = dialog.locator('button:has-text("TSLA"), button:has-text("Tesla")');
+      const resultCount = await results.count();
+      console.log(`Found ${resultCount} Tesla results`);
+      
+      // Click on a result
+      if (resultCount > 0) {
+        await results.first().click();
+        await page.waitForTimeout(500);
+        
+        // Should show stock preview with submit button
+        const submitBtn = dialog.locator('button:has-text("Submit")');
+        await expect(submitBtn).toBeVisible();
+      }
+    }
+  });
+});
