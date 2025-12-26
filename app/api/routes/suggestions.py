@@ -32,9 +32,6 @@ from app.repositories import auth_user_orm as auth_repo
 from app.services.runtime_settings import get_runtime_setting
 from app.services.suggestion_stock_info import (
     validate_symbol_format as _validate_symbol_format,
-    get_stock_info_full as _get_stock_info_full,
-    get_stock_info_basic as _get_stock_info,
-    get_ipo_year as _get_ipo_year,
     get_stock_info_full_async,
 )
 
@@ -242,6 +239,8 @@ async def suggest_stock(
         ipo_year=stock_info["ipo_year"],
         current_price=stock_info["current_price"],
         ath_price=stock_info["ath_price"],
+        fetch_status=stock_info["fetch_status"],
+        fetch_error=stock_info["fetch_error"],
     )
 
     # Record suggestion for rate limiting (skip for admins)
@@ -270,6 +269,12 @@ async def suggest_stock(
     if stock_info["fetch_status"] == "rate_limited":
         response["fetch_status"] = "rate_limited"
         response["fetch_message"] = "Data will be fetched once rate limit resets"
+        if stock_info.get("fetch_error"):
+            response["fetch_error"] = stock_info["fetch_error"]
+    elif stock_info["fetch_status"] not in ("fetched", None):
+        response["fetch_status"] = stock_info["fetch_status"]
+        if stock_info.get("fetch_error"):
+            response["fetch_error"] = stock_info["fetch_error"]
     
     return response
 

@@ -20,9 +20,9 @@ from app.cache.http_cache import (
 )
 from app.core.exceptions import ExternalServiceError, NotFoundError
 from app.core.security import TokenData
-from app.database.connection import fetch_all, fetch_one
 from app.dipfinder.service import get_dipfinder_service  # For chart price data
 from app.repositories import symbols_orm as symbol_repo
+from app.repositories import dips_orm as dips_repo
 from app.schemas.dips import ChartPoint, DipStateResponse, RankingEntry, StockInfo
 from app.services.stock_info import get_stock_info, get_stock_info_async
 from app.services.runtime_settings import get_runtime_setting, get_cache_ttl
@@ -67,17 +67,7 @@ async def _build_ranking(
         only includes stocks meeting their individual dip thresholds.
     """
     # Get all dip states with symbol info in one query
-    rows = await fetch_all(
-        """
-        SELECT ds.symbol, ds.current_price, ds.ath_price, ds.dip_percentage,
-               ds.dip_start_date, ds.first_seen, ds.last_updated,
-               s.name, s.sector, s.min_dip_pct, s.symbol_type
-        FROM dip_state ds
-        JOIN symbols s ON s.symbol = ds.symbol
-        WHERE s.is_active = true
-        ORDER BY ds.dip_percentage DESC
-        """
-    )
+    rows = await dips_repo.get_ranking_data()
     
     if not rows:
         return [], []
@@ -263,13 +253,7 @@ async def refresh_ranking(
 async def get_states() -> List[DipStateResponse]:
     """Get current dip state for all tracked symbols."""
     # Get dip states from database
-    rows = await fetch_all(
-        """
-        SELECT symbol, ref_high, days_below, last_price, updated_at
-        FROM dip_state
-        ORDER BY symbol
-        """
-    )
+    rows = await dips_repo.get_all_dip_states()
 
     return [
         DipStateResponse(
@@ -304,10 +288,7 @@ async def get_symbol_state(
 ) -> DipStateResponse:
     """Get dip state for a specific symbol."""
     # Get dip state from database
-    row = await fetch_one(
-        "SELECT symbol, ref_high, days_below, last_price, updated_at FROM dip_state WHERE symbol = $1",
-        symbol,
-    )
+    row = await dips_repo.get_dip_state(symbol)
 
     if row is None:
         raise NotFoundError(
@@ -367,8 +348,7 @@ async def get_chart(
         )
 
     # Get config if tracked
-    row = await fetch_one("SELECT min_dip_pct FROM symbols WHERE symbol = $1", symbol)
-    min_dip_pct = float(row["min_dip_pct"]) if row and row["min_dip_pct"] else 0.10
+    min_dip_pct = await dips_repo.get_symbol_min_dip_pct(symbol)
 
     try:
         # Use dipfinder service for chart data
@@ -468,12 +448,9 @@ async def get_stock_info_endpoint(
         )
 
     # Check if we have an AI summary in the database
-    symbol_data = await fetch_one(
-        "SELECT summary_ai FROM symbols WHERE symbol = $1",
-        symbol.upper(),
-    )
-    if symbol_data and symbol_data.get("summary_ai"):
-        info.summary_ai = symbol_data["summary_ai"]
+    summary_ai = await dips_repo.get_symbol_summary_ai(symbol)
+    if summary_ai:
+        info.summary_ai = summary_ai
 
     # Cache the result with dynamic TTL (skip cache if TTL is 0)
     ttl = get_cache_ttl("ai_content")

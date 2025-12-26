@@ -16,6 +16,23 @@ from app.jobs.registry import list_job_names
 
 logger = get_logger("jobs.celery_scheduler")
 
+# Dedicated event loop for Celery Beat async operations
+_beat_loop: asyncio.AbstractEventLoop | None = None
+
+
+def _get_beat_loop() -> asyncio.AbstractEventLoop:
+    """Get or create a dedicated event loop for beat scheduler."""
+    global _beat_loop
+    if _beat_loop is None or _beat_loop.is_closed():
+        _beat_loop = asyncio.new_event_loop()
+    return _beat_loop
+
+
+def _run_async(coro: Any) -> Any:
+    """Run async coroutine in the dedicated beat loop."""
+    loop = _get_beat_loop()
+    return loop.run_until_complete(coro)
+
 
 def _cron_to_crontab(expr: str) -> crontab:
     parts = expr.split()
@@ -37,7 +54,7 @@ def _load_cronjobs() -> list[dict[str, Any]]:
     async def _fetch():
         return await cron_repo.list_cronjobs()
 
-    return asyncio.run(_fetch())
+    return _run_async(_fetch())
 
 
 class DatabaseScheduler(Scheduler):
@@ -53,7 +70,7 @@ class DatabaseScheduler(Scheduler):
 
         job_names = list_job_names()
         try:
-            asyncio.run(seed_cronjobs(job_names))
+            _run_async(seed_cronjobs(job_names))
         except Exception as exc:
             logger.warning(f"Failed to seed cronjobs: {exc}")
 

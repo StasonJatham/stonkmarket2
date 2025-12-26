@@ -14,7 +14,7 @@ from .dispatch import (
 )
 
 
-async def reschedule_job(name: str, cron_expression: str) -> bool:
+async def reschedule_job(name: str, _cron_expression: str) -> bool:
     """No-op reschedule hook (Celery beat polls DB for changes)."""
     return True
 

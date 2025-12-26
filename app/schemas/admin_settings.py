@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import List, Optional
+from datetime import datetime
+from typing import Any, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -170,3 +171,48 @@ class BatchJobListResponse(BaseModel):
     jobs: List[BatchJobResponse]
     total: int
     active_count: int = Field(default=0, description="Number of actively processing jobs")
+
+
+# Settings Change History schemas
+
+
+class SettingsChangeHistoryItem(BaseModel):
+    """Single settings change history entry."""
+
+    id: int
+    setting_type: str = Field(..., description="Type of setting (runtime, cronjob, api_key)")
+    setting_key: str = Field(..., description="The specific setting key that changed")
+    old_value: Optional[Any] = Field(None, description="Previous value")
+    new_value: Optional[Any] = Field(None, description="New value")
+    changed_by: Optional[int] = Field(None, description="User ID who made the change")
+    changed_by_username: Optional[str] = Field(None, description="Username who made the change")
+    change_reason: Optional[str] = Field(None, description="Reason for the change")
+    reverted: bool = Field(default=False, description="Whether this change has been reverted")
+    reverted_at: Optional[datetime] = Field(None, description="When the change was reverted")
+    reverted_by: Optional[int] = Field(None, description="User ID who reverted the change")
+    created_at: datetime = Field(..., description="When the change was made")
+
+
+class SettingsChangeHistoryResponse(BaseModel):
+    """Response for settings change history list."""
+
+    changes: List[SettingsChangeHistoryItem]
+    total: int
+    limit: int
+    offset: int
+
+
+class RevertChangeRequest(BaseModel):
+    """Request to revert a settings change."""
+
+    reason: Optional[str] = Field(None, description="Optional reason for reverting")
+
+
+class RevertChangeResponse(BaseModel):
+    """Response after reverting a settings change."""
+
+    success: bool
+    message: str
+    reverted_setting_type: str
+    reverted_setting_key: str
+    restored_value: Optional[Any] = None

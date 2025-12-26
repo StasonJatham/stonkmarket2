@@ -14,7 +14,7 @@ Jobs:
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from app.core.logging import get_logger
 from app.repositories import jobs_orm as jobs_repo
@@ -180,56 +180,118 @@ async def data_grab_job() -> str:
         # Fetch latest prices and update dip_state
         updated_count = 0
         changed_symbols = []  # Track which symbols had data changes
-        
+
         # Get min_dip_pct for each symbol to calculate dip start date
         dip_thresholds = await jobs_repo.get_symbol_dip_thresholds()
-        
+        latest_dates = await price_history_repo.get_latest_price_dates(tickers)
+
+        from app.services.fundamentals import update_price_based_metrics
+        from datetime import timedelta
+
+        today = date.today()
+        stale_cutoff_days = 7
+        batch_size = 10
+
+        full_refresh = []
+        incremental = []
         for ticker in tickers:
-            try:
-                # Get price history with version tracking
-                prices, price_version = await yf_service.get_price_history(
-                    ticker,
-                    period="1y",
-                )
-                
-                if prices is not None and not prices.empty:
+            last_date = latest_dates.get(ticker)
+            if not last_date or (today - last_date).days > stale_cutoff_days:
+                full_refresh.append(ticker)
+            else:
+                incremental.append(ticker)
+
+        def _chunked(items: list[str], size: int) -> list[list[str]]:
+            return [items[i:i + size] for i in range(0, len(items), size)]
+
+        async def _process_batch(symbols: list[str], start_date: date) -> None:
+            nonlocal updated_count
+            if not symbols:
+                return
+            if start_date >= today:
+                return
+
+            results = await yf_service.get_price_history_batch(symbols, start_date, today)
+
+            for symbol in symbols:
+                try:
+                    data = results.get(symbol)
+                    if not data:
+                        continue
+                    prices, price_version = data
+                    if prices is None or prices.empty:
+                        continue
+
                     current_price = float(prices["Close"].iloc[-1])
-                    
+
                     # Check if data actually changed
                     data_changed = False
                     if price_version:
                         data_changed = await yf_service.has_data_changed(
-                            ticker, "prices", price_version.hash
+                            symbol, "prices", price_version.hash
                         )
                         if data_changed:
-                            await yf_service.save_data_version(ticker, price_version)
-                            changed_symbols.append(ticker)
-                    
+                            await yf_service.save_data_version(symbol, price_version)
+                            changed_symbols.append(symbol)
+
                     # ATH from our price_history table (single source of truth)
-                    ath_price = await jobs_repo.get_ath_price(ticker, fallback=float(prices["Close"].max()))
-                    
+                    ath_price = await jobs_repo.get_ath_price(
+                        symbol, fallback=float(prices["Close"].max())
+                    )
+
                     # Calculate dip percentage
                     dip_percentage = ((ath_price - current_price) / ath_price * 100) if ath_price > 0 else 0
-                    
+
                     # Calculate dip start date
-                    dip_threshold = dip_thresholds.get(ticker, 0.15)
-                    dip_start_date = await jobs_repo.calculate_dip_start_date(ticker, ath_price, dip_threshold)
-                    
+                    dip_threshold = dip_thresholds.get(symbol, 0.15)
+                    dip_start_date = await jobs_repo.calculate_dip_start_date(
+                        symbol, ath_price, dip_threshold
+                    )
+
                     # Update dip_state
                     await jobs_repo.upsert_dip_state_with_dates(
-                        ticker, current_price, ath_price, dip_percentage, dip_start_date
+                        symbol, current_price, ath_price, dip_percentage, dip_start_date
                     )
-                    
-                    # Store new price history
-                    await _store_price_history(ticker, prices)
-                    
+
+                    # Store new price history (only new rows)
+                    last_date = latest_dates.get(symbol)
+                    if last_date:
+                        prices_to_store = prices.loc[prices.index.date > last_date]
+                    else:
+                        prices_to_store = prices
+                    if prices_to_store is not None and not prices_to_store.empty:
+                        await _store_price_history(symbol, prices_to_store)
+
+                    # Update price-based ratios daily
+                    await update_price_based_metrics(symbol, current_price)
+
                     updated_count += 1
                     days_in_dip = (date.today() - dip_start_date).days if dip_start_date else 0
-                    logger.debug(f"Updated dip_state for {ticker}: ${current_price:.2f}, ATH: ${ath_price:.2f}, dip: {dip_percentage:.1f}%, days: {days_in_dip}")
-                    
-            except Exception as e:
-                logger.warning(f"Failed to update {ticker}: {e}")
-                continue
+                    logger.debug(
+                        f"Updated dip_state for {symbol}: ${current_price:.2f}, "
+                        f"ATH: ${ath_price:.2f}, dip: {dip_percentage:.1f}%, days: {days_in_dip}"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to update {symbol}: {e}")
+
+        # Full refresh batches (1y window)
+        if full_refresh:
+            full_start = today - timedelta(days=365)
+            for batch in _chunked(full_refresh, batch_size):
+                await _process_batch(batch, full_start)
+
+        # Incremental batches (only new data since last date)
+        # Use minimum 5-day window to avoid holiday no-data errors
+        if incremental:
+            min_fetch_days = 5
+            for batch in _chunked(incremental, batch_size):
+                batch_start = min(
+                    latest_dates[symbol] for symbol in batch if latest_dates.get(symbol)
+                ) + timedelta(days=1)
+                # Ensure minimum fetch window to handle holidays
+                if (today - batch_start).days < min_fetch_days:
+                    batch_start = today - timedelta(days=min_fetch_days)
+                await _process_batch(batch, batch_start)
 
         # Also fetch latest benchmark data
         benchmarks = get_runtime_setting("benchmarks", [])
@@ -546,7 +608,59 @@ async def fundamentals_refresh_job() -> str:
         
         # Use the existing refresh function with specific symbols
         symbols_only = [s for s, _ in symbols_to_refresh]
-        result = await refresh_all_fundamentals(symbols=symbols_only, batch_size=5)
+        rows_by_symbol = {row["symbol"]: row for row in rows}
+
+        include_financials_for: set[str] = set()
+        include_calendar_for: set[str] = set()
+
+        for symbol, reason in symbols_to_refresh:
+            row = rows_by_symbol.get(symbol)
+            if not row:
+                continue
+
+            fetched_at = row["fetched_at"]
+            financials_fetched_at = row["financials_fetched_at"]
+            earnings_date = row["earnings_date"]
+            next_earnings_date = row["next_earnings_date"]
+
+            # Calendar updates for refreshed symbols (keep upcoming earnings accurate)
+            if not next_earnings_date:
+                include_calendar_for.add(symbol)
+            else:
+                next_dt = _parse_datetime(next_earnings_date)
+                if not next_dt or next_dt <= (now + timedelta(days=30)) or next_dt < now:
+                    include_calendar_for.add(symbol)
+
+            # Decide whether to include financial statements
+            include_financials = False
+            if not financials_fetched_at:
+                include_financials = True
+            else:
+                financials_at_utc = financials_fetched_at.replace(tzinfo=timezone.utc) if financials_fetched_at.tzinfo is None else financials_fetched_at
+                if (now - financials_at_utc).days > 90:
+                    include_financials = True
+
+            if earnings_date and fetched_at:
+                earnings_dt = _parse_datetime(earnings_date)
+                fetched_at_utc = fetched_at.replace(tzinfo=timezone.utc) if fetched_at.tzinfo is None else fetched_at
+                if earnings_dt and earnings_dt < now and earnings_dt > fetched_at_utc:
+                    include_financials = True
+
+            if next_earnings_date:
+                next_earnings_dt = _parse_datetime(next_earnings_date)
+                fetched_at_utc = fetched_at.replace(tzinfo=timezone.utc) if fetched_at and fetched_at.tzinfo is None else fetched_at
+                if next_earnings_dt and fetched_at_utc and fetched_at_utc < (next_earnings_dt - timedelta(days=7)):
+                    include_financials = True
+
+            if include_financials:
+                include_financials_for.add(symbol)
+
+        result = await refresh_all_fundamentals(
+            symbols=symbols_only,
+            batch_size=5,
+            include_financials_for=include_financials_for,
+            include_calendar_for=include_calendar_for,
+        )
 
         message = f"Fundamentals refresh: {result['refreshed']} updated, {result['failed']} failed, {result['skipped']} skipped"
         logger.info(f"fundamentals_refresh: {message}")
@@ -557,7 +671,7 @@ async def fundamentals_refresh_job() -> str:
         raise
 
 
-def _parse_datetime(dt_value) -> datetime | None:
+def _parse_datetime(dt_value: Any) -> datetime | None:
     """Parse datetime from various formats."""
     from datetime import datetime, timezone
     
@@ -726,6 +840,9 @@ async def cleanup_job() -> str:
         
         # Expired AI agent analyses
         await jobs_repo.cleanup_expired_agent_analyses()
+
+        # Expired cached symbol search results
+        await jobs_repo.cleanup_expired_symbol_search_results()
 
         # Expired user API keys
         await jobs_repo.cleanup_expired_api_keys()

@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import Optional, Any
 
 from app.core.logging import get_logger
-from app.dipfinder.domain import Domain, DomainClassification, get_domain_metadata
+from app.dipfinder.domain import Domain, DomainClassification
 
 logger = get_logger("dipfinder.domain_scoring")
 

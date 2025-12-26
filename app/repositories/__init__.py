@@ -25,7 +25,7 @@ from . import api_usage_orm
 from . import dip_history_orm
 from . import user_api_keys_orm
 from . import portfolios_orm
-from . import portfolio_analytics_jobs
+from . import portfolio_analytics_jobs_orm
 
 __all__ = [
     "auth_user_orm",
@@ -37,5 +37,5 @@ __all__ = [
     "dip_history_orm",
     "user_api_keys_orm",
     "portfolios_orm",
-    "portfolio_analytics_jobs",
+    "portfolio_analytics_jobs_orm",
 ]

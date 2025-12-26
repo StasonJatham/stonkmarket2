@@ -33,6 +33,7 @@ JOB_PRIORITIES: dict[str, dict[str, int | str]] = {
     "dipfinder_run": {"queue": "default", "priority": 6},
     "initial_data_ingest": {"queue": "default", "priority": 6},
     "fundamentals_refresh": {"queue": "default", "priority": 5},
+    "refresh_fundamentals_symbol": {"queue": "default", "priority": 6},
     "ai_agents_analysis": {"queue": "default", "priority": 5},
     "portfolio_analytics_worker": {"queue": "default", "priority": 5},
     "dipfinder_refresh_all": {"queue": "batch", "priority": 4},
@@ -61,8 +62,9 @@ async def seed_cronjobs(job_names: Iterable[str]) -> None:
             cron_expr, description = get_job_schedule(job_name)
             stmt = insert(CronJob).values(
                 name=job_name,
-                cron_expression=cron_expr,
-                config={"description": description},
+                cron=cron_expr,
+                description=description,
+                config={},
                 is_active=True,
             ).on_conflict_do_nothing(index_elements=["name"])
             await session.execute(stmt)

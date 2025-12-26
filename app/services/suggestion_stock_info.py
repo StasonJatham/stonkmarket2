@@ -7,10 +7,15 @@ Uses the unified yfinance service for all API calls.
 from __future__ import annotations
 
 import re
-from typing import Optional
+from datetime import datetime, timezone
+from typing import Optional, Any
+
+from sqlalchemy import select
 
 from app.core.exceptions import ValidationError
 from app.core.logging import get_logger
+from app.database.connection import get_session
+from app.database.orm import DipState, Symbol, SymbolSearchResult
 from app.services.data_providers import get_yfinance_service
 
 logger = get_logger("services.suggestion_stock_info")
@@ -85,6 +90,60 @@ async def get_stock_info_basic(symbol: str) -> dict:
     }
 
 
+async def _get_tracked_symbol_snapshot(symbol: str) -> Optional[dict[str, Any]]:
+    """Get symbol info from tracked symbols and dip_state."""
+    async with get_session() as session:
+        result = await session.execute(
+            select(
+                Symbol.symbol,
+                Symbol.name,
+                Symbol.sector,
+                Symbol.summary_ai,
+                DipState.current_price,
+                DipState.ath_price,
+            )
+            .outerjoin(DipState, DipState.symbol == Symbol.symbol)
+            .where(Symbol.symbol == symbol.upper())
+        )
+        row = result.one_or_none()
+
+    if not row:
+        return None
+
+    return {
+        "symbol": row.symbol,
+        "name": row.name,
+        "sector": row.sector,
+        "summary": row.summary_ai,
+        "current_price": float(row.current_price) if row.current_price else None,
+        "ath_price": float(row.ath_price) if row.ath_price else None,
+    }
+
+
+async def _get_cached_search_result(symbol: str) -> Optional[dict[str, Any]]:
+    """Get cached search result for a symbol if available and not expired."""
+    now = datetime.now(timezone.utc)
+    async with get_session() as session:
+        result = await session.execute(
+            select(SymbolSearchResult).where(
+                SymbolSearchResult.symbol == symbol.upper(),
+                SymbolSearchResult.expires_at > now,
+            )
+        )
+        row = result.scalar_one_or_none()
+
+    if not row:
+        return None
+
+    return {
+        "symbol": row.symbol,
+        "name": row.name,
+        "sector": row.sector,
+        "industry": row.industry,
+        "market_cap": row.market_cap,
+    }
+
+
 async def get_stock_info_full(symbol: str) -> dict:
     """Get comprehensive stock info for suggestions.
     
@@ -101,7 +160,7 @@ async def get_stock_info_full(symbol: str) -> dict:
         - ipo_year: int | None
         - current_price: float | None
         - ath_price: float | None (52-week high as proxy)
-        - fetch_status: 'fetched' | 'rate_limited' | 'error' | 'invalid'
+        - fetch_status: 'fetched' | 'rate_limited' | 'pending' | 'error' | 'invalid'
         - fetch_error: str | None
     """
     result = {
@@ -116,23 +175,65 @@ async def get_stock_info_full(symbol: str) -> dict:
         "fetch_status": "error",
         "fetch_error": None,
     }
-    
-    info = await _yf_service.get_ticker_info(symbol)
-    
-    if not info:
-        result["fetch_status"] = "invalid"
-        result["fetch_error"] = "Symbol not found on Yahoo Finance"
+
+    symbol = symbol.strip().upper()
+
+    tracked = await _get_tracked_symbol_snapshot(symbol)
+    if tracked:
+        result["valid"] = True
+        result["fetch_status"] = "fetched"
+        result["name"] = tracked.get("name")
+        result["sector"] = tracked.get("sector")
+        result["summary"] = tracked.get("summary")
+        result["current_price"] = tracked.get("current_price")
+        result["ath_price"] = tracked.get("ath_price")
         return result
-    
+
+    info, status = await _yf_service.get_ticker_info_with_status(symbol)
+
+    if status in ("rate_limited", "error", "not_found"):
+        cached = await _get_cached_search_result(symbol)
+        if cached:
+            result["valid"] = True
+            result["name"] = cached.get("name")
+            result["sector"] = cached.get("sector")
+            result["fetch_status"] = "pending" if status == "not_found" else status
+            result["fetch_error"] = (
+                "Symbol lookup unavailable; cached search result used"
+                if status == "not_found"
+                else "Yahoo Finance rate limit exceeded"
+                if status == "rate_limited"
+                else "Yahoo Finance request failed"
+            )
+            return result
+
+        if status == "not_found":
+            result["fetch_status"] = "invalid"
+            result["fetch_error"] = "Symbol not found on Yahoo Finance"
+            return result
+
+        result["fetch_status"] = status
+        result["fetch_error"] = (
+            "Yahoo Finance rate limit exceeded"
+            if status == "rate_limited"
+            else "Yahoo Finance request failed"
+        )
+        return result
+
+    if not info:
+        result["fetch_status"] = "error"
+        result["fetch_error"] = "Yahoo Finance returned no data"
+        return result
+
     # Check if valid symbol (must have at least a name or price)
     name = info.get("name")
     current_price = info.get("current_price")
-    
+
     if not name and not current_price:
         result["fetch_status"] = "invalid"
         result["fetch_error"] = "Symbol not found on Yahoo Finance"
         return result
-    
+
     result["valid"] = True
     result["fetch_status"] = "fetched"
     result["name"] = name
@@ -142,7 +243,7 @@ async def get_stock_info_full(symbol: str) -> dict:
     result["current_price"] = current_price
     result["ath_price"] = info.get("fifty_two_week_high")
     result["ipo_year"] = info.get("ipo_year")
-    
+
     return result
 
 

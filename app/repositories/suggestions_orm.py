@@ -393,6 +393,8 @@ async def create_suggestion(
     reason: Optional[str] = None,
     current_price: Optional[float] = None,
     ath_price: Optional[float] = None,
+    fetch_status: Optional[str] = None,
+    fetch_error: Optional[str] = None,
 ) -> StockSuggestion:
     """Create a new stock suggestion."""
     async with get_session() as session:
@@ -409,7 +411,8 @@ async def create_suggestion(
             ath_price=Decimal(str(ath_price)) if ath_price else None,
             status="pending",
             vote_score=0,
-            fetch_status="pending",
+            fetch_status=fetch_status or "pending",
+            fetch_error=fetch_error,
         )
         session.add(suggestion)
         await session.commit()

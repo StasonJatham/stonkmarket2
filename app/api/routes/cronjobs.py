@@ -12,6 +12,7 @@ from app.core.exceptions import NotFoundError
 from app.core.security import TokenData
 from app.jobs import enqueue_job, get_task_status
 from app.repositories import cronjobs_orm as cron_repo
+from app.repositories import settings_history_orm as settings_history_repo
 from app.schemas.cronjobs import (
     CronJobResponse,
     CronJobUpdate,
@@ -158,6 +159,17 @@ async def update_cronjob(
         raise NotFoundError(
             message=f"Cron job '{name}' not found",
             details={"name": name},
+        )
+
+    # Log the change before applying
+    if existing.cron != payload.cron:
+        await settings_history_repo.log_change(
+            setting_type="cronjob",
+            setting_key=name,
+            old_value=existing.cron,
+            new_value=payload.cron,
+            changed_by=int(admin.sub) if admin.sub else None,
+            changed_by_username=admin.username,
         )
 
     updated = await cron_repo.upsert_cronjob(name, payload.cron)

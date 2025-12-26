@@ -49,7 +49,7 @@ def generate_etag(data: Any) -> str:
     else:
         content = str(data)
     
-    hash_val = hashlib.md5(content.encode()).hexdigest()[:16]
+    hash_val = hashlib.md5(content.encode(), usedforsecurity=False).hexdigest()[:16]
     return f'W/"{hash_val}"'
 
 

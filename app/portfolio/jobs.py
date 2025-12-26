@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from app.core.logging import get_logger
 from app.portfolio.service import run_portfolio_tools
-from app.repositories import portfolio_analytics_jobs as jobs_repo
+from app.repositories import portfolio_analytics_jobs_orm as jobs_repo
 
 logger = get_logger("portfolio.jobs")
 

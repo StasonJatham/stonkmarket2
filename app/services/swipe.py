@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import select
-from sqlalchemy.orm import joinedload
 
 from app.core.logging import get_logger
 from app.database.connection import get_session

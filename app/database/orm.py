@@ -471,6 +471,32 @@ class RuntimeSetting(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class SettingsChangeHistory(Base):
+    """Audit log for settings changes with revert capability."""
+    __tablename__ = "settings_change_history"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    setting_type: Mapped[str] = mapped_column(String(50), nullable=False)  # 'runtime', 'cronjob', etc.
+    setting_key: Mapped[str] = mapped_column(String(100), nullable=False)  # e.g., 'ai_enrichment_enabled' or cronjob name
+    old_value: Mapped[Optional[dict]] = mapped_column(JSONB)  # Previous value (JSON)
+    new_value: Mapped[Optional[dict]] = mapped_column(JSONB)  # New value (JSON)
+    changed_by: Mapped[int] = mapped_column(ForeignKey("auth_user.id", ondelete="SET NULL"), nullable=True)
+    changed_by_username: Mapped[Optional[str]] = mapped_column(String(100))  # Denormalized for display
+    change_reason: Mapped[Optional[str]] = mapped_column(Text)  # Optional reason for change
+    reverted: Mapped[bool] = mapped_column(Boolean, default=False)  # Whether this change was reverted
+    reverted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    reverted_by: Mapped[Optional[int]] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    user: Mapped[Optional["AuthUser"]] = relationship(foreign_keys=[changed_by])
+
+    __table_args__ = (
+        Index("idx_settings_history_type", "setting_type"),
+        Index("idx_settings_history_key", "setting_key"),
+        Index("idx_settings_history_created", "created_at", postgresql_ops={"created_at": "DESC"}),
+    )
+
+
 # =============================================================================
 # RATE LIMITING
 # =============================================================================

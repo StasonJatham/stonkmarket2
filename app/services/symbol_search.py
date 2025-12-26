@@ -38,8 +38,8 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Optional
 
-from sqlalchemy import text, select, update
-from sqlalchemy.orm import joinedload
+from sqlalchemy import select, update, or_, func, literal
+from sqlalchemy.exc import ProgrammingError
 
 from app.core.logging import get_logger
 from app.database.connection import get_session
@@ -110,134 +110,150 @@ async def _search_local_db(
         Tuple of (results, next_cursor)
     """
     normalized = _normalize_query(query)
-    
-    # Build cursor WHERE clause
-    cursor_clause = ""
-    
-    if cursor:
-        cursor_clause = """
-            AND (
-                score < :cursor_score
-                OR (score = :cursor_score AND id > :cursor_id)
-            )
-        """
-    
-    # Trigram similarity clause for fuzzy name matching
-    trigram_select_symbols = ""
-    trigram_select_cached = ""
-    if use_trigram:
-        trigram_select_symbols = ", similarity(s.name, :query) as name_similarity"
-        trigram_select_cached = ", similarity(r.name, :query) as name_similarity"
-    
-    # Fetch one extra to detect if there are more results
-    fetch_limit = limit + 1
-    
-    # Build query with SQLAlchemy text()
-    query_sql = f"""
-        WITH combined AS (
-            -- Active symbols (highest priority)
-            SELECT 
-                s.id::bigint as id,
-                s.symbol,
-                s.name,
-                s.sector,
-                COALESCE(s.symbol_type, 'EQUITY') as quote_type,
-                s.market_cap,
-                NULL::numeric as pe_ratio,
-                'local' as source,
-                CASE 
-                    WHEN UPPER(s.symbol) = :query THEN 1.00
-                    WHEN UPPER(s.symbol) LIKE :query || '%' THEN 0.90
-                    WHEN UPPER(s.name) LIKE '%' || :query || '%' THEN 0.70
-                    ELSE 0.50
-                END::numeric as score
-                {trigram_select_symbols if use_trigram else ', 0 as name_similarity'}
-            FROM symbols s
-            WHERE s.is_active = TRUE
-              AND (
-                  UPPER(s.symbol) LIKE :query || '%'
-                  OR UPPER(s.name) LIKE '%' || :query || '%'
-                  {"OR similarity(s.name, :query) > 0.3" if use_trigram else ""}
-              )
-              
-            UNION ALL
-            
-            -- Cached search results (not in symbols table)
-            SELECT 
-                r.id::bigint as id,
-                r.symbol,
-                r.name,
-                r.sector,
-                COALESCE(r.quote_type, 'EQUITY') as quote_type,
-                r.market_cap,
-                NULL::numeric as pe_ratio,
-                'cached' as source,
-                COALESCE(r.confidence_score, 
-                    CASE 
-                        WHEN UPPER(r.symbol) = :query THEN 0.85
-                        WHEN UPPER(r.symbol) LIKE :query || '%' THEN 0.75
-                        WHEN UPPER(r.name) LIKE '%' || :query || '%' THEN 0.60
-                        ELSE 0.40
-                    END
-                )::numeric as score
-                {trigram_select_cached if use_trigram else ', 0 as name_similarity'}
-            FROM symbol_search_results r
-            WHERE r.expires_at > NOW()
-              AND NOT EXISTS (SELECT 1 FROM symbols s WHERE s.symbol = r.symbol AND s.is_active = TRUE)
-              AND (
-                  UPPER(r.symbol) LIKE :query || '%'
-                  OR UPPER(r.name) LIKE '%' || :query || '%'
-                  {"OR similarity(r.name, :query) > 0.3" if use_trigram else ""}
-              )
-        )
-        SELECT DISTINCT ON (symbol) *
-        FROM combined
-        WHERE 1=1 {cursor_clause}
-        ORDER BY symbol, score DESC, id ASC
-        LIMIT :limit
-    """
-    
-    # Build parameters dict
-    params = {"query": normalized, "limit": fetch_limit}
-    if cursor:
-        params["cursor_score"] = cursor.score
-        params["cursor_id"] = cursor.id
-    
-    async with get_session() as session:
-        result = await session.execute(text(query_sql), params)
-        rows = result.mappings().all()
-    
-    # Check if there are more results
-    has_more = len(rows) > limit
-    if has_more:
-        rows = rows[:limit]
-    
-    # Build results list
-    results = []
-    for r in rows:
-        # Boost score with trigram similarity if available
-        base_score = float(r["score"])
-        if use_trigram and r.get("name_similarity"):
-            # Blend: 70% base score + 30% trigram similarity
-            final_score = base_score * 0.7 + float(r["name_similarity"]) * 0.3
+    fetch_limit = limit * 5
+
+    def _base_score(symbol: str, name: Optional[str]) -> float:
+        symbol_upper = (symbol or "").upper()
+        name_upper = (name or "").upper()
+        if symbol_upper == normalized:
+            return 1.00
+        if symbol_upper.startswith(normalized):
+            return 0.90
+        if normalized in name_upper:
+            return 0.70
+        return 0.50
+
+    def _build_symbol_stmt(use_similarity: bool):
+        columns = [
+            Symbol.id.label("id"),
+            Symbol.symbol.label("symbol"),
+            Symbol.name.label("name"),
+            Symbol.sector.label("sector"),
+            Symbol.symbol_type.label("quote_type"),
+            Symbol.market_cap.label("market_cap"),
+        ]
+        if use_similarity:
+            columns.append(func.similarity(Symbol.name, normalized).label("name_similarity"))
         else:
-            final_score = base_score
-            
-        results.append({
-            "id": r["id"],
-            "symbol": r["symbol"],
-            "name": r["name"],
-            "sector": r["sector"],
-            "quote_type": (r["quote_type"] or "EQUITY").upper(),
-            "market_cap": float(r["market_cap"]) if r["market_cap"] else None,
-            "pe_ratio": float(r["pe_ratio"]) if r["pe_ratio"] else None,
-            "source": r["source"],
-            "score": round(final_score, 3),
-        })
-    
+            columns.append(literal(0).label("name_similarity"))
+
+        conditions = [
+            Symbol.symbol.ilike(f"{normalized}%"),
+            Symbol.name.ilike(f"%{normalized}%"),
+        ]
+        if use_similarity:
+            conditions.append(func.similarity(Symbol.name, normalized) > 0.3)
+
+        return (
+            select(*columns)
+            .where(Symbol.is_active == True)
+            .where(or_(*conditions))
+            .limit(fetch_limit)
+        )
+
+    def _build_cached_stmt(use_similarity: bool):
+        columns = [
+            SymbolSearchResult.id.label("id"),
+            SymbolSearchResult.symbol.label("symbol"),
+            SymbolSearchResult.name.label("name"),
+            SymbolSearchResult.sector.label("sector"),
+            SymbolSearchResult.quote_type.label("quote_type"),
+            SymbolSearchResult.market_cap.label("market_cap"),
+            SymbolSearchResult.confidence_score.label("confidence_score"),
+        ]
+        if use_similarity:
+            columns.append(func.similarity(SymbolSearchResult.name, normalized).label("name_similarity"))
+        else:
+            columns.append(literal(0).label("name_similarity"))
+
+        conditions = [
+            SymbolSearchResult.symbol.ilike(f"{normalized}%"),
+            SymbolSearchResult.name.ilike(f"%{normalized}%"),
+        ]
+        if use_similarity:
+            conditions.append(func.similarity(SymbolSearchResult.name, normalized) > 0.3)
+
+        active_symbols = select(Symbol.symbol).where(Symbol.is_active == True)
+
+        return (
+            select(*columns)
+            .where(SymbolSearchResult.expires_at > datetime.now(timezone.utc))
+            .where(~SymbolSearchResult.symbol.in_(active_symbols))
+            .where(or_(*conditions))
+            .limit(fetch_limit)
+        )
+
+    async with get_session() as session:
+        try:
+            symbol_rows = (await session.execute(_build_symbol_stmt(use_trigram))).mappings().all()
+            cached_rows = (await session.execute(_build_cached_stmt(use_trigram))).mappings().all()
+        except ProgrammingError as exc:
+            if use_trigram:
+                logger.warning(f"pg_trgm unavailable, falling back to basic search: {exc}")
+                use_trigram = False
+                symbol_rows = (await session.execute(_build_symbol_stmt(False))).mappings().all()
+                cached_rows = (await session.execute(_build_cached_stmt(False))).mappings().all()
+            else:
+                raise
+
+    results = []
+    seen_symbols = set()
+
+    for r in symbol_rows:
+        base = _base_score(r["symbol"], r["name"])
+        name_similarity = float(r.get("name_similarity") or 0)
+        final_score = base * 0.7 + name_similarity * 0.3 if use_trigram else base
+        results.append(
+            {
+                "id": r["id"],
+                "symbol": r["symbol"],
+                "name": r["name"],
+                "sector": r["sector"],
+                "quote_type": (r["quote_type"] or "EQUITY").upper(),
+                "market_cap": float(r["market_cap"]) if r["market_cap"] else None,
+                "pe_ratio": None,
+                "source": "local",
+                "score": round(final_score, 3),
+            }
+        )
+        seen_symbols.add(r["symbol"])
+
+    for r in cached_rows:
+        if r["symbol"] in seen_symbols:
+            continue
+        base = float(r.get("confidence_score") or _base_score(r["symbol"], r["name"]))
+        name_similarity = float(r.get("name_similarity") or 0)
+        final_score = base * 0.7 + name_similarity * 0.3 if use_trigram else base
+        results.append(
+            {
+                "id": r["id"],
+                "symbol": r["symbol"],
+                "name": r["name"],
+                "sector": r["sector"],
+                "quote_type": (r["quote_type"] or "EQUITY").upper(),
+                "market_cap": float(r["market_cap"]) if r["market_cap"] else None,
+                "pe_ratio": None,
+                "source": "cached",
+                "score": round(final_score, 3),
+            }
+        )
+
     # Sort by score DESC, then market_cap DESC for final ordering
-    results.sort(key=lambda x: (-x["score"], -(x["market_cap"] or 0)))
-    
+    results.sort(key=lambda x: (-x["score"], -(x["market_cap"] or 0), x["id"]))
+
+    # Apply cursor filtering after sorting
+    if cursor:
+        results = [
+            r for r in results
+            if r["score"] < float(cursor.score)
+            or (r["score"] == float(cursor.score) and r["id"] > cursor.id)
+        ]
+
+    # Fetch one extra to detect if there are more results
+    has_more = len(results) > limit
+    if has_more:
+        results = results[:limit]
+
     # Build next cursor from last result
     next_cursor = None
     if has_more and results:
@@ -246,7 +262,7 @@ async def _search_local_db(
             score=Decimal(str(last["score"])),
             id=last["id"],
         )
-    
+
     return results, next_cursor
 
 

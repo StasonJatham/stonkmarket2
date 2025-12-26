@@ -16,7 +16,7 @@ from decimal import Decimal
 from typing import Optional, Sequence
 
 import pandas as pd
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, func
 from sqlalchemy.dialects.postgresql import insert
 
 from app.database.connection import get_session
@@ -54,6 +54,32 @@ async def get_prices(
             .order_by(PriceHistory.date.asc())
         )
         return result.scalars().all()
+
+
+async def get_latest_price_date(symbol: str) -> Optional[date]:
+    """Get the most recent price date for a symbol."""
+    async with get_session() as session:
+        result = await session.execute(
+            select(func.max(PriceHistory.date)).where(
+                PriceHistory.symbol == symbol.upper()
+            )
+        )
+        return result.scalar_one_or_none()
+
+
+async def get_latest_price_dates(symbols: Sequence[str]) -> dict[str, date]:
+    """Get most recent price dates for multiple symbols."""
+    normalized = [s.upper() for s in symbols]
+    if not normalized:
+        return {}
+
+    async with get_session() as session:
+        result = await session.execute(
+            select(PriceHistory.symbol, func.max(PriceHistory.date))
+            .where(PriceHistory.symbol.in_(normalized))
+            .group_by(PriceHistory.symbol)
+        )
+        return {row[0]: row[1] for row in result.all() if row[1] is not None}
 
 
 async def get_prices_as_dataframe(

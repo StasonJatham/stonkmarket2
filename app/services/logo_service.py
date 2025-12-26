@@ -164,7 +164,7 @@ async def _fetch_favicon_fallback(
         # Final fallback: UI Avatars (always works, generates placeholder)
         try:
             # Generate a consistent color from symbol
-            color = hashlib.md5(symbol.encode()).hexdigest()[:6]
+            color = hashlib.md5(symbol.encode(), usedforsecurity=False).hexdigest()[:6]
             url = f"https://ui-avatars.com/api/?name={symbol}&background={color}&color=fff&size=128&format=png&bold=true"
             response = await client.get(url)
             if response.status_code == 200:

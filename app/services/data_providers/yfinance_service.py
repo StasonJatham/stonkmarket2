@@ -98,13 +98,25 @@ class DataVersion:
         }
 
 
+TickerInfoStatus = Literal["cached", "fetched", "rate_limited", "not_found", "error"]
+
+
 def _compute_hash(data: Any) -> str:
     """Compute SHA-256 hash of data for version tracking."""
     if data is None:
         return ""
     if isinstance(data, pd.DataFrame):
-        # For DataFrames, hash the shape and last few values
-        content = f"{data.shape}:{data.index[-1] if len(data) > 0 else ''}:{data.iloc[-1].to_dict() if len(data) > 0 else {}}"
+        # For DataFrames, hash the most recent rows to detect meaningful changes.
+        tail = data.tail(5).copy()
+        tail.reset_index(inplace=True)
+        content = json.dumps(
+            {
+                "last_index": str(data.index[-1]) if len(data) > 0 else "",
+                "tail": tail.to_dict(orient="records"),
+            },
+            sort_keys=True,
+            default=str,
+        )
     elif isinstance(data, dict):
         # Sort keys for consistent hashing
         content = json.dumps(data, sort_keys=True, default=str)
@@ -189,32 +201,51 @@ class YFinanceService:
     # Core yfinance API Calls (Sync, run in thread pool)
     # =========================================================================
     
-    def _fetch_ticker_info_sync(self, symbol: str) -> Optional[dict[str, Any]]:
-        """Fetch complete ticker info from yfinance (blocking)."""
+    def _fetch_ticker_info_with_status_sync(
+        self,
+        symbol: str,
+    ) -> tuple[Optional[dict[str, Any]], TickerInfoStatus]:
+        """Fetch complete ticker info from yfinance (blocking) with status."""
         if not self._limiter.acquire_sync():
             logger.warning(f"Rate limit timeout for {symbol}")
-            return None
-        
+            return None, "rate_limited"
+
         try:
+            def _ts_to_date(value: Any) -> Optional[str]:
+                """Convert timestamp to ISO date string for JSON serialization."""
+                if value is None:
+                    return None
+                try:
+                    ts = float(value)
+                    if ts > 1e12:  # ms -> s
+                        ts = ts / 1000.0
+                    return datetime.fromtimestamp(ts, tz=timezone.utc).date().isoformat()
+                except (ValueError, TypeError, OSError):
+                    return None
+
             ticker = yf.Ticker(symbol)
             info = ticker.info or {}
-            
+
             if not info or not info.get("symbol"):
-                return None
-            
+                return None, "not_found"
+
             quote_type = (info.get("quoteType") or "EQUITY").upper()
             is_etf = _is_etf_or_index(symbol, quote_type)
-            
+
             # Get IPO year from first trade date
             ipo_year = None
             first_trade_ms = info.get("firstTradeDateMilliseconds")
             if first_trade_ms:
                 ipo_year = datetime.fromtimestamp(first_trade_ms / 1000, tz=timezone.utc).year
-            
+
             # Normalize dividend yield
             raw_div_yield = info.get("dividendYield")
             dividend_yield = raw_div_yield / 100 if raw_div_yield else None
-            
+
+            # Earnings metadata
+            most_recent_quarter = _ts_to_date(info.get("mostRecentQuarter"))
+            earnings_timestamp = _ts_to_date(info.get("earningsTimestamp"))
+
             return {
                 # Identity
                 "symbol": symbol.upper(),
@@ -228,7 +259,7 @@ class YFinanceService:
                 "summary": info.get("longBusinessSummary"),
                 "ipo_year": ipo_year,
                 "is_etf": is_etf,
-                
+
                 # Price
                 "current_price": _safe_float(info.get("regularMarketPrice") or info.get("previousClose")),
                 "previous_close": _safe_float(info.get("previousClose")),
@@ -236,12 +267,12 @@ class YFinanceService:
                 "fifty_two_week_low": _safe_float(info.get("fiftyTwoWeekLow")),
                 "fifty_day_average": _safe_float(info.get("fiftyDayAverage")),
                 "two_hundred_day_average": _safe_float(info.get("twoHundredDayAverage")),
-                
+
                 # Market
                 "market_cap": _safe_int(info.get("totalAssets") if is_etf else info.get("marketCap")),
                 "avg_volume": _safe_int(info.get("averageVolume")),
                 "volume": _safe_int(info.get("volume")),
-                
+
                 # Valuation (skip for ETFs)
                 "pe_ratio": None if is_etf else _safe_float(info.get("trailingPE")),
                 "forward_pe": None if is_etf else _safe_float(info.get("forwardPE")),
@@ -251,7 +282,7 @@ class YFinanceService:
                 "enterprise_value": None if is_etf else _safe_int(info.get("enterpriseValue")),
                 "ev_to_ebitda": None if is_etf else _safe_float(info.get("enterpriseToEbitda")),
                 "ev_to_revenue": None if is_etf else _safe_float(info.get("enterpriseToRevenue")),
-                
+
                 # Profitability
                 "profit_margin": None if is_etf else _safe_float(info.get("profitMargins")),
                 "operating_margin": None if is_etf else _safe_float(info.get("operatingMargins")),
@@ -259,7 +290,7 @@ class YFinanceService:
                 "ebitda_margin": None if is_etf else _safe_float(info.get("ebitdaMargins")),
                 "return_on_equity": None if is_etf else _safe_float(info.get("returnOnEquity")),
                 "return_on_assets": None if is_etf else _safe_float(info.get("returnOnAssets")),
-                
+
                 # Financial Health
                 "debt_to_equity": None if is_etf else _safe_float(info.get("debtToEquity")),
                 "current_ratio": None if is_etf else _safe_float(info.get("currentRatio")),
@@ -268,19 +299,22 @@ class YFinanceService:
                 "total_debt": None if is_etf else _safe_int(info.get("totalDebt")),
                 "free_cash_flow": None if is_etf else _safe_int(info.get("freeCashflow")),
                 "operating_cash_flow": None if is_etf else _safe_int(info.get("operatingCashflow")),
-                
+
                 # Per Share
                 "book_value": None if is_etf else _safe_float(info.get("bookValue")),
                 "eps_trailing": None if is_etf else _safe_float(info.get("trailingEps")),
                 "eps_forward": None if is_etf else _safe_float(info.get("forwardEps")),
                 "revenue_per_share": None if is_etf else _safe_float(info.get("revenuePerShare")),
                 "dividend_yield": dividend_yield,
-                
+                "payout_ratio": None if is_etf else _safe_float(info.get("payoutRatio")),
+                "shares_outstanding": None if is_etf else _safe_int(info.get("sharesOutstanding")),
+                "float_shares": None if is_etf else _safe_int(info.get("floatShares")),
+
                 # Growth
                 "revenue_growth": None if is_etf else _safe_float(info.get("revenueGrowth")),
                 "earnings_growth": None if is_etf else _safe_float(info.get("earningsGrowth")),
                 "earnings_quarterly_growth": None if is_etf else _safe_float(info.get("earningsQuarterlyGrowth")),
-                
+
                 # Analyst
                 "recommendation": info.get("recommendationKey"),
                 "recommendation_mean": _safe_float(info.get("recommendationMean")),
@@ -288,20 +322,34 @@ class YFinanceService:
                 "target_high_price": _safe_float(info.get("targetHighPrice")),
                 "target_low_price": _safe_float(info.get("targetLowPrice")),
                 "num_analyst_opinions": _safe_int(info.get("numberOfAnalystOpinions")),
-                
+
+                # Earnings (last reported)
+                "earnings_date": earnings_timestamp or most_recent_quarter,
+                "most_recent_quarter": most_recent_quarter,
+
+                # Revenue & Earnings
+                "revenue": None if is_etf else _safe_int(info.get("totalRevenue")),
+                "ebitda": None if is_etf else _safe_int(info.get("ebitda")),
+                "net_income": None if is_etf else _safe_int(info.get("netIncomeToCommon") or info.get("netIncome")),
+
                 # Risk
                 "beta": _safe_float(info.get("beta")),
                 "short_ratio": _safe_float(info.get("shortRatio")),
                 "short_percent_of_float": _safe_float(info.get("shortPercentOfFloat")),
                 "held_percent_insiders": _safe_float(info.get("heldPercentInsiders")),
                 "held_percent_institutions": _safe_float(info.get("heldPercentInstitutions")),
-                
+
                 # Metadata
                 "fetched_at": datetime.now(timezone.utc).isoformat(),
-            }
+            }, "fetched"
         except Exception as e:
             logger.warning(f"yfinance ticker info failed for {symbol}: {e}")
-            return None
+            return None, "error"
+
+    def _fetch_ticker_info_sync(self, symbol: str) -> Optional[dict[str, Any]]:
+        """Fetch complete ticker info from yfinance (blocking)."""
+        data, status = self._fetch_ticker_info_with_status_sync(symbol)
+        return data if status == "fetched" else None
     
     def _fetch_price_history_sync(
         self,
@@ -417,25 +465,55 @@ class YFinanceService:
             return []
         
         try:
-            # yfinance search is not directly available, use Ticker with fuzzy matching
-            # For now, we rely on cached search results in DB
-            # This is a placeholder - actual search uses yfinance's search endpoint
-            results = []
-            
-            # Try direct ticker lookup first
+            results: list[dict[str, Any]] = []
+
+            # Prefer yfinance Search when available
+            if hasattr(yf, "Search"):
+                try:
+                    search = yf.Search(query, max_results=max_results)
+                    quotes = getattr(search, "quotes", None) or []
+                    for q in quotes:
+                        symbol = q.get("symbol") or q.get("ticker")
+                        if not symbol:
+                            continue
+                        quote_type = (q.get("quoteType") or "EQUITY").upper()
+                        results.append(
+                            {
+                                "symbol": symbol,
+                                "name": q.get("shortname") or q.get("shortName") or q.get("longname") or q.get("longName"),
+                                "exchange": q.get("exchange") or q.get("exchDisp"),
+                                "quote_type": quote_type,
+                                "sector": None if _is_etf_or_index(symbol, quote_type) else q.get("sector"),
+                                "industry": q.get("industry"),
+                                "market_cap": _safe_int(q.get("marketCap")),
+                                "relevance_score": _safe_float(q.get("score") or q.get("relevance")),
+                                "confidence_score": _safe_float(q.get("confidenceScore")),
+                            }
+                        )
+                    if results:
+                        return results[:max_results]
+                except Exception as e:
+                    logger.debug(f"yfinance Search failed for {query}: {e}")
+
+            # Fallback: direct ticker lookup
             ticker = yf.Ticker(query.upper())
             info = ticker.info
             if info and info.get("symbol"):
                 quote_type = (info.get("quoteType") or "EQUITY").upper()
-                results.append({
-                    "symbol": info["symbol"],
-                    "name": info.get("shortName") or info.get("longName"),
-                    "exchange": info.get("exchange"),
-                    "quote_type": quote_type,
-                    "sector": None if _is_etf_or_index(info["symbol"], quote_type) else info.get("sector"),
-                    "market_cap": _safe_int(info.get("marketCap")),
-                })
-            
+                results.append(
+                    {
+                        "symbol": info["symbol"],
+                        "name": info.get("shortName") or info.get("longName"),
+                        "exchange": info.get("exchange"),
+                        "quote_type": quote_type,
+                        "sector": None if _is_etf_or_index(info["symbol"], quote_type) else info.get("sector"),
+                        "industry": info.get("industry"),
+                        "market_cap": _safe_int(info.get("marketCap")),
+                        "relevance_score": None,
+                        "confidence_score": None,
+                    }
+                )
+
             return results[:max_results]
         except Exception as e:
             logger.debug(f"yfinance search failed for {query}: {e}")
@@ -657,6 +735,87 @@ class YFinanceService:
                 await session.commit()
         
         return data
+
+    async def get_ticker_info_with_status(
+        self,
+        symbol: str,
+        skip_cache: bool = False,
+    ) -> tuple[Optional[dict[str, Any]], TickerInfoStatus]:
+        """
+        Get ticker info with cache-aware status.
+
+        Returns:
+            Tuple of (data, status) where status is one of:
+            cached, fetched, rate_limited, not_found, error.
+        """
+        symbol = symbol.upper()
+        cache_key = f"info:{symbol}"
+
+        if not skip_cache:
+            mem_data = self._get_from_memory(cache_key)
+            if mem_data is not None:
+                logger.debug(f"Cache hit L1 (memory) for {symbol}")
+                return mem_data, "cached"
+
+            valkey_data = await self._info_cache.get(cache_key)
+            if valkey_data is not None:
+                logger.debug(f"Cache hit L2 (valkey) for {symbol}")
+                self._set_in_memory(cache_key, valkey_data)
+                return valkey_data, "cached"
+
+            async with get_session() as session:
+                result = await session.execute(
+                    select(YfinanceInfoCache.data).where(
+                        YfinanceInfoCache.symbol == symbol,
+                        YfinanceInfoCache.expires_at > datetime.now(timezone.utc),
+                    )
+                )
+                db_data = result.scalar_one_or_none()
+
+            if db_data:
+                logger.debug(f"Cache hit L3 (db) for {symbol}")
+                data = db_data
+                if isinstance(data, str):
+                    try:
+                        data = json.loads(data)
+                    except (json.JSONDecodeError, TypeError):
+                        logger.warning(f"Invalid JSON in DB cache for {symbol}")
+                        data = None
+                if data:
+                    self._set_in_memory(cache_key, data)
+                    await self._info_cache.set(cache_key, data)
+                    return data, "cached"
+
+        logger.debug(f"Cache miss for {symbol}, fetching from yfinance")
+        loop = asyncio.get_event_loop()
+        data, status = await loop.run_in_executor(
+            _executor, self._fetch_ticker_info_with_status_sync, symbol
+        )
+
+        if status == "fetched" and data:
+            self._set_in_memory(cache_key, data)
+            await self._info_cache.set(cache_key, data)
+
+            expires = datetime.now(timezone.utc) + timedelta(hours=24)
+            async with get_session() as session:
+                stmt = insert(YfinanceInfoCache).values(
+                    symbol=symbol,
+                    data=data,
+                    expires_at=expires,
+                    fetched_at=datetime.now(timezone.utc),
+                )
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["symbol"],
+                    set_={
+                        "data": stmt.excluded.data,
+                        "expires_at": stmt.excluded.expires_at,
+                        "fetched_at": stmt.excluded.fetched_at,
+                    },
+                )
+                await session.execute(stmt)
+                await session.commit()
+
+        return data, status
     
     async def get_financials(
         self,
@@ -865,7 +1024,10 @@ class YFinanceService:
                             exchange=r.get("exchange"),
                             quote_type=r.get("quote_type"),
                             sector=r.get("sector"),
+                            industry=r.get("industry"),
                             market_cap=r.get("market_cap"),
+                            relevance_score=r.get("relevance_score"),
+                            confidence_score=r.get("confidence_score") or r.get("relevance_score"),
                             expires_at=expires_at,
                             search_query=query,
                         )
@@ -877,7 +1039,10 @@ class YFinanceService:
                                 "exchange": stmt.excluded.exchange,
                                 "quote_type": stmt.excluded.quote_type,
                                 "sector": stmt.excluded.sector,
+                                "industry": stmt.excluded.industry,
                                 "market_cap": stmt.excluded.market_cap,
+                                "relevance_score": stmt.excluded.relevance_score,
+                                "confidence_score": stmt.excluded.confidence_score,
                                 "expires_at": stmt.excluded.expires_at,
                             },
                         )

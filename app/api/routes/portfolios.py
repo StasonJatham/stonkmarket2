@@ -12,7 +12,7 @@ from app.core.exceptions import NotFoundError, ValidationError
 from app.core.security import TokenData
 from app.repositories import auth_user_orm as auth_repo
 from app.repositories import portfolios_orm as portfolios_repo
-from app.repositories import portfolio_analytics_jobs as analytics_jobs_repo
+from app.repositories import portfolio_analytics_jobs_orm as analytics_jobs_repo
 from app.portfolio.service import (
     run_portfolio_tools,
     split_tools,

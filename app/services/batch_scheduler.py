@@ -374,8 +374,6 @@ async def process_completed_batch_jobs() -> int:
 
     return processed
 
-    return processed
-
 
 async def _process_batch_results(
     batch_id: str,

@@ -16,8 +16,8 @@ from app.core.logging import get_logger, setup_logging
 from app.database.connection import init_pg_pool, close_pg_pool, get_session
 from app.database.orm import SchemaMigration
 from app.services.runtime_settings import init_runtime_settings
-from app.repositories.api_keys import seed_api_keys_from_env
-from app.repositories.auth_user import seed_admin_from_env
+from app.repositories.api_keys_orm import seed_api_keys_from_env
+from app.repositories.auth_user_orm import seed_admin_from_env
 import app.jobs.definitions  # noqa: F401 - register jobs
 
 logger = get_logger("main")

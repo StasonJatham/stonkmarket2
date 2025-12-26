@@ -62,6 +62,19 @@ async def validate_symbol(
     if cached_result is not None:
         return SymbolValidationResponse(**cached_result)
 
+    # Check local symbols table before hitting external API
+    local_symbol = await symbol_repo.get_symbol(symbol_upper)
+    if local_symbol:
+        result = SymbolValidationResponse(
+            valid=True,
+            symbol=symbol_upper,
+            name=local_symbol.name,
+            sector=local_symbol.sector,
+            summary=local_symbol.summary_ai,
+        )
+        await _validation_cache.set(cache_key, result.model_dump(), ttl=30 * 24 * 60 * 60)
+        return result
+
     # Not in cache, validate against Yahoo Finance
     try:
         # get_stock_info is async
@@ -209,6 +222,10 @@ class SymbolFundamentalsResponse(BaseModel):
     beta: Optional[str] = None
     next_earnings_date: Optional[str] = None
     source: str = "database"  # "database" or "api"
+    fetched_at: Optional[str] = None
+    expires_at: Optional[str] = None
+    is_stale: bool = False
+    refresh_task_id: Optional[str] = None
 
 
 @router.get(
@@ -222,7 +239,7 @@ async def get_symbol_fundamentals(
 ) -> SymbolFundamentalsResponse:
     """Get fundamental data for a symbol."""
     from app.services.fundamentals import (
-        get_fundamentals_from_db,
+        get_fundamentals_with_status,
         fetch_fundamentals_live,
     )
     
@@ -230,9 +247,18 @@ async def get_symbol_fundamentals(
     source = "database"
     
     # Try database first (for tracked symbols)
-    db_data = await get_fundamentals_from_db(symbol_upper)
+    db_data, is_stale = await get_fundamentals_with_status(
+        symbol_upper, allow_stale=True
+    )
+    refresh_task_id = None
     
     if db_data:
+        if is_stale:
+            task = celery_app.send_task(
+                "jobs.refresh_fundamentals_symbol", args=[symbol_upper]
+            )
+            refresh_task_id = task.id
+
         # Format the database data
         def fmt_pct(val):
             if val is None:
@@ -279,6 +305,7 @@ async def get_symbol_fundamentals(
         # Not in database, fetch live from yfinance (without storing)
         data = await fetch_fundamentals_live(symbol_upper)
         source = "api"
+        is_stale = False
     
     if not data:
         raise NotFoundError(
@@ -306,6 +333,10 @@ async def get_symbol_fundamentals(
         beta=data.get("beta"),
         next_earnings_date=data.get("next_earnings_date"),
         source=source,
+        fetched_at=db_data.get("fetched_at").isoformat() if db_data and db_data.get("fetched_at") else None,
+        expires_at=db_data.get("expires_at").isoformat() if db_data and db_data.get("expires_at") else None,
+        is_stale=is_stale,
+        refresh_task_id=refresh_task_id,
     )
 
 

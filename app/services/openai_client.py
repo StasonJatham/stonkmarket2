@@ -45,7 +45,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Literal, Optional, TypedDict
+from typing import Any, Literal, Optional
 
 from openai import AsyncOpenAI, APITimeoutError, APIConnectionError, RateLimitError, APIStatusError
 

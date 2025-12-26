@@ -40,6 +40,7 @@ from app.database.orm import (
     UserApiKey,
     StockFundamentals,
     AnalysisVersion,
+    SymbolSearchResult,
 )
 from app.core.logging import get_logger
 
@@ -599,6 +600,22 @@ async def cleanup_expired_api_keys() -> int:
                     UserApiKey.expires_at < now,
                 )
             )
+        )
+        await session.commit()
+        return result.rowcount
+
+
+async def cleanup_expired_symbol_search_results() -> int:
+    """Delete expired symbol search results.
+
+    Returns:
+        Number of rows deleted
+    """
+    now = datetime.now(timezone.utc)
+    async with get_session() as session:
+        result = await session.execute(
+            delete(SymbolSearchResult)
+            .where(SymbolSearchResult.expires_at < now)
         )
         await session.commit()
         return result.rowcount

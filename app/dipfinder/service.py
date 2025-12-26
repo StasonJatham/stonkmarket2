@@ -155,21 +155,41 @@ class DatabasePriceProvider:
         )
 
         if df is not None and not df.empty:
-            # Check if we have enough data
-            expected_days = (
-                end_date - start_date
-            ).days * 0.7  # Approximate trading days
-            if len(df) >= expected_days * 0.8:  # Allow 20% missing
+            expected_days = (end_date - start_date).days * 0.7
+            coverage_ok = len(df) >= expected_days * 0.8
+
+            last_idx = df.index.max()
+            last_date = last_idx.date() if hasattr(last_idx, "date") else last_idx
+
+            if coverage_ok and last_date and last_date >= (end_date - timedelta(days=1)):
                 return df
 
-        # Fallback to yfinance
+            if last_date and last_date < end_date:
+                # Use at least 5-day window to avoid holiday no-data errors
+                fetch_start = last_date + timedelta(days=1)
+                min_fetch_days = 5
+                if (end_date - fetch_start).days < min_fetch_days:
+                    fetch_start = end_date - timedelta(days=min_fetch_days)
+                if fetch_start <= end_date:
+                    yf_df = await self._yf_provider.get_prices(ticker, fetch_start, end_date)
+                    if yf_df is not None and not yf_df.empty:
+                        await self._save_prices_to_db(ticker, yf_df)
+                        merged = pd.concat(
+                            [df.copy(), yf_df.copy()],
+                            axis=0,
+                        )
+                        merged.index = pd.to_datetime(merged.index).date
+                        merged = merged[~merged.index.duplicated(keep="last")].sort_index()
+                        return merged
+
+        # Fallback to yfinance (full range)
         yf_df = await self._yf_provider.get_prices(ticker, start_date, end_date)
 
-        # Cache in database
         if yf_df is not None and not yf_df.empty:
             await self._save_prices_to_db(ticker, yf_df)
+            return yf_df
 
-        return yf_df
+        return df
 
     async def get_prices_batch(
         self,
@@ -179,14 +199,11 @@ class DatabasePriceProvider:
     ) -> Dict[str, pd.DataFrame]:
         """Get prices for multiple tickers."""
         results: Dict[str, pd.DataFrame] = {}
-        tickers_to_fetch: List[str] = []
 
         for ticker in tickers:
             df = await self.get_prices(ticker, start_date, end_date)
             if df is not None and not df.empty:
                 results[ticker] = df
-            else:
-                tickers_to_fetch.append(ticker)
 
         return results
 

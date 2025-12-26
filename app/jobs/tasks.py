@@ -15,16 +15,27 @@ from app.repositories import cronjobs_orm as cron_repo
 
 logger = get_logger("jobs.celery_tasks")
 
+# Per-worker event loop for Celery prefork pool
+_worker_loop: asyncio.AbstractEventLoop | None = None
+
+
+def _get_worker_loop() -> asyncio.AbstractEventLoop:
+    """Get or create a persistent event loop for the worker process."""
+    global _worker_loop
+    if _worker_loop is None or _worker_loop.is_closed():
+        _worker_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(_worker_loop)
+    return _worker_loop
+
 
 def _run_async(coro: Any) -> Any:
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
-
-    if loop and loop.is_running():
-        return asyncio.run_coroutine_threadsafe(coro, loop).result()
-    return asyncio.run(coro)
+    """Run async coroutine in the worker's event loop.
+    
+    Uses a persistent event loop to avoid 'Event loop is closed' errors
+    with async Redis connections.
+    """
+    loop = _get_worker_loop()
+    return loop.run_until_complete(coro)
 
 
 async def _execute_job_locked(job_name: str) -> str:
@@ -139,6 +150,60 @@ def batch_poll_task() -> str:
 @celery_app.task(name="jobs.fundamentals_refresh")
 def fundamentals_refresh_task() -> str:
     return _run_job("fundamentals_refresh")
+
+
+@celery_app.task(name="jobs.refresh_fundamentals_symbol")
+def refresh_fundamentals_symbol_task(symbol: str) -> str:
+    """Refresh fundamentals for a single symbol with minimal scope."""
+    from datetime import datetime, timezone, timedelta
+    from app.services.fundamentals import (
+        refresh_fundamentals,
+        get_fundamentals_with_status,
+    )
+
+    async def _run() -> str:
+        data, _ = await get_fundamentals_with_status(symbol, allow_stale=True)
+        include_financials = True
+
+        if data:
+            financials_fetched_at = data.get("financials_fetched_at")
+            if financials_fetched_at:
+                fin_at_utc = (
+                    financials_fetched_at.replace(tzinfo=timezone.utc)
+                    if financials_fetched_at.tzinfo is None
+                    else financials_fetched_at
+                )
+                include_financials = (datetime.now(timezone.utc) - fin_at_utc).days > 90
+
+                earnings_date = data.get("earnings_date")
+                if earnings_date:
+                    earnings_dt = (
+                        earnings_date
+                        if isinstance(earnings_date, datetime)
+                        else datetime.combine(earnings_date, datetime.min.time(), tzinfo=timezone.utc)
+                    )
+                    if earnings_dt > fin_at_utc:
+                        include_financials = True
+
+                next_earnings = data.get("next_earnings_date")
+                if next_earnings:
+                    next_dt = (
+                        next_earnings
+                        if isinstance(next_earnings, datetime)
+                        else datetime.combine(next_earnings, datetime.min.time(), tzinfo=timezone.utc)
+                    )
+                    if datetime.now(timezone.utc) <= next_dt <= datetime.now(timezone.utc) + timedelta(days=7):
+                        if fin_at_utc < (next_dt - timedelta(days=7)):
+                            include_financials = True
+
+        await refresh_fundamentals(
+            symbol,
+            include_financials=include_financials,
+            include_calendar=True,
+        )
+        return f"Refreshed fundamentals for {symbol} (financials={include_financials})"
+
+    return _run_async(_run())
 
 
 @celery_app.task(name="jobs.ai_agents_analysis")

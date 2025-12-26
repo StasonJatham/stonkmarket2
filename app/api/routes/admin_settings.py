@@ -22,6 +22,10 @@ from app.schemas.admin_settings import (
     SystemStatusResponse,
     BatchJobResponse,
     BatchJobListResponse,
+    SettingsChangeHistoryItem,
+    SettingsChangeHistoryResponse,
+    RevertChangeRequest,
+    RevertChangeResponse,
 )
 from app.services.runtime_settings import (
     get_all_runtime_settings,
@@ -29,6 +33,7 @@ from app.services.runtime_settings import (
     check_openai_configured,
     check_logo_dev_configured,
 )
+from app.repositories import settings_history_orm as settings_history_repo
 
 logger = get_logger("api.admin_settings")
 
@@ -107,6 +112,22 @@ async def update_runtime_settings(
             raise ValidationError(
                 "Cannot enable AI enrichment: OpenAI API key is not configured. "
                 "Set OPENAI_API_KEY environment variable or add via API Keys settings."
+            )
+    
+    # Get current values for change logging
+    current_settings = get_all_runtime_settings()
+    
+    # Log each changed setting
+    for key, new_value in update_dict.items():
+        old_value = current_settings.get(key)
+        if old_value != new_value:
+            await settings_history_repo.log_change(
+                setting_type="runtime",
+                setting_key=key,
+                old_value=old_value,
+                new_value=new_value,
+                changed_by=int(user.sub) if user.sub else None,
+                changed_by_username=user.username,
             )
     
     updated = await update_settings_async(update_dict)
@@ -275,3 +296,116 @@ async def get_batch_jobs(
             total=len(jobs),
             active_count=active_count,
         )
+
+
+# Settings Change History endpoints
+
+
+@router.get(
+    "/history",
+    response_model=SettingsChangeHistoryResponse,
+    summary="Get settings change history",
+    description="View recent settings changes with optional filtering.",
+)
+async def get_settings_history(
+    setting_type: str | None = None,
+    setting_key: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    user: TokenData = Depends(require_admin),
+) -> SettingsChangeHistoryResponse:
+    """Get settings change history for admin review."""
+    changes, total = await settings_history_repo.list_changes(
+        setting_type=setting_type,
+        setting_key=setting_key,
+        limit=limit,
+        offset=offset,
+    )
+    
+    return SettingsChangeHistoryResponse(
+        changes=[SettingsChangeHistoryItem(**c) for c in changes],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.post(
+    "/history/{change_id}/revert",
+    response_model=RevertChangeResponse,
+    summary="Revert a settings change",
+    description="Revert a previous settings change to restore the old value.",
+)
+async def revert_settings_change(
+    change_id: int,
+    request: RevertChangeRequest | None = None,
+    user: TokenData = Depends(require_admin),
+) -> RevertChangeResponse:
+    """Revert a settings change by restoring the old value."""
+    from app.core.exceptions import NotFoundError, ValidationError
+    
+    # Get the change record
+    change = await settings_history_repo.get_change(change_id)
+    if not change:
+        raise NotFoundError(f"Settings change {change_id} not found")
+    
+    if change["reverted"]:
+        raise ValidationError(f"Settings change {change_id} has already been reverted")
+    
+    setting_type = change["setting_type"]
+    setting_key = change["setting_key"]
+    old_value = change["old_value"]
+    
+    # Extract the actual value from the wrapper if it exists
+    if isinstance(old_value, dict) and "value" in old_value and len(old_value) == 1:
+        restored_value = old_value["value"]
+    else:
+        restored_value = old_value
+    
+    # Apply the revert based on setting type
+    if setting_type == "runtime":
+        # Revert runtime setting
+        from app.services.runtime_settings import save_runtime_setting
+        await save_runtime_setting(setting_key, restored_value)
+        
+        # Log the revert as a new change
+        await settings_history_repo.log_change(
+            setting_type="runtime",
+            setting_key=setting_key,
+            old_value=change["new_value"],
+            new_value=old_value,
+            changed_by=int(user.sub) if user.sub else None,
+            changed_by_username=user.username,
+            change_reason=f"Reverted change #{change_id}: {request.reason if request else 'No reason provided'}",
+        )
+        
+    elif setting_type == "cronjob":
+        # Revert cronjob schedule
+        from app.repositories.cronjobs_orm import upsert_cronjob
+        await upsert_cronjob(setting_key, restored_value)
+        
+        # Log the revert as a new change
+        await settings_history_repo.log_change(
+            setting_type="cronjob",
+            setting_key=setting_key,
+            old_value=change["new_value"],
+            new_value=old_value,
+            changed_by=int(user.sub) if user.sub else None,
+            changed_by_username=user.username,
+            change_reason=f"Reverted change #{change_id}: {request.reason if request else 'No reason provided'}",
+        )
+    else:
+        raise ValidationError(f"Cannot revert settings of type: {setting_type}")
+    
+    # Mark the original change as reverted
+    await settings_history_repo.mark_as_reverted(change_id, int(user.sub) if user.sub else None)
+    
+    logger.info(f"Settings change {change_id} reverted by {user.username}")
+    
+    return RevertChangeResponse(
+        success=True,
+        message=f"Successfully reverted {setting_type}/{setting_key} to previous value",
+        reverted_setting_type=setting_type,
+        reverted_setting_key=setting_key,
+        restored_value=restored_value,
+    )
