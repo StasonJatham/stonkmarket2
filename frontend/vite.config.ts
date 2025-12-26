@@ -45,6 +45,7 @@ export default defineConfig({
           'react-vendor': ['react', 'react-dom', 'react-router-dom'],
           'charts': ['recharts'],
           'animation': ['framer-motion'],
+          'three': ['three', '@react-three/fiber', '@react-three/drei'],
           'radix': [
             '@radix-ui/react-dialog',
             '@radix-ui/react-dropdown-menu',
@@ -73,6 +74,15 @@ export default defineConfig({
   },
   // Optimize dependencies
   optimizeDeps: {
-    include: ['react', 'react-dom', 'react-router-dom', 'recharts', 'framer-motion'],
+    include: [
+      'react', 
+      'react-dom', 
+      'react-router-dom', 
+      'recharts', 
+      'framer-motion',
+      'three',
+      '@react-three/fiber',
+      '@react-three/drei',
+    ],
   },
 })

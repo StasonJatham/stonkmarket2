@@ -105,13 +105,43 @@
 }
 
 .landing3d-tooltip {
-  background: rgba(6, 10, 20, 0.9);
+  background: rgba(6, 10, 20, 0.95);
   border: 1px solid rgba(120, 168, 255, 0.35);
   padding: 8px 10px;
   border-radius: 10px;
   font-size: 0.75rem;
   color: #d6e4ff;
   min-width: 140px;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.landing3d-tooltip-glow {
+  background: linear-gradient(135deg, rgba(10, 18, 35, 0.95) 0%, rgba(6, 12, 28, 0.98) 100%);
+  border: 1px solid rgba(100, 180, 255, 0.4);
+  padding: 12px 14px;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  color: #e0ecff;
+  min-width: 160px;
+  backdrop-filter: blur(12px);
+  box-shadow: 
+    0 4px 20px rgba(80, 140, 255, 0.15),
+    0 0 40px rgba(80, 140, 255, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  transform: translateY(-4px);
+  animation: tooltipFadeIn 0.2s ease-out;
+}
+
+@keyframes tooltipFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(-4px);
+  }
 }
 
 .landing3d-tooltip-title {
@@ -122,6 +152,16 @@
 .landing3d-tooltip-row {
   color: rgba(198, 215, 255, 0.75);
   font-size: 0.7rem;
+}
+
+.landing3d-positive {
+  color: #4cff8f;
+  text-shadow: 0 0 8px rgba(76, 255, 143, 0.3);
+}
+
+.landing3d-negative {
+  color: #ff5b5b;
+  text-shadow: 0 0 8px rgba(255, 91, 91, 0.3);
 }
 
 @media (max-width: 768px) {

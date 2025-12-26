@@ -248,6 +248,11 @@ export function AdminPage() {
       (job.description || '').toLowerCase().includes(query)
     );
   });
+  const sortedCronJobs = [...filteredCronJobs].sort((a, b) => {
+    const timeA = a.next_run ? new Date(a.next_run).getTime() : Infinity;
+    const timeB = b.next_run ? new Date(b.next_run).getTime() : Infinity;
+    return timeA - timeB;
+  });
 
   const sections = [
     {
@@ -352,85 +357,93 @@ export function AdminPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredCronJobs.map((job) => {
-                      const nextRuns = job.next_runs && job.next_runs.length > 0
-                        ? job.next_runs
-                        : job.next_run ? [job.next_run] : [];
-                      return (
-                        <TableRow key={job.name}>
-                          <TableCell className="font-medium">
-                            {job.description ? (
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <span className="cursor-help underline decoration-dotted">
-                                    {job.name}
-                                  </span>
-                                </TooltipTrigger>
-                                <TooltipContent className="max-w-xs">
-                                  {job.description}
-                                </TooltipContent>
-                              </Tooltip>
-                            ) : (
-                              job.name
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant="outline" className="font-mono text-xs">
-                              {job.cron}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-sm text-muted-foreground">
-                            {job.next_run ? (
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <span className="cursor-help">
-                                    {formatDate(job.next_run)}
-                                  </span>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                  <div className="space-y-1">
-                                    <p className="text-xs font-medium">Next runs</p>
-                                    {nextRuns.map((run, index) => (
-                                      <p key={`${job.name}-next-${index}`} className="text-xs">
-                                        {formatDate(run)}
-                                      </p>
-                                    ))}
-                                  </div>
-                                </TooltipContent>
-                              </Tooltip>
-                            ) : (
-                              '—'
-                            )}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button variant="ghost" size="icon" className="h-8 w-8">
-                                  <MoreHorizontal className="h-4 w-4" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end">
-                                <DropdownMenuItem
-                                  onClick={() => handleRunNow(job.name)}
-                                  disabled={runningJob === job.name}
-                                >
-                                  {runningJob === job.name ? (
-                                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                                  ) : (
-                                    <Play className="h-4 w-4 mr-2" />
-                                  )}
-                                  Run now
-                                </DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => openCronEditor(job)}>
-                                  <Settings className="h-4 w-4 mr-2" />
-                                  Edit schedule
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
+                    <AnimatePresence mode="popLayout">
+                      {sortedCronJobs.map((job) => {
+                        const nextRuns = job.next_runs && job.next_runs.length > 0
+                          ? job.next_runs
+                          : job.next_run ? [job.next_run] : [];
+                        return (
+                          <motion.tr
+                            key={job.name}
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0 }}
+                            className="border-b"
+                          >
+                            <TableCell className="font-medium">
+                              {job.description ? (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <span className="cursor-help underline decoration-dotted">
+                                      {job.name}
+                                    </span>
+                                  </TooltipTrigger>
+                                  <TooltipContent className="max-w-xs">
+                                    {job.description}
+                                  </TooltipContent>
+                                </Tooltip>
+                              ) : (
+                                job.name
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="outline" className="font-mono text-xs">
+                                {job.cron}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-sm text-muted-foreground">
+                              {job.next_run ? (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <span className="cursor-help">
+                                      {formatDate(job.next_run)}
+                                    </span>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <div className="space-y-1">
+                                      <p className="text-xs font-medium">Next runs</p>
+                                      {nextRuns.map((run, index) => (
+                                        <p key={`${job.name}-next-${index}`} className="text-xs">
+                                          {formatDate(run)}
+                                        </p>
+                                      ))}
+                                    </div>
+                                  </TooltipContent>
+                                </Tooltip>
+                              ) : (
+                                '—'
+                              )}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button variant="ghost" size="icon" className="h-8 w-8">
+                                    <MoreHorizontal className="h-4 w-4" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  <DropdownMenuItem
+                                    onClick={() => handleRunNow(job.name)}
+                                    disabled={runningJob === job.name}
+                                  >
+                                    {runningJob === job.name ? (
+                                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                    ) : (
+                                      <Play className="h-4 w-4 mr-2" />
+                                    )}
+                                    Run now
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => openCronEditor(job)}>
+                                    <Settings className="h-4 w-4 mr-2" />
+                                    Edit schedule
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            </TableCell>
+                          </motion.tr>
+                        );
+                      })}
+                    </AnimatePresence>
                   </TableBody>
                 </Table>
               )}

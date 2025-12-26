@@ -9,6 +9,7 @@ from app.core.exceptions import ExternalServiceError
 from app.core.logging import get_logger
 from app.core.security import TokenData
 from app.services.flower_service import fetch_flower
+from app.services import celery_inspect
 
 
 logger = get_logger("routes.celery")
@@ -24,7 +25,14 @@ router = APIRouter(prefix="/celery", tags=["Celery"])
 async def list_workers(
     admin: TokenData = Depends(require_admin),
 ) -> dict:
-    return await fetch_flower("api/workers")
+    try:
+        payload = await fetch_flower("api/workers")
+        if isinstance(payload, dict) and payload:
+            return payload
+    except ExternalServiceError:
+        logger.debug("Flower workers endpoint not available")
+
+    return celery_inspect.list_workers()
 
 
 @router.get(
@@ -58,13 +66,15 @@ async def get_task_info(
 )
 async def list_queues(
     admin: TokenData = Depends(require_admin),
-) -> dict:
+) -> dict | list[dict]:
     try:
-        return await fetch_flower("api/queues")
+        payload = await fetch_flower("api/queues")
+        if payload:
+            return payload
     except ExternalServiceError:
-        # Flower may not support queues endpoint - return empty
         logger.debug("Flower queues endpoint not available")
-        return {}
+
+    return celery_inspect.list_queues()
 
 
 @router.get(

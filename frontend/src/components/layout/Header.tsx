@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '@/context/AuthContext';
@@ -12,7 +12,7 @@ import { TrendingUp, Settings, LogOut, Heart, Eye, EyeOff, PieChart } from 'luci
 import { Button } from '@/components/ui/button';
 
 const navLinks = [
-  { href: '/', label: 'Dashboard' },
+  { href: '/dashboard', label: 'Dashboard' },
   { href: '/swipe', label: 'DipSwipe', icon: Heart },
   { href: '/learn', label: 'Methodology' },
   { href: '/portfolio', label: 'Portfolio', icon: PieChart, requiresAuth: true },
@@ -32,6 +32,31 @@ export function Header() {
 
   const toggleMenu = () => setMobileMenuOpen(!mobileMenuOpen);
   const closeMenu = () => setMobileMenuOpen(false);
+
+  // Lock body scroll when mobile menu is open
+  useEffect(() => {
+    if (mobileMenuOpen) {
+      document.body.style.overflow = 'hidden';
+      document.body.style.position = 'fixed';
+      document.body.style.width = '100%';
+      document.body.style.top = `-${window.scrollY}px`;
+    } else {
+      const scrollY = document.body.style.top;
+      document.body.style.overflow = '';
+      document.body.style.position = '';
+      document.body.style.width = '';
+      document.body.style.top = '';
+      if (scrollY) {
+        window.scrollTo(0, parseInt(scrollY || '0') * -1);
+      }
+    }
+    return () => {
+      document.body.style.overflow = '';
+      document.body.style.position = '';
+      document.body.style.width = '';
+      document.body.style.top = '';
+    };
+  }, [mobileMenuOpen]);
 
   return (
     <>
@@ -143,16 +168,18 @@ export function Header() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="fixed inset-0 z-40 bg-background md:hidden"
+            className="fixed inset-0 z-40 bg-background md:hidden overflow-hidden"
+            style={{ top: '56px' }}
           >
             <motion.nav
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 20 }}
               transition={{ duration: 0.3, delay: 0.1 }}
-              className="flex flex-col items-center justify-center h-full gap-8"
+              className="flex flex-col items-center py-8 px-4 h-full overflow-y-auto overscroll-contain"
+              style={{ maxHeight: 'calc(100vh - 56px)', WebkitOverflowScrolling: 'touch' }}
             >
-              {navLinks.filter((link) => !link.requiresAuth || user).map((link, i) => (
+              <div className="flex flex-col items-center gap-6 w-full max-w-xs">{navLinks.filter((link) => !link.requiresAuth || user).map((link, i) => (
                 <motion.div
                   key={link.href}
                   initial={{ opacity: 0, y: 20 }}
@@ -195,7 +222,7 @@ export function Header() {
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.25 }}
-                className="pt-8 border-t border-border w-48 space-y-3"
+                className="pt-6 border-t border-border w-full space-y-3"
               >
                 <SuggestStockDialog size="lg" className="w-full" showLabel />
                 {user ? (
@@ -222,7 +249,7 @@ export function Header() {
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.3 }}
-                className="pt-6 border-t border-border/50 w-48"
+                className="pt-6 pb-8 border-t border-border/50 w-full"
               >
                 <div className="flex flex-col items-center gap-4 text-muted-foreground">
                   {/* Color pickers */}
@@ -248,6 +275,7 @@ export function Header() {
                   </button>
                 </div>
               </motion.div>
+              </div>
             </motion.nav>
           </motion.div>
         )}

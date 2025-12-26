@@ -387,8 +387,30 @@ export async function getCeleryWorkers(): Promise<CeleryWorkersResponse> {
   return fetchAPI<CeleryWorkersResponse>('/celery/workers');
 }
 
+function normalizeCeleryQueues(payload: unknown): CeleryQueueInfo[] {
+  if (Array.isArray(payload)) {
+    return payload as CeleryQueueInfo[];
+  }
+
+  if (payload && typeof payload === 'object') {
+    const record = payload as Record<string, unknown>;
+    const fromKey = record.queues ?? record.data ?? record.items;
+    if (Array.isArray(fromKey)) {
+      return fromKey as CeleryQueueInfo[];
+    }
+
+    return Object.entries(record).map(([name, info]) => ({
+      name,
+      ...(typeof info === 'object' && info !== null ? (info as CeleryQueueInfo) : {}),
+    }));
+  }
+
+  return [];
+}
+
 export async function getCeleryQueues(): Promise<CeleryQueueInfo[]> {
-  return fetchAPI<CeleryQueueInfo[]>('/celery/queues');
+  const payload = await fetchAPI<unknown>('/celery/queues');
+  return normalizeCeleryQueues(payload);
 }
 
 export async function getCeleryBroker(): Promise<CeleryBrokerInfo> {

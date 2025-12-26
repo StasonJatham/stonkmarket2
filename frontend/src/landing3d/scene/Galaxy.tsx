@@ -84,6 +84,8 @@ export function Galaxy({ assets, snapshot, count }: GalaxyProps) {
           <Html
             position={[highlightPosition.x + 0.6, highlightPosition.y + 0.35, highlightPosition.z]}
             distanceFactor={10}
+            portal={{ current: document.body }}
+            style={{ pointerEvents: 'none' }}
           >
             <div className="landing3d-tooltip">
               <div className="landing3d-tooltip-title">{hoveredPoint.symbol}</div>
