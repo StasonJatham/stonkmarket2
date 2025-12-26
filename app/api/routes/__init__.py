@@ -17,6 +17,7 @@ from . import metrics
 from . import seo
 from . import logos
 from . import portfolios
+from . import celery
 
 __all__ = [
     "auth",
@@ -36,4 +37,5 @@ __all__ = [
     "seo",
     "logos",
     "portfolios",
+    "celery",
 ]

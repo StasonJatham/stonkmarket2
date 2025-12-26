@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from datetime import datetime, timezone
 from typing import List, Optional
 
@@ -11,13 +10,14 @@ from fastapi import APIRouter, Depends, Path, Query
 from app.api.dependencies import require_admin
 from app.core.exceptions import NotFoundError
 from app.core.security import TokenData
-from app.jobs import execute_job
+from app.jobs import enqueue_job, get_task_status
 from app.repositories import cronjobs_orm as cron_repo
 from app.schemas.cronjobs import (
     CronJobResponse,
     CronJobUpdate,
     CronJobWithStatsResponse,
     JobStatusResponse,
+    TaskStatusResponse,
 )
 
 router = APIRouter()
@@ -48,12 +48,20 @@ async def get_cron_logs(
     logs = []
     for job in jobs:
         if job.last_run:
+            status = job.last_status or "unknown"
+            if status == "error":
+                message = job.last_error
+            elif status == "skipped":
+                message = job.last_error or "Skipped"
+            elif status == "queued":
+                message = "Queued"
+            else:
+                message = f"Completed in {job.last_duration_ms}ms"
+
             log_entry = {
                 "name": job.name,
-                "status": job.last_status or "unknown",
-                "message": job.last_error
-                if job.last_status == "error"
-                else f"Completed in {job.last_duration_ms}ms",
+                "status": status,
+                "message": message,
                 "created_at": job.last_run.isoformat() if job.last_run else None,
                 "duration_ms": job.last_duration_ms,
             }
@@ -186,32 +194,34 @@ async def run_cronjob(
             details={"name": name},
         )
 
-    start_time = time.monotonic()
-
     try:
-        message = await execute_job(name)
-        duration_ms = int((time.monotonic() - start_time) * 1000)
-
-        # Update job stats
-        await cron_repo.update_job_stats(name, "ok", duration_ms)
-
+        task_id = enqueue_job(name)
         return JobStatusResponse(
             name=name,
-            status="ok",
-            message=message,
-            duration_ms=duration_ms,
+            status="queued",
+            message="Job enqueued",
+            task_id=task_id,
             created_at=datetime.now(timezone.utc),
         )
     except Exception as exc:
-        duration_ms = int((time.monotonic() - start_time) * 1000)
-
-        # Update job stats with error
-        await cron_repo.update_job_stats(name, "error", duration_ms, str(exc))
-
         return JobStatusResponse(
             name=name,
             status="error",
             message=str(exc),
-            duration_ms=duration_ms,
             created_at=datetime.now(timezone.utc),
         )
+
+
+@router.get(
+    "/tasks/{task_id}",
+    response_model=TaskStatusResponse,
+    summary="Get Celery task status",
+    description="Fetch Celery task status from the result backend.",
+)
+async def get_celery_task_status(
+    task_id: str = Path(..., min_length=1, max_length=200),
+    admin: TokenData = Depends(require_admin),
+) -> TaskStatusResponse:
+    """Get Celery task status for admin monitoring."""
+    status = get_task_status(task_id)
+    return TaskStatusResponse(**status)

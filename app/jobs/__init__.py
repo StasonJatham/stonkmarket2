@@ -1,11 +1,4 @@
-"""Background job scheduler with distributed locking."""
-
-from .scheduler import (
-    JobScheduler,
-    get_scheduler,
-    start_scheduler,
-    stop_scheduler,
-)
+"""Background job utilities."""
 from .registry import (
     JobRegistry,
     register_job,
@@ -22,18 +15,11 @@ from .dispatch import (
 
 
 async def reschedule_job(name: str, cron_expression: str) -> bool:
-    """Reschedule a running job with a new cron expression."""
-    scheduler = get_scheduler()
-    if scheduler is None:
-        return False
-    return await scheduler.reschedule_job(name, cron_expression)
+    """No-op reschedule hook (Celery beat polls DB for changes)."""
+    return True
 
 
 __all__ = [
-    "JobScheduler",
-    "get_scheduler",
-    "start_scheduler",
-    "stop_scheduler",
     "JobRegistry",
     "register_job",
     "get_job",

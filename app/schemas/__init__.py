@@ -23,6 +23,7 @@ from .cronjobs import (
     CronJobLogCreate,
     CronJobLogResponse,
     CronJobLogListResponse,
+    TaskStatusResponse,
 )
 from .common import (
     ErrorResponse,
@@ -75,6 +76,7 @@ __all__ = [
     "CronJobLogCreate",
     "CronJobLogResponse",
     "CronJobLogListResponse",
+    "TaskStatusResponse",
     # Suggestions
     "SuggestionStatus",
     "SuggestionCreate",

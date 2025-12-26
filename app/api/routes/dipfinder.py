@@ -8,13 +8,14 @@ from __future__ import annotations
 from datetime import date
 from typing import Optional, Dict
 
-from fastapi import APIRouter, Depends, Query, Path, BackgroundTasks
+from fastapi import APIRouter, Depends, Query, Path
 
 from app.api.dependencies import require_user, require_admin
 from app.core.exceptions import NotFoundError, BadRequestError
 from app.core.logging import get_logger
 from app.core.security import TokenData
-from app.database.connection import fetch_all
+from app.celery_app import celery_app
+from app.repositories import dip_state_orm as dip_state_repo
 from app.dipfinder.config import get_dipfinder_config
 from app.dipfinder.service import get_dipfinder_service
 from app.schemas.dipfinder import (
@@ -39,16 +40,17 @@ async def _get_dip_state_map(tickers: list[str]) -> Dict[str, dict]:
     if not tickers:
         return {}
     
-    placeholders = ", ".join(f"${i+1}" for i in range(len(tickers)))
-    rows = await fetch_all(
-        f"""
-        SELECT symbol, current_price, ath_price, dip_percentage, dip_start_date
-        FROM dip_state
-        WHERE symbol IN ({placeholders})
-        """,
-        *tickers
-    )
-    return {row["symbol"]: dict(row) for row in rows}
+    states = await dip_state_repo.get_dip_states_for_symbols(tickers)
+    return {
+        symbol: {
+            "symbol": state.symbol,
+            "current_price": float(state.current_price) if state.current_price else None,
+            "ath_price": float(state.ath_price) if state.ath_price else None,
+            "dip_percentage": float(state.dip_percentage) if state.dip_percentage else None,
+            "dip_start_date": state.dip_start_date,
+        }
+        for symbol, state in states.items()
+    }
 
 
 def _signal_to_response(signal, include_factors: bool = False, dip_state: dict = None) -> DipSignalResponse:
@@ -233,7 +235,6 @@ async def get_ticker_signal(
 )
 async def run_dipfinder(
     request: DipFinderRunRequest,
-    background_tasks: BackgroundTasks,
     user: TokenData = Depends(require_user),
 ) -> DipFinderRunResponse:
     """
@@ -253,10 +254,10 @@ async def run_dipfinder(
         tickers = [t.upper() for t in request.tickers]
     else:
         # Get user's tracked symbols from database
-        from app.database.connection import fetch_all
+        from app.repositories import symbols_orm as symbols_repo
 
-        rows = await fetch_all("SELECT symbol FROM symbols ORDER BY symbol")
-        tickers = [r["symbol"] for r in rows]
+        symbols = await symbols_repo.list_symbols()
+        tickers = [symbol.symbol for symbol in symbols]
 
     if not tickers:
         return DipFinderRunResponse(
@@ -301,16 +302,20 @@ async def run_dipfinder(
         )
 
     # For larger sets, queue for background processing
-    async def _run_in_background():
-        for window in windows:
-            await service.get_signals(tickers, benchmark, window, force_refresh=True)
-
-    background_tasks.add_task(_run_in_background)
+    task = celery_app.send_task(
+        "jobs.dipfinder_run",
+        kwargs={
+            "tickers": tickers,
+            "benchmark": benchmark,
+            "windows": windows,
+        },
+    )
 
     return DipFinderRunResponse(
         status="started",
         message=f"Background computation started for {len(tickers)} tickers",
         tickers_processed=len(tickers),
+        task_id=task.id,
     )
 
 
@@ -457,19 +462,17 @@ async def get_config() -> DipFinderConfigResponse:
     description="Force refresh signals for all tracked symbols.",
 )
 async def admin_refresh_all(
-    background_tasks: BackgroundTasks,
     benchmark: Optional[str] = Query(default=None),
     admin: TokenData = Depends(require_admin),
 ) -> DipFinderRunResponse:
     """Admin endpoint to refresh all tracked symbols."""
-    from app.database.connection import fetch_all
+    from app.repositories import symbols_orm as symbols_repo
 
     config = get_dipfinder_config()
-    service = get_dipfinder_service()
 
     # Get all tracked symbols
-    rows = await fetch_all("SELECT symbol FROM symbols ORDER BY symbol")
-    tickers = [r["symbol"] for r in rows]
+    symbols = await symbols_repo.list_symbols()
+    tickers = [symbol.symbol for symbol in symbols]
 
     if not tickers:
         return DipFinderRunResponse(
@@ -477,18 +480,16 @@ async def admin_refresh_all(
             message="No symbols to refresh",
         )
 
-    benchmark = benchmark or config.default_benchmark
-
-    async def _refresh_all():
-        for window in config.windows:
-            await service.get_signals(tickers, benchmark, window, force_refresh=True)
-
-    background_tasks.add_task(_refresh_all)
+    task = celery_app.send_task(
+        "jobs.dipfinder_refresh_all",
+        kwargs={"benchmark": benchmark or config.default_benchmark},
+    )
 
     return DipFinderRunResponse(
         status="started",
         message=f"Refreshing {len(tickers)} symbols across {len(config.windows)} windows",
         tickers_processed=len(tickers),
+        task_id=task.id,
     )
 
 
@@ -501,18 +502,16 @@ async def admin_cleanup(
     admin: TokenData = Depends(require_admin),
 ) -> dict:
     """Admin endpoint to cleanup expired data."""
-    from app.database.connection import execute
+    from app.repositories import cleanup_orm as cleanup_repo
 
     # Delete expired signals
-    await execute("DELETE FROM dipfinder_signals WHERE expires_at < NOW()")
+    await cleanup_repo.delete_expired_signals()
 
     # Delete old yfinance cache
-    await execute("DELETE FROM yfinance_info_cache WHERE expires_at < NOW()")
+    await cleanup_repo.delete_expired_yfinance_cache()
 
     # Delete old price history (keep 2 years)
-    await execute(
-        "DELETE FROM price_history WHERE date < CURRENT_DATE - INTERVAL '730 days'"
-    )
+    await cleanup_repo.delete_old_price_history(days=730)
 
     return {
         "status": "completed",

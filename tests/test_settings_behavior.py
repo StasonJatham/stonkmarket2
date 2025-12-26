@@ -31,18 +31,14 @@ class TestAutoApprovalGates:
         mock_settings.auto_approve_unique_voters = 3
         mock_settings.auto_approve_min_age_hours = 1
         
-        mock_bg_tasks = AsyncMock()
-        
         with patch("app.core.config.settings", mock_settings):
             result = await _check_and_apply_auto_approval(
                 suggestion_id=1,
                 symbol="TEST",
                 new_score=100,  # Way above threshold
-                background_tasks=mock_bg_tasks,
             )
         
         assert result is False
-        mock_bg_tasks.add_task.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_auto_approval_requires_unique_voters(self):
@@ -55,23 +51,16 @@ class TestAutoApprovalGates:
         mock_settings.auto_approve_unique_voters = 5
         mock_settings.auto_approve_min_age_hours = 1
         
-        mock_bg_tasks = AsyncMock()
-        
         with patch("app.core.config.settings", mock_settings), \
-             patch("app.api.routes.suggestions.fetch_one", side_effect=[
-                 {"unique_voters": 2},  # Not enough unique voters
-                 {"age_hours": 24.0},
-             ]), \
+             patch("app.api.routes.suggestions.suggestions_repo.get_unique_voter_count", return_value=2), \
              patch("app.api.routes.suggestions.get_runtime_setting", return_value=10):
             result = await _check_and_apply_auto_approval(
                 suggestion_id=1,
                 symbol="TEST",
                 new_score=100,  # Above threshold
-                background_tasks=mock_bg_tasks,
             )
         
         assert result is False
-        mock_bg_tasks.add_task.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_auto_approval_requires_min_age(self):
@@ -84,24 +73,18 @@ class TestAutoApprovalGates:
         mock_settings.auto_approve_unique_voters = 3
         mock_settings.auto_approve_min_age_hours = 48
         
-        mock_bg_tasks = AsyncMock()
-        
-        # Mock fetch_one: enough voters but too young
+        # Mock repository methods: enough voters but too young
         with patch("app.core.config.settings", mock_settings), \
-             patch("app.api.routes.suggestions.fetch_one", side_effect=[
-                 {"unique_voters": 10},  # Enough voters
-                 {"age_hours": 12.0},    # Too young (need 48h)
-             ]), \
+             patch("app.api.routes.suggestions.suggestions_repo.get_unique_voter_count", return_value=10), \
+             patch("app.api.routes.suggestions.suggestions_repo.get_suggestion_age_hours", return_value=12.0), \
              patch("app.api.routes.suggestions.get_runtime_setting", return_value=10):
             result = await _check_and_apply_auto_approval(
                 suggestion_id=1,
                 symbol="TEST",
                 new_score=100,
-                background_tasks=mock_bg_tasks,
             )
         
         assert result is False
-        mock_bg_tasks.add_task.assert_not_called()
 
 
 class TestCacheTTLBehavior:

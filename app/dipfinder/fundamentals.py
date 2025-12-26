@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
 from app.core.logging import get_logger
-from app.database.connection import fetch_one, execute
+from app.repositories import yfinance_cache_orm as yfinance_cache_repo
 from app.services.data_providers import get_yfinance_service
 
 from .config import DipFinderConfig, get_dipfinder_config
@@ -664,23 +664,7 @@ async def _fetch_info_async(ticker: str) -> Dict[str, Any]:
 async def _get_cached_info_from_db(ticker: str) -> Optional[Dict[str, Any]]:
     """Get cached info from database if not expired."""
     try:
-        row = await fetch_one(
-            """
-            SELECT data, expires_at
-            FROM yfinance_info_cache
-            WHERE symbol = $1 AND expires_at > NOW()
-            """,
-            ticker.upper(),
-        )
-
-        if row and row["data"]:
-            return (
-                row["data"]
-                if isinstance(row["data"], dict)
-                else json.loads(row["data"])
-            )
-
-        return None
+        return await yfinance_cache_repo.get_cached_info(ticker)
     except Exception as e:
         logger.debug(f"Could not load cached info for {ticker}: {e}")
         return None
@@ -689,20 +673,7 @@ async def _get_cached_info_from_db(ticker: str) -> Optional[Dict[str, Any]]:
 async def _save_info_to_db(ticker: str, info: Dict[str, Any], ttl_seconds: int) -> None:
     """Save info to database cache."""
     try:
-        expires_at = datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
-        await execute(
-            """
-            INSERT INTO yfinance_info_cache (symbol, data, fetched_at, expires_at)
-            VALUES ($1, $2, NOW(), $3)
-            ON CONFLICT (symbol) DO UPDATE SET
-                data = $2,
-                fetched_at = NOW(),
-                expires_at = $3
-            """,
-            ticker.upper(),
-            json.dumps(info),
-            expires_at,
-        )
+        await yfinance_cache_repo.save_info(ticker, info, ttl_seconds)
     except Exception as e:
         logger.debug(f"Could not save info cache for {ticker}: {e}")
 

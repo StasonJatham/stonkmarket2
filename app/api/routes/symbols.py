@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Path, Query, status
+from fastapi import APIRouter, Depends, Path, Query, status
 from pydantic import BaseModel
 
 from app.api.dependencies import require_user
 from app.cache.cache import Cache
+from app.celery_app import celery_app
 from app.core.exceptions import ConflictError, NotFoundError
 from app.core.logging import get_logger
 from app.core.security import TokenData
@@ -372,7 +373,6 @@ async def get_symbol(
 )
 async def create_symbol(
     payload: SymbolCreate,
-    background_tasks: BackgroundTasks,
     user: TokenData = Depends(require_user),
 ) -> SymbolResponse:
     """
@@ -396,7 +396,7 @@ async def create_symbol(
     )
 
     # Process symbol in background (fetch data, generate AI summary)
-    background_tasks.add_task(_process_new_symbol, payload.symbol)
+    task = celery_app.send_task("jobs.process_new_symbol", args=[payload.symbol.upper()])
 
     return SymbolResponse(
         symbol=created.symbol,
@@ -405,6 +405,7 @@ async def create_symbol(
         name=created.name,
         fetch_status='fetching',  # Will be set to fetching by background task
         fetch_error=None,
+        task_id=task.id,
     )
 
 
@@ -484,7 +485,8 @@ async def _process_new_symbol(symbol: str) -> None:
     """
     import asyncio
     from datetime import date, timedelta
-    from app.database.connection import execute, fetch_one
+    from app.repositories import symbols_orm as symbols_repo_local
+    from app.repositories import dip_state_orm as dip_state_repo
     from app.services.stock_info import get_stock_info_async
     from app.services.openai_client import summarize_company, generate_bio, rate_dip
     from app.repositories import dip_votes_orm as dip_votes_repo
@@ -497,17 +499,16 @@ async def _process_new_symbol(symbol: str) -> None:
     await asyncio.sleep(0.5)
     
     # Verify symbol exists before proceeding
-    exists = await fetch_one("SELECT 1 FROM symbols WHERE symbol = $1", symbol.upper())
+    exists = await symbols_repo_local.symbol_exists(symbol.upper())
     if not exists:
         logger.error(f"[NEW SYMBOL] FAILED: Symbol {symbol} not found in database - aborting")
         return
     
     # Set fetch_status to 'fetching' so UI shows loading state
-    await execute(
-        """UPDATE symbols 
-           SET fetch_status = 'fetching', fetch_error = NULL, updated_at = NOW()
-           WHERE symbol = $1""",
+    await symbols_repo_local.update_fetch_status(
         symbol.upper(),
+        fetch_status="fetching",
+        fetch_error=None,
     )
     
     # Track what we've successfully done
@@ -520,11 +521,10 @@ async def _process_new_symbol(symbol: str) -> None:
         if not info:
             logger.error(f"[NEW SYMBOL] FAILED: Could not fetch Yahoo data for {symbol} - aborting")
             # Mark as error
-            await execute(
-                """UPDATE symbols 
-                   SET fetch_status = 'error', fetch_error = 'Could not fetch data from Yahoo Finance'
-                   WHERE symbol = $1""",
+            await symbols_repo_local.update_fetch_status(
                 symbol.upper(),
+                fetch_status="error",
+                fetch_error="Could not fetch data from Yahoo Finance",
             )
             # Still try to invalidate cache
             try:
@@ -548,15 +548,10 @@ async def _process_new_symbol(symbol: str) -> None:
         # Step 2: Update symbols with name, sector (no AI yet)
         if name or sector:
             try:
-                await execute(
-                    """UPDATE symbols SET 
-                           name = COALESCE($2, name),
-                           sector = COALESCE($3, sector),
-                           updated_at = NOW()
-                       WHERE symbol = $1""",
+                await symbols_repo_local.update_symbol_info(
                     symbol.upper(),
-                    name,
-                    sector,
+                    name=name,
+                    sector=sector,
                 )
                 steps_completed.append("symbol_update")
                 logger.info(f"[NEW SYMBOL] Step 2: Updated symbol table for {symbol}")
@@ -565,18 +560,11 @@ async def _process_new_symbol(symbol: str) -> None:
         
         # Step 3: Add to dip_state so it appears in dashboard
         try:
-            await execute(
-                """INSERT INTO dip_state (symbol, current_price, ath_price, dip_percentage, first_seen, last_updated)
-                   VALUES ($1, $2, $3, $4, NOW(), NOW())
-                   ON CONFLICT (symbol) DO UPDATE SET
-                       current_price = EXCLUDED.current_price,
-                       ath_price = EXCLUDED.ath_price,
-                       dip_percentage = EXCLUDED.dip_percentage,
-                       last_updated = NOW()""",
-                symbol.upper(),
-                current_price,
-                ath_price,
-                dip_pct,
+            await dip_state_repo.upsert_dip_state(
+                symbol=symbol.upper(),
+                current_price=current_price,
+                ath_price=ath_price,
+                dip_percentage=dip_pct,
             )
             steps_completed.append("dip_state")
             logger.info(f"[NEW SYMBOL] Step 3: Added to dip_state with dip={dip_pct:.1f}%")
@@ -609,10 +597,9 @@ async def _process_new_symbol(symbol: str) -> None:
                     description=full_summary,
                 )
                 if ai_summary:
-                    await execute(
-                        "UPDATE symbols SET summary_ai = $2, updated_at = NOW() WHERE symbol = $1",
+                    await symbols_repo_local.update_symbol_info(
                         symbol.upper(),
-                        ai_summary,
+                        summary_ai=ai_summary,
                     )
                     steps_completed.append("ai_summary")
                     logger.info(f"[NEW SYMBOL] Step 5: Generated AI summary ({len(ai_summary)} chars)")
@@ -713,11 +700,11 @@ async def _process_new_symbol(symbol: str) -> None:
             logger.warning(f"[NEW SYMBOL] Step 9 FAILED: Could not invalidate cache: {e}")
         
         # Step 10: Mark as fetched
-        await execute(
-            """UPDATE symbols 
-               SET fetch_status = 'fetched', fetched_at = NOW(), updated_at = NOW()
-               WHERE symbol = $1""",
+        from datetime import datetime as dt
+        await symbols_repo_local.update_fetch_status(
             symbol.upper(),
+            fetch_status="fetched",
+            fetched_at=dt.utcnow(),
         )
         
         logger.info(f"[NEW SYMBOL] COMPLETED processing {symbol}. Steps completed: {', '.join(steps_completed)}")
@@ -726,12 +713,10 @@ async def _process_new_symbol(symbol: str) -> None:
         logger.error(f"[NEW SYMBOL] FATAL ERROR processing {symbol}: {e}", exc_info=True)
         # Mark as error
         try:
-            await execute(
-                """UPDATE symbols 
-                   SET fetch_status = 'error', fetch_error = $2
-                   WHERE symbol = $1""",
+            await symbols_repo_local.update_fetch_status(
                 symbol.upper(),
-                str(e)[:500],
+                fetch_status="error",
+                fetch_error=str(e)[:500],
             )
         except Exception:
             pass
@@ -764,7 +749,7 @@ async def regenerate_ai_summary(
     symbol: str = Depends(_validate_symbol_path),
 ) -> AISummaryResponse:
     """Regenerate the AI summary for a symbol from its Yahoo Finance description."""
-    from app.database.connection import execute, fetch_one
+    from app.repositories import symbols_orm as symbols_repo_local
     from app.services.stock_info import get_stock_info_async
     from app.services.openai_client import summarize_company
     from app.api.routes.dips import invalidate_stock_info_cache
@@ -791,11 +776,10 @@ async def regenerate_ai_summary(
     )
     
     if new_summary:
-        # Persist to database
-        await execute(
-            "UPDATE symbols SET summary_ai = $2, updated_at = NOW() WHERE symbol = $1",
+        # Persist to database using ORM
+        await symbols_repo_local.update_symbol_info(
             symbol.upper(),
-            new_summary,
+            summary_ai=new_summary,
         )
         
         # Invalidate caches
@@ -946,4 +930,3 @@ async def list_agents() -> list[AgentInfoResponse]:
     
     agents = get_agent_info()
     return [AgentInfoResponse(**a) for a in agents]
-

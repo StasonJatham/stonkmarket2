@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 from datetime import datetime, timedelta
 from typing import List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, Header
+from fastapi import APIRouter, Depends, Query, Request, Header
 
 from app.api.dependencies import require_admin
 from app.core.exceptions import ValidationError, NotFoundError
 from app.core.logging import get_logger
 from app.core.security import TokenData, decode_access_token
+from app.celery_app import celery_app
 from app.core.client_identity import (
     get_client_fingerprint,
     get_server_fingerprint,
@@ -23,7 +23,12 @@ from app.core.client_identity import (
     get_voted_symbols,
     RiskLevel,
 )
-from app.database.connection import fetch_all, fetch_one, execute
+from app.database.connection import get_session
+from sqlalchemy import text
+from app.repositories import suggestions_orm as suggestions_repo
+from app.repositories import symbols_orm as symbols_repo
+from app.repositories import dip_state_orm as dip_state_repo
+from app.repositories import auth_user_orm as auth_repo
 from app.services.runtime_settings import get_runtime_setting
 from app.services.suggestion_stock_info import (
     validate_symbol_format as _validate_symbol_format,
@@ -38,6 +43,12 @@ logger = get_logger("api.routes.suggestions")
 router = APIRouter(prefix="/suggestions", tags=["suggestions"])
 
 
+def _enqueue_symbol_processing(symbol: str) -> str:
+    """Queue background processing for an approved symbol."""
+    task = celery_app.send_task("jobs.process_approved_symbol", args=[symbol.upper()])
+    return task.id
+
+
 # =============================================================================
 # Auto-approval helper
 # =============================================================================
@@ -47,7 +58,6 @@ async def _check_and_apply_auto_approval(
     suggestion_id: int,
     symbol: str,
     new_score: int,
-    background_tasks: BackgroundTasks,
 ) -> bool:
     """Check all auto-approval conditions and approve if met.
     
@@ -73,12 +83,7 @@ async def _check_and_apply_auto_approval(
         return False
     
     # 3. Check unique voter count
-    unique_voters_result = await fetch_one(
-        """SELECT COUNT(DISTINCT fingerprint) as unique_voters 
-           FROM suggestion_votes WHERE suggestion_id = $1""",
-        suggestion_id,
-    )
-    unique_voters = unique_voters_result["unique_voters"] if unique_voters_result else 0
+    unique_voters = await suggestions_repo.get_unique_voter_count(suggestion_id)
     
     if unique_voters < settings.auto_approve_unique_voters:
         logger.debug(
@@ -88,12 +93,7 @@ async def _check_and_apply_auto_approval(
         return False
     
     # 4. Check suggestion age
-    age_result = await fetch_one(
-        """SELECT EXTRACT(EPOCH FROM (NOW() - created_at)) / 3600 as age_hours
-           FROM stock_suggestions WHERE id = $1""",
-        suggestion_id,
-    )
-    age_hours = float(age_result["age_hours"]) if age_result else 0
+    age_hours = await suggestions_repo.get_suggestion_age_hours(suggestion_id)
     
     if age_hours < settings.auto_approve_min_age_hours:
         logger.debug(
@@ -103,21 +103,13 @@ async def _check_and_apply_auto_approval(
         return False
     
     # All conditions met - auto-approve
-    await execute(
-        """UPDATE stock_suggestions 
-           SET status = 'approved', approved_by = NULL, reviewed_at = NOW()
-           WHERE id = $1 AND status = 'pending'""",
-        suggestion_id,
-    )
+    await suggestions_repo.auto_approve_suggestion(suggestion_id)
     
     logger.info(
         f"Auto-approved {symbol}: {new_score} votes (>={auto_approve_threshold}), "
         f"{unique_voters} unique voters (>={settings.auto_approve_unique_voters}), "
         f"{age_hours:.1f}h old (>={settings.auto_approve_min_age_hours}h)"
     )
-    
-    # Trigger background processing for data + AI
-    background_tasks.add_task(_process_approved_symbol, symbol)
     
     return True
 
@@ -143,7 +135,6 @@ async def get_suggestion_settings():
 @router.post("", response_model=dict, status_code=201)
 async def suggest_stock(
     request: Request,
-    background_tasks: BackgroundTasks,
     symbol: str = Query(..., min_length=1, max_length=10, description="Stock symbol (1-10 chars, letters/numbers/dots only)"),
     authorization: Optional[str] = Header(default=None),
 ):
@@ -174,41 +165,30 @@ async def suggest_stock(
     fingerprint_hash = hashlib.sha256(server_fp.encode()).hexdigest()[:32]
 
     # Check if suggestion already exists
-    existing = await fetch_one(
-        "SELECT id, symbol, status, vote_score FROM stock_suggestions WHERE symbol = $1",
-        symbol,
-    )
+    existing = await suggestions_repo.get_suggestion_by_symbol(symbol)
 
     if existing:
+        task_id = None
         # Already exists - try to add a vote (admins bypass cooldown)
         if not is_admin:
             check = await check_vote_allowed(request, symbol)
             if not check.allowed:
                 raise ValidationError(message=check.reason, details={"symbol": symbol})
 
-        suggestion_id = existing["id"]
+        suggestion_id = existing.id
 
         # Record vote for tracking (skip for admins to avoid polluting rate limit data)
         if not is_admin:
             await record_vote(request, symbol)
 
-        # Also store in database for historical record
-        await execute(
-            """INSERT INTO suggestion_votes (suggestion_id, fingerprint, vote_type, created_at)
-               VALUES ($1, $2, 'up', NOW())
-               ON CONFLICT (suggestion_id, fingerprint) DO NOTHING""",
-            suggestion_id,
-            fingerprint_hash,
+        # Add vote to database (upsert)
+        new_score, _ = await suggestions_repo.upsert_vote(
+            suggestion_id=suggestion_id,
+            fingerprint=fingerprint_hash,
+            vote_type="up",
         )
 
-        # Update vote score
-        await execute(
-            "UPDATE stock_suggestions SET vote_score = vote_score + 1 WHERE id = $1",
-            suggestion_id,
-        )
-
-        new_score = existing["vote_score"] + 1
-        current_status = existing["status"]
+        current_status = existing.status
         auto_approved = False
         
         # Check for auto-approval if still pending
@@ -217,18 +197,22 @@ async def suggest_stock(
                 suggestion_id=suggestion_id,
                 symbol=symbol,
                 new_score=new_score,
-                background_tasks=background_tasks,
             )
             if auto_approved:
+                task_id = _enqueue_symbol_processing(symbol)
                 current_status = "approved"
 
-        return {
+        response = {
             "message": "Vote added successfully",
             "symbol": symbol,
             "vote_count": new_score,
             "status": current_status,
             "auto_approved": auto_approved,
         }
+        if task_id:
+            response["task_id"] = task_id
+
+        return response
 
     # NEW SUGGESTION - check rate limit first
     # Check suggestion limits (admins bypass)
@@ -248,24 +232,16 @@ async def suggest_stock(
         )
     
     # Create suggestion with fetched data (or with pending fetch status if rate limited)
-    result = await fetch_one(
-        """INSERT INTO stock_suggestions (
-               symbol, fingerprint, status, vote_score, created_at,
-               company_name, sector, summary, website, ipo_year, 
-               current_price, ath_price, fetch_status, fetch_error, fetched_at
-           ) VALUES ($1, $2, 'pending', 1, NOW(), $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
-           RETURNING id, vote_score""",
-        symbol,
-        fingerprint_hash,
-        stock_info["name"],
-        stock_info["sector"],
-        stock_info["summary"],
-        stock_info["website"],
-        stock_info["ipo_year"],
-        stock_info["current_price"],
-        stock_info["ath_price"],
-        stock_info["fetch_status"],
-        stock_info["fetch_error"],
+    new_suggestion = await suggestions_repo.create_suggestion(
+        symbol=symbol,
+        fingerprint=fingerprint_hash,
+        company_name=stock_info["name"],
+        sector=stock_info["sector"],
+        summary=stock_info["summary"],
+        website=stock_info["website"],
+        ipo_year=stock_info["ipo_year"],
+        current_price=stock_info["current_price"],
+        ath_price=stock_info["ath_price"],
     )
 
     # Record suggestion for rate limiting (skip for admins)
@@ -277,12 +253,10 @@ async def suggest_stock(
         await record_vote(request, symbol)
 
     # Add initial vote to database
-    await execute(
-        """INSERT INTO suggestion_votes (suggestion_id, fingerprint, vote_type, created_at)
-           VALUES ($1, $2, 'up', NOW())
-           ON CONFLICT (suggestion_id, fingerprint) DO NOTHING""",
-        result["id"],
-        fingerprint_hash,
+    await suggestions_repo.upsert_vote(
+        suggestion_id=new_suggestion.id,
+        fingerprint=fingerprint_hash,
+        vote_type="up",
     )
     
     response = {
@@ -304,7 +278,6 @@ async def suggest_stock(
 async def vote_for_suggestion(
     request: Request,
     symbol: str,
-    background_tasks: BackgroundTasks,
     authorization: Optional[str] = Header(default=None),
 ):
     """
@@ -339,66 +312,54 @@ async def vote_for_suggestion(
             )
 
     # Get suggestion
-    suggestion = await fetch_one(
-        "SELECT id, symbol, status, vote_score FROM stock_suggestions WHERE symbol = $1",
-        symbol,
-    )
+    suggestion = await suggestions_repo.get_suggestion_by_symbol(symbol)
 
     if not suggestion:
         raise NotFoundError(
             message=f"No suggestion found for '{symbol}'", details={"symbol": symbol}
         )
 
-    suggestion_id = suggestion["id"]
+    suggestion_id = suggestion.id
 
     # Record vote for tracking
     await record_vote(request, symbol)
 
-    # Also store in database for historical record
+    # Store vote in database
     server_fp = get_server_fingerprint(request)
     fingerprint_hash = hashlib.sha256(server_fp.encode()).hexdigest()[:32]
-    await execute(
-        """INSERT INTO suggestion_votes (suggestion_id, fingerprint, vote_type, created_at)
-           VALUES ($1, $2, 'up', NOW())
-           ON CONFLICT (suggestion_id, fingerprint) DO NOTHING""",
-        suggestion_id,
-        fingerprint_hash,
+    new_score, _ = await suggestions_repo.upsert_vote(
+        suggestion_id=suggestion_id,
+        fingerprint=fingerprint_hash,
+        vote_type="up",
     )
 
-    # Update vote score
-    await execute(
-        "UPDATE stock_suggestions SET vote_score = vote_score + 1 WHERE id = $1",
-        suggestion_id,
-    )
-
-    new_score = suggestion["vote_score"] + 1
-    current_status = suggestion["status"]
+    current_status = suggestion.status
     auto_approved = False
+    task_id = None
     
     # Check for auto-approval if still pending
     if current_status == "pending":
         auto_approve_threshold = get_runtime_setting("auto_approve_votes", 10)
         if new_score >= auto_approve_threshold:
             # Auto-approve the suggestion
-            await execute(
-                """UPDATE stock_suggestions 
-                   SET status = 'approved', approved_by = NULL, reviewed_at = NOW()
-                   WHERE id = $1 AND status = 'pending'""",
-                suggestion_id,
-            )
+            await suggestions_repo.auto_approve_suggestion(suggestion_id)
             current_status = "approved"
             auto_approved = True
             logger.info(f"Auto-approved suggestion {symbol} with {new_score} votes (threshold: {auto_approve_threshold})")
             # Trigger background processing for data + AI
-            background_tasks.add_task(_process_approved_symbol, symbol)
+            task_id = _enqueue_symbol_processing(symbol)
 
-    return {
+    response = {
         "message": "Vote recorded", 
         "symbol": symbol,
         "vote_count": new_score,
         "status": current_status,
         "auto_approved": auto_approved,
     }
+    if task_id:
+        response["task_id"] = task_id
+
+    return response
 
 
 @router.get("/top", response_model=List[dict])
@@ -418,34 +379,31 @@ async def get_top_suggestions(
     if exclude_voted:
         voted_symbols = await get_voted_symbols(request)
     
-    rows = await fetch_all(
-        """SELECT symbol, company_name as name, vote_score as vote_count, 
-                  sector, summary, website, ipo_year, fetch_status
-           FROM stock_suggestions 
-           WHERE status = 'pending'
-           ORDER BY vote_score DESC
-           LIMIT $1""",
-        limit + len(voted_symbols),  # Fetch extra to account for filtering
+    # Use ORM to get pending suggestions
+    suggestions, _ = await suggestions_repo.list_all_suggestions(
+        status="pending",
+        limit=limit + len(voted_symbols),
+        offset=0,
     )
     
-    # Filter out voted symbols
-    if voted_symbols:
-        rows = [row for row in rows if row["symbol"] not in voted_symbols][:limit]
-
-    # Use stored data - no live yfinance calls needed!
-    return [
-        {
-            "symbol": row["symbol"],
-            "name": row["name"],
-            "vote_count": row["vote_count"],
-            "sector": row["sector"],
-            "summary": row["summary"],
-            "ipo_year": row["ipo_year"],
-            "website": row["website"],
-            "fetch_status": row["fetch_status"],
-        }
-        for row in rows
-    ]
+    # Filter out voted symbols and convert to response format
+    results = []
+    for suggestion in suggestions:
+        if suggestion.symbol not in voted_symbols:
+            results.append({
+                "symbol": suggestion.symbol,
+                "name": suggestion.company_name,
+                "vote_count": suggestion.vote_score,
+                "sector": suggestion.sector,
+                "summary": suggestion.summary,
+                "ipo_year": suggestion.ipo_year,
+                "website": suggestion.website,
+                "fetch_status": suggestion.fetch_status,
+            })
+            if len(results) >= limit:
+                break
+    
+    return results
 
 
 @router.get("/search", response_model=List[dict])
@@ -464,41 +422,11 @@ async def search_stored_suggestions(
     Fast endpoint suitable for real-time debounced search.
     Results are ordered by relevance: exact match > prefix match > contains match.
     """
-    query_upper = q.upper().strip()
-    search_pattern = f"%{query_upper}%"
-    prefix_pattern = f"{query_upper}%"
+    # Search in suggestions (pending ones) using ORM
+    suggestion_rows = await suggestions_repo.search_pending_suggestions(q, limit)
     
-    # Search in suggestions first (pending ones)
-    # Use CASE to rank: exact=0, prefix=1, contains=2
-    suggestion_rows = await fetch_all(
-        """SELECT symbol, company_name as name, sector, 'suggestion' as source, vote_score,
-                  CASE 
-                      WHEN UPPER(symbol) = $3 THEN 0
-                      WHEN UPPER(symbol) LIKE $2 THEN 1
-                      ELSE 2
-                  END as match_rank
-           FROM stock_suggestions 
-           WHERE status = 'pending'
-             AND (UPPER(symbol) LIKE $1 OR UPPER(company_name) LIKE $1)
-           ORDER BY match_rank, vote_score DESC
-           LIMIT $4""",
-        search_pattern, prefix_pattern, query_upper, limit,
-    )
-    
-    # Search in tracked symbols with same ranking
-    symbol_rows = await fetch_all(
-        """SELECT symbol, name, sector, 'tracked' as source, 0 as vote_score,
-                  CASE 
-                      WHEN UPPER(symbol) = $3 THEN 0
-                      WHEN UPPER(symbol) LIKE $2 THEN 1
-                      ELSE 2
-                  END as match_rank
-           FROM symbols
-           WHERE UPPER(symbol) LIKE $1 OR UPPER(name) LIKE $1
-           ORDER BY match_rank, symbol
-           LIMIT $4""",
-        search_pattern, prefix_pattern, query_upper, limit,
-    )
+    # Search in tracked symbols using ORM
+    symbol_rows = await suggestions_repo.search_tracked_symbols(q, limit)
     
     # Combine and dedupe (prefer tracked over suggestions)
     seen_symbols = set()
@@ -539,42 +467,31 @@ async def list_pending_suggestions(
     """List all pending suggestions (public)."""
     offset = (page - 1) * page_size
 
-    # Get count
-    count_row = await fetch_one(
-        "SELECT COUNT(*) as cnt FROM stock_suggestions WHERE status = 'pending'"
-    )
-    total = count_row["cnt"] if count_row else 0
-
-    # Get items
-    rows = await fetch_all(
-        """SELECT id, symbol, company_name, sector, summary, website, ipo_year,
-                  fetch_status, status, vote_score, created_at
-           FROM stock_suggestions 
-           WHERE status = 'pending'
-           ORDER BY vote_score DESC
-           LIMIT $1 OFFSET $2""",
-        page_size,
-        offset,
+    # Get pending suggestions using ORM
+    suggestions, total = await suggestions_repo.list_all_suggestions(
+        status="pending",
+        limit=page_size,
+        offset=offset,
     )
 
     return {
         "items": [
             {
-                "id": row["id"],
-                "symbol": row["symbol"],
-                "name": row["company_name"],
-                "sector": row["sector"],
-                "summary": row["summary"],
-                "website": row["website"],
-                "ipo_year": row["ipo_year"],
-                "fetch_status": row["fetch_status"],
-                "status": row["status"],
-                "vote_count": row["vote_score"],
-                "created_at": row["created_at"].isoformat()
-                if row["created_at"]
+                "id": suggestion.id,
+                "symbol": suggestion.symbol,
+                "name": suggestion.company_name,
+                "sector": suggestion.sector,
+                "summary": suggestion.summary,
+                "website": suggestion.website,
+                "ipo_year": suggestion.ipo_year,
+                "fetch_status": suggestion.fetch_status,
+                "status": suggestion.status,
+                "vote_count": suggestion.vote_score,
+                "created_at": suggestion.created_at.isoformat()
+                if suggestion.created_at
                 else None,
             }
-            for row in rows
+            for suggestion in suggestions
         ],
         "total": total,
         "page": page,
@@ -597,60 +514,39 @@ async def list_all_suggestions(
     """List all suggestions (admin only)."""
     offset = (page - 1) * page_size
 
-    # Build query
-    where = ""
-    params = []
-    param_idx = 1
-
-    if status:
-        where = f"WHERE status = ${param_idx}"
-        params.append(status)
-        param_idx += 1
-
-    # Get count
-    count_row = await fetch_one(
-        f"SELECT COUNT(*) as cnt FROM stock_suggestions {where}", *params
-    )
-    total = count_row["cnt"] if count_row else 0
-
-    # Get items
-    params.extend([page_size, offset])
-    rows = await fetch_all(
-        f"""SELECT id, symbol, company_name, sector, summary, website, ipo_year,
-                   current_price, ath_price, fetch_status, fetch_error, fetched_at,
-                   status, vote_score, approved_by, created_at, reviewed_at
-            FROM stock_suggestions {where}
-            ORDER BY vote_score DESC
-            LIMIT ${param_idx} OFFSET ${param_idx + 1}""",
-        *params,
+    # Get suggestions using ORM
+    suggestions, total = await suggestions_repo.list_all_suggestions(
+        status=status,
+        limit=page_size,
+        offset=offset,
     )
 
     return {
         "items": [
             {
-                "id": row["id"],
-                "symbol": row["symbol"],
-                "name": row["company_name"],
-                "sector": row["sector"],
-                "summary": row["summary"],
-                "website": row["website"],
-                "ipo_year": row["ipo_year"],
-                "current_price": float(row["current_price"]) if row["current_price"] else None,
-                "ath_price": float(row["ath_price"]) if row["ath_price"] else None,
-                "fetch_status": row["fetch_status"],
-                "fetch_error": row["fetch_error"],
-                "fetched_at": row["fetched_at"].isoformat() if row["fetched_at"] else None,
-                "status": row["status"],
-                "vote_count": row["vote_score"],
-                "approved_by": row["approved_by"],
-                "created_at": row["created_at"].isoformat()
-                if row["created_at"]
+                "id": suggestion.id,
+                "symbol": suggestion.symbol,
+                "name": suggestion.company_name,
+                "sector": suggestion.sector,
+                "summary": suggestion.summary,
+                "website": suggestion.website,
+                "ipo_year": suggestion.ipo_year,
+                "current_price": float(suggestion.current_price) if suggestion.current_price else None,
+                "ath_price": float(suggestion.ath_price) if suggestion.ath_price else None,
+                "fetch_status": suggestion.fetch_status,
+                "fetch_error": suggestion.fetch_error,
+                "fetched_at": suggestion.fetched_at.isoformat() if suggestion.fetched_at else None,
+                "status": suggestion.status,
+                "vote_count": suggestion.vote_score,
+                "approved_by": suggestion.approved_by_id,
+                "created_at": suggestion.created_at.isoformat()
+                if suggestion.created_at
                 else None,
-                "reviewed_at": row["reviewed_at"].isoformat()
-                if row["reviewed_at"]
+                "reviewed_at": suggestion.reviewed_at.isoformat()
+                if suggestion.reviewed_at
                 else None,
             }
-            for row in rows
+            for suggestion in suggestions
         ],
         "total": total,
         "page": page,
@@ -661,7 +557,6 @@ async def list_all_suggestions(
 @router.post("/{suggestion_id}/approve", response_model=dict)
 async def approve_suggestion(
     suggestion_id: int,
-    background_tasks: BackgroundTasks,
     admin: TokenData = Depends(require_admin),
 ):
     """Approve a suggestion and add the stock to tracking (admin only).
@@ -673,9 +568,7 @@ async def approve_suggestion(
     4. Generate AI bio in background
     """
     # Get suggestion
-    suggestion = await fetch_one(
-        "SELECT id, symbol, status FROM stock_suggestions WHERE id = $1", suggestion_id
-    )
+    suggestion = await suggestions_repo.get_suggestion_by_id(suggestion_id)
 
     if not suggestion:
         raise NotFoundError(
@@ -683,48 +576,38 @@ async def approve_suggestion(
             details={"id": suggestion_id},
         )
 
-    if suggestion["status"] != "pending":
+    if suggestion.status != "pending":
         raise ValidationError(
-            message=f"Suggestion is already {suggestion['status']}",
-            details={"status": suggestion["status"]},
+            message=f"Suggestion is already {suggestion.status}",
+            details={"status": suggestion.status},
         )
 
-    symbol = suggestion["symbol"]
+    symbol = suggestion.symbol
 
-    # Look up admin user ID from username
-    admin_user = await fetch_one(
-        "SELECT id FROM auth_user WHERE username = $1",
-        admin.sub
-    )
-    admin_id = admin_user["id"] if admin_user else None
+    # Approve suggestion using ORM
+    from app.repositories import auth_user_orm as auth_repo
+    admin_user = await auth_repo.get_user(admin.sub)
+    admin_id = admin_user.id if admin_user else None
 
-    # Update suggestion status
-    await execute(
-        """UPDATE stock_suggestions 
-           SET status = 'approved', approved_by = $1, reviewed_at = NOW()
-           WHERE id = $2""",
-        admin_id,
-        suggestion_id,
-    )
+    await suggestions_repo.approve_suggestion(suggestion_id, admin_id)
 
-    # Add symbol to tracked symbols
-    await execute(
-        """INSERT INTO symbols (symbol, is_active, added_at)
-           VALUES ($1, TRUE, NOW())
-           ON CONFLICT (symbol) DO NOTHING""",
-        symbol,
+    # Add symbol to tracked symbols using ORM
+    await suggestions_repo.add_symbol_from_suggestion(
+        symbol=symbol,
+        name=suggestion.company_name,
+        sector=suggestion.sector,
     )
     
     # Queue for initial data ingest (high priority since user is waiting)
     from app.jobs.definitions import add_to_ingest_queue
     await add_to_ingest_queue(symbol, priority=5)
 
-    # Schedule background task to fetch data and generate AI content
-    background_tasks.add_task(_process_approved_symbol, symbol)
+    task_id = _enqueue_symbol_processing(symbol)
 
     return {
         "message": f"Approved and added {symbol} to tracking. AI content generating in background.",
         "symbol": symbol,
+        "task_id": task_id,
     }
 
 
@@ -738,10 +621,7 @@ async def refresh_suggestion_data(
     Fetches latest Yahoo Finance data and regenerates AI bio/rating in real-time.
     """
     # Get suggestion
-    suggestion = await fetch_one(
-        "SELECT id, symbol, status FROM stock_suggestions WHERE id = $1",
-        suggestion_id,
-    )
+    suggestion = await suggestions_repo.get_suggestion_by_id(suggestion_id)
 
     if not suggestion:
         raise NotFoundError(
@@ -749,20 +629,20 @@ async def refresh_suggestion_data(
             details={"id": suggestion_id},
         )
 
-    if suggestion["status"] != "approved":
+    if suggestion.status != "approved":
         raise ValidationError(
             message="Only approved suggestions can be refreshed",
-            details={"status": suggestion["status"]},
+            details={"status": suggestion.status},
         )
 
-    symbol = suggestion["symbol"]
+    symbol = suggestion.symbol
     
-    # Process the symbol synchronously (not in background) for immediate feedback
-    await _process_approved_symbol(symbol)
+    task_id = _enqueue_symbol_processing(symbol)
 
     return {
-        "message": f"Refreshed data and AI content for {symbol}",
+        "message": f"Refresh queued for {symbol}",
         "symbol": symbol,
+        "task_id": task_id,
     }
 
 
@@ -777,9 +657,7 @@ async def update_suggestion(
     Useful for correcting symbols (e.g., German stocks listed as .F vs .DE).
     """
     # Get suggestion
-    suggestion = await fetch_one(
-        "SELECT id, symbol, status FROM stock_suggestions WHERE id = $1", suggestion_id
-    )
+    suggestion = await suggestions_repo.get_suggestion_by_id(suggestion_id)
 
     if not suggestion:
         raise NotFoundError(
@@ -794,10 +672,8 @@ async def update_suggestion(
         new_symbol = _validate_symbol_format(new_symbol)
         
         # Check if the new symbol already exists
-        existing = await fetch_one(
-            "SELECT id FROM stock_suggestions WHERE symbol = $1 AND id != $2",
-            new_symbol,
-            suggestion_id,
+        existing = await suggestions_repo.check_symbol_exists_in_other_suggestion(
+            new_symbol, suggestion_id
         )
         
         if existing:
@@ -814,27 +690,14 @@ async def update_suggestion(
             details={"suggestion_id": suggestion_id},
         )
 
-    # Build update query
-    set_parts = []
-    params = []
-    param_idx = 1
-    
-    for key, value in updates.items():
-        set_parts.append(f"{key} = ${param_idx}")
-        params.append(value)
-        param_idx += 1
-    
-    params.append(suggestion_id)
-    
-    await execute(
-        f"UPDATE stock_suggestions SET {', '.join(set_parts)} WHERE id = ${param_idx}",
-        *params,
-    )
+    # Update symbol
+    if "symbol" in updates:
+        await suggestions_repo.update_suggestion_symbol(suggestion_id, updates["symbol"])
 
     return {
         "message": f"Updated suggestion #{suggestion_id}",
-        "old_symbol": suggestion["symbol"],
-        "new_symbol": updates.get("symbol", suggestion["symbol"]),
+        "old_symbol": suggestion.symbol,
+        "new_symbol": updates.get("symbol", suggestion.symbol),
     }
 
 
@@ -848,9 +711,7 @@ async def retry_suggestion_fetch(
     This is useful for retrying individual suggestions that failed due to rate limiting.
     """
     # Get suggestion
-    suggestion = await fetch_one(
-        "SELECT id, symbol, fetch_status FROM stock_suggestions WHERE id = $1", suggestion_id
-    )
+    suggestion = await suggestions_repo.get_suggestion_by_id(suggestion_id)
 
     if not suggestion:
         raise NotFoundError(
@@ -859,41 +720,29 @@ async def retry_suggestion_fetch(
         )
 
     # Only allow retry for rate_limited, error, or pending status
-    if suggestion["fetch_status"] not in ("rate_limited", "error", "pending", None):
+    if suggestion.fetch_status not in ("rate_limited", "error", "pending", None):
         raise ValidationError(
-            message=f"Suggestion already has status '{suggestion['fetch_status']}'",
-            details={"fetch_status": suggestion["fetch_status"]},
+            message=f"Suggestion already has status '{suggestion.fetch_status}'",
+            details={"fetch_status": suggestion.fetch_status},
         )
 
-    symbol = suggestion["symbol"]
+    symbol = suggestion.symbol
     
     # Fetch stock info
     stock_info = await get_stock_info_full_async(symbol)
     
     # Update suggestion with fetched data
-    await execute(
-        """UPDATE stock_suggestions SET
-               company_name = COALESCE($2, company_name),
-               sector = $3,
-               summary = $4,
-               website = $5,
-               ipo_year = $6,
-               current_price = $7,
-               ath_price = $8,
-               fetch_status = $9,
-               fetch_error = $10,
-               fetched_at = NOW()
-           WHERE id = $1""",
-        suggestion_id,
-        stock_info["name"],
-        stock_info["sector"],
-        stock_info["summary"],
-        stock_info["website"],
-        stock_info["ipo_year"],
-        stock_info["current_price"],
-        stock_info["ath_price"],
-        stock_info["fetch_status"],
-        stock_info["fetch_error"],
+    await suggestions_repo.update_suggestion_stock_info(
+        symbol=symbol,
+        company_name=stock_info["name"],
+        sector=stock_info["sector"],
+        summary=stock_info["summary"],
+        website=stock_info["website"],
+        ipo_year=stock_info["ipo_year"],
+        current_price=stock_info["current_price"],
+        ath_price=stock_info["ath_price"],
+        fetch_status=stock_info["fetch_status"],
+        fetch_error=stock_info["fetch_error"],
     )
     
     logger.info(f"Retried fetch for {symbol}: {stock_info['fetch_status']}")
@@ -917,52 +766,34 @@ async def backfill_suggestion_data(
     data fetch was implemented.
     """
     # Get suggestions with pending fetch status
-    rows = await fetch_all(
-        """SELECT id, symbol FROM stock_suggestions 
-           WHERE fetch_status = 'pending' OR fetch_status IS NULL
-           ORDER BY vote_score DESC
-           LIMIT $1""",
-        limit,
-    )
+    suggestions = await suggestions_repo.list_suggestions_needing_backfill(limit)
     
-    if not rows:
+    if not suggestions:
         return {"message": "No suggestions need backfilling", "processed": 0}
     
     processed = 0
     errors = []
     
-    for row in rows:
-        symbol = row["symbol"]
-        suggestion_id = row["id"]
+    for suggestion in suggestions:
+        symbol = suggestion.symbol
+        suggestion_id = suggestion.id
         
         try:
             # Fetch stock info
             stock_info = await get_stock_info_full_async(symbol)
             
             # Update suggestion with fetched data
-            await execute(
-                """UPDATE stock_suggestions SET
-                       company_name = COALESCE($2, company_name),
-                       sector = $3,
-                       summary = $4,
-                       website = $5,
-                       ipo_year = $6,
-                       current_price = $7,
-                       ath_price = $8,
-                       fetch_status = $9,
-                       fetch_error = $10,
-                       fetched_at = NOW()
-                   WHERE id = $1""",
-                suggestion_id,
-                stock_info["name"],
-                stock_info["sector"],
-                stock_info["summary"],
-                stock_info["website"],
-                stock_info["ipo_year"],
-                stock_info["current_price"],
-                stock_info["ath_price"],
-                stock_info["fetch_status"],
-                stock_info["fetch_error"],
+            await suggestions_repo.update_suggestion_stock_info(
+                symbol=symbol,
+                company_name=stock_info["name"],
+                sector=stock_info["sector"],
+                summary=stock_info["summary"],
+                website=stock_info["website"],
+                ipo_year=stock_info["ipo_year"],
+                current_price=stock_info["current_price"],
+                ath_price=stock_info["ath_price"],
+                fetch_status=stock_info["fetch_status"],
+                fetch_error=stock_info["fetch_error"],
             )
             processed += 1
             logger.info(f"Backfilled data for {symbol}: {stock_info['fetch_status']}")
@@ -974,7 +805,7 @@ async def backfill_suggestion_data(
     return {
         "message": f"Processed {processed} suggestions",
         "processed": processed,
-        "total": len(rows),
+        "total": len(suggestions),
         "errors": errors if errors else None,
     }
 
@@ -996,12 +827,7 @@ async def _process_approved_symbol(symbol: str) -> None:
     logger.info(f"Processing newly approved symbol: {symbol}")
     
     # Set fetch_status to 'fetching' so admin UI shows loading state
-    await execute(
-        """UPDATE stock_suggestions 
-           SET fetch_status = 'fetching', fetch_error = NULL
-           WHERE symbol = $1""",
-        symbol.upper(),
-    )
+    await suggestions_repo.set_suggestion_fetching(symbol.upper())
     
     try:
         # Step 1: Fetch Yahoo Finance info
@@ -1027,11 +853,8 @@ async def _process_approved_symbol(symbol: str) -> None:
         ai_enabled = get_runtime_setting("ai_enrichment_enabled", True)
         if ai_enabled and full_summary and len(full_summary) > 100:
             # Check if we already have an AI summary
-            existing = await fetch_one(
-                "SELECT summary_ai FROM symbols WHERE symbol = $1",
-                symbol.upper(),
-            )
-            if not existing or not existing.get("summary_ai"):
+            existing_summary = await symbols_repo.get_symbol_summary_ai(symbol.upper())
+            if not existing_summary:
                 ai_summary = await summarize_company(
                     symbol=symbol,
                     name=name,
@@ -1042,35 +865,22 @@ async def _process_approved_symbol(symbol: str) -> None:
         
         # Update symbols with name, sector, and AI summary
         if name or sector or ai_summary:
-            await execute(
-                """UPDATE symbols SET 
-                       name = COALESCE($2, name),
-                       sector = COALESCE($3, sector),
-                       summary_ai = COALESCE($4, summary_ai),
-                       updated_at = NOW()
-                   WHERE symbol = $1""",
+            await symbols_repo.update_symbol_info(
                 symbol.upper(),
-                name,
-                sector,
-                ai_summary,
+                name=name,
+                sector=sector,
+                summary_ai=ai_summary,
             )
             logger.info(f"Updated symbol info for {symbol}: name='{name}', sector='{sector}', summary_ai={'yes' if ai_summary else 'no'}")
         
         # Also update stock_suggestions table with name/sector for admin UI display
-        await execute(
-            """UPDATE stock_suggestions SET
-                   company_name = COALESCE($2, company_name),
-                   sector = COALESCE($3, sector),
-                   summary = COALESCE($4, summary),
-                   current_price = $5,
-                   ath_price = $6
-               WHERE symbol = $1""",
-            symbol.upper(),
-            name,
-            sector,
-            full_summary[:1000] if full_summary else None,  # Truncate for storage
-            current_price,
-            ath_price,
+        await suggestions_repo.update_suggestion_stock_info(
+            symbol=symbol.upper(),
+            company_name=name,
+            sector=sector,
+            summary=full_summary[:1000] if full_summary else None,  # Truncate for storage
+            current_price=current_price,
+            ath_price=ath_price,
         )
         
         # Step 1.6: Fetch 365 days of price history
@@ -1089,18 +899,11 @@ async def _process_approved_symbol(symbol: str) -> None:
             logger.warning(f"Failed to fetch price history for {symbol}: {price_err}")
         
         # Step 2: Create or update dip_state entry
-        await execute(
-            """INSERT INTO dip_state (symbol, current_price, ath_price, dip_percentage, first_seen, last_updated)
-               VALUES ($1, $2, $3, $4, NOW(), NOW())
-               ON CONFLICT (symbol) DO UPDATE SET
-                   current_price = EXCLUDED.current_price,
-                   ath_price = EXCLUDED.ath_price,
-                   dip_percentage = EXCLUDED.dip_percentage,
-                   last_updated = NOW()""",
-            symbol.upper(),
-            current_price,
-            ath_price,
-            dip_pct,
+        await dip_state_repo.upsert_dip_state(
+            symbol=symbol.upper(),
+            current_price=current_price,
+            ath_price=ath_price,
+            dip_percentage=dip_pct,
         )
         
         # Check if AI enrichment is enabled before running AI work
@@ -1149,17 +952,11 @@ async def _process_approved_symbol(symbol: str) -> None:
         
         # Step 6: Mark as fetched and invalidate ranking cache
         # Update both stock_suggestions AND symbols tables
-        await execute(
-            """UPDATE stock_suggestions 
-               SET fetch_status = 'fetched', fetched_at = NOW()
-               WHERE symbol = $1""",
+        await suggestions_repo.set_suggestion_fetched(symbol.upper())
+        await symbols_repo.update_fetch_status(
             symbol.upper(),
-        )
-        await execute(
-            """UPDATE symbols 
-               SET fetch_status = 'fetched', fetch_error = NULL, updated_at = NOW()
-               WHERE symbol = $1""",
-            symbol.upper(),
+            fetch_status="fetched",
+            fetch_error=None,
         )
         
         # Invalidate ranking cache so the new stock appears immediately
@@ -1170,13 +967,7 @@ async def _process_approved_symbol(symbol: str) -> None:
     except Exception as e:
         logger.error(f"Error processing approved symbol {symbol}: {e}")
         # Set error status so admin can retry
-        await execute(
-            """UPDATE stock_suggestions 
-               SET fetch_status = 'error', fetch_error = $2
-               WHERE symbol = $1""",
-            symbol.upper(),
-            str(e)[:500],  # Truncate error message
-        )
+        await suggestions_repo.set_suggestion_error(symbol.upper(), str(e))
 
 
 @router.post("/{suggestion_id}/reject", response_model=dict)
@@ -1187,9 +978,7 @@ async def reject_suggestion(
 ):
     """Reject a suggestion (admin only)."""
     # Get suggestion
-    suggestion = await fetch_one(
-        "SELECT id, symbol, status FROM stock_suggestions WHERE id = $1", suggestion_id
-    )
+    suggestion = await suggestions_repo.get_suggestion_by_id(suggestion_id)
 
     if not suggestion:
         raise NotFoundError(
@@ -1197,30 +986,24 @@ async def reject_suggestion(
             details={"id": suggestion_id},
         )
 
-    if suggestion["status"] != "pending":
+    if suggestion.status != "pending":
         raise ValidationError(
-            message=f"Suggestion is already {suggestion['status']}",
-            details={"status": suggestion["status"]},
+            message=f"Suggestion is already {suggestion.status}",
+            details={"status": suggestion.status},
         )
 
     # Look up admin user ID from username
-    admin_user = await fetch_one(
-        "SELECT id FROM auth_user WHERE username = $1",
-        admin.sub
-    )
-    admin_id = admin_user["id"] if admin_user else None
+    admin_user = await auth_repo.get_user(admin.sub)
+    admin_id = admin_user.id if admin_user else None
 
     # Update suggestion status
-    await execute(
-        """UPDATE stock_suggestions 
-           SET status = 'rejected', approved_by = $1, reviewed_at = NOW(), reason = $2
-           WHERE id = $3""",
-        admin_id,
-        reason,
-        suggestion_id,
+    await suggestions_repo.reject_suggestion_with_reason(
+        suggestion_id=suggestion_id,
+        admin_id=admin_id,
+        reason=reason,
     )
 
     return {
-        "message": f"Rejected suggestion for {suggestion['symbol']}",
-        "symbol": suggestion["symbol"],
+        "message": f"Rejected suggestion for {suggestion.symbol}",
+        "symbol": suggestion.symbol,
     }

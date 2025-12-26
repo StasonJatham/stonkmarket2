@@ -65,5 +65,6 @@ class SymbolResponse(BaseModel):
     name: Optional[str] = Field(None, description="Company name")
     fetch_status: Optional[str] = Field(None, description="Data fetch status: pending, fetching, fetched, error")
     fetch_error: Optional[str] = Field(None, description="Error message if fetch failed")
+    task_id: Optional[str] = Field(None, description="Celery task id")
 
     model_config = {"from_attributes": True}

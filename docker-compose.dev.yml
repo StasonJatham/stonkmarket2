@@ -19,7 +19,7 @@ services:
       - ENVIRONMENT=development
       - DEBUG=true
       - LOG_LEVEL=DEBUG
-      - SCHEDULER_ENABLED=false
+      - FLOWER_BASIC_AUTH=${FLOWER_BASIC_AUTH:-stonkmarket:88c3c9bfc4df90f830f2f025fc669b58}
       - CORS_ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173
     ports:
       - "8000:8000"
@@ -123,9 +123,42 @@ services:
       --loglevel=INFO
       --concurrency=${CELERY_CONCURRENCY:-4}
       --prefetch-multiplier=1
-      --queues=high,default,low,batch
+      --queues=high,default,low
       -O fair
       --hostname=worker@%h
+    env_file:
+      - .env.production
+    environment:
+      - ENVIRONMENT=development
+      - DEBUG=true
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://valkey:6379/1}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://valkey:6379/1}
+      - CELERY_CRON_SYNC_SECONDS=${CELERY_CRON_SYNC_SECONDS:-30}
+    volumes:
+      - ./app:/app/app:ro
+      - ./alembic:/app/alembic:ro
+      - ./alembic.ini:/app/alembic.ini:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    networks:
+      - stonkmarket
+
+  celery-worker-batch:
+    build:
+      context: .
+      dockerfile: Dockerfile.celery
+    container_name: stonkmarket-celery-worker-batch-dev
+    command: >
+      celery -A app.celery_app.celery_app worker
+      --loglevel=INFO
+      --concurrency=${CELERY_BATCH_CONCURRENCY:-2}
+      --prefetch-multiplier=1
+      --queues=batch
+      -O fair
+      --hostname=batch@%h
     env_file:
       - .env.production
     environment:
@@ -155,6 +188,7 @@ services:
       celery -A app.celery_app.celery_app beat
       --loglevel=INFO
       --scheduler app.jobs.celery_scheduler:DatabaseScheduler
+      --schedule=/tmp/celerybeat-schedule
     env_file:
       - .env.production
     environment:
@@ -187,6 +221,7 @@ services:
     environment:
       - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://valkey:6379/1}
       - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://valkey:6379/1}
+      - FLOWER_BASIC_AUTH=${FLOWER_BASIC_AUTH:-stonkmarket:88c3c9bfc4df90f830f2f025fc669b58}
     volumes:
       - ./app:/app/app:ro
     depends_on:

@@ -13,66 +13,19 @@ Jobs:
 
 from __future__ import annotations
 
+from datetime import datetime
+from typing import TYPE_CHECKING
+
 from app.core.logging import get_logger
+from app.repositories import jobs_orm as jobs_repo
+from app.repositories import price_history_orm as price_history_repo
 
 from .registry import register_job
 
+if TYPE_CHECKING:
+    import pandas as pd
+
 logger = get_logger("jobs.definitions")
-
-
-async def _calculate_dip_start_date(symbol: str, ath_price: float, dip_threshold: float):
-    """
-    Calculate when the stock first entered the current dip period.
-    
-    Uses price_history table to find the first date where the stock dropped
-    below the dip threshold (from ATH) and stayed there.
-    
-    Args:
-        symbol: Stock symbol
-        ath_price: All-time high price from price_history
-        dip_threshold: Minimum dip percentage to consider (e.g., 0.15 for 15%)
-    
-    Returns:
-        Date when dip started, or None if not in dip
-    """
-    from datetime import date
-    from app.database.connection import fetch_all as db_fetch_all
-    
-    if ath_price <= 0:
-        return None
-    
-    # Calculate the threshold price (e.g., if ATH=100 and threshold=0.15, then dip_price=85)
-    dip_threshold_price = ath_price * (1 - dip_threshold)
-    
-    # Get all price history sorted chronologically
-    rows = await db_fetch_all(
-        "SELECT date, close FROM price_history WHERE symbol = $1 ORDER BY date ASC",
-        symbol
-    )
-    
-    if not rows:
-        return None
-    
-    # Find when the current dip started
-    # Walk through prices chronologically, tracking when we enter/exit dip territory
-    dip_start = None
-    currently_in_dip = False
-    
-    for row in rows:
-        price = float(row["close"])
-        is_dip = price <= dip_threshold_price
-        
-        if is_dip and not currently_in_dip:
-            # Entering a dip
-            dip_start = row["date"]
-            currently_in_dip = True
-        elif not is_dip and currently_in_dip:
-            # Exited the dip, reset
-            dip_start = None
-            currently_in_dip = False
-    
-    # If currently in dip, return when it started
-    return dip_start if currently_in_dip else None
 
 
 # =============================================================================
@@ -97,10 +50,7 @@ async def initial_data_ingest_job() -> str:
     
     Schedule: Every 15 minutes
     """
-    from datetime import datetime, timezone, timedelta
-    from app.database.connection import fetch_all, execute
     from app.services.data_providers import get_yfinance_service
-    from app.services.data_providers.yfinance_service import DataVersion, _compute_hash
     
     logger.info("Starting initial_data_ingest job")
     
@@ -108,16 +58,7 @@ async def initial_data_ingest_job() -> str:
     
     try:
         # Get pending symbols from the queue (oldest first, limit to batch size)
-        rows = await fetch_all(
-            """
-            SELECT id, symbol, attempts 
-            FROM symbol_ingest_queue 
-            WHERE status = 'pending' 
-            ORDER BY priority DESC, queued_at ASC 
-            LIMIT $1
-            """,
-            BATCH_SIZE
-        )
+        rows = await jobs_repo.get_pending_ingest_symbols(BATCH_SIZE)
         
         if not rows:
             return "No symbols in queue"
@@ -127,21 +68,12 @@ async def initial_data_ingest_job() -> str:
         failed = 0
         
         for row in rows:
-            queue_id = row["id"]
-            symbol = row["symbol"]
-            attempts = row["attempts"] or 0
+            queue_id = row.id
+            symbol = row.symbol
+            attempts = row.attempts or 0
             
             # Mark as processing
-            await execute(
-                """
-                UPDATE symbol_ingest_queue 
-                SET status = 'processing', 
-                    processing_started_at = NOW(),
-                    attempts = $2
-                WHERE id = $1
-                """,
-                queue_id, attempts + 1
-            )
+            await jobs_repo.mark_ingest_processing(queue_id, attempts + 1)
             
             try:
                 # Fetch price history (1 year) with version tracking
@@ -174,14 +106,7 @@ async def initial_data_ingest_job() -> str:
                 await _store_price_history(symbol, prices)
                 
                 # Mark as completed
-                await execute(
-                    """
-                    UPDATE symbol_ingest_queue 
-                    SET status = 'completed', completed_at = NOW()
-                    WHERE id = $1
-                    """,
-                    queue_id
-                )
+                await jobs_repo.mark_ingest_completed(queue_id)
                 processed += 1
                 logger.info(f"Ingested initial data for {symbol}")
                 
@@ -192,28 +117,12 @@ async def initial_data_ingest_job() -> str:
                 # Check max attempts
                 max_attempts = 3
                 if attempts + 1 >= max_attempts:
-                    await execute(
-                        """
-                        UPDATE symbol_ingest_queue 
-                        SET status = 'failed', 
-                            last_error = $2
-                        WHERE id = $1
-                        """,
-                        queue_id, str(e)[:500]
-                    )
+                    await jobs_repo.mark_ingest_failed(queue_id, str(e)[:500])
                 else:
                     # Reset to pending for retry
-                    await execute(
-                        """
-                        UPDATE symbol_ingest_queue 
-                        SET status = 'pending', 
-                            last_error = $2
-                        WHERE id = $1
-                        """,
-                        queue_id, str(e)[:500]
-                    )
+                    await jobs_repo.mark_ingest_pending_retry(queue_id, str(e)[:500])
         
-        remaining = await _get_queue_count()
+        remaining = await jobs_repo.get_ingest_queue_count()
         message = f"Processed {processed}/{len(rows)} symbols ({failed} failed), {remaining} remaining in queue"
         logger.info(f"initial_data_ingest: {message}")
         return message
@@ -225,41 +134,10 @@ async def initial_data_ingest_job() -> str:
 
 async def _store_price_history(symbol: str, prices: "pd.DataFrame") -> None:
     """Store price history in database."""
-    from app.database.connection import execute
-    
     if prices.empty:
         return
     
-    # Convert DataFrame to records
-    for idx, row in prices.iterrows():
-        price_date = idx.date() if hasattr(idx, 'date') else idx
-        await execute(
-            """
-            INSERT INTO price_history (symbol, date, open, high, low, close, volume)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-            ON CONFLICT (symbol, date) DO UPDATE SET
-                open = EXCLUDED.open,
-                high = EXCLUDED.high,
-                low = EXCLUDED.low,
-                close = EXCLUDED.close,
-                volume = EXCLUDED.volume
-            """,
-            symbol.upper(),
-            price_date,
-            float(row.get("Open", 0)),
-            float(row.get("High", 0)),
-            float(row.get("Low", 0)),
-            float(row.get("Close", 0)),
-            int(row.get("Volume", 0)),
-        )
-
-
-async def _get_queue_count() -> int:
-    """Get count of pending symbols in queue."""
-    from app.database.connection import fetch_val
-    return await fetch_val(
-        "SELECT COUNT(*) FROM symbol_ingest_queue WHERE status = 'pending'"
-    ) or 0
+    await price_history_repo.save_prices(symbol, prices)
 
 
 async def add_to_ingest_queue(symbol: str, priority: int = 0) -> bool:
@@ -273,28 +151,7 @@ async def add_to_ingest_queue(symbol: str, priority: int = 0) -> bool:
     
     Returns True if added, False if already in queue.
     """
-    from app.database.connection import execute, fetch_val
-    
-    # Check if already in queue
-    existing = await fetch_val(
-        "SELECT 1 FROM symbol_ingest_queue WHERE symbol = $1",
-        symbol.upper()
-    )
-    if existing:
-        logger.debug(f"Symbol {symbol} already in ingest queue")
-        return False
-    
-    await execute(
-        """
-        INSERT INTO symbol_ingest_queue (symbol, status, priority, attempts, max_attempts, queued_at)
-        VALUES ($1, 'pending', $2, 0, 3, NOW())
-        ON CONFLICT (symbol) DO NOTHING
-        """,
-        symbol.upper(),
-        priority,
-    )
-    logger.info(f"Added {symbol} to ingest queue (priority={priority})")
-    return True
+    return await jobs_repo.add_to_ingest_queue(symbol, priority)
 
 
 @register_job("data_grab")
@@ -305,18 +162,15 @@ async def data_grab_job() -> str:
 
     Schedule: Mon-Fri at 11pm (after market close)
     """
-    from app.database.connection import fetch_all, execute, fetch_val
     from app.cache.cache import Cache
     from app.services.runtime_settings import get_runtime_setting
     from app.services.data_providers import get_yfinance_service
-    from app.services.data_providers.yfinance_service import _compute_hash
-    from datetime import date, datetime, timedelta, timezone
+    from datetime import date
 
     logger.info("Starting data_grab job")
 
     try:
-        rows = await fetch_all("SELECT symbol FROM symbols WHERE is_active = TRUE")
-        tickers = [row["symbol"] for row in rows]
+        tickers = await jobs_repo.get_active_symbol_tickers()
 
         if not tickers:
             return "No active symbols"
@@ -328,10 +182,7 @@ async def data_grab_job() -> str:
         changed_symbols = []  # Track which symbols had data changes
         
         # Get min_dip_pct for each symbol to calculate dip start date
-        dip_thresholds = {}
-        threshold_rows = await fetch_all("SELECT symbol, min_dip_pct FROM symbols WHERE is_active = TRUE")
-        for row in threshold_rows:
-            dip_thresholds[row["symbol"]] = float(row["min_dip_pct"]) if row["min_dip_pct"] else 0.15
+        dip_thresholds = await jobs_repo.get_symbol_dip_thresholds()
         
         for ticker in tickers:
             try:
@@ -355,31 +206,17 @@ async def data_grab_job() -> str:
                             changed_symbols.append(ticker)
                     
                     # ATH from our price_history table (single source of truth)
-                    ath_price = await fetch_val(
-                        "SELECT COALESCE(MAX(close), $2) FROM price_history WHERE symbol = $1",
-                        ticker, float(prices["Close"].max())
-                    )
-                    ath_price = float(ath_price)
+                    ath_price = await jobs_repo.get_ath_price(ticker, fallback=float(prices["Close"].max()))
                     
                     # Calculate dip percentage
                     dip_percentage = ((ath_price - current_price) / ath_price * 100) if ath_price > 0 else 0
                     
                     # Calculate dip start date
                     dip_threshold = dip_thresholds.get(ticker, 0.15)
-                    dip_start_date = await _calculate_dip_start_date(ticker, ath_price, dip_threshold)
+                    dip_start_date = await jobs_repo.calculate_dip_start_date(ticker, ath_price, dip_threshold)
                     
                     # Update dip_state
-                    await execute(
-                        """
-                        INSERT INTO dip_state (symbol, current_price, ath_price, dip_percentage, dip_start_date, first_seen, last_updated)
-                        VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
-                        ON CONFLICT (symbol) DO UPDATE SET
-                            current_price = EXCLUDED.current_price,
-                            ath_price = EXCLUDED.ath_price,
-                            dip_percentage = EXCLUDED.dip_percentage,
-                            dip_start_date = COALESCE(EXCLUDED.dip_start_date, dip_state.dip_start_date),
-                            last_updated = NOW()
-                        """,
+                    await jobs_repo.upsert_dip_state_with_dates(
                         ticker, current_price, ath_price, dip_percentage, dip_start_date
                     )
                     
@@ -441,7 +278,6 @@ async def cache_warmup_job() -> str:
 
     Schedule: After data_grab (Mon-Fri at 11:30pm) or on demand
     """
-    from app.database.connection import fetch_all, fetch_one
     from app.dipfinder.service import get_dipfinder_service
     from app.cache.cache import Cache
     from app.services.runtime_settings import get_runtime_setting
@@ -451,15 +287,7 @@ async def cache_warmup_job() -> str:
 
     try:
         # Get top 20 active symbols ordered by dip percentage
-        rows = await fetch_all("""
-            SELECT s.symbol 
-            FROM symbols s
-            LEFT JOIN dip_state ds ON s.symbol = ds.symbol
-            WHERE s.is_active = TRUE 
-            ORDER BY COALESCE(ds.dip_percentage, 0) DESC
-            LIMIT 20
-        """)
-        symbols = [row["symbol"] for row in rows]
+        symbols = await jobs_repo.get_top_dip_symbols(limit=20)
 
         # Add benchmark symbols from runtime settings
         benchmarks = get_runtime_setting("benchmarks", [])
@@ -488,10 +316,7 @@ async def cache_warmup_job() -> str:
 
                     if prices is not None and not prices.empty:
                         # Get min_dip_pct for the symbol
-                        symbol_row = await fetch_one(
-                            "SELECT min_dip_pct FROM symbols WHERE symbol = $1", symbol
-                        )
-                        min_dip_pct = float(symbol_row["min_dip_pct"]) if symbol_row and symbol_row.get("min_dip_pct") else 0.10
+                        min_dip_pct = await jobs_repo.get_symbol_min_dip_pct(symbol)
 
                         # Build chart data
                         ref_high = float(prices["Close"].max())
@@ -641,23 +466,13 @@ async def fundamentals_refresh_job() -> str:
     Schedule: Weekly on Sunday at 2am (checks all conditions)
     """
     from app.services.fundamentals import refresh_all_fundamentals
-    from app.database.connection import fetch_all
     from datetime import datetime, timezone, timedelta
 
     logger.info("Starting fundamentals_refresh job")
 
     try:
         # Find symbols that need refresh based on multiple criteria
-        rows = await fetch_all(
-            """
-            SELECT s.symbol, f.fetched_at, f.earnings_date, f.next_earnings_date, 
-                   f.financials_fetched_at, f.domain
-            FROM symbols s
-            LEFT JOIN stock_fundamentals f ON s.symbol = f.symbol
-            WHERE s.symbol_type = 'stock'
-              AND s.is_active = TRUE
-            """
-        )
+        rows = await jobs_repo.get_stocks_needing_fundamentals_refresh()
         
         symbols_to_refresh = []
         now = datetime.now(timezone.utc)
@@ -669,7 +484,6 @@ async def fundamentals_refresh_job() -> str:
             earnings_date = row["earnings_date"]
             next_earnings_date = row["next_earnings_date"]
             financials_fetched_at = row["financials_fetched_at"]
-            domain = row["domain"]
             
             # Criterion 1: Basic fundamentals never fetched
             if not fetched_at:
@@ -842,32 +656,21 @@ async def ai_agents_batch_collect_job() -> str:
     """
     from app.services.openai_client import check_batch
     from app.services.ai_agents import collect_agent_batch
-    from app.database.connection import fetch_all, execute
 
     logger.info("Starting ai_agents_batch_collect job")
 
     try:
         # Find pending batch jobs
-        rows = await fetch_all(
-            """
-            SELECT DISTINCT batch_job_id 
-            FROM analysis_versions 
-            WHERE batch_job_id IS NOT NULL 
-              AND analysis_type = 'agent_analysis'
-              AND generated_at > NOW() - INTERVAL '24 hours'
-            """
-        )
+        batch_ids = await jobs_repo.get_pending_batch_jobs()
         
-        if not rows:
+        if not batch_ids:
             return "No pending batch jobs"
         
         collected = 0
         pending = 0
         failed = 0
         
-        for row in rows:
-            batch_id = row["batch_job_id"]
-            
+        for batch_id in batch_ids:
             # Check batch status
             status = await check_batch(batch_id)
             if not status:
@@ -882,26 +685,12 @@ async def ai_agents_batch_collect_job() -> str:
                 logger.info(f"Collected {len(results)} results from batch {batch_id}")
                 
                 # Clear batch_job_id for processed symbols
-                await execute(
-                    """
-                    UPDATE analysis_versions 
-                    SET batch_job_id = NULL 
-                    WHERE batch_job_id = $1
-                    """,
-                    batch_id
-                )
+                await jobs_repo.clear_batch_job_references(batch_id)
             elif status["status"] in ("failed", "cancelled", "expired"):
                 logger.error(f"Batch {batch_id} failed with status: {status['status']}")
                 failed += 1
                 # Clear failed batch references
-                await execute(
-                    """
-                    UPDATE analysis_versions 
-                    SET batch_job_id = NULL 
-                    WHERE batch_job_id = $1
-                    """,
-                    batch_id
-                )
+                await jobs_repo.clear_batch_job_references(batch_id)
             else:
                 # Still in progress
                 pending += 1
@@ -923,35 +712,23 @@ async def cleanup_job() -> str:
 
     Schedule: Daily midnight
     """
-    from app.database.connection import execute
-
     logger.info("Starting cleanup job")
 
     try:
         # Rejected suggestions > 7 days
-        await execute(
-            "DELETE FROM stock_suggestions WHERE status = 'rejected' AND reviewed_at < NOW() - INTERVAL '7 days'"
-        )
+        await jobs_repo.cleanup_expired_suggestions()
 
         # Pending suggestions > 30 days
-        await execute(
-            "DELETE FROM stock_suggestions WHERE status = 'pending' AND created_at < NOW() - INTERVAL '30 days'"
-        )
+        await jobs_repo.cleanup_stale_pending_suggestions()
 
         # Expired AI analyses
-        await execute(
-            "DELETE FROM dip_ai_analysis WHERE expires_at IS NOT NULL AND expires_at < NOW()"
-        )
+        await jobs_repo.cleanup_expired_ai_analyses()
         
         # Expired AI agent analyses
-        await execute(
-            "DELETE FROM ai_agent_analysis WHERE expires_at IS NOT NULL AND expires_at < NOW()"
-        )
+        await jobs_repo.cleanup_expired_agent_analyses()
 
         # Expired user API keys
-        await execute(
-            "DELETE FROM user_api_keys WHERE expires_at IS NOT NULL AND expires_at < NOW()"
-        )
+        await jobs_repo.cleanup_expired_api_keys()
 
         message = "Cleanup completed"
         logger.info(f"cleanup: {message}")

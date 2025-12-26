@@ -36,7 +36,6 @@ class AppSettingsResponse(BaseModel):
     rate_limit_auth: str
     rate_limit_api_anonymous: str
     rate_limit_api_authenticated: str
-    scheduler_enabled: bool
     scheduler_timezone: str
     external_api_timeout: int
     external_api_retries: int

@@ -6,9 +6,14 @@ from typing import Any
 
 from celery.result import AsyncResult
 
-from app.celery_app import celery_app
 from app.core.exceptions import JobError
 from app.jobs.registry import get_job
+
+
+def _get_celery_app():
+    """Lazy import to avoid circular imports."""
+    from app.celery_app import celery_app
+    return celery_app
 
 
 def enqueue_job(name: str) -> str:
@@ -16,12 +21,14 @@ def enqueue_job(name: str) -> str:
     if get_job(name) is None:
         raise JobError(message=f"Unknown job: {name}", error_code="UNKNOWN_JOB")
 
+    celery_app = _get_celery_app()
     result = celery_app.send_task(f"jobs.{name}")
     return result.id
 
 
 def get_task_status(task_id: str) -> dict[str, Any]:
     """Fetch Celery task status from the result backend."""
+    celery_app = _get_celery_app()
     result = AsyncResult(task_id, app=celery_app)
     payload: dict[str, Any] = {
         "task_id": task_id,

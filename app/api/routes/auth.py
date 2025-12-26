@@ -15,7 +15,6 @@ from app.core.security import (
     hash_password,
     verify_password,
 )
-from app.database.connection import execute
 from app.repositories import auth_user_orm as auth_repo
 from app.schemas.auth import (
     LoginRequest,
@@ -214,33 +213,15 @@ async def update_credentials(
 
     # If username is changing, we need to preserve admin status and MFA settings
     if new_username != user.sub:
-        # Create new user with same admin status
-        await execute(
-            """
-            INSERT INTO auth_user(username, password_hash, is_admin, mfa_secret, mfa_enabled, mfa_backup_codes, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
-            """,
-            new_username.lower(),
-            new_password_hash,
-            current_user.is_admin,
-            current_user.mfa_secret,
-            current_user.mfa_enabled,
-            current_user.mfa_backup_codes,
-        )
-        # Delete old user record
-        await execute(
-            "DELETE FROM auth_user WHERE username = $1", user.sub.lower()
+        # Migrate to new username with all settings preserved
+        await auth_repo.migrate_username(
+            old_username=user.sub,
+            new_username=new_username,
+            new_password_hash=new_password_hash,
         )
     else:
         # Just update password
-        await execute(
-            """
-            UPDATE auth_user SET password_hash = $1, updated_at = NOW()
-            WHERE username = $2
-            """,
-            new_password_hash,
-            user.sub.lower(),
-        )
+        await auth_repo.update_password(user.sub, new_password_hash)
 
     # Get admin status from database
     updated_user = await auth_repo.get_user(new_username)

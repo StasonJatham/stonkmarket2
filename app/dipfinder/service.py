@@ -20,7 +20,8 @@ import pandas as pd
 
 from app.cache.cache import Cache
 from app.core.logging import get_logger
-from app.database.connection import fetch_all, fetch_one, execute, execute_many
+from app.repositories import price_history_orm as price_history_repo
+from app.repositories import dipfinder_orm as dipfinder_repo
 from app.services.data_providers import get_yfinance_service
 
 from .config import DipFinderConfig, get_dipfinder_config
@@ -147,33 +148,13 @@ class DatabasePriceProvider:
     ) -> Optional[pd.DataFrame]:
         """Get price data from database or yfinance."""
         # Try database first
-        rows = await fetch_all(
-            """
-            SELECT date, open, high, low, close, adj_close, volume
-            FROM price_history
-            WHERE symbol = $1 AND date >= $2 AND date <= $3
-            ORDER BY date ASC
-            """,
+        df = await price_history_repo.get_prices_as_dataframe(
             ticker.upper(),
             start_date,
             end_date,
         )
 
-        if rows and len(rows) > 0:
-            df = pd.DataFrame([dict(r) for r in rows])
-            df.set_index("date", inplace=True)
-            df.rename(
-                columns={
-                    "open": "Open",
-                    "high": "High",
-                    "low": "Low",
-                    "close": "Close",
-                    "adj_close": "Adj Close",
-                    "volume": "Volume",
-                },
-                inplace=True,
-            )
-
+        if df is not None and not df.empty:
             # Check if we have enough data
             expected_days = (
                 end_date - start_date
@@ -212,45 +193,8 @@ class DatabasePriceProvider:
     async def _save_prices_to_db(self, ticker: str, df: pd.DataFrame) -> None:
         """Save price data to database."""
         try:
-            rows = []
-            for idx, row in df.iterrows():
-                rows.append(
-                    (
-                        ticker.upper(),
-                        idx.date() if hasattr(idx, "date") else idx,
-                        float(row.get("Open", 0))
-                        if pd.notna(row.get("Open"))
-                        else None,
-                        float(row.get("High", 0))
-                        if pd.notna(row.get("High"))
-                        else None,
-                        float(row.get("Low", 0)) if pd.notna(row.get("Low")) else None,
-                        float(row["Close"]) if pd.notna(row["Close"]) else None,
-                        float(row.get("Adj Close", row["Close"]))
-                        if pd.notna(row.get("Adj Close", row["Close"]))
-                        else None,
-                        int(row.get("Volume", 0))
-                        if pd.notna(row.get("Volume"))
-                        else None,
-                    )
-                )
-
-            if rows:
-                await execute_many(
-                    """
-                    INSERT INTO price_history (symbol, date, open, high, low, close, adj_close, volume)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                    ON CONFLICT (symbol, date) DO UPDATE SET
-                        open = EXCLUDED.open,
-                        high = EXCLUDED.high,
-                        low = EXCLUDED.low,
-                        close = EXCLUDED.close,
-                        adj_close = EXCLUDED.adj_close,
-                        volume = EXCLUDED.volume
-                    """,
-                    rows,
-                )
-                logger.debug(f"Cached {len(rows)} price records for {ticker}")
+            count = await price_history_repo.save_prices(ticker, df)
+            logger.debug(f"Cached {count} price records for {ticker}")
         except Exception as e:
             logger.warning(f"Failed to cache prices for {ticker}: {e}")
 
@@ -362,32 +306,13 @@ class DipFinderService:
         Returns:
             List of DipSignals
         """
-        conditions = ["1=1"]
-        params = []
-        param_idx = 1
-
-        if min_final_score is not None:
-            conditions.append(f"final_score >= ${param_idx}")
-            params.append(min_final_score)
-            param_idx += 1
-
-        if only_alerts:
-            conditions.append("should_alert = TRUE")
-
-        where_clause = " AND ".join(conditions)
-
-        rows = await fetch_all(
-            f"""
-            SELECT * FROM dipfinder_latest_signals
-            WHERE {where_clause}
-            ORDER BY final_score DESC
-            LIMIT ${param_idx}
-            """,
-            *params,
-            limit,
+        rows = await dipfinder_repo.get_latest_signals(
+            limit=limit,
+            min_final_score=min_final_score,
+            only_alerts=only_alerts,
         )
 
-        return [self._row_to_signal(dict(r)) for r in rows if r]
+        return [self._row_to_signal(self._orm_to_dict(r)) for r in rows if r]
 
     async def get_dip_history(
         self,
@@ -404,19 +329,47 @@ class DipFinderService:
         Returns:
             List of history records
         """
-        since = datetime.now(timezone.utc) - timedelta(days=days)
+        rows = await dipfinder_repo.get_dip_history(ticker, days)
 
-        rows = await fetch_all(
-            """
-            SELECT * FROM dipfinder_history
-            WHERE ticker = $1 AND recorded_at >= $2
-            ORDER BY recorded_at DESC
-            """,
-            ticker.upper(),
-            since,
-        )
+        return [
+            {
+                "ticker": r.ticker,
+                "event_type": r.event_type,
+                "window_days": r.window_days,
+                "dip_pct": float(r.dip_pct) if r.dip_pct else None,
+                "final_score": float(r.final_score) if r.final_score else None,
+                "dip_class": r.dip_class,
+                "recorded_at": r.recorded_at,
+            }
+            for r in rows
+        ]
 
-        return [dict(r) for r in rows]
+    def _orm_to_dict(self, obj) -> Dict[str, Any]:
+        """Convert ORM object to dict for signal deserialization."""
+        return {
+            "ticker": obj.ticker,
+            "benchmark": obj.benchmark,
+            "window": obj.window_days,
+            "window_days": obj.window_days,
+            "as_of_date": obj.as_of_date,
+            "dip_stock": float(obj.dip_stock) if obj.dip_stock else 0,
+            "peak_stock": float(obj.peak_stock) if obj.peak_stock else 0,
+            "dip_pctl": float(obj.dip_pctl) if obj.dip_pctl else 0,
+            "dip_vs_typical": float(obj.dip_vs_typical) if obj.dip_vs_typical else 0,
+            "persist_days": obj.persist_days or 0,
+            "dip_mkt": float(obj.dip_mkt) if obj.dip_mkt else 0,
+            "excess_dip": float(obj.excess_dip) if obj.excess_dip else 0,
+            "dip_class": obj.dip_class,
+            "quality_score": float(obj.quality_score) if obj.quality_score else 0,
+            "stability_score": float(obj.stability_score) if obj.stability_score else 0,
+            "dip_score": float(obj.dip_score) if obj.dip_score else 0,
+            "final_score": float(obj.final_score) if obj.final_score else 0,
+            "alert_level": obj.alert_level,
+            "should_alert": obj.should_alert,
+            "reason": obj.reason,
+            "quality_factors": obj.quality_factors,
+            "stability_factors": obj.stability_factors,
+        }
 
     async def _compute_signal(
         self,
@@ -493,20 +446,13 @@ class DipFinderService:
                 as_of_date = date.fromisoformat(as_of_date)
 
             # Fetch ATH-based dip values from dip_state (source of truth)
-            dip_state = await fetch_one(
-                """
-                SELECT ath_price, dip_percentage, dip_start_date
-                FROM dip_state
-                WHERE symbol = $1
-                """,
-                signal.ticker,
-            )
+            dip_state = await dipfinder_repo.get_dip_state(signal.ticker)
 
             # Use ATH-based values if available, otherwise fall back to computed values
             if dip_state:
-                peak_stock = float(dip_state["ath_price"])
-                dip_stock = float(dip_state["dip_percentage"]) / 100.0  # Convert to fraction
-                persist_days = (date.today() - dip_state["dip_start_date"]).days if dip_state["dip_start_date"] else 0
+                peak_stock = float(dip_state.ath_price)
+                dip_stock = float(dip_state.dip_percentage) / 100.0  # Convert to fraction
+                persist_days = (date.today() - dip_state.dip_start_date).days if dip_state.dip_start_date else 0
                 # Recalculate dip_score based on ATH dip
                 dip_score = min(100.0, dip_stock * 100 * 5)
                 # Recalculate final_score
@@ -519,67 +465,29 @@ class DipFinderService:
                 dip_score = signal.dip_score
                 final_score = signal.final_score
 
-            await execute(
-                """
-                INSERT INTO dipfinder_signals (
-                    ticker, benchmark, window_days, as_of_date,
-                    dip_stock, peak_stock, dip_pctl, dip_vs_typical, persist_days,
-                    dip_mkt, excess_dip, dip_class,
-                    quality_score, stability_score, dip_score, final_score,
-                    alert_level, should_alert, reason,
-                    quality_factors, stability_factors,
-                    expires_at
-                ) VALUES (
-                    $1, $2, $3, $4,
-                    $5, $6, $7, $8, $9,
-                    $10, $11, $12,
-                    $13, $14, $15, $16,
-                    $17, $18, $19,
-                    $20, $21,
-                    $22
-                )
-                ON CONFLICT (ticker, benchmark, window_days, as_of_date) DO UPDATE SET
-                    dip_stock = EXCLUDED.dip_stock,
-                    peak_stock = EXCLUDED.peak_stock,
-                    dip_pctl = EXCLUDED.dip_pctl,
-                    dip_vs_typical = EXCLUDED.dip_vs_typical,
-                    persist_days = EXCLUDED.persist_days,
-                    dip_mkt = EXCLUDED.dip_mkt,
-                    excess_dip = EXCLUDED.excess_dip,
-                    dip_class = EXCLUDED.dip_class,
-                    quality_score = EXCLUDED.quality_score,
-                    stability_score = EXCLUDED.stability_score,
-                    dip_score = EXCLUDED.dip_score,
-                    final_score = EXCLUDED.final_score,
-                    alert_level = EXCLUDED.alert_level,
-                    should_alert = EXCLUDED.should_alert,
-                    reason = EXCLUDED.reason,
-                    quality_factors = EXCLUDED.quality_factors,
-                    stability_factors = EXCLUDED.stability_factors,
-                    expires_at = EXCLUDED.expires_at
-                """,
-                signal.ticker,
-                signal.benchmark,
-                signal.window,
-                as_of_date,
-                float(dip_stock),
-                float(peak_stock),
-                float(signal.dip_metrics.dip_percentile),
-                float(signal.dip_metrics.dip_vs_typical),
-                int(persist_days),
-                float(signal.market_context.dip_mkt),
-                float(signal.market_context.excess_dip),
-                signal.market_context.dip_class.value,
-                float(signal.quality_metrics.score),
-                float(signal.stability_metrics.score),
-                float(dip_score),
-                float(final_score),
-                signal.alert_level.value,
-                bool(signal.should_alert),
-                signal.reason,
-                json.dumps(signal.quality_metrics.to_dict()),
-                json.dumps(signal.stability_metrics.to_dict()),
-                expires_at,
+            await dipfinder_repo.save_signal(
+                ticker=signal.ticker,
+                benchmark=signal.benchmark,
+                window_days=signal.window,
+                as_of_date=as_of_date,
+                dip_stock=float(dip_stock),
+                peak_stock=float(peak_stock),
+                dip_pctl=float(signal.dip_metrics.dip_percentile),
+                dip_vs_typical=float(signal.dip_metrics.dip_vs_typical),
+                persist_days=int(persist_days),
+                dip_mkt=float(signal.market_context.dip_mkt),
+                excess_dip=float(signal.market_context.excess_dip),
+                dip_class=signal.market_context.dip_class.value,
+                quality_score=float(signal.quality_metrics.score),
+                stability_score=float(signal.stability_metrics.score),
+                dip_score=float(dip_score),
+                final_score=float(final_score),
+                alert_level=signal.alert_level.value,
+                should_alert=bool(signal.should_alert),
+                reason=signal.reason,
+                quality_factors=signal.quality_metrics.to_dict(),
+                stability_factors=signal.stability_metrics.to_dict(),
+                expires_at=expires_at,
             )
 
             # Check if this is a state change that should be logged
@@ -591,18 +499,16 @@ class DipFinderService:
     async def _check_and_log_history(self, signal: DipSignal) -> None:
         """Check for dip state changes and log to history."""
         try:
+            # Convert as_of_date string to date object if needed
+            as_of_date = signal.as_of_date
+            if isinstance(as_of_date, str):
+                as_of_date = date.fromisoformat(as_of_date)
+            
             # Get previous signal for this ticker/window
-            prev = await fetch_one(
-                """
-                SELECT should_alert, dip_stock, final_score, dip_class
-                FROM dipfinder_signals
-                WHERE ticker = $1 AND window_days = $2 AND as_of_date < $3
-                ORDER BY as_of_date DESC
-                LIMIT 1
-                """,
+            prev = await dipfinder_repo.get_previous_signal(
                 signal.ticker,
                 signal.window,
-                signal.as_of_date,
+                as_of_date,
             )
 
             event_type = None
@@ -610,7 +516,8 @@ class DipFinderService:
             if prev is None and signal.dip_metrics.is_meaningful:
                 event_type = "entered_dip"
             elif prev is not None:
-                was_meaningful = prev["dip_stock"] >= self.config.min_dip_abs
+                prev_dip_stock = float(prev.dip_stock) if prev.dip_stock else 0
+                was_meaningful = prev_dip_stock >= self.config.min_dip_abs
                 is_meaningful = signal.dip_metrics.is_meaningful
 
                 if not was_meaningful and is_meaningful:
@@ -619,33 +526,28 @@ class DipFinderService:
                     event_type = "exited_dip"
                 elif (
                     is_meaningful
-                    and signal.dip_metrics.dip_pct > prev["dip_stock"] * 1.1
+                    and signal.dip_metrics.dip_pct > prev_dip_stock * 1.1
                 ):
                     event_type = "deepened"
                 elif (
                     is_meaningful
-                    and signal.dip_metrics.dip_pct < prev["dip_stock"] * 0.9
+                    and signal.dip_metrics.dip_pct < prev_dip_stock * 0.9
                 ):
                     event_type = "recovered"
 
             if signal.should_alert and (
-                prev is None or not prev.get("should_alert", False)
+                prev is None or not prev.should_alert
             ):
                 event_type = "alert_triggered"
 
             if event_type:
-                await execute(
-                    """
-                    INSERT INTO dipfinder_history (
-                        ticker, event_type, window_days, dip_pct, final_score, dip_class
-                    ) VALUES ($1, $2, $3, $4, $5, $6)
-                    """,
-                    signal.ticker,
-                    event_type,
-                    signal.window,
-                    signal.dip_metrics.dip_pct,
-                    signal.final_score,
-                    signal.market_context.dip_class.value,
+                await dipfinder_repo.log_history_event(
+                    ticker=signal.ticker,
+                    event_type=event_type,
+                    window_days=signal.window,
+                    dip_pct=signal.dip_metrics.dip_pct,
+                    final_score=signal.final_score,
+                    dip_class=signal.market_context.dip_class.value,
                 )
 
         except Exception as e:

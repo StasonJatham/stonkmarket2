@@ -66,7 +66,6 @@ async def get_app_settings(
         rate_limit_auth=settings.rate_limit_auth,
         rate_limit_api_anonymous=settings.rate_limit_api_anonymous,
         rate_limit_api_authenticated=settings.rate_limit_api_authenticated,
-        scheduler_enabled=settings.scheduler_enabled,
         scheduler_timezone=settings.scheduler_timezone,
         external_api_timeout=settings.external_api_timeout,
         external_api_retries=settings.external_api_retries,

@@ -186,6 +186,63 @@ async def user_exists() -> bool:
         return result.scalar_one_or_none() is not None
 
 
+async def update_password(username: str, password_hash: str) -> bool:
+    """Update a user's password."""
+    async with get_session() as session:
+        result = await session.execute(
+            select(AuthUserORM).where(AuthUserORM.username == username.lower())
+        )
+        user = result.scalar_one_or_none()
+        
+        if user:
+            user.password_hash = password_hash
+            user.updated_at = datetime.now(timezone.utc)
+            await session.commit()
+            return True
+        return False
+
+
+async def migrate_username(
+    old_username: str,
+    new_username: str,
+    new_password_hash: str,
+) -> bool:
+    """
+    Migrate a user to a new username, preserving all settings.
+    
+    Creates new user with all MFA settings, then deletes old user.
+    """
+    async with get_session() as session:
+        # Get old user
+        result = await session.execute(
+            select(AuthUserORM).where(AuthUserORM.username == old_username.lower())
+        )
+        old_user = result.scalar_one_or_none()
+        
+        if not old_user:
+            return False
+        
+        now = datetime.now(timezone.utc)
+        
+        # Create new user with all settings from old user
+        new_user = AuthUserORM(
+            username=new_username.lower(),
+            password_hash=new_password_hash,
+            is_admin=old_user.is_admin,
+            mfa_secret=old_user.mfa_secret,
+            mfa_enabled=old_user.mfa_enabled,
+            mfa_backup_codes=old_user.mfa_backup_codes,
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(new_user)
+        
+        # Delete old user
+        await session.delete(old_user)
+        await session.commit()
+        return True
+
+
 async def seed_admin_from_env() -> None:
     """
     Seed admin user from environment variables into the database.

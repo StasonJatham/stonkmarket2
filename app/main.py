@@ -15,7 +15,6 @@ from app.core.config import settings
 from app.core.logging import get_logger, setup_logging
 from app.database.connection import init_pg_pool, close_pg_pool, get_session
 from app.database.orm import SchemaMigration
-from app.jobs import start_scheduler, stop_scheduler
 from app.services.runtime_settings import init_runtime_settings
 from app.repositories.api_keys import seed_api_keys_from_env
 from app.repositories.auth_user import seed_admin_from_env
@@ -122,18 +121,10 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Valkey connection failed (cache disabled): {e}")
 
-    # Start scheduler
-    if settings.scheduler_enabled:
-        await start_scheduler()
-        logger.info("Job scheduler started")
-
     yield
 
     # Shutdown
     logger.info("Shutting down...")
-
-    # Stop scheduler
-    await stop_scheduler()
 
     # Close Valkey connection
     await close_valkey_client()

@@ -140,10 +140,13 @@ class Settings(BaseSettings):
     chart_days: int = Field(default=180, ge=7, le=365)
 
     # Scheduler
-    scheduler_enabled: bool = Field(
-        default=True, description="Enable background job scheduler"
-    )
     scheduler_timezone: str = Field(default="UTC", description="Scheduler timezone")
+    flower_api_url: str = Field(
+        default="http://flower:5555", description="Flower API base URL"
+    )
+    flower_basic_auth: str = Field(
+        default="", description="Flower basic auth (user:pass)"
+    )
 
     # External API timeouts
     external_api_timeout: int = Field(

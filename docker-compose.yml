@@ -21,7 +21,7 @@ services:
     environment:
       - ENVIRONMENT=production
       - DEBUG=false
-      - SCHEDULER_ENABLED=false
+      - FLOWER_BASIC_AUTH=${FLOWER_BASIC_AUTH:-stonkmarket:88c3c9bfc4df90f830f2f025fc669b58}
     expose:
       - "8000"
     depends_on:
@@ -162,9 +162,44 @@ services:
       --loglevel=INFO
       --concurrency=${CELERY_CONCURRENCY:-4}
       --prefetch-multiplier=1
-      --queues=high,default,low,batch
+      --queues=high,default,low
       -O fair
       --hostname=worker@%h
+    env_file:
+      - .env.production
+    environment:
+      - ENVIRONMENT=production
+      - DEBUG=false
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://valkey:6379/1}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://valkey:6379/1}
+      - CELERY_CRON_SYNC_SECONDS=${CELERY_CRON_SYNC_SECONDS:-60}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - stonkmarket
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777
+
+  celery-worker-batch:
+    build:
+      context: .
+      dockerfile: Dockerfile.celery
+    container_name: stonkmarket-celery-worker-batch
+    command: >
+      celery -A app.celery_app.celery_app worker
+      --loglevel=INFO
+      --concurrency=${CELERY_BATCH_CONCURRENCY:-2}
+      --prefetch-multiplier=1
+      --queues=batch
+      -O fair
+      --hostname=batch@%h
     env_file:
       - .env.production
     environment:
@@ -231,6 +266,7 @@ services:
     environment:
       - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://valkey:6379/1}
       - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://valkey:6379/1}
+      - FLOWER_BASIC_AUTH=${FLOWER_BASIC_AUTH:-stonkmarket:88c3c9bfc4df90f830f2f025fc669b58}
     depends_on:
       valkey:
         condition: service_healthy

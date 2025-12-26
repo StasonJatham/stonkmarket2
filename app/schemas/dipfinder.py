@@ -200,6 +200,7 @@ class DipFinderRunResponse(BaseModel):
 
     status: str = Field(..., description="Status: started, completed, failed")
     message: str
+    task_id: Optional[str] = Field(None, description="Celery task id")
     tickers_processed: int = 0
     signals_generated: int = 0
     alerts_triggered: int = 0

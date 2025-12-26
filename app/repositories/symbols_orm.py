@@ -231,3 +231,89 @@ async def count_symbols() -> int:
     """Count total symbols."""
     async with get_session() as session:
         return await _count_symbols(session)
+
+
+async def update_fetch_status(
+    symbol: str,
+    fetch_status: str,
+    fetch_error: str | None = None,
+    fetched_at: datetime | None = None,
+) -> bool:
+    """Update a symbol's fetch status.
+    
+    Args:
+        symbol: Symbol ticker
+        fetch_status: Status string ('pending', 'fetching', 'fetched', 'error')
+        fetch_error: Error message if status is 'error'
+        fetched_at: Timestamp when fetch completed
+    
+    Returns:
+        True if symbol was updated, False if not found
+    """
+    async with get_session() as session:
+        result = await session.execute(
+            select(Symbol).where(Symbol.symbol == symbol.upper())
+        )
+        sym = result.scalar_one_or_none()
+        
+        if not sym:
+            return False
+        
+        sym.fetch_status = fetch_status
+        sym.fetch_error = fetch_error
+        if fetched_at:
+            sym.fetched_at = fetched_at
+        sym.updated_at = datetime.utcnow()
+        
+        await session.commit()
+        return True
+
+
+async def update_symbol_info(
+    symbol: str,
+    *,
+    name: str | None = None,
+    sector: str | None = None,
+    summary_ai: str | None = None,
+) -> bool:
+    """Update a symbol's name, sector, and/or AI summary.
+    
+    Only updates fields that are explicitly provided (not None).
+    
+    Returns:
+        True if symbol was updated, False if not found
+    """
+    async with get_session() as session:
+        result = await session.execute(
+            select(Symbol).where(Symbol.symbol == symbol.upper())
+        )
+        sym = result.scalar_one_or_none()
+        
+        if not sym:
+            return False
+        
+        if name is not None:
+            sym.name = name
+        if sector is not None:
+            sym.sector = sector
+        if summary_ai is not None:
+            sym.summary_ai = summary_ai
+        sym.updated_at = datetime.utcnow()
+        
+        await session.commit()
+        await invalidate_symbol_caches(symbol.upper())
+        return True
+
+
+async def get_symbol_summary_ai(symbol: str) -> str | None:
+    """Get a symbol's AI summary.
+    
+    Returns:
+        AI summary string or None if not found
+    """
+    async with get_session() as session:
+        result = await session.execute(
+            select(Symbol.summary_ai).where(Symbol.symbol == symbol.upper())
+        )
+        row = result.one_or_none()
+        return row[0] if row else None
