@@ -288,8 +288,9 @@ export function AIManager() {
     try {
       if (field === 'summary') {
         const summaryResult = await regenerateSymbolAiSummary(symbol);
-        if (summaryResult.task_id) {
-          setSummaryTasks(prev => ({ ...prev, [symbol]: summaryResult.task_id }));
+        const taskId = summaryResult.task_id;
+        if (taskId) {
+          setSummaryTasks(prev => ({ ...prev, [symbol]: taskId }));
         }
         return;
       }

@@ -371,3 +371,9 @@ def dipfinder_refresh_all_task(benchmark: str | None = None) -> str:
         )
 
     return _run_async(_run())
+
+
+@celery_app.task(name="jobs.quant_engine_monthly")
+def quant_engine_monthly_task() -> str:
+    """Run monthly quant engine optimization for all portfolios."""
+    return _run_job("quant_engine_monthly")

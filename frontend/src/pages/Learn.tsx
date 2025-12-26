@@ -5,21 +5,20 @@ import {
   AlertTriangle,
   BookOpen,
   Target,
-  Clock,
   BarChart3,
   Brain,
   Shield,
   ArrowRight,
   Lightbulb,
-  CheckCircle2,
-  XCircle,
-  Zap,
+  Sigma,
+  LineChart,
+  Activity,
+  Calculator,
 } from 'lucide-react';
 import { useSEO, generateBreadcrumbJsonLd, generateFAQJsonLd } from '@/lib/seo';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 
-// Feature flags from environment
 const ENABLE_LEGAL_PAGES = import.meta.env.VITE_ENABLE_LEGAL_PAGES === 'true';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -62,169 +61,146 @@ const fadeInVariants = {
   },
 };
 
-// Educational content structured as articles for SEO
+// Technical methodology articles
 const ARTICLES = [
   {
-    id: 'what-is-a-dip',
-    title: 'What is a Stock Dip?',
-    icon: TrendingDown,
+    id: 'alpha-model',
+    title: 'Alpha Model: Ridge/Lasso Ensemble',
+    icon: Brain,
     color: 'text-blue-500',
     bgColor: 'bg-blue-500/10',
-    summary: 'Understanding price pullbacks and their significance in the market.',
-    content: `A stock dip occurs when a stock's price falls significantly below its recent high point. This is typically measured from the 52-week high or a shorter reference period. For example, if a stock was trading at $100 and drops to $80, that's a 20% dip.
+    summary: 'Expected return estimation with out-of-sample validation.',
+    content: `Our alpha model uses a Ridge/Lasso regularized regression ensemble to predict forward returns over a 2-month horizon.
 
-Dips can happen for various reasons: market-wide corrections, sector rotation, company-specific news, or simply profit-taking by investors. Not all dips are equal—some represent buying opportunities while others signal fundamental problems with the company.`,
+**Features**: Momentum (21d, 63d, 126d, 252d windows), realized volatility, short-term reversal, and volume trends. All computed with strict no-lookahead guarantees.
+
+**Ensemble Weighting**: Models are combined using inverse-MSE weighting from out-of-sample validation. Each model's weight is proportional to 1/MSE, ensuring better performers contribute more.
+
+**Uncertainty Quantification**: We estimate forecast uncertainty using cross-validation residuals, enabling confidence-aware position sizing.`,
   },
   {
-    id: 'buy-the-dip-strategy',
-    title: 'The "Buy the Dip" Strategy',
-    icon: Target,
+    id: 'dip-score',
+    title: 'DipScore: Statistical Dip Detection',
+    icon: TrendingDown,
     color: 'text-chart-1',
     bgColor: 'bg-chart-1/10',
-    summary: 'How investors use price pullbacks as potential entry points.',
-    content: `"Buy the dip" is an investment strategy where investors purchase stocks after a significant price decline, betting on a recovery. The logic is simple: if a fundamentally strong company's stock drops due to temporary factors, buying at the lower price could yield profits when the stock recovers.
+    summary: 'Factor-residual z-score for identifying abnormal drawdowns.',
+    content: `DipScore measures how unusual a price drop is after controlling for market factors.
 
-However, this strategy requires careful analysis. You need to distinguish between temporary pullbacks in quality stocks and genuine downtrends in declining businesses. Key factors to consider include the company's fundamentals, the reason for the dip, and broader market conditions.`,
+**Computation**: DipScore = (r − E[r | factors]) / σ_resid
+
+Where r is the observed return, E[r | factors] is the expected return from factor regression, and σ_resid is the rolling residual volatility.
+
+**Critical Design**: DipScore is **informational only**. It adjusts expected returns (μ_hat) but **never directly generates orders**. All trading decisions flow through the optimizer.
+
+**Bucketing**: Scores are bucketed (≤-2, -2 to -1, -1 to 0, 0 to 1, >1) for regime-conditional analysis.`,
   },
   {
-    id: 'identifying-quality-dips',
-    title: 'Identifying Quality Dip Opportunities',
-    icon: BarChart3,
+    id: 'risk-model',
+    title: 'Risk Model: PCA Factor Covariance',
+    icon: Activity,
     color: 'text-purple-500',
     bgColor: 'bg-purple-500/10',
-    summary: 'Criteria for finding stocks with genuine recovery potential.',
-    content: `Not every dip is worth buying. Here's what to look for:
+    summary: 'Principal component analysis for portfolio risk estimation.',
+    content: `We use a PCA-based factor model to estimate the covariance matrix.
 
-**Strong Fundamentals**: The company should have solid revenue growth, healthy profit margins, and a sustainable business model.
+**Structure**: Σ ≈ B Σ_F B^T + D
 
-**Temporary Catalyst**: The dip should be caused by temporary factors (market sentiment, short-term news) rather than fundamental deterioration.
+Where B is the factor loading matrix (n_assets × n_factors), Σ_F is the factor covariance, and D is the diagonal idiosyncratic variance.
 
-**Historical Recovery**: Check if the stock has recovered from similar dips in the past.
+**Configuration**: 5 PCA factors by default, capturing major market drivers while filtering noise.
 
-**Valuation**: Even after the dip, ensure the stock isn't overvalued compared to peers.
-
-**Volume Analysis**: Look for signs of institutional buying during the dip.`,
+**Marginal Contribution to Risk (MCR)**: For each asset, we compute MCR_i = w_i × (Σw)_i / σ_p, enabling risk-aware allocation decisions.`,
   },
   {
-    id: 'risks-of-dip-buying',
-    title: 'Risks of Buying Dips',
-    icon: AlertTriangle,
+    id: 'optimizer',
+    title: 'Portfolio Optimizer: Incremental QP',
+    icon: Calculator,
     color: 'text-orange-500',
     bgColor: 'bg-orange-500/10',
-    summary: 'Understanding the dangers and how to protect yourself.',
-    content: `Buying dips carries significant risks that every investor should understand:
+    summary: 'Mean-variance optimization with transaction costs.',
+    content: `The optimizer solves an incremental mean-variance problem using convex quadratic programming (CVXPY).
 
-**Catching a Falling Knife**: Sometimes a stock dips and keeps falling. What looks like a 20% discount today could become a 50% loss tomorrow.
+**Objective**: max (w+Δw)'μ_hat − λ(w+Δw)'Σ(w+Δw) − TC(Δw)
 
-**Value Traps**: Some stocks are cheap for good reasons. Declining businesses rarely recover.
+**Constraints**:
+• Long-only: w ≥ 0
+• Max position weight: 15%
+• Max monthly turnover: 20%
+• Transaction cost: €1 fixed per trade
+• Minimum trade size: €10
 
-**Opportunity Cost**: Money tied up in underperforming dip-buys could be invested elsewhere.
-
-**Emotional Decision-Making**: The fear of missing out (FOMO) can lead to impulsive purchases.
-
-**Timing Risk**: Even good companies can take years to recover from significant dips.`,
+**Output**: Optimal weight changes Δw*, ranked by marginal utility net of transaction costs.`,
   },
   {
-    id: 'using-stonkmarket',
-    title: 'How StonkMarket Helps',
-    icon: Brain,
+    id: 'walk-forward',
+    title: 'Validation: Walk-Forward Testing',
+    icon: LineChart,
+    color: 'text-chart-4',
+    bgColor: 'bg-chart-4/10',
+    summary: 'Out-of-sample validation with proper time splits.',
+    content: `All models are validated using walk-forward methodology to prevent overfitting.
+
+**Split Structure**: 36-month training / 6-month validation / 6-month test windows, rolled forward in 3-month increments.
+
+**Metrics**: Sharpe ratio, maximum drawdown, hit rate (directional accuracy), total turnover.
+
+**Baseline Comparison**: Results compared against equal-weight and 60/40 benchmarks.
+
+**No Lookahead**: Strict separation enforced—no future data leaks into training or feature computation.`,
+  },
+  {
+    id: 'tuning',
+    title: 'Hyperparameter Tuning',
+    icon: Target,
     color: 'text-primary',
     bgColor: 'bg-primary/10',
-    summary: 'Using our tools to research and track potential opportunities.',
-    content: `StonkMarket provides several tools to help with your dip research:
+    summary: 'Nested walk-forward selection of optimal parameters.',
+    content: `Hyperparameters are tuned using nested walk-forward validation.
 
-**Dip Tracker**: Our dashboard shows stocks currently trading below their reference highs, sorted by dip depth and other metrics.
+**Tuned Parameters**:
+• Forecast horizon: {1, 2, 3} months
+• Ridge alpha: {1, 10, 100}
+• Dip coefficient k: {0.001, 0.002, 0.005}
+• PCA factors: {3, 5, 8}
+• Risk aversion λ: {5, 10, 20}
 
-**DipSwipe**: A Tinder-style interface to quickly review stocks with AI-generated summaries.
+**Selection Criterion**: Maximize validation Sharpe ratio while penalizing parameter instability.
 
-**AI Analysis**: GPT-powered insights providing context, ratings, and reasoning for each stock.
-
-**Community Voting**: See what other users think about specific dip opportunities.
-
-**Benchmark Comparison**: Compare individual stocks against S&P 500 and MSCI World indices.
-
-Remember: Our tools are for research and education only. Always do your own due diligence before making any investment decisions.`,
+**Schedule**: Full retuning monthly; dip coefficient can be tuned more frequently if regime shifts detected.`,
   },
 ];
 
-// Tips & Tricks
-const TIPS = [
-  {
-    type: 'do',
-    icon: CheckCircle2,
-    title: 'Do: Diversify Your Dips',
-    description: "Don't put all your money into one dipped stock. Spread across multiple positions to reduce risk.",
-  },
-  {
-    type: 'do',
-    icon: CheckCircle2,
-    title: 'Do: Wait for Stabilization',
-    description: "Let a stock show signs of stabilization before buying. Patience often pays off.",
-  },
-  {
-    type: 'do',
-    icon: CheckCircle2,
-    title: 'Do: Set Price Alerts',
-    description: "Use price alerts to notify you when stocks hit your target entry points.",
-  },
-  {
-    type: 'dont',
-    icon: XCircle,
-    title: "Don't: Chase Every Dip",
-    description: "Not every dip is an opportunity. Be selective and do your research first.",
-  },
-  {
-    type: 'dont',
-    icon: XCircle,
-    title: "Don't: Ignore the Why",
-    description: "Always understand why a stock dropped. News matters—a lot.",
-  },
-  {
-    type: 'dont',
-    icon: XCircle,
-    title: "Don't: Forget Stop-Losses",
-    description: "Have an exit plan. Know when to cut losses if your thesis is wrong.",
-  },
-];
-
-// Quick tips for sidebar
+// Technical quick reference
 const QUICK_TIPS = [
-  "A 10-20% drop is typically considered a 'dip'",
-  "Check the VIX (fear index) before buying dips",
-  "Earnings season often creates dip opportunities",
-  "Dollar-cost averaging reduces timing risk",
-  "Blue-chip stocks recover faster than small caps",
+  "μ_hat = ensemble-weighted Ridge/Lasso predictions",
+  "Σ = PCA factor model with 5 components",
+  "DipScore adjusts μ_hat, never generates orders",
+  "Max position 15%, max turnover 20%/month",
+  "Walk-forward: 36mo train / 6mo val / 6mo test",
 ];
 
-// FAQs for structured data
+// FAQs
 const FAQS = [
   {
-    question: 'Is buying the dip a good strategy?',
-    answer: 'Buying the dip can be profitable if applied to fundamentally strong companies experiencing temporary setbacks. However, it carries risks including catching falling knives and value traps. Success requires thorough research, patience, and proper risk management.',
+    question: 'Why use Ridge/Lasso instead of more complex models?',
+    answer: 'Linear models with regularization are well-suited for noisy financial data. They provide interpretable coefficients, stable out-of-sample performance, and explicit uncertainty quantification. More complex models often overfit without providing better out-of-sample returns.',
   },
   {
-    question: 'How do I know if a dip is a buying opportunity?',
-    answer: 'Look for stocks with strong fundamentals (revenue growth, profit margins, competitive advantage) where the dip was caused by temporary factors rather than deteriorating business conditions. Check historical recovery patterns and ensure the valuation is reasonable even after the decline.',
+    question: "Why doesn't DipScore directly trigger trades?",
+    answer: 'DipScore is an informational signal, not a trading rule. It adjusts expected return estimates (μ_hat), which then flow through the optimizer. This ensures all decisions respect constraints (position limits, turnover, costs) and are part of a coherent portfolio optimization.',
   },
   {
-    question: 'What percentage drop counts as a dip?',
-    answer: 'There is no universal definition, but many investors consider a 10-20% decline from recent highs as a "dip." Larger declines (20-40%) are often called corrections, while drops over 40-50% may indicate more serious problems. StonkMarket tracks stocks with dips of 10% or more.',
+    question: 'How do you prevent lookahead bias?',
+    answer: 'All features are computed using only past data as of each point in time. Walk-forward validation uses strict temporal separation between train/validation/test sets. The codebase includes explicit no-lookahead verification in tests.',
   },
   {
-    question: 'Should I use stop-loss orders when buying dips?',
-    answer: 'Stop-loss orders can help limit downside risk, but they may also trigger during temporary volatility, locking in losses. Consider your time horizon, risk tolerance, and the specific situation. Some investors prefer position sizing and diversification over stop-losses for dip-buying strategies.',
+    question: 'What is the rebalancing frequency?',
+    answer: 'The optimizer runs monthly, generating recommendations for the upcoming period. Intra-month, recommendations can be refreshed if significant new data arrives, but the core model is retrained monthly to balance reactivity with stability.',
   },
   {
-    question: 'How long does it take for stocks to recover from dips?',
-    answer: 'Recovery time varies significantly depending on the cause of the dip, market conditions, and company fundamentals. Some stocks recover within weeks, while others take months or years. Historical data shows that major market indices typically recover from corrections within 6-18 months, but individual stocks vary widely.',
-  },
-  {
-    question: 'What is a value trap?',
-    answer: 'A value trap is a stock that appears cheap based on valuation metrics but continues to decline. These are often companies with deteriorating fundamentals, disrupted business models, or structural problems. The key is distinguishing between temporary dips and permanent declines.',
-  },
-  {
-    question: 'How much of my portfolio should I allocate to dip buying?',
-    answer: 'Most financial advisors suggest keeping 5-15% of your portfolio as "opportunity cash" for dip buying. Never invest more than you can afford to lose, and ensure your core portfolio is properly diversified before attempting dip-buying strategies.',
+    question: 'How are transaction costs modeled?',
+    answer: "We use a €1 fixed cost per trade (matching TradeRepublic pricing) with a €10 minimum trade size. The optimizer directly incorporates these costs, pruning small trades that don't justify the fixed cost.",
   },
 ];
 
@@ -232,7 +208,7 @@ const FAQS = [
 function generateArticleJsonLd(article: typeof ARTICLES[0]) {
   return {
     '@context': 'https://schema.org',
-    '@type': 'Article',
+    '@type': 'TechArticle',
     'headline': article.title,
     'description': article.summary,
     'author': {
@@ -256,16 +232,15 @@ function generateArticleJsonLd(article: typeof ARTICLES[0]) {
 }
 
 export function LearnPage() {
-  // SEO with educational content structured data
   useSEO({
-    title: 'Learn - Stock Dip Investing Guide',
-    description: 'Learn about stock dips, the buy-the-dip strategy, how to identify quality opportunities, and the risks involved. Free educational resources for investors.',
-    keywords: 'stock dips, buy the dip, investing strategy, stock market education, dip buying, value investing, stock analysis',
+    title: 'Methodology - Quantitative Portfolio Engine',
+    description: 'Technical documentation for our quantitative portfolio optimization engine. Ridge/Lasso alpha models, PCA risk factors, walk-forward validation, and transaction-cost-aware optimization.',
+    keywords: 'quantitative finance, portfolio optimization, alpha model, risk model, walk-forward validation, mean-variance optimization',
     canonical: '/learn',
     jsonLd: [
       generateBreadcrumbJsonLd([
         { name: 'Home', url: '/' },
-        { name: 'Learn', url: '/learn' },
+        { name: 'Methodology', url: '/learn' },
       ]),
       generateFAQJsonLd(FAQS),
       ...ARTICLES.map(generateArticleJsonLd),
@@ -282,30 +257,30 @@ export function LearnPage() {
         className="text-center py-12 md:py-16"
       >
         <Badge variant="outline" className="mb-4">
-          <BookOpen className="mr-1.5 h-3.5 w-3.5" />
-          Educational Resources
+          <Sigma className="mr-1.5 h-3.5 w-3.5" />
+          Quantitative Methodology
         </Badge>
         <h1 className="text-4xl md:text-5xl font-bold tracking-tight mb-4">
-          Stock Dip Investing Guide
+          Portfolio Engine Documentation
         </h1>
         <p className="text-lg text-muted-foreground max-w-2xl mx-auto mb-8">
-          Master the fundamentals of dip buying, identify quality opportunities, 
-          and understand the risks every smart investor should know.
+          A systematic, mathematically explicit portfolio decision engine. 
+          Every signal validated out-of-sample. Every decision from explicit optimization.
         </p>
         
         {/* Quick Stats */}
         <div className="flex flex-wrap justify-center gap-6 text-sm text-muted-foreground">
           <div className="flex items-center gap-2">
-            <Clock className="h-4 w-4" />
-            <span>5 min read</span>
+            <BarChart3 className="h-4 w-4" />
+            <span>Walk-forward validated</span>
           </div>
           <div className="flex items-center gap-2">
             <BookOpen className="h-4 w-4" />
-            <span>{ARTICLES.length} topics</span>
+            <span>{ARTICLES.length} components</span>
           </div>
           <div className="flex items-center gap-2">
             <Shield className="h-4 w-4" />
-            <span>Free forever</span>
+            <span>No lookahead bias</span>
           </div>
         </div>
       </motion.section>
@@ -322,9 +297,9 @@ export function LearnPage() {
             <div className="flex items-center gap-3">
               <AlertTriangle className="h-5 w-5 text-warning shrink-0" />
               <p className="text-sm text-muted-foreground">
-                <span className="font-semibold text-warning">Educational Only:</span>{' '}
-                This content does not constitute financial advice. Investing involves risk, 
-                including loss of principal. Always consult a qualified financial advisor.
+                <span className="font-semibold text-warning">Research Only:</span>{' '}
+                This system is for research and education. Past performance does not guarantee future results. 
+                Investing involves risk of loss. Not financial advice.
               </p>
             </div>
           </CardContent>
@@ -364,19 +339,18 @@ export function LearnPage() {
                   <CardContent className="pt-0">
                     <div className="prose prose-sm dark:prose-invert max-w-none">
                       {article.content.split('\n\n').map((paragraph, i) => {
-                        // Handle bold text with **
                         if (paragraph.includes('**')) {
                           const parts = paragraph.split(/\*\*(.*?)\*\*/g);
                           return (
-                            <p key={i} className="text-sm text-muted-foreground leading-relaxed mb-3 last:mb-0">
+                            <p key={i} className="text-sm text-muted-foreground leading-relaxed mb-3 last:mb-0 font-mono">
                               {parts.map((part, j) => 
-                                j % 2 === 1 ? <strong key={j} className="text-foreground">{part}</strong> : part
+                                j % 2 === 1 ? <strong key={j} className="text-foreground font-semibold">{part}</strong> : part
                               )}
                             </p>
                           );
                         }
                         return (
-                          <p key={i} className="text-sm text-muted-foreground leading-relaxed mb-3 last:mb-0">
+                          <p key={i} className="text-sm text-muted-foreground leading-relaxed mb-3 last:mb-0 font-mono">
                             {paragraph}
                           </p>
                         );
@@ -396,20 +370,20 @@ export function LearnPage() {
           variants={containerVariants}
           className="space-y-6"
         >
-          {/* Quick Tips Card */}
+          {/* Quick Reference Card */}
           <motion.div variants={itemVariants}>
             <Card className="sticky top-4">
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center gap-2 text-base">
                   <Lightbulb className="h-4 w-4 text-yellow-500" />
-                  Quick Tips
+                  Quick Reference
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-0">
                 <ul className="space-y-3">
                   {QUICK_TIPS.map((tip, index) => (
-                    <li key={index} className="flex items-start gap-2 text-sm text-muted-foreground">
-                      <Zap className="h-3.5 w-3.5 text-yellow-500 shrink-0 mt-0.5" />
+                    <li key={index} className="flex items-start gap-2 text-sm text-muted-foreground font-mono">
+                      <Sigma className="h-3.5 w-3.5 text-primary shrink-0 mt-0.5" />
                       <span>{tip}</span>
                     </li>
                   ))}
@@ -422,7 +396,7 @@ export function LearnPage() {
           <motion.div variants={itemVariants}>
             <Card>
               <CardHeader className="pb-3">
-                <CardTitle className="text-base">Jump to Section</CardTitle>
+                <CardTitle className="text-base">Components</CardTitle>
               </CardHeader>
               <CardContent className="pt-0">
                 <nav className="space-y-1">
@@ -438,7 +412,7 @@ export function LearnPage() {
                           {index + 1}
                         </span>
                         <Icon className="h-3.5 w-3.5" />
-                        <span className="truncate">{article.title}</span>
+                        <span className="truncate">{article.title.split(':')[0]}</span>
                       </a>
                     );
                   })}
@@ -448,52 +422,6 @@ export function LearnPage() {
           </motion.div>
         </motion.aside>
       </div>
-
-      {/* Tips & Tricks Section */}
-      <motion.section
-        initial="hidden"
-        whileInView="visible"
-        viewport={{ once: true, margin: '-100px' }}
-        variants={containerVariants}
-        className="mt-16"
-      >
-        <div className="text-center mb-8">
-          <Badge variant="outline" className="mb-3">
-            <Lightbulb className="mr-1.5 h-3.5 w-3.5" />
-            Pro Tips
-          </Badge>
-          <h2 className="text-2xl md:text-3xl font-bold tracking-tight">
-            Do's and Don'ts of Dip Buying
-          </h2>
-          <p className="text-muted-foreground mt-2">
-            Practical advice from experienced investors
-          </p>
-        </div>
-
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {TIPS.map((tip, index) => {
-            const Icon = tip.icon;
-            const isDo = tip.type === 'do';
-            return (
-              <motion.div key={index} variants={itemVariants}>
-                <Card className={`h-full ${isDo ? 'border-success/30 bg-success/5' : 'border-danger/30 bg-danger/5'}`}>
-                  <CardContent className="pt-6">
-                    <div className="flex items-start gap-3">
-                      <div className={`flex items-center justify-center w-8 h-8 rounded-full shrink-0 ${isDo ? 'bg-success/20' : 'bg-danger/20'}`}>
-                        <Icon className={`h-4 w-4 ${isDo ? 'text-success' : 'text-danger'}`} />
-                      </div>
-                      <div>
-                        <h3 className="font-semibold text-sm mb-1">{tip.title}</h3>
-                        <p className="text-sm text-muted-foreground">{tip.description}</p>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              </motion.div>
-            );
-          })}
-        </div>
-      </motion.section>
 
       {/* FAQ Section with Accordion */}
       <motion.section
@@ -505,10 +433,10 @@ export function LearnPage() {
       >
         <div className="text-center mb-8">
           <h2 className="text-2xl md:text-3xl font-bold tracking-tight">
-            Frequently Asked Questions
+            Technical FAQ
           </h2>
           <p className="text-muted-foreground mt-2">
-            Common questions about dip buying strategies
+            Common questions about the methodology
           </p>
         </div>
 
@@ -521,7 +449,7 @@ export function LearnPage() {
                     <span className="font-medium">{faq.question}</span>
                   </AccordionTrigger>
                   <AccordionContent>
-                    <p className="text-sm text-muted-foreground leading-relaxed">
+                    <p className="text-sm text-muted-foreground leading-relaxed font-mono">
                       {faq.answer}
                     </p>
                   </AccordionContent>
@@ -544,21 +472,21 @@ export function LearnPage() {
           <CardContent className="py-8">
             <div className="flex flex-col md:flex-row items-center justify-between gap-6 text-center md:text-left">
               <div>
-                <h3 className="text-xl font-bold mb-2">Ready to Put It Into Practice?</h3>
+                <h3 className="text-xl font-bold mb-2">View Your Portfolio Recommendations</h3>
                 <p className="text-muted-foreground max-w-md">
-                  Explore our tools to research stocks currently in a dip and make informed decisions.
+                  Generate optimized allocation recommendations based on this methodology.
                 </p>
               </div>
               <div className="flex flex-col sm:flex-row gap-3">
                 <Button asChild size="lg">
-                  <Link to="/">
-                    View Dashboard
+                  <Link to="/portfolios">
+                    My Portfolios
                     <ArrowRight className="ml-2 h-4 w-4" />
                   </Link>
                 </Button>
                 <Button variant="outline" size="lg" asChild>
-                  <Link to="/swipe">
-                    Try DipSwipe
+                  <Link to="/">
+                    Dashboard
                   </Link>
                 </Button>
               </div>
@@ -576,7 +504,7 @@ export function LearnPage() {
       >
         <div className="flex flex-wrap gap-2 justify-center">
           <Button variant="ghost" size="sm" asChild>
-            <Link to="/about">About Our Methodology</Link>
+            <Link to="/about">About</Link>
           </Button>
           {ENABLE_LEGAL_PAGES && (
             <Button variant="ghost" size="sm" asChild>
@@ -584,7 +512,7 @@ export function LearnPage() {
             </Button>
           )}
           <Button variant="ghost" size="sm" asChild>
-            <Link to="/contact">Contact Us</Link>
+            <Link to="/contact">Contact</Link>
           </Button>
         </div>
       </motion.section>

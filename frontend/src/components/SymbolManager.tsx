@@ -37,6 +37,7 @@ import {
   createSymbol, 
   updateSymbol, 
   deleteSymbol,
+  getCronJobs,
   validateSymbol,
   type Symbol 
 } from '@/services/api';
@@ -49,6 +50,7 @@ export function SymbolManager({ onError }: SymbolManagerProps) {
   const [symbols, setSymbols] = useState<Symbol[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [nextIngestRun, setNextIngestRun] = useState<string | null>(null);
   
   // Add/Edit dialog
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -80,6 +82,15 @@ export function SymbolManager({ onError }: SymbolManagerProps) {
   useEffect(() => {
     loadSymbols();
   }, [loadSymbols]);
+
+  useEffect(() => {
+    getCronJobs()
+      .then((jobs) => {
+        const ingest = jobs.find((job) => job.name === 'initial_data_ingest');
+        setNextIngestRun(ingest?.next_run || null);
+      })
+      .catch(() => {});
+  }, []);
 
   // Auto-poll when any symbol is in 'fetching' state
   useEffect(() => {
@@ -182,6 +193,12 @@ export function SymbolManager({ onError }: SymbolManagerProps) {
   const filteredSymbols = symbols.filter(s => 
     s.symbol.toLowerCase().includes(search.toLowerCase())
   );
+  const hasPending = symbols.some(
+    (s) => s.fetch_status === 'fetching' || s.fetch_status === 'pending'
+  );
+  const ingestHint = nextIngestRun
+    ? `Next ingest run: ${new Date(nextIngestRun).toLocaleString()}`
+    : 'Ingest queue active';
 
   return (
     <Card>
@@ -213,6 +230,12 @@ export function SymbolManager({ onError }: SymbolManagerProps) {
             className="pl-9"
           />
         </div>
+
+        {hasPending && (
+          <div className="text-xs text-muted-foreground mb-3">
+            {ingestHint}
+          </div>
+        )}
 
         {/* Table */}
         {isLoading ? (
@@ -256,26 +279,33 @@ export function SymbolManager({ onError }: SymbolManagerProps) {
                       {symbol.name || '—'}
                     </TableCell>
                     <TableCell>
-                      {symbol.fetch_status === 'fetching' ? (
-                        <Badge variant="secondary" className="animate-pulse">
-                          <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-                          Fetching...
-                        </Badge>
-                      ) : symbol.fetch_status === 'error' ? (
-                        <Badge variant="destructive" title={symbol.fetch_error || 'Unknown error'}>
-                          <XCircle className="h-3 w-3 mr-1" />
-                          Error
-                        </Badge>
-                      ) : symbol.fetch_status === 'fetched' ? (
-                        <Badge variant="default" className="bg-success">
-                          <CheckCircle className="h-3 w-3 mr-1" />
-                          Ready
-                        </Badge>
-                      ) : (
-                        <Badge variant="outline">
-                          Pending
-                        </Badge>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {symbol.fetch_status === 'fetching' ? (
+                          <Badge variant="secondary" className="animate-pulse">
+                            <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                            Fetching...
+                          </Badge>
+                        ) : symbol.fetch_status === 'error' ? (
+                          <Badge variant="destructive" title={symbol.fetch_error || 'Unknown error'}>
+                            <XCircle className="h-3 w-3 mr-1" />
+                            Error
+                          </Badge>
+                        ) : symbol.fetch_status === 'fetched' ? (
+                          <Badge variant="default" className="bg-success">
+                            <CheckCircle className="h-3 w-3 mr-1" />
+                            Ready
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline">
+                            Pending
+                          </Badge>
+                        )}
+                        {symbol.task_id && (symbol.fetch_status === 'pending' || symbol.fetch_status === 'fetching') && (
+                          <Badge variant="outline" className="text-muted-foreground" title={symbol.task_id}>
+                            Queued
+                          </Badge>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell>{(symbol.min_dip_pct * 100).toFixed(0)}%</TableCell>
                     <TableCell>{symbol.min_days} days</TableCell>

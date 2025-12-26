@@ -440,6 +440,11 @@ export function AdminPage() {
                         <span className="text-sm text-muted-foreground">
                           {describeCron(job.cron)}
                         </span>
+                        {job.next_run && (
+                          <span className="text-xs text-muted-foreground">
+                            Next: {formatDate(job.next_run)}
+                          </span>
+                        )}
                       </div>
                     </CardContent>
                   </Card>

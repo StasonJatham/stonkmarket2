@@ -73,6 +73,17 @@ async def list_portfolios(user_id: int) -> list[dict[str, Any]]:
         return [_portfolio_to_dict(p) for p in result.scalars().all()]
 
 
+async def list_all_active_portfolios() -> list[dict[str, Any]]:
+    """List all active portfolios across all users (for batch jobs)."""
+    async with get_session() as session:
+        result = await session.execute(
+            select(Portfolio)
+            .where(Portfolio.is_active == True)
+            .order_by(Portfolio.id)
+        )
+        return [_portfolio_to_dict(p) for p in result.scalars().all()]
+
+
 async def get_portfolio(portfolio_id: int, user_id: int) -> Optional[dict[str, Any]]:
     """Get a portfolio by id."""
     async with get_session() as session:

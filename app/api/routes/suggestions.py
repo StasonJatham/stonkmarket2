@@ -40,10 +40,37 @@ logger = get_logger("api.routes.suggestions")
 router = APIRouter(prefix="/suggestions", tags=["suggestions"])
 
 
-def _enqueue_symbol_processing(symbol: str) -> str:
+async def _enqueue_symbol_processing(symbol: str) -> str:
     """Queue background processing for an approved symbol."""
     task = celery_app.send_task("jobs.process_approved_symbol", args=[symbol.upper()])
+    from app.services.task_tracking import store_symbol_task
+    await store_symbol_task(symbol, task.id)
     return task.id
+
+
+async def _start_symbol_enrichment(
+    symbol: str,
+    name: str | None,
+    sector: str | None,
+) -> str:
+    """Ensure symbol is tracked and queue enrichment workflows."""
+    await suggestions_repo.add_symbol_from_suggestion(
+        symbol=symbol,
+        name=name,
+        sector=sector,
+    )
+
+    await suggestions_repo.set_suggestion_fetching(symbol)
+    await symbols_repo.update_fetch_status(
+        symbol,
+        fetch_status="fetching",
+        fetch_error=None,
+    )
+
+    from app.jobs.definitions import add_to_ingest_queue
+
+    await add_to_ingest_queue(symbol, priority=5)
+    return await _enqueue_symbol_processing(symbol)
 
 
 # =============================================================================
@@ -196,7 +223,11 @@ async def suggest_stock(
                 new_score=new_score,
             )
             if auto_approved:
-                task_id = _enqueue_symbol_processing(symbol)
+                task_id = await _start_symbol_enrichment(
+                    symbol=symbol,
+                    name=existing.company_name,
+                    sector=existing.sector,
+                )
                 current_status = "approved"
 
         response = {
@@ -352,7 +383,11 @@ async def vote_for_suggestion(
             auto_approved = True
             logger.info(f"Auto-approved suggestion {symbol} with {new_score} votes (threshold: {auto_approve_threshold})")
             # Trigger background processing for data + AI
-            task_id = _enqueue_symbol_processing(symbol)
+            task_id = await _start_symbol_enrichment(
+                symbol=symbol,
+                name=suggestion.company_name,
+                sector=suggestion.sector,
+            )
 
     response = {
         "message": "Vote recorded", 
@@ -479,6 +514,12 @@ async def list_pending_suggestions(
         offset=offset,
     )
 
+    from app.services.task_tracking import get_symbol_task
+    import asyncio
+    task_ids = await asyncio.gather(
+        *(get_symbol_task(s.symbol) for s in suggestions)
+    )
+
     return {
         "items": [
             {
@@ -495,8 +536,9 @@ async def list_pending_suggestions(
                 "created_at": suggestion.created_at.isoformat()
                 if suggestion.created_at
                 else None,
+                "task_id": task_ids[index],
             }
-            for suggestion in suggestions
+            for index, suggestion in enumerate(suggestions)
         ],
         "total": total,
         "page": page,
@@ -526,6 +568,12 @@ async def list_all_suggestions(
         offset=offset,
     )
 
+    from app.services.task_tracking import get_symbol_task
+    import asyncio
+    task_ids = await asyncio.gather(
+        *(get_symbol_task(s.symbol) for s in suggestions)
+    )
+
     return {
         "items": [
             {
@@ -550,8 +598,9 @@ async def list_all_suggestions(
                 "reviewed_at": suggestion.reviewed_at.isoformat()
                 if suggestion.reviewed_at
                 else None,
+                "task_id": task_ids[index],
             }
-            for suggestion in suggestions
+            for index, suggestion in enumerate(suggestions)
         ],
         "total": total,
         "page": page,
@@ -596,18 +645,11 @@ async def approve_suggestion(
 
     await suggestions_repo.approve_suggestion(suggestion_id, admin_id)
 
-    # Add symbol to tracked symbols using ORM
-    await suggestions_repo.add_symbol_from_suggestion(
+    task_id = await _start_symbol_enrichment(
         symbol=symbol,
         name=suggestion.company_name,
         sector=suggestion.sector,
     )
-    
-    # Queue for initial data ingest (high priority since user is waiting)
-    from app.jobs.definitions import add_to_ingest_queue
-    await add_to_ingest_queue(symbol, priority=5)
-
-    task_id = _enqueue_symbol_processing(symbol)
 
     return {
         "message": f"Approved and added {symbol} to tracking. AI content generating in background.",
@@ -642,7 +684,14 @@ async def refresh_suggestion_data(
 
     symbol = suggestion.symbol
     
-    task_id = _enqueue_symbol_processing(symbol)
+    await suggestions_repo.set_suggestion_fetching(symbol)
+    await symbols_repo.update_fetch_status(
+        symbol,
+        fetch_status="fetching",
+        fetch_error=None,
+    )
+
+    task_id = await _enqueue_symbol_processing(symbol)
 
     return {
         "message": f"Refresh queued for {symbol}",
@@ -813,166 +862,6 @@ async def backfill_suggestion_data(
         "total": len(suggestions),
         "errors": errors if errors else None,
     }
-
-
-async def _process_approved_symbol(symbol: str) -> None:
-    """Background task to process newly approved symbol.
-    
-    Fetches Yahoo Finance data, 365 days of price history, and generates AI content.
-    Also generates AI summary of company description on first import.
-    Updates fetch_status throughout for real-time admin feedback.
-    """
-    from datetime import date, timedelta
-    from app.services.stock_info import get_stock_info_async
-    from app.services.openai_client import generate_bio, rate_dip, summarize_company
-    from app.repositories import dip_votes_orm as dip_votes_repo
-    from app.dipfinder.service import get_dipfinder_service
-    from app.cache.cache import Cache
-    
-    logger.info(f"Processing newly approved symbol: {symbol}")
-    
-    # Set fetch_status to 'fetching' so admin UI shows loading state
-    await suggestions_repo.set_suggestion_fetching(symbol.upper())
-    
-    try:
-        # Step 1: Fetch Yahoo Finance info
-        info = await get_stock_info_async(symbol)
-        if not info:
-            logger.warning(f"Could not fetch Yahoo data for {symbol}")
-            return
-            
-        current_price = info.get("current_price", 0)
-        ath_price = info.get("ath_price") or info.get("fifty_two_week_high", 0)
-        dip_pct = ((ath_price - current_price) / ath_price * 100) if ath_price > 0 else 0
-        
-        logger.info(f"Fetched data for {symbol}: price=${current_price}, ATH=${ath_price}, dip={dip_pct:.1f}%")
-        
-        # Step 1.5: Update symbols table with name, sector and generate AI summary
-        name = info.get("name") or info.get("short_name")
-        sector = info.get("sector")
-        full_summary = info.get("summary")  # longBusinessSummary from yfinance
-        
-        # Generate AI summary from the long description (only on first import)
-        # Respects ai_enrichment_enabled setting
-        ai_summary = None
-        ai_enabled = get_runtime_setting("ai_enrichment_enabled", True)
-        if ai_enabled and full_summary and len(full_summary) > 100:
-            # Check if we already have an AI summary
-            existing_summary = await symbols_repo.get_symbol_summary_ai(symbol.upper())
-            if not existing_summary:
-                ai_summary = await summarize_company(
-                    symbol=symbol,
-                    name=name,
-                    description=full_summary,
-                )
-                if ai_summary:
-                    logger.info(f"Generated AI summary for {symbol}: {len(ai_summary)} chars")
-        
-        # Update symbols with name, sector, and AI summary
-        if name or sector or ai_summary:
-            await symbols_repo.update_symbol_info(
-                symbol.upper(),
-                name=name,
-                sector=sector,
-                summary_ai=ai_summary,
-            )
-            logger.info(f"Updated symbol info for {symbol}: name='{name}', sector='{sector}', summary_ai={'yes' if ai_summary else 'no'}")
-        
-        # Also update stock_suggestions table with name/sector for admin UI display
-        await suggestions_repo.update_suggestion_stock_info(
-            symbol=symbol.upper(),
-            company_name=name,
-            sector=sector,
-            summary=full_summary[:1000] if full_summary else None,  # Truncate for storage
-            current_price=current_price,
-            ath_price=ath_price,
-        )
-        
-        # Step 1.6: Fetch 365 days of price history
-        try:
-            service = get_dipfinder_service()
-            prices = await service.price_provider.get_prices(
-                symbol.upper(),
-                start_date=date.today() - timedelta(days=365),
-                end_date=date.today(),
-            )
-            if prices is not None and not prices.empty:
-                logger.info(f"Fetched {len(prices)} days of price history for {symbol}")
-            else:
-                logger.warning(f"No price history returned for {symbol}")
-        except Exception as price_err:
-            logger.warning(f"Failed to fetch price history for {symbol}: {price_err}")
-        
-        # Step 2: Create or update dip_state entry
-        await dip_state_repo.upsert_dip_state(
-            symbol=symbol.upper(),
-            current_price=current_price,
-            ath_price=ath_price,
-            dip_percentage=dip_pct,
-        )
-        
-        # Check if AI enrichment is enabled before running AI work
-        ai_enabled = get_runtime_setting("ai_enrichment_enabled", True)
-        
-        if ai_enabled:
-            # Step 3: Generate AI bio
-            bio = await generate_bio(
-                symbol=symbol,
-                dip_pct=dip_pct,
-            )
-            
-            # Step 4: Generate AI rating
-            rating_data = await rate_dip(
-                symbol=symbol,
-                current_price=current_price,
-                ref_high=ath_price,
-                dip_pct=dip_pct,
-            )
-            
-            # Step 5: Store AI analysis
-            if bio or rating_data:
-                await dip_votes_repo.upsert_ai_analysis(
-                    symbol=symbol,
-                    swipe_bio=bio,
-                    ai_rating=rating_data.get("rating") if rating_data else None,
-                    ai_reasoning=rating_data.get("reasoning") if rating_data else None,
-                    is_batch=False,
-                )
-                logger.info(f"Generated AI content for {symbol}: bio={'yes' if bio else 'no'}, rating={rating_data.get('rating') if rating_data else 'none'}")
-            else:
-                logger.warning(f"No AI content generated for {symbol}")
-            
-            # Step 5.5: Run AI agent analysis (Warren Buffett, Peter Lynch, etc.)
-            try:
-                from app.services.ai_agents import run_agent_analysis
-                agent_result = await run_agent_analysis(symbol)
-                if agent_result:
-                    logger.info(f"AI agents for {symbol}: {agent_result.overall_signal} ({agent_result.overall_confidence}%)")
-                else:
-                    logger.warning(f"No agent analysis generated for {symbol}")
-            except Exception as agent_err:
-                logger.warning(f"AI agents error for {symbol}: {agent_err}")
-        else:
-            logger.info(f"AI enrichment disabled, skipping AI content generation for {symbol}")
-        
-        # Step 6: Mark as fetched and invalidate ranking cache
-        # Update both stock_suggestions AND symbols tables
-        await suggestions_repo.set_suggestion_fetched(symbol.upper())
-        await symbols_repo.update_fetch_status(
-            symbol.upper(),
-            fetch_status="fetched",
-            fetch_error=None,
-        )
-        
-        # Invalidate ranking cache so the new stock appears immediately
-        ranking_cache = Cache(prefix="ranking", default_ttl=3600)
-        deleted = await ranking_cache.invalidate_pattern("*")
-        logger.info(f"Completed processing {symbol}, invalidated {deleted} ranking cache keys")
-            
-    except Exception as e:
-        logger.error(f"Error processing approved symbol {symbol}: {e}")
-        # Set error status so admin can retry
-        await suggestions_repo.set_suggestion_error(symbol.upper(), str(e))
 
 
 @router.post("/{suggestion_id}/reject", response_model=dict)

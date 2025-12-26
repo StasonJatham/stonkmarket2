@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Path, Query
@@ -10,6 +11,7 @@ from fastapi import APIRouter, Depends, Path, Query
 from app.api.dependencies import require_admin
 from app.core.exceptions import NotFoundError
 from app.core.security import TokenData
+from app.core.config import settings
 from app.jobs import enqueue_job, get_task_status
 from app.repositories import cronjobs_orm as cron_repo
 from app.repositories import settings_history_orm as settings_history_repo
@@ -22,6 +24,21 @@ from app.schemas.cronjobs import (
 )
 
 router = APIRouter()
+
+
+def _compute_next_run(cron_expr: str) -> datetime | None:
+    """Compute next run timestamp for a cron expression."""
+    try:
+        from croniter import croniter
+    except Exception:
+        return None
+
+    try:
+        tz = ZoneInfo(settings.scheduler_timezone)
+    except Exception:
+        tz = timezone.utc
+    now = datetime.now(tz)
+    return croniter(cron_expr, now).get_next(datetime)
 
 
 def _validate_job_name(name: str = Path(..., min_length=1, max_length=50)) -> str:
@@ -105,6 +122,7 @@ async def list_cronjobs(
             run_count=j.run_count,
             error_count=j.error_count,
             last_error=j.last_error,
+            next_run=_compute_next_run(j.cron),
         )
         for j in jobs
     ]
@@ -134,6 +152,7 @@ async def get_cronjob(
         name=job.name,
         cron=job.cron,
         description=job.description,
+        next_run=_compute_next_run(job.cron),
     )
 
 
@@ -181,6 +200,7 @@ async def update_cronjob(
         name=updated.name,
         cron=updated.cron,
         description=updated.description,
+        next_run=_compute_next_run(updated.cron),
     )
 
 

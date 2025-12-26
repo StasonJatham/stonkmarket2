@@ -349,6 +349,11 @@ async def get_symbol_fundamentals(
 async def list_symbols() -> List[SymbolResponse]:
     """List all tracked symbols (public endpoint for signals page)."""
     symbols = await symbol_repo.list_symbols()
+    from app.services.task_tracking import get_symbol_task
+    import asyncio
+    task_ids = await asyncio.gather(
+        *(get_symbol_task(s.symbol) for s in symbols)
+    )
     return [
         SymbolResponse(
             symbol=s.symbol,
@@ -357,8 +362,9 @@ async def list_symbols() -> List[SymbolResponse]:
             name=s.name,
             fetch_status=s.fetch_status,
             fetch_error=s.fetch_error,
+            task_id=task_ids[index],
         )
-        for s in symbols
+        for index, s in enumerate(symbols)
     ]
 
 
@@ -382,6 +388,8 @@ async def get_symbol(
             message=f"Symbol '{symbol}' not found",
             details={"symbol": symbol},
         )
+    from app.services.task_tracking import get_symbol_task
+    task_id = await get_symbol_task(symbol)
     return SymbolResponse(
         symbol=config.symbol,
         min_dip_pct=config.min_dip_pct,
@@ -389,6 +397,7 @@ async def get_symbol(
         name=config.name,
         fetch_status=config.fetch_status,
         fetch_error=config.fetch_error,
+        task_id=task_id,
     )
 
 
@@ -426,8 +435,16 @@ async def create_symbol(
         payload.min_days,
     )
 
+    await symbol_repo.update_fetch_status(
+        payload.symbol,
+        fetch_status="fetching",
+        fetch_error=None,
+    )
+
     # Process symbol in background (fetch data, generate AI summary)
     task = celery_app.send_task("jobs.process_new_symbol", args=[payload.symbol.upper()])
+    from app.services.task_tracking import store_symbol_task
+    await store_symbol_task(payload.symbol, task.id)
 
     return SymbolResponse(
         symbol=created.symbol,

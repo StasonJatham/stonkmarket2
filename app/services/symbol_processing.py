@@ -55,6 +55,11 @@ async def process_new_symbol(symbol: str) -> None:
                 fetch_error="Could not fetch data from Yahoo Finance",
             )
             try:
+                from app.services.task_tracking import clear_symbol_task
+                await clear_symbol_task(symbol)
+            except Exception:
+                pass
+            try:
                 ranking_cache = Cache(prefix="ranking", default_ttl=3600)
                 await ranking_cache.invalidate_pattern("*")
             except Exception:
@@ -232,6 +237,8 @@ async def process_new_symbol(symbol: str) -> None:
             fetch_status="fetched",
             fetched_at=datetime.now(timezone.utc),
         )
+        from app.services.task_tracking import clear_symbol_task
+        await clear_symbol_task(symbol)
 
         logger.info(
             f"[NEW SYMBOL] COMPLETED processing {symbol}. "
@@ -245,6 +252,11 @@ async def process_new_symbol(symbol: str) -> None:
                 fetch_status="error",
                 fetch_error=str(exc)[:500],
             )
+        except Exception:
+            pass
+        try:
+            from app.services.task_tracking import clear_symbol_task
+            await clear_symbol_task(symbol)
         except Exception:
             pass
         try:
@@ -262,11 +274,29 @@ async def process_approved_symbol(symbol: str) -> None:
 
     # Set fetch_status to 'fetching' so admin UI shows loading state
     await suggestions_repo.set_suggestion_fetching(symbol.upper())
+    await symbols_repo.update_fetch_status(
+        symbol.upper(),
+        fetch_status="fetching",
+        fetch_error=None,
+    )
 
     try:
         info = await get_stock_info_async(symbol)
         if not info:
             logger.warning(f"Could not fetch Yahoo data for {symbol}")
+            await suggestions_repo.set_suggestion_error(
+                symbol.upper(), "Could not fetch data from Yahoo Finance"
+            )
+            await symbols_repo.update_fetch_status(
+                symbol.upper(),
+                fetch_status="error",
+                fetch_error="Could not fetch data from Yahoo Finance",
+            )
+            try:
+                from app.services.task_tracking import clear_symbol_task
+                await clear_symbol_task(symbol)
+            except Exception:
+                pass
             return
 
         current_price = info.get("current_price", 0)
@@ -392,6 +422,8 @@ async def process_approved_symbol(symbol: str) -> None:
             fetch_status="fetched",
             fetch_error=None,
         )
+        from app.services.task_tracking import clear_symbol_task
+        await clear_symbol_task(symbol)
 
         ranking_cache = Cache(prefix="ranking", default_ttl=3600)
         deleted = await ranking_cache.invalidate_pattern("*")
@@ -401,3 +433,8 @@ async def process_approved_symbol(symbol: str) -> None:
     except Exception as exc:
         logger.error(f"Error processing approved symbol {symbol}: {exc}")
         await suggestions_repo.set_suggestion_error(symbol.upper(), str(exc))
+        try:
+            from app.services.task_tracking import clear_symbol_task
+            await clear_symbol_task(symbol)
+        except Exception:
+            pass

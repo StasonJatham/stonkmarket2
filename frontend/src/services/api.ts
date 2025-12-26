@@ -157,6 +157,7 @@ export interface CronJob {
   name: string;
   cron: string;
   description: string | null;
+  next_run?: string | null;
 }
 
 export interface CronLogEntry {
@@ -662,7 +663,7 @@ export async function getDipCard(symbol: string, refreshAi: boolean = false): Pr
 }
 
 export async function voteDip(symbol: string, voteType: VoteType): Promise<{ symbol: string; vote_type: string; message: string }> {
-  const result = await fetchAPI(`/swipe/cards/${symbol}/vote`, {
+  const result = await fetchAPI<{ symbol: string; vote_type: string; message: string }>(`/swipe/cards/${symbol}/vote`, {
     method: 'PUT',
     body: JSON.stringify({ vote_type: voteType }),
   });
@@ -733,91 +734,6 @@ export async function regenerateSymbolAiSummary(symbol: string): Promise<AISumma
 }
 
 // =============================================================================
-// DIPFINDER TYPES & API
-// =============================================================================
-
-export interface QualityFactors {
-  score: number;
-  pe_ratio: number | null;
-  forward_pe: number | null;
-  pb_ratio: number | null;
-  ps_ratio: number | null;
-  profit_margin: number | null;
-  roe: number | null;
-  debt_to_equity: number | null;
-  current_ratio: number | null;
-  factors_available: number;
-}
-
-export interface StabilityFactors {
-  score: number;
-  beta: number | null;
-  volatility_30d: number | null;
-  volatility_90d: number | null;
-  avg_volume: number | null;
-  market_cap: number | null;
-  factors_available: number;
-}
-
-export interface DipSignal {
-  ticker: string;
-  window: number;
-  benchmark: string;
-  as_of_date: string;
-  dip_stock: number;
-  peak_stock: number;
-  current_price: number;
-  dip_pctl: number;
-  dip_vs_typical: number;
-  persist_days: number;
-  dip_mkt: number;
-  excess_dip: number;
-  dip_class: 'MARKET_DIP' | 'STOCK_SPECIFIC' | 'MIXED';
-  quality_score: number;
-  stability_score: number;
-  dip_score: number;
-  final_score: number;
-  alert_level: 'NONE' | 'GOOD' | 'STRONG';
-  should_alert: boolean;
-  reason: string;
-  quality_factors?: QualityFactors;
-  stability_factors?: StabilityFactors;
-}
-
-export interface DipSignalListResponse {
-  signals: DipSignal[];
-  count: number;
-  benchmark: string;
-  window: number;
-  as_of_date: string;
-}
-
-export async function getDipFinderSignals(
-  tickers: string[],
-  options: { window?: number; benchmark?: string; includeFactors?: boolean } = {}
-): Promise<DipSignalListResponse> {
-  const params = new URLSearchParams();
-  params.append('tickers', tickers.join(','));
-  if (options.window) params.append('window', options.window.toString());
-  if (options.benchmark) params.append('benchmark', options.benchmark);
-  if (options.includeFactors) params.append('include_factors', 'true');
-  
-  return fetchAPI<DipSignalListResponse>(`/dipfinder/signals?${params.toString()}`);
-}
-
-export async function getDipFinderSignal(
-  ticker: string,
-  options: { window?: number; benchmark?: string; forceRefresh?: boolean } = {}
-): Promise<DipSignal> {
-  const params = new URLSearchParams();
-  if (options.window) params.append('window', options.window.toString());
-  if (options.benchmark) params.append('benchmark', options.benchmark);
-  if (options.forceRefresh) params.append('force_refresh', 'true');
-  
-  return fetchAPI<DipSignal>(`/dipfinder/signals/${ticker}?${params.toString()}`);
-}
-
-// =============================================================================
 // SYMBOLS CRUD
 // =============================================================================
 
@@ -828,6 +744,7 @@ export interface Symbol {
   name?: string | null;
   fetch_status?: 'pending' | 'fetching' | 'fetched' | 'error' | null;
   fetch_error?: string | null;
+  task_id?: string | null;
 }
 
 export async function getSymbols(skipCache = false): Promise<Symbol[]> {
@@ -1348,6 +1265,7 @@ export interface Suggestion {
   created_at: string;
   reviewed_at?: string | null;
   approved_by?: number | null;
+  task_id?: string | null;
 }
 
 export interface SuggestionListResponse {
@@ -1486,8 +1404,8 @@ export async function getAllSuggestions(
   return fetchAPI<SuggestionListResponse>(`/suggestions?${params.toString()}`);
 }
 
-export async function approveSuggestion(suggestionId: number): Promise<{ message: string; symbol: string }> {
-  const result = await fetchAPI<{ message: string; symbol: string }>(`/suggestions/${suggestionId}/approve`, {
+export async function approveSuggestion(suggestionId: number): Promise<{ message: string; symbol: string; task_id?: string | null }> {
+  const result = await fetchAPI<{ message: string; symbol: string; task_id?: string | null }>(`/suggestions/${suggestionId}/approve`, {
     method: 'POST',
   });
   // Invalidate symbols and ranking cache so the new stock appears immediately
@@ -1516,8 +1434,8 @@ export async function updateSuggestion(
 
 export async function refreshSuggestionData(
   suggestionId: number
-): Promise<{ message: string; symbol: string }> {
-  return fetchAPI<{ message: string; symbol: string }>(
+): Promise<{ message: string; symbol: string; task_id?: string | null }> {
+  return fetchAPI<{ message: string; symbol: string; task_id?: string | null }>(
     `/suggestions/${suggestionId}/refresh`,
     { method: 'POST' }
   );

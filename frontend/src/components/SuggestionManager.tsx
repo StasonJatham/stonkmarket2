@@ -9,6 +9,7 @@ import {
   retrySuggestionFetch,
   getRuntimeSettings,
   updateRuntimeSettings,
+  getCronJobs,
   type Suggestion,
   type SuggestionStatus,
 } from '@/services/api';
@@ -149,6 +150,7 @@ export function SuggestionManager() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
+  const [nextIngestRun, setNextIngestRun] = useState<string | null>(null);
   
   // Action states
   const [actionLoading, setActionLoading] = useState<number | null>(null);
@@ -230,6 +232,15 @@ export function SuggestionManager() {
   useEffect(() => {
     loadSuggestions();
   }, [loadSuggestions]);
+
+  useEffect(() => {
+    getCronJobs()
+      .then((jobs) => {
+        const ingest = jobs.find((job) => job.name === 'initial_data_ingest');
+        setNextIngestRun(ingest?.next_run || null);
+      })
+      .catch(() => {});
+  }, []);
 
   // Auto-poll when any suggestion is in 'fetching' state
   useEffect(() => {
@@ -337,6 +348,13 @@ export function SuggestionManager() {
     return new Date(dateStr).toLocaleDateString();
   }
 
+  const hasPending = suggestions.some(
+    (s) => s.fetch_status === 'fetching' || s.fetch_status === 'pending'
+  );
+  const ingestHint = nextIngestRun
+    ? `Next ingest run: ${new Date(nextIngestRun).toLocaleString()}`
+    : 'Ingest queue active';
+
   return (
     <TooltipProvider>
     <Card>
@@ -430,6 +448,11 @@ export function SuggestionManager() {
             </Badge>
           )}
         </div>
+        {hasPending && (
+          <div className="text-xs text-muted-foreground mb-3">
+            {ingestHint}
+          </div>
+        )}
 
         {/* Table */}
         {isLoading ? (
@@ -494,6 +517,18 @@ export function SuggestionManager() {
                             </Tooltip>
                           ) : (
                             getFetchStatusBadge(suggestion.fetch_status)
+                          )}
+                          {suggestion.task_id && (suggestion.fetch_status === 'pending' || suggestion.fetch_status === 'fetching') && (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Badge variant="outline" className="text-muted-foreground">
+                                  Queued
+                                </Badge>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p className="max-w-xs">Task: {suggestion.task_id}</p>
+                              </TooltipContent>
+                            </Tooltip>
                           )}
                           {/* Only show retry button for pending suggestions (not approved - use Refresh Data instead) */}
                           {suggestion.status === 'pending' && (suggestion.fetch_status === 'rate_limited' || suggestion.fetch_status === 'error') && (

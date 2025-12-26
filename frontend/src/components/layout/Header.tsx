@@ -8,14 +8,13 @@ import { useTheme } from '@/context/ThemeContext';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { SuggestStockDialog } from '@/components/SuggestStockDialog';
 import { ColorPickerInline } from '@/components/ui/color-picker';
-import { TrendingUp, Settings, LogOut, Heart, BarChart3, Eye, EyeOff, PieChart } from 'lucide-react';
+import { TrendingUp, Settings, LogOut, Heart, Eye, EyeOff, PieChart } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 const navLinks = [
   { href: '/', label: 'Dashboard' },
   { href: '/swipe', label: 'DipSwipe', icon: Heart },
-  { href: '/learn', label: 'Learn' },
-  { href: '/signals', label: 'Signals', icon: BarChart3 },
+  { href: '/learn', label: 'Methodology' },
   { href: '/portfolio', label: 'Portfolio', icon: PieChart, requiresAuth: true },
 ];
 

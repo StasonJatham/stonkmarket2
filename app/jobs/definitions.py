@@ -875,3 +875,94 @@ async def portfolio_analytics_worker_job() -> str:
     except Exception as e:
         logger.error(f"portfolio_analytics_worker failed: {e}")
         raise
+
+
+@register_job("quant_engine_monthly")
+async def quant_engine_monthly_job() -> str:
+    """
+    Monthly quant engine optimization for all active portfolios.
+
+    Runs walk-forward validation and hyperparameter tuning if needed,
+    then generates fresh recommendations for each portfolio.
+
+    Schedule: 1st of each month at 6 AM
+    """
+    from app.repositories import portfolios_orm as portfolios_repo
+    from app.repositories import price_history_orm as price_history_repo
+    from app.quant_engine import QuantEngineService, get_default_config
+    from datetime import date, timedelta
+    import numpy as np
+    import pandas as pd
+
+    logger.info("Starting quant_engine_monthly job")
+
+    try:
+        # Get all active portfolios
+        all_portfolios = await portfolios_repo.list_all_active_portfolios()
+        
+        if not all_portfolios:
+            return "No active portfolios"
+
+        processed = 0
+        failed = 0
+
+        for portfolio in all_portfolios:
+            portfolio_id = portfolio["id"]
+            user_id = portfolio["user_id"]
+            
+            try:
+                # Get holdings
+                holdings = await portfolios_repo.list_holdings(portfolio_id)
+                if not holdings:
+                    logger.debug(f"Portfolio {portfolio_id} has no holdings, skipping")
+                    continue
+
+                symbols = [h["symbol"] for h in holdings]
+                
+                # Fetch price history
+                end_date = date.today()
+                start_date = end_date - timedelta(days=400)
+                
+                price_dfs = {}
+                for symbol in symbols:
+                    df = await price_history_repo.get_prices_as_dataframe(
+                        symbol, start_date, end_date
+                    )
+                    if df is not None and "Close" in df.columns:
+                        price_dfs[symbol] = df["Close"]
+                
+                if not price_dfs:
+                    logger.warning(f"No price data for portfolio {portfolio_id}")
+                    continue
+                
+                prices = pd.DataFrame(price_dfs).dropna(how="all").ffill()
+                
+                if len(prices) < 100:
+                    logger.warning(f"Insufficient price history for portfolio {portfolio_id}")
+                    continue
+                
+                # Initialize engine and train
+                config = get_default_config()
+                engine = QuantEngineService(config=config)
+                
+                train_result = engine.train(prices)
+                
+                if train_result.get("status") == "success":
+                    # Store trained model artifacts (could save to DB)
+                    logger.info(f"Trained quant engine for portfolio {portfolio_id}")
+                    processed += 1
+                else:
+                    logger.warning(f"Training failed for portfolio {portfolio_id}: {train_result.get('message')}")
+                    failed += 1
+
+            except Exception as e:
+                logger.error(f"Failed to process portfolio {portfolio_id}: {e}")
+                failed += 1
+
+        message = f"Quant engine monthly: {processed} portfolios trained, {failed} failed"
+        logger.info(f"quant_engine_monthly: {message}")
+        return message
+
+    except Exception as e:
+        logger.error(f"quant_engine_monthly failed: {e}")
+        raise

@@ -17,7 +17,6 @@ const Dashboard = lazy(() => import('@/pages/Dashboard').then(m => ({ default: m
 const LoginPage = lazy(() => import('@/pages/Login').then(m => ({ default: m.LoginPage })));
 const AdminPage = lazy(() => import('@/pages/Admin').then(m => ({ default: m.AdminPage })));
 const DipSwipePage = lazy(() => import('@/pages/DipSwipe').then(m => ({ default: m.DipSwipePage })));
-const DipFinderPage = lazy(() => import('@/pages/DipFinder').then(m => ({ default: m.DipFinderPage })));
 const SuggestionsPage = lazy(() => import('@/pages/Suggestions').then(m => ({ default: m.SuggestionsPage })));
 const PrivacyPage = lazy(() => import('@/pages/Privacy').then(m => ({ default: m.PrivacyPage })));
 const ImprintPage = lazy(() => import('@/pages/Imprint').then(m => ({ default: m.ImprintPage })));
@@ -65,10 +64,6 @@ function App() {
                   </>
                 )}
                 <Route path="/contact" element={<ContactPage />} />
-                <Route
-                  path="/signals"
-                  element={<DipFinderPage />}
-                />
                 <Route
                   path="/admin"
                   element={
