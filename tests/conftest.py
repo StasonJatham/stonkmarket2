@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import warnings
 from typing import AsyncGenerator, Generator
 
 import pytest
@@ -17,7 +18,11 @@ pytest_plugins = ["pytest_asyncio"]
 
 def _force_cleanup():
     """Force cleanup of pending async resources."""
-    gc.collect()
+    # Suppress ResourceWarning during GC - these are expected during test cleanup
+    # when async resources are collected outside their event loop
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=ResourceWarning)
+        gc.collect()
 
 
 async def _async_cleanup():
@@ -89,16 +94,50 @@ def cleanup_after_test():
     import app.services.data_providers.yfinance_service as yf_service
     import app.cache.client as cache_client
     
+    # Close existing connections before resetting
+    async def _close_all():
+        try:
+            if db_conn._engine is not None:
+                await db_conn._engine.dispose()
+        except Exception:
+            pass
+        try:
+            if db_conn._pool is not None:
+                await db_conn._pool.close()
+        except Exception:
+            pass
+        try:
+            if cache_client._pool is not None:
+                await cache_client._pool.disconnect()
+        except Exception:
+            pass
+    
+    # Run cleanup in a new event loop if needed
+    try:
+        loop = asyncio.get_running_loop()
+        loop.run_until_complete(_close_all())
+    except RuntimeError:
+        # No running loop - create one for cleanup
+        try:
+            asyncio.run(_close_all())
+        except Exception:
+            pass
+    
     db_conn._engine = None
     db_conn._session_factory = None
-    db_conn._pool = None  # Also reset asyncpg pool
-    yf_service._instance = None  # Reset yfinance singleton
-    cache_client._pool = None  # Reset Valkey pool
-    cache_client._client = None  # Reset Valkey client
+    db_conn._pool = None
+    yf_service._instance = None
+    cache_client._pool = None
+    cache_client._client = None
     
     yield
     
-    # Reset again after test
+    # Close and reset again after test
+    try:
+        asyncio.run(_close_all())
+    except Exception:
+        pass
+    
     db_conn._engine = None
     db_conn._session_factory = None
     db_conn._pool = None

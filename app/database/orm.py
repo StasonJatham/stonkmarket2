@@ -442,7 +442,8 @@ class CronJob(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
-    cron_expression: Mapped[str] = mapped_column(String(50), nullable=False)
+    cron: Mapped[str] = mapped_column(String(50), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     last_run: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     next_run: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))

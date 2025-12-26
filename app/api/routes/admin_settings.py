@@ -137,8 +137,8 @@ async def get_system_status(
                 cronjobs.append(
                     CronJobSummary(
                         name=row.name,
-                        cron=row.cron_expression,
-                        description=row.config.get("description") if row.config else None,
+                        cron=row.cron,
+                        description=row.description,
                         last_run=row.last_run,
                         last_status=row.last_status,
                     )

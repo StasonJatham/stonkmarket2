@@ -34,8 +34,12 @@ python -m pytest tests/ -x -W error --tb=short
 
 - `-x` = Stop on first failure
 - `-W error` = Treat warnings as errors
+- `--tb=short` = Always show traceback/error output
 - **ALL errors are FATAL** - Do not proceed until fixed
+- **NEVER skip or ignore test failures** - Every failure is CRITICAL
 - **NEVER just edit tests to make them pass** - Analyze the root cause and fix the actual code
+- **ALWAYS show full error output** - Never hide or truncate test failures
+- **SOLVE every test failure immediately** - Treat as blocking issue
 - Re-run tests repeatedly until ALL pass with zero warnings
 
 ### Adding Dependencies - NEVER Edit Requirements Directly
@@ -69,7 +73,7 @@ python -m pytest tests/ -x -W error --tb=short
 - **NEVER** write raw SQL queries - use SQLAlchemy query builder
 - Define models with proper types: `Mapped[type]`, `mapped_column()`
 
-### Alembic Migrations - NEVER Manual SQL
+### Alembic Migrations - HOLY AND UNTOUCHABLE
 
 ```bash
 # Auto-generate migrations from ORM model changes
@@ -80,9 +84,41 @@ alembic upgrade head
 ```
 
 - **NEVER** create manual SQL migration files
+- **NEVER** manually create migrations - ALWAYS use alembic autogenerate
+- **NEVER** edit existing migration files - they are HOLY
 - **NEVER** put raw SQL in `migrations/` folder
+- Migrations MUST work out of the box - no manual tweaks allowed
 - Let Alembic detect ORM model changes automatically
-- Review generated migration before applying
+
+### If Migration Fails
+
+If autogenerate creates a broken migration, follow this exact workflow:
+
+```bash
+# 1. Delete the broken migration file
+rm alembic/versions/<broken_migration>.py
+
+# 2. Fix ORM models/code to match desired state
+# Edit app/database/orm.py
+
+# 3. Drop and recreate database
+docker exec stonkmarket-postgres-dev psql -U stonkmarket postgres -c "DROP DATABASE stonkmarket;"
+docker exec stonkmarket-postgres-dev psql -U stonkmarket postgres -c "CREATE DATABASE stonkmarket OWNER stonkmarket;"
+
+# 4. Apply all existing migrations
+alembic upgrade head
+
+# 5. Generate fresh migration
+alembic revision --autogenerate -m "description_of_change"
+
+# 6. Apply and test
+alembic upgrade head
+python -m pytest tests/ -x -W error --tb=short
+```
+
+- **NEVER** manually edit a migration to "fix" it
+- **ALWAYS** regenerate from clean state
+- The database is disposable in dev - models and code are the source of truth
 
 ---
 
@@ -175,6 +211,7 @@ Before submitting any change:
 ❌ **Don't** fetch data on-demand when it should be cached/stored
 ❌ **Don't** write raw SQL migrations
 ❌ **Don't** skip type hints
+❌ **Don't** manually create migrations
 ❌ **Don't** duplicate existing utility functions
 ❌ **Don't** edit tests to make them pass - fix the code
 ❌ **Don't** ignore warnings - they're errors
@@ -187,3 +224,5 @@ Before submitting any change:
 ✅ **Do** fix root causes, not symptoms
 ✅ **Do** treat warnings as errors
 ✅ **Do** use shadcn/ui components  
+
+

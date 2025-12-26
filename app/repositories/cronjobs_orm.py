@@ -31,11 +31,10 @@ class CronJobConfig:
 
     @classmethod
     def from_orm(cls, job: CronJobORM) -> "CronJobConfig":
-        description = job.config.get("description") if job.config else None
         return cls(
             name=job.name,
-            cron=job.cron_expression,
-            description=description,
+            cron=job.cron,
+            description=job.description,
         )
 
 
@@ -64,11 +63,10 @@ class CronJobWithStats(CronJobConfig):
 
     @classmethod
     def from_orm(cls, job: CronJobORM) -> "CronJobWithStats":
-        description = job.config.get("description") if job.config else None
         return cls(
             name=job.name,
-            cron=job.cron_expression,
-            description=description,
+            cron=job.cron,
+            description=job.description,
             last_run=job.last_run,
             last_status=job.last_status,
             last_duration_ms=job.last_duration_ms,
@@ -112,21 +110,26 @@ async def get_cronjob(name: str) -> Optional[CronJobConfig]:
         return CronJobConfig.from_orm(job) if job else None
 
 
-async def upsert_cronjob(name: str, cron: str) -> CronJobConfig:
+async def upsert_cronjob(
+    name: str, cron_expr: str, description: str | None = None
+) -> CronJobConfig:
     """Create or update a cron job."""
     now = datetime.now(timezone.utc)
+    config = {"description": description} if description else None
     
     async with get_session() as session:
         stmt = insert(CronJobORM).values(
             name=name,
-            cron_expression=cron,
+            cron_expression=cron_expr,
+            config=config,
             is_active=True,
         ).on_conflict_do_update(
             index_elements=["name"],
             set_={
-                "cron_expression": cron,
+                "cron_expression": cron_expr,
                 "updated_at": now,
-            }
+                **({"config": config} if description else {}),
+            },
         )
         await session.execute(stmt)
         await session.commit()

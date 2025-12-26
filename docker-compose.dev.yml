@@ -19,6 +19,7 @@ services:
       - ENVIRONMENT=development
       - DEBUG=true
       - LOG_LEVEL=DEBUG
+      - SCHEDULER_ENABLED=false
       - CORS_ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173
     ports:
       - "8000:8000"
@@ -109,6 +110,90 @@ services:
       timeout: 5s
       retries: 5
       start_period: 3s
+    networks:
+      - stonkmarket
+
+  celery-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.celery
+    container_name: stonkmarket-celery-worker-dev
+    command: >
+      celery -A app.celery_app.celery_app worker
+      --loglevel=INFO
+      --concurrency=${CELERY_CONCURRENCY:-4}
+      --prefetch-multiplier=1
+      --queues=high,default,low,batch
+      -O fair
+      --hostname=worker@%h
+    env_file:
+      - .env.production
+    environment:
+      - ENVIRONMENT=development
+      - DEBUG=true
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://valkey:6379/1}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://valkey:6379/1}
+      - CELERY_CRON_SYNC_SECONDS=${CELERY_CRON_SYNC_SECONDS:-30}
+    volumes:
+      - ./app:/app/app:ro
+      - ./alembic:/app/alembic:ro
+      - ./alembic.ini:/app/alembic.ini:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    networks:
+      - stonkmarket
+
+  celery-beat:
+    build:
+      context: .
+      dockerfile: Dockerfile.celery
+    container_name: stonkmarket-celery-beat-dev
+    command: >
+      celery -A app.celery_app.celery_app beat
+      --loglevel=INFO
+      --scheduler app.jobs.celery_scheduler:DatabaseScheduler
+    env_file:
+      - .env.production
+    environment:
+      - ENVIRONMENT=development
+      - DEBUG=true
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://valkey:6379/1}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://valkey:6379/1}
+      - CELERY_CRON_SYNC_SECONDS=${CELERY_CRON_SYNC_SECONDS:-30}
+    volumes:
+      - ./app:/app/app:ro
+      - ./alembic:/app/alembic:ro
+      - ./alembic.ini:/app/alembic.ini:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    networks:
+      - stonkmarket
+
+  flower:
+    build:
+      context: .
+      dockerfile: Dockerfile.celery
+    container_name: stonkmarket-flower-dev
+    command: >
+      sh -c "celery -A app.celery_app.celery_app flower --port=5555 ${FLOWER_BASIC_AUTH:+--basic_auth=$FLOWER_BASIC_AUTH}"
+    env_file:
+      - .env.production
+    environment:
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://valkey:6379/1}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://valkey:6379/1}
+    volumes:
+      - ./app:/app/app:ro
+    depends_on:
+      valkey:
+        condition: service_healthy
+    ports:
+      - "5555:5555"
     networks:
       - stonkmarket
 

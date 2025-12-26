@@ -21,6 +21,7 @@ services:
     environment:
       - ENVIRONMENT=production
       - DEBUG=false
+      - SCHEDULER_ENABLED=false
     expose:
       - "8000"
     depends_on:
@@ -146,6 +147,96 @@ services:
         reservations:
           cpus: "0.1"
           memory: 64M
+    networks:
+      - stonkmarket
+    security_opt:
+      - no-new-privileges:true
+
+  celery-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.celery
+    container_name: stonkmarket-celery-worker
+    command: >
+      celery -A app.celery_app.celery_app worker
+      --loglevel=INFO
+      --concurrency=${CELERY_CONCURRENCY:-4}
+      --prefetch-multiplier=1
+      --queues=high,default,low,batch
+      -O fair
+      --hostname=worker@%h
+    env_file:
+      - .env.production
+    environment:
+      - ENVIRONMENT=production
+      - DEBUG=false
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://valkey:6379/1}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://valkey:6379/1}
+      - CELERY_CRON_SYNC_SECONDS=${CELERY_CRON_SYNC_SECONDS:-60}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - stonkmarket
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777
+
+  celery-beat:
+    build:
+      context: .
+      dockerfile: Dockerfile.celery
+    container_name: stonkmarket-celery-beat
+    command: >
+      celery -A app.celery_app.celery_app beat
+      --loglevel=INFO
+      --scheduler app.jobs.celery_scheduler:DatabaseScheduler
+      --schedule=/tmp/celerybeat-schedule
+    env_file:
+      - .env.production
+    environment:
+      - ENVIRONMENT=production
+      - DEBUG=false
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://valkey:6379/1}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://valkey:6379/1}
+      - CELERY_CRON_SYNC_SECONDS=${CELERY_CRON_SYNC_SECONDS:-60}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - stonkmarket
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777
+
+  flower:
+    build:
+      context: .
+      dockerfile: Dockerfile.celery
+    container_name: stonkmarket-flower
+    command: >
+      sh -c "celery -A app.celery_app.celery_app flower --port=5555 ${FLOWER_BASIC_AUTH:+--basic_auth=$FLOWER_BASIC_AUTH}"
+    env_file:
+      - .env.production
+    environment:
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://valkey:6379/1}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://valkey:6379/1}
+    depends_on:
+      valkey:
+        condition: service_healthy
+    ports:
+      - "5555:5555"
+    restart: unless-stopped
     networks:
       - stonkmarket
     security_opt:

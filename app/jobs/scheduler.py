@@ -8,11 +8,11 @@ from typing import Callable, Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-
 from app.core.config import settings
 from app.core.logging import get_logger
 
 from .registry import get_job, get_all_jobs
+from .job_defaults import get_job_schedule, seed_cronjobs
 
 logger = get_logger("jobs.scheduler")
 
@@ -64,45 +64,13 @@ class JobScheduler:
     async def _load_jobs(self) -> None:
         """Load job schedules from database, seeding any missing registered jobs."""
         from app.repositories import cronjobs_orm as cron_repo
-        from app.database.connection import execute
 
         # First, seed any registered jobs that don't exist in DB
         registered_jobs = get_all_jobs()
-
-        # Define default schedules for registered jobs
-        default_schedules = {
-            "initial_data_ingest": ("*/15 * * * *", "Process queued symbols every 15 min"),
-            "data_grab": ("0 23 * * 1-5", "Fetch stock data Mon-Fri 11pm"),
-            "cache_warmup": ("*/30 * * * *", "Pre-cache chart data every 30 min"),
-            "batch_ai_swipe": ("0 3 * * 0", "Generate swipe bios weekly Sunday 3am"),
-            "batch_ai_analysis": (
-                "0 4 * * 0",
-                "Generate dip analysis weekly Sunday 4am",
-            ),
-            "batch_poll": ("*/5 * * * *", "Poll for completed batch jobs every 5 min"),
-            "fundamentals_refresh": ("0 2 1 * *", "Refresh stock fundamentals monthly 1st at 2am"),
-            "ai_agents_analysis": ("0 5 * * 0", "AI agent analysis weekly Sunday 5am"),
-            "portfolio_analytics_worker": ("*/5 * * * *", "Process queued portfolio analytics jobs"),
-            "cleanup": ("0 0 * * *", "Clean up expired data daily midnight"),
-        }
-
-        for job_name in registered_jobs:
-            cron_expr, description = default_schedules.get(
-                job_name, ("0 * * * *", f"Job: {job_name}")
-            )
-            try:
-                await execute(
-                    """
-                    INSERT INTO cronjobs (name, cron_expression, is_active, config)
-                    VALUES ($1, $2, TRUE, $3)
-                    ON CONFLICT (name) DO NOTHING
-                    """,
-                    job_name,
-                    cron_expr,
-                    f'{{"description": "{description}"}}',
-                )
-            except Exception as e:
-                logger.warning(f"Failed to seed job {job_name}: {e}")
+        try:
+            await seed_cronjobs(registered_jobs.keys())
+        except Exception as e:
+            logger.warning(f"Failed to seed cronjobs: {e}")
 
         # Now load and schedule all jobs from database
         jobs = await cron_repo.list_cronjobs()
@@ -119,7 +87,7 @@ class JobScheduler:
                     self._wrap_job(job_config.name, job_func),
                     trigger=trigger,
                     id=job_config.name,
-                    name=job_config.description or job_config.name,
+                    name=job_config.description or get_job_schedule(job_config.name)[1],
                     replace_existing=True,
                 )
                 logger.info(f"Scheduled job: {job_config.name} ({job_config.cron})")

@@ -113,5 +113,16 @@ class JobStatusResponse(BaseModel):
     name: str = Field(..., description="Job name")
     status: str = Field(..., description="Execution status")
     message: str = Field(..., description="Result message")
+    task_id: Optional[str] = Field(None, description="Celery task id")
     duration_ms: Optional[int] = Field(None, description="Execution duration in ms")
     created_at: datetime = Field(..., description="Execution timestamp")
+
+
+class TaskStatusResponse(BaseModel):
+    """Celery task status response."""
+
+    task_id: str = Field(..., description="Celery task id")
+    status: str = Field(..., description="Celery task status")
+    result: Optional[str] = Field(None, description="Task result (if completed)")
+    error: Optional[str] = Field(None, description="Task error (if failed)")
+    traceback: Optional[str] = Field(None, description="Task traceback (if failed)")
