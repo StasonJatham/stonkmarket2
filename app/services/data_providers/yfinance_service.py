@@ -48,10 +48,19 @@ from typing import Any, Optional, Literal
 import pandas as pd
 import yfinance as yf
 
+from sqlalchemy import select, or_
+from sqlalchemy.dialects.postgresql import insert
+
 from app.core.logging import get_logger
 from app.core.rate_limiter import get_yfinance_limiter
 from app.cache.cache import Cache
-from app.database.connection import fetch_one, fetch_all, execute
+from app.database.connection import get_session
+from app.database.orm import (
+    YfinanceInfoCache,
+    SymbolSearchResult,
+    DataVersion as DataVersionORM,
+    Symbol,
+)
 
 logger = get_logger("data_providers.yfinance")
 
@@ -593,16 +602,18 @@ class YFinanceService:
                 return valkey_data
             
             # L3: DB cache
-            db_row = await fetch_one(
-                """
-                SELECT data FROM yfinance_info_cache 
-                WHERE symbol = $1 AND expires_at > NOW()
-                """,
-                symbol,
-            )
-            if db_row and db_row.get("data"):
+            async with get_session() as session:
+                result = await session.execute(
+                    select(YfinanceInfoCache.data).where(
+                        YfinanceInfoCache.symbol == symbol,
+                        YfinanceInfoCache.expires_at > datetime.now(timezone.utc),
+                    )
+                )
+                db_data = result.scalar_one_or_none()
+            
+            if db_data:
                 logger.debug(f"Cache hit L3 (db) for {symbol}")
-                data = db_row["data"]
+                data = db_data
                 # Defensive: parse JSON if data is string (legacy or codec issue)
                 if isinstance(data, str):
                     try:
@@ -626,18 +637,24 @@ class YFinanceService:
             await self._info_cache.set(cache_key, data)
             
             # DB cache with 24h expiry
-            await execute(
-                """
-                INSERT INTO yfinance_info_cache (symbol, data, expires_at, fetched_at)
-                VALUES ($1, $2::jsonb, NOW() + INTERVAL '24 hours', NOW())
-                ON CONFLICT (symbol) DO UPDATE SET
-                    data = EXCLUDED.data,
-                    expires_at = EXCLUDED.expires_at,
-                    fetched_at = EXCLUDED.fetched_at
-                """,
-                symbol,
-                json.dumps(data, default=str),  # Explicit JSON string for JSONB insert
-            )
+            expires = datetime.now(timezone.utc) + timedelta(hours=24)
+            async with get_session() as session:
+                stmt = insert(YfinanceInfoCache).values(
+                    symbol=symbol,
+                    data=data,
+                    expires_at=expires,
+                    fetched_at=datetime.now(timezone.utc),
+                )
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["symbol"],
+                    set_={
+                        "data": stmt.excluded.data,
+                        "expires_at": stmt.excluded.expires_at,
+                        "fetched_at": stmt.excluded.fetched_at,
+                    },
+                )
+                await session.execute(stmt)
+                await session.commit()
         
         return data
     
@@ -838,31 +855,36 @@ class YFinanceService:
         
         if save_to_db and results:
             # Save to symbol_search_results for future local search
-            for r in results:
-                try:
-                    await execute(
-                        """
-                        INSERT INTO symbol_search_results 
-                            (symbol, name, exchange, quote_type, sector, market_cap, expires_at, search_query)
-                        VALUES ($1, $2, $3, $4, $5, $6, NOW() + INTERVAL '30 days', $7)
-                        ON CONFLICT (symbol) DO UPDATE SET
-                            name = COALESCE(EXCLUDED.name, symbol_search_results.name),
-                            exchange = COALESCE(EXCLUDED.exchange, symbol_search_results.exchange),
-                            quote_type = COALESCE(EXCLUDED.quote_type, symbol_search_results.quote_type),
-                            sector = COALESCE(EXCLUDED.sector, symbol_search_results.sector),
-                            market_cap = COALESCE(EXCLUDED.market_cap, symbol_search_results.market_cap),
-                            expires_at = EXCLUDED.expires_at
-                        """,
-                        r["symbol"],
-                        r.get("name"),
-                        r.get("exchange"),
-                        r.get("quote_type"),
-                        r.get("sector"),
-                        r.get("market_cap"),
-                        query,
-                    )
-                except Exception as e:
-                    logger.debug(f"Failed to cache search result {r.get('symbol')}: {e}")
+            expires_at = datetime.now(timezone.utc) + timedelta(days=30)
+            async with get_session() as session:
+                for r in results:
+                    try:
+                        stmt = insert(SymbolSearchResult).values(
+                            symbol=r["symbol"],
+                            name=r.get("name"),
+                            exchange=r.get("exchange"),
+                            quote_type=r.get("quote_type"),
+                            sector=r.get("sector"),
+                            market_cap=r.get("market_cap"),
+                            expires_at=expires_at,
+                            search_query=query,
+                        )
+                        # Use COALESCE for upsert - keep existing non-null values
+                        stmt = stmt.on_conflict_do_update(
+                            constraint="uq_symbol_search_result",
+                            set_={
+                                "name": stmt.excluded.name,
+                                "exchange": stmt.excluded.exchange,
+                                "quote_type": stmt.excluded.quote_type,
+                                "sector": stmt.excluded.sector,
+                                "market_cap": stmt.excluded.market_cap,
+                                "expires_at": stmt.excluded.expires_at,
+                            },
+                        )
+                        await session.execute(stmt)
+                    except Exception as e:
+                        logger.debug(f"Failed to cache search result {r.get('symbol')}: {e}")
+                await session.commit()
         
         return results[:max_results]
     
@@ -931,24 +953,27 @@ class YFinanceService:
         source: Literal["prices", "fundamentals", "calendar"],
     ) -> Optional[DataVersion]:
         """Get current data version from database."""
-        row = await fetch_one(
-            """
-            SELECT version_hash, updated_at, version_metadata
-            FROM data_versions
-            WHERE symbol = $1 AND source = $2
-            """,
-            symbol.upper(),
-            source,
-        )
+        async with get_session() as session:
+            result = await session.execute(
+                select(
+                    DataVersionORM.version_hash,
+                    DataVersionORM.updated_at,
+                    DataVersionORM.version_metadata,
+                ).where(
+                    DataVersionORM.symbol == symbol.upper(),
+                    DataVersionORM.source == source,
+                )
+            )
+            row = result.one_or_none()
         
         if not row:
             return None
         
         return DataVersion(
-            hash=row["version_hash"],
-            timestamp=row["updated_at"],
+            hash=row.version_hash,
+            timestamp=row.updated_at,
             source=source,
-            metadata=row.get("version_metadata") or {},
+            metadata=row.version_metadata or {},
         )
     
     async def save_data_version(
@@ -957,20 +982,24 @@ class YFinanceService:
         version: DataVersion,
     ) -> None:
         """Save data version for change tracking."""
-        await execute(
-            """
-            INSERT INTO data_versions (symbol, source, version_hash, version_metadata, updated_at)
-            VALUES ($1, $2, $3, $4, NOW())
-            ON CONFLICT (symbol, source) DO UPDATE SET
-                version_hash = EXCLUDED.version_hash,
-                version_metadata = EXCLUDED.version_metadata,
-                updated_at = NOW()
-            """,
-            symbol.upper(),
-            version.source,
-            version.hash,
-            json.dumps(version.metadata, default=str),
-        )
+        async with get_session() as session:
+            stmt = insert(DataVersionORM).values(
+                symbol=symbol.upper(),
+                source=version.source,
+                version_hash=version.hash,
+                version_metadata=version.metadata,
+                updated_at=datetime.now(timezone.utc),
+            )
+            stmt = stmt.on_conflict_do_update(
+                constraint="uq_data_version_symbol_source",
+                set_={
+                    "version_hash": stmt.excluded.version_hash,
+                    "version_metadata": stmt.excluded.version_metadata,
+                    "updated_at": stmt.excluded.updated_at,
+                },
+            )
+            await session.execute(stmt)
+            await session.commit()
     
     async def has_data_changed(
         self,
@@ -990,18 +1019,24 @@ class YFinanceService:
         max_age_hours: int = 24,
     ) -> list[str]:
         """Get symbols that need data refresh based on age."""
-        rows = await fetch_all(
-            """
-            SELECT s.symbol
-            FROM symbols s
-            LEFT JOIN data_versions dv ON s.symbol = dv.symbol AND dv.source = $1
-            WHERE s.is_active = TRUE
-              AND (dv.updated_at IS NULL OR dv.updated_at < NOW() - INTERVAL '%s hours')
-            ORDER BY dv.updated_at ASC NULLS FIRST
-            """ % max_age_hours,
-            source,
-        )
-        return [r["symbol"] for r in rows]
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
+        async with get_session() as session:
+            result = await session.execute(
+                select(Symbol.symbol)
+                .outerjoin(
+                    DataVersionORM,
+                    (Symbol.symbol == DataVersionORM.symbol) & (DataVersionORM.source == source),
+                )
+                .where(
+                    Symbol.is_active == True,
+                    or_(
+                        DataVersionORM.updated_at == None,
+                        DataVersionORM.updated_at < cutoff,
+                    ),
+                )
+                .order_by(DataVersionORM.updated_at.asc().nulls_first())
+            )
+            return [r[0] for r in result.all()]
 
 
 # Singleton instance

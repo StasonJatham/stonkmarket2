@@ -165,6 +165,7 @@ async def invalidate_portfolio_analytics_cache(portfolio_id: int) -> int:
     """Invalidate cached analytics for a portfolio."""
     return await _analytics_cache.invalidate_pattern(f"{portfolio_id}:*")
 
+
 def _compute_returns(series: pd.Series) -> pd.Series:
     return series.pct_change().replace([np.inf, -np.inf], np.nan).dropna()
 

@@ -6,12 +6,14 @@ import os
 from typing import Dict, Any, List
 
 from fastapi import APIRouter, Depends
+from sqlalchemy import select, func
 
 from app.api.dependencies import require_admin
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.core.security import TokenData
-from app.database.connection import fetch_one, fetch_all
+from app.database.connection import get_session
+from app.database.orm import CronJob, Symbol, StockSuggestion, BatchJob
 from app.schemas.admin_settings import (
     AppSettingsResponse,
     RuntimeSettingsResponse,
@@ -126,23 +128,21 @@ async def get_system_status(
     # Get cronjobs
     cronjobs = []
     try:
-        rows = await fetch_all(
-            """
-            SELECT name, cron, description, last_run, last_status
-            FROM cronjobs
-            ORDER BY name
-            """
-        )
-        for row in rows:
-            cronjobs.append(
-                CronJobSummary(
-                    name=row["name"],
-                    cron=row["cron"],
-                    description=row["description"],
-                    last_run=row["last_run"],
-                    last_status=row["last_status"],
-                )
+        async with get_session() as session:
+            result = await session.execute(
+                select(CronJob).order_by(CronJob.name)
             )
+            rows = result.scalars().all()
+            for row in rows:
+                cronjobs.append(
+                    CronJobSummary(
+                        name=row.name,
+                        cron=row.cron_expression,
+                        description=row.config.get("description") if row.config else None,
+                        last_run=row.last_run,
+                        last_status=row.last_status,
+                    )
+                )
     except Exception as e:
         logger.warning(f"Failed to fetch cronjobs: {e}")
 
@@ -155,20 +155,20 @@ async def get_system_status(
     # Get symbol count
     total_symbols = 0
     try:
-        row = await fetch_one("SELECT COUNT(*) as count FROM symbols")
-        if row:
-            total_symbols = row["count"]
+        async with get_session() as session:
+            result = await session.execute(select(func.count()).select_from(Symbol))
+            total_symbols = result.scalar() or 0
     except Exception as e:
         logger.warning(f"Failed to count symbols: {e}")
 
     # Get pending suggestions count
     pending_suggestions = 0
     try:
-        row = await fetch_one(
-            "SELECT COUNT(*) as count FROM stock_suggestions WHERE status = 'pending'"
-        )
-        if row:
-            pending_suggestions = row["count"]
+        async with get_session() as session:
+            result = await session.execute(
+                select(func.count()).select_from(StockSuggestion).where(StockSuggestion.status == "pending")
+            )
+            pending_suggestions = result.scalar() or 0
     except Exception as e:
         logger.warning(f"Failed to count suggestions: {e}")
 
@@ -226,67 +226,53 @@ async def get_batch_jobs(
     user: TokenData = Depends(require_admin),
 ) -> BatchJobListResponse:
     """Get batch job status for admin monitoring."""
-    # Build query based on filters
-    if include_completed:
-        rows = await fetch_all(
-            """
-            SELECT 
-                id, batch_id, job_type, status, 
-                total_requests, completed_requests, failed_requests,
-                estimated_cost_usd, actual_cost_usd,
-                created_at, completed_at
-            FROM batch_jobs
-            ORDER BY created_at DESC
-            LIMIT $1
-            """,
-            limit,
-        )
-    else:
-        rows = await fetch_all(
-            """
-            SELECT 
-                id, batch_id, job_type, status, 
-                total_requests, completed_requests, failed_requests,
-                estimated_cost_usd, actual_cost_usd,
-                created_at, completed_at
-            FROM batch_jobs
-            WHERE status NOT IN ('completed', 'failed', 'expired', 'cancelled')
-            ORDER BY created_at DESC
-            LIMIT $1
-            """,
-            limit,
-        )
-    
-    jobs = []
-    for row in rows:
-        jobs.append(
-            BatchJobResponse(
-                id=row["id"],
-                batch_id=row["batch_id"],
-                job_type=row["job_type"],
-                status=row["status"],
-                total_requests=row["total_requests"] or 0,
-                completed_requests=row["completed_requests"] or 0,
-                failed_requests=row["failed_requests"] or 0,
-                estimated_cost_usd=float(row["estimated_cost_usd"]) if row["estimated_cost_usd"] else None,
-                actual_cost_usd=float(row["actual_cost_usd"]) if row["actual_cost_usd"] else None,
-                created_at=row["created_at"],
-                completed_at=row["completed_at"],
+    async with get_session() as session:
+        # Build query based on filters
+        if include_completed:
+            stmt = (
+                select(BatchJob)
+                .order_by(BatchJob.created_at.desc())
+                .limit(limit)
+            )
+        else:
+            stmt = (
+                select(BatchJob)
+                .where(BatchJob.status.notin_(["completed", "failed", "expired", "cancelled"]))
+                .order_by(BatchJob.created_at.desc())
+                .limit(limit)
+            )
+        
+        result = await session.execute(stmt)
+        rows = result.scalars().all()
+        
+        jobs = []
+        for row in rows:
+            jobs.append(
+                BatchJobResponse(
+                    id=row.id,
+                    batch_id=row.batch_id,
+                    job_type=row.job_type,
+                    status=row.status,
+                    total_requests=row.total_requests or 0,
+                    completed_requests=row.completed_requests or 0,
+                    failed_requests=row.failed_requests or 0,
+                    estimated_cost_usd=float(row.estimated_cost_usd) if row.estimated_cost_usd else None,
+                    actual_cost_usd=float(row.actual_cost_usd) if row.actual_cost_usd else None,
+                    created_at=row.created_at,
+                    completed_at=row.completed_at,
+                )
+            )
+        
+        # Count active jobs
+        active_result = await session.execute(
+            select(func.count()).select_from(BatchJob).where(
+                BatchJob.status.in_(["pending", "validating", "in_progress", "finalizing"])
             )
         )
-    
-    # Count active jobs
-    active_row = await fetch_one(
-        """
-        SELECT COUNT(*) as count 
-        FROM batch_jobs 
-        WHERE status IN ('pending', 'validating', 'in_progress', 'finalizing')
-        """
-    )
-    active_count = active_row["count"] if active_row else 0
-    
-    return BatchJobListResponse(
-        jobs=jobs,
-        total=len(jobs),
-        active_count=active_count,
-    )
+        active_count = active_result.scalar() or 0
+        
+        return BatchJobListResponse(
+            jobs=jobs,
+            total=len(jobs),
+            active_count=active_count,
+        )

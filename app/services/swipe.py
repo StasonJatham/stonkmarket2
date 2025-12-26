@@ -5,8 +5,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
 
+from sqlalchemy import select
+from sqlalchemy.orm import joinedload
+
 from app.core.logging import get_logger
-from app.database.connection import fetch_all, fetch_one
+from app.database.connection import get_session
+from app.database.orm import DipState, Symbol, DipAIAnalysis
 from app.repositories import dip_votes_orm as dip_votes_repo
 from app.schemas.swipe import DipCard, DipStats, VoteCounts
 from app.services.openai_client import generate_bio, rate_dip
@@ -25,20 +29,18 @@ async def get_dip_card(symbol: str) -> Optional[DipCard]:
         None if symbol not found in dip state.
     """
     # Get dip state and symbol info from PostgreSQL
-    dip_row = await fetch_one(
-        """
-        SELECT ds.symbol, ds.current_price, ds.ath_price, ds.dip_percentage,
-               ds.first_seen, ds.last_updated,
-               s.name, s.sector, s.summary_ai
-        FROM dip_state ds
-        LEFT JOIN symbols s ON s.symbol = ds.symbol
-        WHERE ds.symbol = $1
-        """,
-        symbol.upper(),
-    )
+    async with get_session() as session:
+        result = await session.execute(
+            select(DipState, Symbol)
+            .outerjoin(Symbol, Symbol.symbol == DipState.symbol)
+            .where(DipState.symbol == symbol.upper())
+        )
+        row = result.one_or_none()
 
-    if not dip_row:
+    if not row:
         return None
+    
+    dip_state, sym = row
 
     # Get cached AI analysis
     ai_analysis = await dip_votes_repo.get_ai_analysis(symbol)
@@ -49,8 +51,8 @@ async def get_dip_card(symbol: str) -> Optional[DipCard]:
 
     # Calculate days in dip from first_seen
     days_below = 0
-    if dip_row["first_seen"]:
-        first_seen = dip_row["first_seen"]
+    if dip_state.first_seen:
+        first_seen = dip_state.first_seen
         if hasattr(first_seen, 'tzinfo') and first_seen.tzinfo is None:
             first_seen = first_seen.replace(tzinfo=timezone.utc)
         days_below = (datetime.now(timezone.utc) - first_seen).days
@@ -58,14 +60,14 @@ async def get_dip_card(symbol: str) -> Optional[DipCard]:
     # Build card with Pydantic model
     card = DipCard(
         symbol=symbol.upper(),
-        name=dip_row.get("name"),
-        sector=dip_row.get("sector"),
-        current_price=float(dip_row["current_price"]) if dip_row["current_price"] else 0,
-        ref_high=float(dip_row["ath_price"]) if dip_row["ath_price"] else 0,
-        dip_pct=float(dip_row["dip_percentage"]) if dip_row["dip_percentage"] else 0,
+        name=sym.name if sym else None,
+        sector=sym.sector if sym else None,
+        current_price=float(dip_state.current_price) if dip_state.current_price else 0,
+        ref_high=float(dip_state.ath_price) if dip_state.ath_price else 0,
+        dip_pct=float(dip_state.dip_percentage) if dip_state.dip_percentage else 0,
         days_below=days_below,
         vote_counts=vote_counts,
-        summary_ai=dip_row.get("summary_ai"),
+        summary_ai=sym.summary_ai if sym else None,
         swipe_bio=ai_analysis.get("swipe_bio") if ai_analysis else None,
         ai_rating=ai_analysis.get("ai_rating") if ai_analysis else None,
         ai_reasoning=ai_analysis.get("ai_reasoning") if ai_analysis else None,
@@ -249,39 +251,36 @@ async def get_all_dip_cards(include_ai: bool = False) -> list[DipCard]:
         List of DipCard objects sorted by dip percentage.
     """
     # Get all dip states with symbol info
-    dip_rows = await fetch_all(
-        """
-        SELECT ds.symbol, ds.current_price, ds.ath_price, ds.dip_percentage, 
-               ds.first_seen, ds.last_updated,
-               s.name, s.sector, s.summary_ai
-        FROM dip_state ds
-        JOIN symbols s ON s.symbol = ds.symbol
-        ORDER BY ds.dip_percentage DESC
-        """
-    )
+    async with get_session() as session:
+        result = await session.execute(
+            select(DipState, Symbol)
+            .join(Symbol, Symbol.symbol == DipState.symbol)
+            .order_by(DipState.dip_percentage.desc())
+        )
+        dip_rows = result.all()
 
     # Get all vote counts at once
     all_vote_counts = await dip_votes_repo.get_all_vote_counts()
 
     # Get all AI analyses
-    ai_rows = await fetch_all(
-        """
-        SELECT symbol, swipe_bio, ai_rating, rating_reasoning
-        FROM dip_ai_analysis
-        WHERE expires_at IS NULL OR expires_at > NOW()
-        """
-    )
-    ai_by_symbol = {r["symbol"]: dict(r) for r in ai_rows}
+    async with get_session() as session:
+        result = await session.execute(
+            select(DipAIAnalysis).where(
+                (DipAIAnalysis.expires_at == None) | (DipAIAnalysis.expires_at > datetime.now(timezone.utc))
+            )
+        )
+        ai_rows = result.scalars().all()
+    ai_by_symbol = {r.symbol: r for r in ai_rows}
 
     cards: list[DipCard] = []
     now = datetime.now(timezone.utc)
-    for dip in dip_rows:
-        symbol = dip["symbol"]
+    for dip_state, sym in dip_rows:
+        symbol = dip_state.symbol
 
         # Calculate days in dip from first_seen
         days_below = 0
-        if dip["first_seen"]:
-            first_seen = dip["first_seen"]
+        if dip_state.first_seen:
+            first_seen = dip_state.first_seen
             if hasattr(first_seen, 'tzinfo') and first_seen.tzinfo is None:
                 first_seen = first_seen.replace(tzinfo=timezone.utc)
             days_below = (now - first_seen).days
@@ -294,21 +293,21 @@ async def get_all_dip_cards(include_ai: bool = False) -> list[DipCard]:
         vote_counts = VoteCounts(**vote_counts_dict)
 
         # Get AI analysis if available
-        ai = ai_by_symbol.get(symbol, {})
+        ai = ai_by_symbol.get(symbol)
 
         card = DipCard(
             symbol=symbol,
-            name=dip["name"],
-            sector=dip["sector"],
-            current_price=float(dip["current_price"]) if dip["current_price"] else 0,
-            ref_high=float(dip["ath_price"]) if dip["ath_price"] else 0,
-            dip_pct=float(dip["dip_percentage"]) if dip["dip_percentage"] else 0,
+            name=sym.name if sym else None,
+            sector=sym.sector if sym else None,
+            current_price=float(dip_state.current_price) if dip_state.current_price else 0,
+            ref_high=float(dip_state.ath_price) if dip_state.ath_price else 0,
+            dip_pct=float(dip_state.dip_percentage) if dip_state.dip_percentage else 0,
             days_below=days_below,
             vote_counts=vote_counts,
-            summary_ai=dip.get("summary_ai"),
-            swipe_bio=ai.get("swipe_bio"),
-            ai_rating=ai.get("ai_rating"),
-            ai_reasoning=ai.get("rating_reasoning"),
+            summary_ai=sym.summary_ai if sym else None,
+            swipe_bio=ai.swipe_bio if ai else None,
+            ai_rating=ai.ai_rating if ai else None,
+            ai_reasoning=ai.rating_reasoning if ai else None,
         )
 
         cards.append(card)

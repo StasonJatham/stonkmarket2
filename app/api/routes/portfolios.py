@@ -119,6 +119,7 @@ async def delete_portfolio(
     success = await portfolios_repo.archive_portfolio(portfolio_id, user_id)
     if not success:
         raise NotFoundError(message="Portfolio not found")
+    await invalidate_portfolio_analytics_cache(portfolio_id)
 
 
 @router.get("/{portfolio_id}/holdings", response_model=List[HoldingResponse])

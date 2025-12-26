@@ -14,10 +14,12 @@ from typing import Optional, Tuple
 from enum import Enum
 
 import httpx
+from sqlalchemy import select, update
 
 from app.core.config import settings
 from app.core.logging import get_logger
-from app.database.connection import fetch_one, execute
+from app.database.connection import get_session
+from app.database.orm import Symbol, StockSuggestion
 from app.repositories import api_keys_orm as api_keys_repo
 
 logger = get_logger("services.logo")
@@ -193,24 +195,24 @@ async def get_logo(
     symbol = symbol.upper()
     
     # Check cache first
-    cache_column = "logo_light" if theme == LogoTheme.LIGHT else "logo_dark"
-    
-    row = await fetch_one(
-        f"""
-        SELECT {cache_column}, logo_fetched_at, logo_source
-        FROM symbols 
-        WHERE symbol = $1
-        """,
-        symbol,
-    )
+    async with get_session() as session:
+        result = await session.execute(
+            select(
+                Symbol.logo_light if theme == LogoTheme.LIGHT else Symbol.logo_dark,
+                Symbol.logo_fetched_at,
+                Symbol.logo_source,
+            ).where(Symbol.symbol == symbol)
+        )
+        row = result.one_or_none()
     
     # Return cached logo if still valid
-    if row and row[cache_column]:
-        fetched_at = row.get("logo_fetched_at")
-        if fetched_at:
-            age = datetime.now(timezone.utc) - fetched_at.replace(tzinfo=timezone.utc)
-            if age < timedelta(days=settings.logo_cache_days):
-                return bytes(row[cache_column])
+    if row:
+        logo_data, fetched_at, logo_source = row
+        if logo_data:
+            if fetched_at:
+                age = datetime.now(timezone.utc) - fetched_at.replace(tzinfo=timezone.utc)
+                if age < timedelta(days=settings.logo_cache_days):
+                    return bytes(logo_data)
     
     # Fetch fresh logo
     logo_data = await _fetch_logo_from_api(symbol, theme)
@@ -218,14 +220,15 @@ async def get_logo(
     
     # Fallback to favicon if Logo.dev failed
     if not logo_data:
-        # Get website from symbols table if not provided
+        # Get website from stock_suggestions table if not provided
         if not website and row:
-            website_row = await fetch_one(
-                "SELECT website FROM stock_suggestions WHERE symbol = $1",
-                symbol,
-            )
-            if website_row:
-                website = website_row.get("website")
+            async with get_session() as session:
+                website_result = await session.execute(
+                    select(StockSuggestion.website).where(StockSuggestion.symbol == symbol)
+                )
+                website_row = website_result.scalar_one_or_none()
+                if website_row:
+                    website = website_row
         
         logo_data = await _fetch_favicon_fallback(website, symbol)
         source = "favicon" if logo_data else None
@@ -244,21 +247,23 @@ async def _cache_logo(
     source: str,
 ) -> None:
     """Cache logo data in the database."""
-    cache_column = "logo_light" if theme == LogoTheme.LIGHT else "logo_dark"
-    
     try:
-        await execute(
-            f"""
-            UPDATE symbols 
-            SET {cache_column} = $2,
-                logo_fetched_at = NOW(),
-                logo_source = $3
-            WHERE symbol = $1
-            """,
-            symbol.upper(),
-            data,
-            source,
-        )
+        async with get_session() as session:
+            update_values = {
+                "logo_fetched_at": datetime.now(timezone.utc),
+                "logo_source": source,
+            }
+            if theme == LogoTheme.LIGHT:
+                update_values["logo_light"] = data
+            else:
+                update_values["logo_dark"] = data
+            
+            await session.execute(
+                update(Symbol)
+                .where(Symbol.symbol == symbol.upper())
+                .values(**update_values)
+            )
+            await session.commit()
         logger.info(f"Cached {theme.value} logo for {symbol} (source: {source}, size: {len(data)} bytes)")
     except Exception as e:
         logger.warning(f"Failed to cache logo for {symbol}: {e}")

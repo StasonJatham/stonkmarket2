@@ -51,6 +51,7 @@ from .portfolio import (
     TransactionResponse,
     PortfolioAnalyticsRequest,
     PortfolioAnalyticsResponse,
+    PortfolioAnalyticsJobResponse,
 )
 
 __all__ = [
@@ -95,6 +96,7 @@ __all__ = [
     "TransactionResponse",
     "PortfolioAnalyticsRequest",
     "PortfolioAnalyticsResponse",
+    "PortfolioAnalyticsJobResponse",
     # Common
     "ErrorResponse",
     "HealthResponse",

@@ -9,8 +9,12 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, Optional
 
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
+
 from app.core.logging import get_logger
-from app.database.connection import fetch_one, fetch_all, execute
+from app.database.connection import get_session
+from app.database.orm import RuntimeSetting
 
 logger = get_logger("runtime_settings")
 
@@ -81,13 +85,15 @@ async def _load_settings_from_db() -> Dict[str, Any]:
     """Load all settings from the database."""
     settings = DEFAULT_SETTINGS.copy()
     try:
-        rows = await fetch_all("SELECT key, value FROM runtime_settings")
-        for row in rows:
-            key = row["key"]
-            # Parse JSONB value (asyncpg may return as string)
-            value = _parse_jsonb_value(row["value"])
-            settings[key] = value
-        logger.debug(f"Loaded {len(rows)} settings from database")
+        async with get_session() as session:
+            result = await session.execute(select(RuntimeSetting))
+            rows = result.scalars().all()
+            for row in rows:
+                key = row.key
+                # Parse JSONB value (asyncpg may return as string)
+                value = _parse_jsonb_value(row.value)
+                settings[key] = value
+            logger.debug(f"Loaded {len(rows)} settings from database")
     except Exception as e:
         logger.warning(f"Failed to load settings from database, using defaults: {e}")
     return settings
@@ -96,19 +102,17 @@ async def _load_settings_from_db() -> Dict[str, Any]:
 async def _save_setting_to_db(key: str, value: Any) -> None:
     """Save a single setting to the database."""
     try:
-        # Convert Python value to JSON for storage
-        json_value = json.dumps(value)
-        await execute(
-            """
-            INSERT INTO runtime_settings (key, value, updated_at)
-            VALUES ($1, $2::jsonb, NOW())
-            ON CONFLICT (key) DO UPDATE SET
-                value = $2::jsonb,
-                updated_at = NOW()
-            """,
-            key,
-            json_value,
-        )
+        async with get_session() as session:
+            stmt = insert(RuntimeSetting).values(
+                key=key,
+                value=value,  # JSONB will handle serialization
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["key"],
+                set_={"value": value},
+            )
+            await session.execute(stmt)
+            await session.commit()
         logger.debug(f"Saved setting {key} to database")
     except Exception as e:
         logger.error(f"Failed to save setting {key} to database: {e}")

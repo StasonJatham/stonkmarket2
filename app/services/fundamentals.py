@@ -27,10 +27,15 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, date, timedelta, timezone
+from decimal import Decimal
 from typing import Any, Optional
 
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
+
 from app.core.logging import get_logger
-from app.database.connection import fetch_one, fetch_all, execute
+from app.database.connection import get_session
+from app.database.orm import StockFundamentals, Symbol
 from app.services.data_providers import get_yfinance_service
 
 logger = get_logger("services.fundamentals")
@@ -382,154 +387,92 @@ async def _fetch_fundamentals_from_service(symbol: str) -> Optional[dict[str, An
 
 async def _store_fundamentals(data: dict[str, Any]) -> None:
     """Store fundamentals in database including financial statements and domain metrics."""
-    import json
-    
     symbol = data["symbol"]
     expires_at = datetime.now(timezone.utc) + timedelta(days=30)
+    now = datetime.now(timezone.utc)
     
-    # Convert dict columns to JSON strings for PostgreSQL JSONB
-    def to_json(val):
-        if val is None:
-            return None
-        return json.dumps(val)
+    # Build values dict for upsert
+    values = {
+        "symbol": symbol,
+        "domain": data.get("domain"),
+        "pe_ratio": data.get("pe_ratio"),
+        "forward_pe": data.get("forward_pe"),
+        "peg_ratio": data.get("peg_ratio"),
+        "price_to_book": data.get("price_to_book"),
+        "price_to_sales": data.get("price_to_sales"),
+        "enterprise_value": data.get("enterprise_value"),
+        "ev_to_ebitda": data.get("ev_to_ebitda"),
+        "ev_to_revenue": data.get("ev_to_revenue"),
+        "profit_margin": data.get("profit_margin"),
+        "operating_margin": data.get("operating_margin"),
+        "gross_margin": data.get("gross_margin"),
+        "ebitda_margin": data.get("ebitda_margin"),
+        "return_on_equity": data.get("return_on_equity"),
+        "return_on_assets": data.get("return_on_assets"),
+        "debt_to_equity": data.get("debt_to_equity"),
+        "current_ratio": data.get("current_ratio"),
+        "quick_ratio": data.get("quick_ratio"),
+        "total_cash": data.get("total_cash"),
+        "total_debt": data.get("total_debt"),
+        "free_cash_flow": data.get("free_cash_flow"),
+        "operating_cash_flow": data.get("operating_cash_flow"),
+        "book_value": data.get("book_value"),
+        "eps_trailing": data.get("eps_trailing"),
+        "eps_forward": data.get("eps_forward"),
+        "revenue_per_share": data.get("revenue_per_share"),
+        "revenue_growth": data.get("revenue_growth"),
+        "earnings_growth": data.get("earnings_growth"),
+        "earnings_quarterly_growth": data.get("earnings_quarterly_growth"),
+        "shares_outstanding": data.get("shares_outstanding"),
+        "float_shares": data.get("float_shares"),
+        "held_percent_insiders": data.get("held_percent_insiders"),
+        "held_percent_institutions": data.get("held_percent_institutions"),
+        "short_ratio": data.get("short_ratio"),
+        "short_percent_of_float": data.get("short_percent_of_float"),
+        "beta": data.get("beta"),
+        "recommendation": data.get("recommendation"),
+        "recommendation_mean": data.get("recommendation_mean"),
+        "num_analyst_opinions": data.get("num_analyst_opinions"),
+        "target_high_price": data.get("target_high_price"),
+        "target_low_price": data.get("target_low_price"),
+        "target_mean_price": data.get("target_mean_price"),
+        "target_median_price": data.get("target_median_price"),
+        "revenue": data.get("revenue"),
+        "ebitda": data.get("ebitda"),
+        "net_income": data.get("net_income"),
+        "next_earnings_date": data.get("next_earnings_date"),
+        "earnings_estimate_high": data.get("earnings_estimate_high"),
+        "earnings_estimate_low": data.get("earnings_estimate_low"),
+        "earnings_estimate_avg": data.get("earnings_estimate_avg"),
+        "income_stmt_quarterly": data.get("income_stmt_quarterly"),
+        "income_stmt_annual": data.get("income_stmt_annual"),
+        "balance_sheet_quarterly": data.get("balance_sheet_quarterly"),
+        "balance_sheet_annual": data.get("balance_sheet_annual"),
+        "cash_flow_quarterly": data.get("cash_flow_quarterly"),
+        "cash_flow_annual": data.get("cash_flow_annual"),
+        "net_interest_income": data.get("net_interest_income"),
+        "net_interest_margin": data.get("net_interest_margin"),
+        "ffo": data.get("ffo"),
+        "ffo_per_share": data.get("ffo_per_share"),
+        "p_ffo": data.get("p_ffo"),
+        "loss_ratio": data.get("loss_ratio"),
+        "combined_ratio": data.get("combined_ratio"),
+        "fetched_at": now,
+        "expires_at": expires_at,
+        "financials_fetched_at": data.get("financials_fetched_at"),
+    }
     
-    await execute(
-        """
-        INSERT INTO stock_fundamentals (
-            symbol, domain,
-            pe_ratio, forward_pe, peg_ratio, price_to_book, price_to_sales,
-            enterprise_value, ev_to_ebitda, ev_to_revenue,
-            profit_margin, operating_margin, gross_margin, ebitda_margin,
-            return_on_equity, return_on_assets,
-            debt_to_equity, current_ratio, quick_ratio,
-            total_cash, total_debt, free_cash_flow, operating_cash_flow,
-            book_value, eps_trailing, eps_forward, revenue_per_share,
-            revenue_growth, earnings_growth, earnings_quarterly_growth,
-            shares_outstanding, float_shares,
-            held_percent_insiders, held_percent_institutions,
-            short_ratio, short_percent_of_float,
-            beta,
-            recommendation, recommendation_mean, num_analyst_opinions,
-            target_high_price, target_low_price, target_mean_price, target_median_price,
-            revenue, ebitda, net_income,
-            next_earnings_date, earnings_estimate_high, earnings_estimate_low, earnings_estimate_avg,
-            income_stmt_quarterly, income_stmt_annual,
-            balance_sheet_quarterly, balance_sheet_annual,
-            cash_flow_quarterly, cash_flow_annual,
-            net_interest_income, net_interest_margin,
-            ffo, ffo_per_share, p_ffo,
-            loss_ratio, combined_ratio,
-            fetched_at, expires_at, financials_fetched_at
+    # Build update dict (exclude symbol as it's the conflict key)
+    update_values = {k: v for k, v in values.items() if k != "symbol"}
+    
+    async with get_session() as session:
+        stmt = insert(StockFundamentals).values(**values)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["symbol"],
+            set_=update_values,
         )
-        VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-            $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
-            $21, $22, $23, $24, $25, $26, $27, $28, $29, $30,
-            $31, $32, $33, $34, $35, $36, $37, $38, $39, $40,
-            $41, $42, $43, $44, $45, $46, $47, $48, $49, $50,
-            $51, $52, $53, $54, $55, $56, $57, $58, $59, $60,
-            $61, $62, $63, $64, NOW(), $65, $66
-        )
-        ON CONFLICT (symbol) DO UPDATE SET
-            domain = EXCLUDED.domain,
-            pe_ratio = EXCLUDED.pe_ratio,
-            forward_pe = EXCLUDED.forward_pe,
-            peg_ratio = EXCLUDED.peg_ratio,
-            price_to_book = EXCLUDED.price_to_book,
-            price_to_sales = EXCLUDED.price_to_sales,
-            enterprise_value = EXCLUDED.enterprise_value,
-            ev_to_ebitda = EXCLUDED.ev_to_ebitda,
-            ev_to_revenue = EXCLUDED.ev_to_revenue,
-            profit_margin = EXCLUDED.profit_margin,
-            operating_margin = EXCLUDED.operating_margin,
-            gross_margin = EXCLUDED.gross_margin,
-            ebitda_margin = EXCLUDED.ebitda_margin,
-            return_on_equity = EXCLUDED.return_on_equity,
-            return_on_assets = EXCLUDED.return_on_assets,
-            debt_to_equity = EXCLUDED.debt_to_equity,
-            current_ratio = EXCLUDED.current_ratio,
-            quick_ratio = EXCLUDED.quick_ratio,
-            total_cash = EXCLUDED.total_cash,
-            total_debt = EXCLUDED.total_debt,
-            free_cash_flow = EXCLUDED.free_cash_flow,
-            operating_cash_flow = EXCLUDED.operating_cash_flow,
-            book_value = EXCLUDED.book_value,
-            eps_trailing = EXCLUDED.eps_trailing,
-            eps_forward = EXCLUDED.eps_forward,
-            revenue_per_share = EXCLUDED.revenue_per_share,
-            revenue_growth = EXCLUDED.revenue_growth,
-            earnings_growth = EXCLUDED.earnings_growth,
-            earnings_quarterly_growth = EXCLUDED.earnings_quarterly_growth,
-            shares_outstanding = EXCLUDED.shares_outstanding,
-            float_shares = EXCLUDED.float_shares,
-            held_percent_insiders = EXCLUDED.held_percent_insiders,
-            held_percent_institutions = EXCLUDED.held_percent_institutions,
-            short_ratio = EXCLUDED.short_ratio,
-            short_percent_of_float = EXCLUDED.short_percent_of_float,
-            beta = EXCLUDED.beta,
-            recommendation = EXCLUDED.recommendation,
-            recommendation_mean = EXCLUDED.recommendation_mean,
-            num_analyst_opinions = EXCLUDED.num_analyst_opinions,
-            target_high_price = EXCLUDED.target_high_price,
-            target_low_price = EXCLUDED.target_low_price,
-            target_mean_price = EXCLUDED.target_mean_price,
-            target_median_price = EXCLUDED.target_median_price,
-            revenue = EXCLUDED.revenue,
-            ebitda = EXCLUDED.ebitda,
-            net_income = EXCLUDED.net_income,
-            next_earnings_date = EXCLUDED.next_earnings_date,
-            earnings_estimate_high = EXCLUDED.earnings_estimate_high,
-            earnings_estimate_low = EXCLUDED.earnings_estimate_low,
-            earnings_estimate_avg = EXCLUDED.earnings_estimate_avg,
-            income_stmt_quarterly = EXCLUDED.income_stmt_quarterly,
-            income_stmt_annual = EXCLUDED.income_stmt_annual,
-            balance_sheet_quarterly = EXCLUDED.balance_sheet_quarterly,
-            balance_sheet_annual = EXCLUDED.balance_sheet_annual,
-            cash_flow_quarterly = EXCLUDED.cash_flow_quarterly,
-            cash_flow_annual = EXCLUDED.cash_flow_annual,
-            net_interest_income = EXCLUDED.net_interest_income,
-            net_interest_margin = EXCLUDED.net_interest_margin,
-            ffo = EXCLUDED.ffo,
-            ffo_per_share = EXCLUDED.ffo_per_share,
-            p_ffo = EXCLUDED.p_ffo,
-            loss_ratio = EXCLUDED.loss_ratio,
-            combined_ratio = EXCLUDED.combined_ratio,
-            fetched_at = NOW(),
-            expires_at = EXCLUDED.expires_at,
-            financials_fetched_at = EXCLUDED.financials_fetched_at
-        """,
-        symbol,
-        data.get("domain"),
-        data.get("pe_ratio"), data.get("forward_pe"), data.get("peg_ratio"),
-        data.get("price_to_book"), data.get("price_to_sales"),
-        data.get("enterprise_value"), data.get("ev_to_ebitda"), data.get("ev_to_revenue"),
-        data.get("profit_margin"), data.get("operating_margin"),
-        data.get("gross_margin"), data.get("ebitda_margin"),
-        data.get("return_on_equity"), data.get("return_on_assets"),
-        data.get("debt_to_equity"), data.get("current_ratio"), data.get("quick_ratio"),
-        data.get("total_cash"), data.get("total_debt"),
-        data.get("free_cash_flow"), data.get("operating_cash_flow"),
-        data.get("book_value"), data.get("eps_trailing"), data.get("eps_forward"),
-        data.get("revenue_per_share"),
-        data.get("revenue_growth"), data.get("earnings_growth"), data.get("earnings_quarterly_growth"),
-        data.get("shares_outstanding"), data.get("float_shares"),
-        data.get("held_percent_insiders"), data.get("held_percent_institutions"),
-        data.get("short_ratio"), data.get("short_percent_of_float"),
-        data.get("beta"),
-        data.get("recommendation"), data.get("recommendation_mean"), data.get("num_analyst_opinions"),
-        data.get("target_high_price"), data.get("target_low_price"),
-        data.get("target_mean_price"), data.get("target_median_price"),
-        data.get("revenue"), data.get("ebitda"), data.get("net_income"),
-        data.get("next_earnings_date"),
-        data.get("earnings_estimate_high"), data.get("earnings_estimate_low"), data.get("earnings_estimate_avg"),
-        to_json(data.get("income_stmt_quarterly")), to_json(data.get("income_stmt_annual")),
-        to_json(data.get("balance_sheet_quarterly")), to_json(data.get("balance_sheet_annual")),
-        to_json(data.get("cash_flow_quarterly")), to_json(data.get("cash_flow_annual")),
-        data.get("net_interest_income"), data.get("net_interest_margin"),
-        data.get("ffo"), data.get("ffo_per_share"), data.get("p_ffo"),
-        data.get("loss_ratio"), data.get("combined_ratio"),
-        expires_at, data.get("financials_fetched_at"),
-    )
+        await session.execute(stmt)
+        await session.commit()
     
     logger.debug(f"Stored fundamentals for {symbol} (domain={data.get('domain')})")
 
@@ -615,6 +558,79 @@ async def fetch_fundamentals_live(symbol: str) -> Optional[dict[str, Any]]:
     }
 
 
+def _fundamentals_to_dict(f: StockFundamentals) -> dict[str, Any]:
+    """Convert StockFundamentals ORM object to dictionary."""
+    return {
+        "symbol": f.symbol,
+        "domain": f.domain,
+        "pe_ratio": float(f.pe_ratio) if f.pe_ratio else None,
+        "forward_pe": float(f.forward_pe) if f.forward_pe else None,
+        "peg_ratio": float(f.peg_ratio) if f.peg_ratio else None,
+        "price_to_book": float(f.price_to_book) if f.price_to_book else None,
+        "price_to_sales": float(f.price_to_sales) if f.price_to_sales else None,
+        "enterprise_value": f.enterprise_value,
+        "ev_to_ebitda": float(f.ev_to_ebitda) if f.ev_to_ebitda else None,
+        "ev_to_revenue": float(f.ev_to_revenue) if f.ev_to_revenue else None,
+        "profit_margin": float(f.profit_margin) if f.profit_margin else None,
+        "operating_margin": float(f.operating_margin) if f.operating_margin else None,
+        "gross_margin": float(f.gross_margin) if f.gross_margin else None,
+        "ebitda_margin": float(f.ebitda_margin) if f.ebitda_margin else None,
+        "return_on_equity": float(f.return_on_equity) if f.return_on_equity else None,
+        "return_on_assets": float(f.return_on_assets) if f.return_on_assets else None,
+        "debt_to_equity": float(f.debt_to_equity) if f.debt_to_equity else None,
+        "current_ratio": float(f.current_ratio) if f.current_ratio else None,
+        "quick_ratio": float(f.quick_ratio) if f.quick_ratio else None,
+        "total_cash": f.total_cash,
+        "total_debt": f.total_debt,
+        "free_cash_flow": f.free_cash_flow,
+        "operating_cash_flow": f.operating_cash_flow,
+        "book_value": float(f.book_value) if f.book_value else None,
+        "eps_trailing": float(f.eps_trailing) if f.eps_trailing else None,
+        "eps_forward": float(f.eps_forward) if f.eps_forward else None,
+        "revenue_per_share": float(f.revenue_per_share) if f.revenue_per_share else None,
+        "revenue_growth": float(f.revenue_growth) if f.revenue_growth else None,
+        "earnings_growth": float(f.earnings_growth) if f.earnings_growth else None,
+        "earnings_quarterly_growth": float(f.earnings_quarterly_growth) if f.earnings_quarterly_growth else None,
+        "shares_outstanding": f.shares_outstanding,
+        "float_shares": f.float_shares,
+        "held_percent_insiders": float(f.held_percent_insiders) if f.held_percent_insiders else None,
+        "held_percent_institutions": float(f.held_percent_institutions) if f.held_percent_institutions else None,
+        "short_ratio": float(f.short_ratio) if f.short_ratio else None,
+        "short_percent_of_float": float(f.short_percent_of_float) if f.short_percent_of_float else None,
+        "beta": float(f.beta) if f.beta else None,
+        "recommendation": f.recommendation,
+        "recommendation_mean": float(f.recommendation_mean) if f.recommendation_mean else None,
+        "num_analyst_opinions": f.num_analyst_opinions,
+        "target_high_price": float(f.target_high_price) if f.target_high_price else None,
+        "target_low_price": float(f.target_low_price) if f.target_low_price else None,
+        "target_mean_price": float(f.target_mean_price) if f.target_mean_price else None,
+        "target_median_price": float(f.target_median_price) if f.target_median_price else None,
+        "revenue": f.revenue,
+        "ebitda": f.ebitda,
+        "net_income": f.net_income,
+        "next_earnings_date": f.next_earnings_date,
+        "earnings_estimate_high": float(f.earnings_estimate_high) if f.earnings_estimate_high else None,
+        "earnings_estimate_low": float(f.earnings_estimate_low) if f.earnings_estimate_low else None,
+        "earnings_estimate_avg": float(f.earnings_estimate_avg) if f.earnings_estimate_avg else None,
+        "income_stmt_quarterly": f.income_stmt_quarterly,
+        "income_stmt_annual": f.income_stmt_annual,
+        "balance_sheet_quarterly": f.balance_sheet_quarterly,
+        "balance_sheet_annual": f.balance_sheet_annual,
+        "cash_flow_quarterly": f.cash_flow_quarterly,
+        "cash_flow_annual": f.cash_flow_annual,
+        "net_interest_income": f.net_interest_income,
+        "net_interest_margin": float(f.net_interest_margin) if f.net_interest_margin else None,
+        "ffo": f.ffo,
+        "ffo_per_share": float(f.ffo_per_share) if f.ffo_per_share else None,
+        "p_ffo": float(f.p_ffo) if f.p_ffo else None,
+        "loss_ratio": float(f.loss_ratio) if f.loss_ratio else None,
+        "combined_ratio": float(f.combined_ratio) if f.combined_ratio else None,
+        "fetched_at": f.fetched_at,
+        "expires_at": f.expires_at,
+        "financials_fetched_at": f.financials_fetched_at,
+    }
+
+
 async def get_fundamentals_from_db(symbol: str) -> Optional[dict[str, Any]]:
     """
     Get fundamentals from database cache only (no fetching).
@@ -627,16 +643,15 @@ async def get_fundamentals_from_db(symbol: str) -> Optional[dict[str, Any]]:
     if symbol.startswith("^"):
         return None
     
-    row = await fetch_one(
-        """
-        SELECT * FROM stock_fundamentals
-        WHERE symbol = $1 AND expires_at > NOW()
-        """,
-        symbol,
-    )
-    if row:
-        return dict(row)
-    return None
+    async with get_session() as session:
+        result = await session.execute(
+            select(StockFundamentals).where(
+                StockFundamentals.symbol == symbol,
+                StockFundamentals.expires_at > datetime.now(timezone.utc),
+            )
+        )
+        row = result.scalar_one_or_none()
+        return _fundamentals_to_dict(row) if row else None
 
 
 async def get_fundamentals(symbol: str, force_refresh: bool = False) -> Optional[dict[str, Any]]:
@@ -657,15 +672,16 @@ async def get_fundamentals(symbol: str, force_refresh: bool = False) -> Optional
     
     # Check database cache
     if not force_refresh:
-        row = await fetch_one(
-            """
-            SELECT * FROM stock_fundamentals
-            WHERE symbol = $1 AND expires_at > NOW()
-            """,
-            symbol,
-        )
-        if row:
-            return dict(row)
+        async with get_session() as session:
+            result = await session.execute(
+                select(StockFundamentals).where(
+                    StockFundamentals.symbol == symbol,
+                    StockFundamentals.expires_at > datetime.now(timezone.utc),
+                )
+            )
+            row = result.scalar_one_or_none()
+            if row:
+                return _fundamentals_to_dict(row)
     
     # Fetch via unified service
     data = await _fetch_fundamentals_from_service(symbol)
@@ -698,19 +714,23 @@ async def refresh_all_fundamentals(
     """
     if symbols is None:
         # Get symbols needing refresh (expired or missing)
-        rows = await fetch_all(
-            """
-            SELECT s.symbol
-            FROM symbols s
-            LEFT JOIN stock_fundamentals f ON s.symbol = f.symbol
-            WHERE s.symbol_type = 'stock'
-              AND s.is_active = TRUE
-              AND (f.symbol IS NULL OR f.expires_at < NOW())
-            ORDER BY f.expires_at NULLS FIRST
-            LIMIT 100
-            """
-        )
-        symbols = [r["symbol"] for r in rows]
+        async with get_session() as session:
+            from sqlalchemy import or_
+            result = await session.execute(
+                select(Symbol.symbol)
+                .outerjoin(StockFundamentals, Symbol.symbol == StockFundamentals.symbol)
+                .where(
+                    Symbol.symbol_type == "stock",
+                    Symbol.is_active == True,
+                    or_(
+                        StockFundamentals.symbol == None,
+                        StockFundamentals.expires_at < datetime.now(timezone.utc),
+                    ),
+                )
+                .order_by(StockFundamentals.expires_at.asc().nulls_first())
+                .limit(100)
+            )
+            symbols = [r[0] for r in result.all()]
     
     logger.info(f"Refreshing fundamentals for {len(symbols)} symbols")
     
@@ -824,12 +844,13 @@ async def get_fundamentals_for_analysis(symbol: str) -> dict[str, Any]:
 async def get_pe_ratio(symbol: str) -> Optional[float]:
     """Quick helper to get just the P/E ratio."""
     # First check symbols table (fast)
-    row = await fetch_one(
-        "SELECT pe_ratio FROM symbols WHERE symbol = $1",
-        symbol.upper(),
-    )
-    if row and row["pe_ratio"]:
-        return float(row["pe_ratio"])
+    async with get_session() as session:
+        result = await session.execute(
+            select(Symbol.pe_ratio).where(Symbol.symbol == symbol.upper())
+        )
+        row = result.scalar_one_or_none()
+        if row:
+            return float(row)
     
     # Fall back to fundamentals
     data = await get_fundamentals(symbol)

@@ -31,8 +31,12 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, Literal
 from dataclasses import dataclass
 
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
+
 from app.core.logging import get_logger
-from app.database.connection import fetch_one, fetch_all, execute
+from app.database.connection import get_session
+from app.database.orm import AiAgentAnalysis, AnalysisVersion, Symbol
 from app.services.fundamentals import get_fundamentals, get_fundamentals_for_analysis
 from app.services import stock_info
 from app.services.openai_client import generate, TaskType
@@ -80,15 +84,15 @@ def _compute_input_hash(fundamentals: dict[str, Any], stock_data: dict[str, Any]
 
 async def _get_stored_input_hash(symbol: str) -> Optional[str]:
     """Get the stored input hash for a symbol's agent analysis."""
-    row = await fetch_one(
-        """
-        SELECT input_version_hash 
-        FROM analysis_versions 
-        WHERE symbol = $1 AND analysis_type = 'agent_analysis'
-        """,
-        symbol,
-    )
-    return row["input_version_hash"] if row else None
+    async with get_session() as session:
+        result = await session.execute(
+            select(AnalysisVersion.input_version_hash).where(
+                AnalysisVersion.symbol == symbol,
+                AnalysisVersion.analysis_type == "agent_analysis",
+            )
+        )
+        row = result.scalar_one_or_none()
+        return row if row else None
 
 
 async def _store_analysis_version(
@@ -99,18 +103,26 @@ async def _store_analysis_version(
     """Store/update the analysis version after successful analysis."""
     expires_at = datetime.now(timezone.utc) + timedelta(days=7)
     
-    await execute(
-        """
-        INSERT INTO analysis_versions (symbol, analysis_type, input_version_hash, generated_at, expires_at, batch_job_id)
-        VALUES ($1, 'agent_analysis', $2, NOW(), $3, $4)
-        ON CONFLICT (symbol, analysis_type) DO UPDATE SET
-            input_version_hash = EXCLUDED.input_version_hash,
-            generated_at = EXCLUDED.generated_at,
-            expires_at = EXCLUDED.expires_at,
-            batch_job_id = EXCLUDED.batch_job_id
-        """,
-        symbol, input_hash, expires_at, batch_job_id,
-    )
+    async with get_session() as session:
+        stmt = insert(AnalysisVersion).values(
+            symbol=symbol,
+            analysis_type="agent_analysis",
+            input_version_hash=input_hash,
+            generated_at=datetime.now(timezone.utc),
+            expires_at=expires_at,
+            batch_job_id=batch_job_id,
+        )
+        stmt = stmt.on_conflict_do_update(
+            constraint="uq_analysis_version_symbol_type",
+            set_={
+                "input_version_hash": stmt.excluded.input_version_hash,
+                "generated_at": stmt.excluded.generated_at,
+                "expires_at": stmt.excluded.expires_at,
+                "batch_job_id": stmt.excluded.batch_job_id,
+            },
+        )
+        await session.execute(stmt)
+        await session.commit()
 
 
 # Agent definitions with their investment philosophy
@@ -488,7 +500,7 @@ async def run_agent_analysis(
 async def _store_agent_analysis(result: AgentAnalysisResult) -> None:
     """Store agent analysis result in database."""
     # Serialize verdicts to JSON
-    verdicts_json = json.dumps([
+    verdicts_json = [
         {
             "agent_id": v.agent_id,
             "agent_name": v.agent_name,
@@ -498,33 +510,33 @@ async def _store_agent_analysis(result: AgentAnalysisResult) -> None:
             "key_factors": v.key_factors,
         }
         for v in result.verdicts
-    ])
+    ]
     
     expires_at = datetime.now(timezone.utc) + timedelta(days=7)
     
-    await execute(
-        """
-        INSERT INTO ai_agent_analysis (
-            symbol, verdicts, overall_signal, overall_confidence,
-            summary, analyzed_at, expires_at
+    async with get_session() as session:
+        stmt = insert(AiAgentAnalysis).values(
+            symbol=result.symbol,
+            verdicts=verdicts_json,
+            overall_signal=result.overall_signal,
+            overall_confidence=result.overall_confidence,
+            summary=result.summary,
+            analyzed_at=result.analyzed_at,
+            expires_at=expires_at,
         )
-        VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7)
-        ON CONFLICT (symbol) DO UPDATE SET
-            verdicts = EXCLUDED.verdicts,
-            overall_signal = EXCLUDED.overall_signal,
-            overall_confidence = EXCLUDED.overall_confidence,
-            summary = EXCLUDED.summary,
-            analyzed_at = EXCLUDED.analyzed_at,
-            expires_at = EXCLUDED.expires_at
-        """,
-        result.symbol,
-        verdicts_json,
-        result.overall_signal,
-        result.overall_confidence,
-        result.summary,
-        result.analyzed_at,
-        expires_at,
-    )
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["symbol"],
+            set_={
+                "verdicts": stmt.excluded.verdicts,
+                "overall_signal": stmt.excluded.overall_signal,
+                "overall_confidence": stmt.excluded.overall_confidence,
+                "summary": stmt.excluded.summary,
+                "analyzed_at": stmt.excluded.analyzed_at,
+                "expires_at": stmt.excluded.expires_at,
+            },
+        )
+        await session.execute(stmt)
+        await session.commit()
 
 
 async def get_agent_analysis(symbol: str, max_age_hours: int = 168) -> Optional[dict[str, Any]]:
@@ -540,51 +552,56 @@ async def get_agent_analysis(symbol: str, max_age_hours: int = 168) -> Optional[
     """
     symbol = symbol.upper()
     
-    row = await fetch_one(
-        """
-        SELECT symbol, verdicts, overall_signal, overall_confidence,
-               summary, analyzed_at, expires_at
-        FROM ai_agent_analysis
-        WHERE symbol = $1 AND expires_at > NOW()
-        """,
-        symbol,
-    )
+    async with get_session() as session:
+        result = await session.execute(
+            select(AiAgentAnalysis).where(
+                AiAgentAnalysis.symbol == symbol,
+                AiAgentAnalysis.expires_at > datetime.now(timezone.utc),
+            )
+        )
+        row = result.scalar_one_or_none()
     
     if not row:
         return None
     
     # Parse verdicts JSON
-    verdicts = row["verdicts"]
+    verdicts = row.verdicts
     if isinstance(verdicts, str):
         verdicts = json.loads(verdicts)
     
     return {
-        "symbol": row["symbol"],
+        "symbol": row.symbol,
         "verdicts": verdicts,
-        "overall_signal": row["overall_signal"],
-        "overall_confidence": row["overall_confidence"],
-        "summary": row["summary"],
-        "analyzed_at": row["analyzed_at"].isoformat() if row["analyzed_at"] else None,
-        "expires_at": row["expires_at"].isoformat() if row["expires_at"] else None,
+        "overall_signal": row.overall_signal,
+        "overall_confidence": row.overall_confidence,
+        "summary": row.summary,
+        "analyzed_at": row.analyzed_at.isoformat() if row.analyzed_at else None,
+        "expires_at": row.expires_at.isoformat() if row.expires_at else None,
     }
 
 
 async def get_symbols_needing_analysis() -> list[str]:
     """Get symbols that need agent analysis (new or expired)."""
-    rows = await fetch_all(
-        """
-        SELECT s.symbol
-        FROM symbols s
-        WHERE s.is_active = TRUE
-          AND NOT EXISTS (
-              SELECT 1 FROM ai_agent_analysis a
-              WHERE a.symbol = s.symbol
-                AND a.expires_at > NOW()
-          )
-        ORDER BY s.symbol
-        """,
-    )
-    return [r["symbol"] for r in rows]
+    from sqlalchemy import and_, not_, exists
+    
+    async with get_session() as session:
+        # Subquery to check for non-expired analysis
+        has_valid_analysis = exists(
+            select(AiAgentAnalysis.symbol).where(
+                AiAgentAnalysis.symbol == Symbol.symbol,
+                AiAgentAnalysis.expires_at > datetime.now(timezone.utc),
+            )
+        )
+        
+        result = await session.execute(
+            select(Symbol.symbol)
+            .where(
+                Symbol.is_active == True,
+                not_(has_valid_analysis),
+            )
+            .order_by(Symbol.symbol)
+        )
+        return [r[0] for r in result.all()]
 
 
 async def run_all_agent_analyses(force: bool = False) -> dict[str, Any]:

@@ -38,8 +38,12 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Optional
 
+from sqlalchemy import text, select, update
+from sqlalchemy.orm import joinedload
+
 from app.core.logging import get_logger
-from app.database.connection import execute, fetch_all, fetch_one
+from app.database.connection import get_session
+from app.database.orm import Symbol, SymbolSearchResult, StockFundamentals
 from app.services.data_providers import get_yfinance_service
 
 logger = get_logger("services.symbol_search")
@@ -109,34 +113,27 @@ async def _search_local_db(
     
     # Build cursor WHERE clause
     cursor_clause = ""
-    cursor_params: list[Any] = [normalized]
-    param_idx = 2
     
     if cursor:
-        cursor_clause = f"""
+        cursor_clause = """
             AND (
-                score < ${param_idx}
-                OR (score = ${param_idx} AND id > ${param_idx + 1})
+                score < :cursor_score
+                OR (score = :cursor_score AND id > :cursor_id)
             )
         """
-        cursor_params.extend([cursor.score, cursor.id])
-        param_idx += 2
     
     # Trigram similarity clause for fuzzy name matching
-    # NOTE: Don't use .replace() on these - it breaks the alias name
     trigram_select_symbols = ""
     trigram_select_cached = ""
     if use_trigram:
-        # Add similarity score as a factor - use table-specific versions to avoid replace() issues
-        trigram_select_symbols = ", similarity(s.name, $1) as name_similarity"
-        trigram_select_cached = ", similarity(r.name, $1) as name_similarity"
+        trigram_select_symbols = ", similarity(s.name, :query) as name_similarity"
+        trigram_select_cached = ", similarity(r.name, :query) as name_similarity"
     
     # Fetch one extra to detect if there are more results
     fetch_limit = limit + 1
-    cursor_params.append(fetch_limit)
     
-    rows = await fetch_all(
-        f"""
+    # Build query with SQLAlchemy text()
+    query_sql = f"""
         WITH combined AS (
             -- Active symbols (highest priority)
             SELECT 
@@ -149,18 +146,18 @@ async def _search_local_db(
                 NULL::numeric as pe_ratio,
                 'local' as source,
                 CASE 
-                    WHEN UPPER(s.symbol) = $1 THEN 1.00
-                    WHEN UPPER(s.symbol) LIKE $1 || '%' THEN 0.90
-                    WHEN UPPER(s.name) LIKE '%' || $1 || '%' THEN 0.70
+                    WHEN UPPER(s.symbol) = :query THEN 1.00
+                    WHEN UPPER(s.symbol) LIKE :query || '%' THEN 0.90
+                    WHEN UPPER(s.name) LIKE '%' || :query || '%' THEN 0.70
                     ELSE 0.50
                 END::numeric as score
                 {trigram_select_symbols if use_trigram else ', 0 as name_similarity'}
             FROM symbols s
             WHERE s.is_active = TRUE
               AND (
-                  UPPER(s.symbol) LIKE $1 || '%'
-                  OR UPPER(s.name) LIKE '%' || $1 || '%'
-                  {"OR similarity(s.name, $1) > 0.3" if use_trigram else ""}
+                  UPPER(s.symbol) LIKE :query || '%'
+                  OR UPPER(s.name) LIKE '%' || :query || '%'
+                  {"OR similarity(s.name, :query) > 0.3" if use_trigram else ""}
               )
               
             UNION ALL
@@ -177,9 +174,9 @@ async def _search_local_db(
                 'cached' as source,
                 COALESCE(r.confidence_score, 
                     CASE 
-                        WHEN UPPER(r.symbol) = $1 THEN 0.85
-                        WHEN UPPER(r.symbol) LIKE $1 || '%' THEN 0.75
-                        WHEN UPPER(r.name) LIKE '%' || $1 || '%' THEN 0.60
+                        WHEN UPPER(r.symbol) = :query THEN 0.85
+                        WHEN UPPER(r.symbol) LIKE :query || '%' THEN 0.75
+                        WHEN UPPER(r.name) LIKE '%' || :query || '%' THEN 0.60
                         ELSE 0.40
                     END
                 )::numeric as score
@@ -188,19 +185,27 @@ async def _search_local_db(
             WHERE r.expires_at > NOW()
               AND NOT EXISTS (SELECT 1 FROM symbols s WHERE s.symbol = r.symbol AND s.is_active = TRUE)
               AND (
-                  UPPER(r.symbol) LIKE $1 || '%'
-                  OR UPPER(r.name) LIKE '%' || $1 || '%'
-                  {"OR similarity(r.name, $1) > 0.3" if use_trigram else ""}
+                  UPPER(r.symbol) LIKE :query || '%'
+                  OR UPPER(r.name) LIKE '%' || :query || '%'
+                  {"OR similarity(r.name, :query) > 0.3" if use_trigram else ""}
               )
         )
         SELECT DISTINCT ON (symbol) *
         FROM combined
         WHERE 1=1 {cursor_clause}
         ORDER BY symbol, score DESC, id ASC
-        LIMIT ${param_idx}
-        """,
-        *cursor_params,
-    )
+        LIMIT :limit
+    """
+    
+    # Build parameters dict
+    params = {"query": normalized, "limit": fetch_limit}
+    if cursor:
+        params["cursor_score"] = cursor.score
+        params["cursor_id"] = cursor.id
+    
+    async with get_session() as session:
+        result = await session.execute(text(query_sql), params)
+        rows = result.mappings().all()
     
     # Check if there are more results
     has_more = len(rows) > limit
@@ -251,14 +256,14 @@ async def _update_last_seen(symbols: list[str]) -> None:
         return
     
     try:
-        await execute(
-            """
-            UPDATE symbol_search_results 
-            SET last_seen_at = NOW()
-            WHERE symbol = ANY($1)
-            """,
-            symbols,
-        )
+        from datetime import timezone
+        async with get_session() as session:
+            await session.execute(
+                update(SymbolSearchResult)
+                .where(SymbolSearchResult.symbol.in_(symbols))
+                .values(last_seen_at=datetime.now(timezone.utc))
+            )
+            await session.commit()
     except Exception as e:
         logger.warning(f"Failed to update last_seen_at: {e}")
 
@@ -370,50 +375,57 @@ async def lookup_symbol(symbol: str) -> Optional[dict[str, Any]]:
     """
     symbol = symbol.strip().upper()
     
-    # Check local symbols with fundamentals
-    row = await fetch_one(
-        """
-        SELECT s.symbol, s.name, s.sector, s.symbol_type, s.market_cap,
-               f.pe_ratio, f.forward_pe, f.recommendation, f.target_mean_price
-        FROM symbols s
-        LEFT JOIN stock_fundamentals f ON s.symbol = f.symbol
-        WHERE s.symbol = $1 AND s.is_active = TRUE
-        """,
-        symbol,
-    )
+    # Check local symbols with fundamentals using JOIN
+    async with get_session() as session:
+        result = await session.execute(
+            select(
+                Symbol.symbol,
+                Symbol.name,
+                Symbol.sector,
+                Symbol.symbol_type,
+                Symbol.market_cap,
+                StockFundamentals.pe_ratio,
+                StockFundamentals.forward_pe,
+                StockFundamentals.recommendation,
+                StockFundamentals.target_mean_price,
+            )
+            .outerjoin(StockFundamentals, Symbol.symbol == StockFundamentals.symbol)
+            .where(Symbol.symbol == symbol, Symbol.is_active == True)
+        )
+        row = result.one_or_none()
     
     if row:
         return {
-            "symbol": row["symbol"],
-            "name": row["name"],
-            "sector": row["sector"],
-            "quote_type": (row["symbol_type"] or "EQUITY").upper(),
-            "market_cap": float(row["market_cap"]) if row["market_cap"] else None,
-            "pe_ratio": float(row["pe_ratio"]) if row["pe_ratio"] else None,
-            "forward_pe": float(row["forward_pe"]) if row["forward_pe"] else None,
-            "recommendation": row["recommendation"],
-            "target_mean_price": float(row["target_mean_price"]) if row["target_mean_price"] else None,
+            "symbol": row.symbol,
+            "name": row.name,
+            "sector": row.sector,
+            "quote_type": (row.symbol_type or "EQUITY").upper(),
+            "market_cap": float(row.market_cap) if row.market_cap else None,
+            "pe_ratio": float(row.pe_ratio) if row.pe_ratio else None,
+            "forward_pe": float(row.forward_pe) if row.forward_pe else None,
+            "recommendation": row.recommendation,
+            "target_mean_price": float(row.target_mean_price) if row.target_mean_price else None,
             "source": "local",
             "valid": True,
         }
     
     # Check cached search results
-    cached_row = await fetch_one(
-        """
-        SELECT symbol, name, sector, quote_type, market_cap
-        FROM symbol_search_results
-        WHERE symbol = $1 AND expires_at > NOW()
-        """,
-        symbol,
-    )
+    async with get_session() as session:
+        result = await session.execute(
+            select(SymbolSearchResult).where(
+                SymbolSearchResult.symbol == symbol,
+                SymbolSearchResult.expires_at > datetime.now(timezone.utc),
+            )
+        )
+        cached_row = result.scalar_one_or_none()
     
     if cached_row:
         return {
-            "symbol": cached_row["symbol"],
-            "name": cached_row["name"],
-            "sector": cached_row["sector"],
-            "quote_type": (cached_row["quote_type"] or "EQUITY").upper(),
-            "market_cap": float(cached_row["market_cap"]) if cached_row["market_cap"] else None,
+            "symbol": cached_row.symbol,
+            "name": cached_row.name,
+            "sector": cached_row.sector,
+            "quote_type": (cached_row.quote_type or "EQUITY").upper(),
+            "market_cap": float(cached_row.market_cap) if cached_row.market_cap else None,
             "source": "cached",
             "valid": True,
         }
@@ -448,8 +460,11 @@ async def get_symbol_suggestions(
 
 async def get_known_symbols(limit: int = 100) -> list[str]:
     """Get list of all known active symbols."""
-    rows = await fetch_all(
-        "SELECT symbol FROM symbols WHERE is_active = TRUE ORDER BY symbol LIMIT $1",
-        limit,
-    )
-    return [r["symbol"] for r in rows]
+    async with get_session() as session:
+        result = await session.execute(
+            select(Symbol.symbol)
+            .where(Symbol.is_active == True)
+            .order_by(Symbol.symbol)
+            .limit(limit)
+        )
+        return [r[0] for r in result.all()]
