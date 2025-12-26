@@ -1,16 +1,17 @@
 import { lazy, Suspense, memo } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-
-// Feature flags from environment
-const ENABLE_LEGAL_PAGES = import.meta.env.VITE_ENABLE_LEGAL_PAGES === 'true';
 import { AuthProvider } from '@/context/AuthContext';
 import { ThemeProvider } from '@/context/ThemeContext';
 import { DipProvider } from '@/context/DipContext';
+import { QuantProvider } from '@/context/QuantContext';
 import { Layout } from '@/components/layout/Layout';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { UmamiAnalytics } from '@/lib/analytics';
 import { BaseStructuredData } from '@/lib/structuredData';
+
+// Feature flags from environment
+const ENABLE_LEGAL_PAGES = import.meta.env.VITE_ENABLE_LEGAL_PAGES === 'true';
 
 // Lazy load pages for code splitting
 const Dashboard = lazy(() => import('@/pages/Dashboard').then(m => ({ default: m.Dashboard })));
@@ -38,53 +39,55 @@ function App() {
     <ThemeProvider>
       <AuthProvider>
         <DipProvider>
-          <BrowserRouter>
-            <UmamiAnalytics />
-            <BaseStructuredData />
-          <ErrorBoundary>
-          <Suspense fallback={<PageLoader />}>
-            <Routes>
-              <Route path="/login" element={<LoginPage />} />
-              <Route element={<Layout />}>
-                <Route path="/" element={<Dashboard />} />
-                <Route path="/swipe" element={<DipSwipePage />} />
-                <Route path="/suggest" element={<SuggestionsPage />} />
-                <Route path="/about" element={<AboutPage />} />
-                <Route path="/learn" element={<LearnPage />} />
-                <Route path="/stock/:symbol" element={<StockDetailPage />} />
-                {ENABLE_LEGAL_PAGES ? (
-                  <>
-                    <Route path="/privacy" element={<PrivacyPage />} />
-                    <Route path="/imprint" element={<ImprintPage />} />
-                  </>
-                ) : (
-                  <>
-                    <Route path="/privacy" element={<Navigate to="/" replace />} />
-                    <Route path="/imprint" element={<Navigate to="/" replace />} />
-                  </>
-                )}
-                <Route path="/contact" element={<ContactPage />} />
-                <Route
-                  path="/admin"
-                  element={
-                    <ProtectedRoute>
-                      <AdminPage />
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/portfolio"
-                  element={
-                    <ProtectedRoute>
-                      <PortfolioPage />
-                    </ProtectedRoute>
-                  }
-                />
-                </Route>
-              </Routes>
-            </Suspense>
-          </ErrorBoundary>
-          </BrowserRouter>
+          <QuantProvider>
+            <BrowserRouter>
+              <UmamiAnalytics />
+              <BaseStructuredData />
+              <ErrorBoundary>
+                <Suspense fallback={<PageLoader />}>
+                  <Routes>
+                    <Route path="/login" element={<LoginPage />} />
+                    <Route element={<Layout />}>
+                      <Route path="/" element={<Dashboard />} />
+                      <Route path="/swipe" element={<DipSwipePage />} />
+                      <Route path="/suggest" element={<SuggestionsPage />} />
+                      <Route path="/about" element={<AboutPage />} />
+                      <Route path="/learn" element={<LearnPage />} />
+                      <Route path="/stock/:symbol" element={<StockDetailPage />} />
+                      {ENABLE_LEGAL_PAGES ? (
+                        <>
+                          <Route path="/privacy" element={<PrivacyPage />} />
+                          <Route path="/imprint" element={<ImprintPage />} />
+                        </>
+                      ) : (
+                        <>
+                          <Route path="/privacy" element={<Navigate to="/" replace />} />
+                          <Route path="/imprint" element={<Navigate to="/" replace />} />
+                        </>
+                      )}
+                      <Route path="/contact" element={<ContactPage />} />
+                      <Route
+                        path="/admin"
+                        element={
+                          <ProtectedRoute>
+                            <AdminPage />
+                          </ProtectedRoute>
+                        }
+                      />
+                      <Route
+                        path="/portfolio"
+                        element={
+                          <ProtectedRoute>
+                            <PortfolioPage />
+                          </ProtectedRoute>
+                        }
+                      />
+                    </Route>
+                  </Routes>
+                </Suspense>
+              </ErrorBoundary>
+            </BrowserRouter>
+          </QuantProvider>
         </DipProvider>
       </AuthProvider>
     </ThemeProvider>

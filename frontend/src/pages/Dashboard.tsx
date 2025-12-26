@@ -21,6 +21,7 @@ import type {
   DipCard,
 } from '@/services/api';
 import { useDips } from '@/context/DipContext';
+import { useQuant } from '@/context/QuantContext';
 import { useSEO, generateBreadcrumbJsonLd } from '@/lib/seo';
 import { StockCard } from '@/components/StockCard';
 import { StockDetailsPanel } from '@/components/StockDetailsPanel';
@@ -52,7 +53,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 
 type ViewMode = 'grid' | 'list';
-type SortBy = 'score' | 'depth' | 'recovery' | 'name';
+type SortBy = 'utility' | 'return' | 'depth' | 'name';
 
 const container = {
   hidden: { opacity: 0 },
@@ -68,7 +69,17 @@ const item = {
 };
 
 export function Dashboard() {
-  const { stocks, isLoading: isLoadingRanking, lastUpdated, error, showAllStocks, setShowAllStocks } = useDips();
+  // Use quant engine for primary stock ranking (sorted by marginal utility)
+  const { stocks: quantStocks, isLoading: isLoadingQuant, asOfDate, error: quantError, portfolioStats } = useQuant();
+  // Keep dip context for showAllStocks toggle (legacy compatibility)
+  const { showAllStocks, setShowAllStocks } = useDips();
+  
+  // Use quant stocks as primary data source
+  const stocks = quantStocks;
+  const isLoadingRanking = isLoadingQuant;
+  const lastUpdated = asOfDate;
+  const error = quantError;
+  
   const [searchParams, setSearchParams] = useSearchParams();
   const [selectedStock, setSelectedStock] = useState<DipStock | null>(null);
   const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
@@ -78,7 +89,7 @@ export function Dashboard() {
   const [isLoadingInfo, setIsLoadingInfo] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
-  const [sortBy, setSortBy] = useState<SortBy>('score');
+  const [sortBy, setSortBy] = useState<SortBy>('utility');
   const [isMobileDetailOpen, setIsMobileDetailOpen] = useState(false);
   
   // Benchmark state
@@ -101,14 +112,14 @@ export function Dashboard() {
   // SEO - Dynamic meta tags based on selected stock
   useSEO({
     title: selectedStock 
-      ? `${selectedStock.symbol} Stock Analysis - ${(selectedStock.depth * 100).toFixed(0)}% from High`
-      : 'Stock Dip Tracker Dashboard',
+      ? `${selectedStock.symbol} Stock Analysis - Quant Ranked`
+      : 'Smart Stock Allocation Dashboard',
     description: selectedStock
-      ? `Analyze ${selectedStock.symbol} stock dip: ${(selectedStock.depth * 100).toFixed(1)}% below 52-week high. Track recovery potential with AI-powered analysis.`
-      : 'Track market dips and identify stocks with high recovery potential. Real-time analysis with S&P 500 and MSCI World Index benchmarks.',
+      ? `Analyze ${selectedStock.symbol} with quantitative risk-adjusted metrics. Expected returns and portfolio optimization powered by mean-variance analysis.`
+      : 'Quantitative stock allocation using mean-variance optimization. Risk-adjusted expected returns with statistical analysis.',
     keywords: selectedStock
-      ? `${selectedStock.symbol}, stock analysis, dip buying, recovery potential, ${selectedStock.symbol} price`
-      : 'stock dips, market analysis, recovery potential, S&P 500, value investing, dip buying',
+      ? `${selectedStock.symbol}, stock analysis, portfolio optimization, expected return, ${selectedStock.symbol} price`
+      : 'quantitative investing, portfolio optimization, mean-variance, risk-adjusted returns, stock analysis',
     canonical: '/',
     jsonLd: generateBreadcrumbJsonLd([
       { name: 'Home', url: '/' },
@@ -131,7 +142,7 @@ export function Dashboard() {
     const urlShowAll = searchParams.get('showAll');
     
     if (urlSearch !== null) setSearchQuery(urlSearch);
-    if (urlSort && ['score', 'depth', 'recovery', 'name'].includes(urlSort)) setSortBy(urlSort);
+    if (urlSort && ['utility', 'return', 'depth', 'name'].includes(urlSort)) setSortBy(urlSort);
     if (urlView && ['grid', 'list'].includes(urlView)) setViewMode(urlView);
     if (urlShowAll === 'true') setShowAllStocks(true);
   }, [searchParams, setShowAllStocks]);
@@ -160,7 +171,7 @@ export function Dashboard() {
   useEffect(() => {
     updateUrlParams({
       search: searchQuery || null,
-      sort: sortBy !== 'score' ? sortBy : null,
+      sort: sortBy !== 'utility' ? sortBy : null,
       view: viewMode !== 'grid' ? viewMode : null,
       showAll: showAllStocks ? 'true' : null,
     });
@@ -206,12 +217,14 @@ export function Dashboard() {
     // Sort
     result.sort((a, b) => {
       switch (sortBy) {
-        case 'score':
+        case 'utility':
+          // dip_score now contains marginal_utility from quant engine
           return (b.dip_score ?? 0) - (a.dip_score ?? 0);
+        case 'return':
+          // recovery_potential now contains mu_hat (expected return)
+          return (b.recovery_potential ?? 0) - (a.recovery_potential ?? 0);
         case 'depth':
           return b.depth - a.depth;
-        case 'recovery':
-          return (b.recovery_potential ?? 0) - (a.recovery_potential ?? 0);
         case 'name':
           return (a.name || a.symbol).localeCompare(b.name || b.symbol);
         default:
@@ -432,21 +445,26 @@ export function Dashboard() {
           className="flex items-center justify-between mb-6"
         >
           <div>
-            <h1 className="text-3xl font-bold tracking-tight">Market Dips</h1>
+            <h1 className="text-3xl font-bold tracking-tight">Smart Allocation</h1>
             <p className="text-muted-foreground mt-1">
-              Discover stocks with the best recovery potential
+              Stocks ranked by expected risk-adjusted return
             </p>
           </div>
           <div className="flex items-center gap-3 text-xs text-muted-foreground hidden sm:flex">
             {!isLoadingRanking && (
               <span className="flex items-center gap-1">
                 <TrendingDown className="h-3 w-3" />
-                {stocks.length} tracked
+                {stocks.length} analyzed
+              </span>
+            )}
+            {portfolioStats && (
+              <span className="flex items-center gap-1">
+                E[r]: {(portfolioStats.expectedReturn * 100).toFixed(1)}%
               </span>
             )}
             {lastUpdated && (
               <span>
-                Updated {new Date(lastUpdated).toLocaleTimeString()}
+                As of {new Date(lastUpdated).toLocaleDateString()}
               </span>
             )}
           </div>
@@ -527,23 +545,23 @@ export function Dashboard() {
             <DropdownMenuContent align="end">
               <DropdownMenuLabel>Sort by</DropdownMenuLabel>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => setSortBy('score')}>
-                <Badge variant={sortBy === 'score' ? 'default' : 'outline'} className="mr-2">
-                  {sortBy === 'score' && '✓'}
+              <DropdownMenuItem onClick={() => setSortBy('utility')}>
+                <Badge variant={sortBy === 'utility' ? 'default' : 'outline'} className="mr-2">
+                  {sortBy === 'utility' && '✓'}
                 </Badge>
-                Dip Score
+                Marginal Utility
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setSortBy('return')}>
+                <Badge variant={sortBy === 'return' ? 'default' : 'outline'} className="mr-2">
+                  {sortBy === 'return' && '✓'}
+                </Badge>
+                Expected Return
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setSortBy('depth')}>
                 <Badge variant={sortBy === 'depth' ? 'default' : 'outline'} className="mr-2">
                   {sortBy === 'depth' && '✓'}
                 </Badge>
                 Dip Depth
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setSortBy('recovery')}>
-                <Badge variant={sortBy === 'recovery' ? 'default' : 'outline'} className="mr-2">
-                  {sortBy === 'recovery' && '✓'}
-                </Badge>
-                Recovery Potential
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setSortBy('name')}>
                 <Badge variant={sortBy === 'name' ? 'default' : 'outline'} className="mr-2">
@@ -593,7 +611,7 @@ export function Dashboard() {
             <>
               <TrendingDown className="h-3 w-3" />
               <span>
-                {filteredStocks.length} {showAllStocks ? 'tracked' : 'in dip'}
+                {filteredStocks.length} ranked
                 {searchQuery && ` • "${searchQuery}"`}
               </span>
             </>

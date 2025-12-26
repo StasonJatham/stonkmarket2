@@ -158,6 +158,7 @@ export interface CronJob {
   cron: string;
   description: string | null;
   next_run?: string | null;
+  next_runs?: string[] | null;
 }
 
 export interface CronLogEntry {
@@ -731,6 +732,95 @@ export async function regenerateSymbolAiSummary(symbol: string): Promise<AISumma
   apiCache.invalidate(`swipe:cards:false:true`);
   
   return result;
+}
+
+// =============================================================================
+// QUANT ENGINE RECOMMENDATIONS
+// =============================================================================
+
+export interface QuantRecommendation {
+  ticker: string;
+  name: string | null;
+  action: 'BUY' | 'SELL' | 'HOLD';
+  notional_eur: number;
+  delta_weight: number;
+  target_weight: number;
+  mu_hat: number;
+  uncertainty: number;
+  risk_contribution: number;
+  dip_score: number | null;
+  dip_bucket: string | null;
+  marginal_utility: number;
+  // Legacy compatibility
+  legacy_dip_pct: number | null;
+  legacy_days_in_dip: number | null;
+  legacy_domain_score: number | null;
+}
+
+export interface QuantAuditBlock {
+  timestamp: string;
+  config_hash: number;
+  mu_hat_summary: { mean: number; std: number; min: number; max: number };
+  risk_model_summary: Record<string, unknown>;
+  optimizer_status: string;
+  constraint_binding: string[];
+  turnover_realized: number;
+  regime_state: string;
+  dip_stats: Record<string, unknown> | null;
+  error_message: string | null;
+}
+
+export interface QuantEngineResponse {
+  recommendations: QuantRecommendation[];
+  as_of_date: string;
+  portfolio_value_eur: number;
+  inflow_eur: number;
+  total_trades: number;
+  total_transaction_cost_eur: number;
+  expected_portfolio_return: number;
+  expected_portfolio_risk: number;
+  audit: QuantAuditBlock;
+}
+
+export async function getQuantRecommendations(
+  inflow_eur: number = 1000,
+  limit: number = 40
+): Promise<QuantEngineResponse> {
+  const params = new URLSearchParams();
+  params.append('inflow_eur', inflow_eur.toString());
+  params.append('limit', limit.toString());
+  
+  return fetchAPI<QuantEngineResponse>(`/recommendations?${params.toString()}`);
+}
+
+/**
+ * Convert QuantRecommendation to DipStock for backward compatibility.
+ * This adapter allows quant-ranked stocks to be displayed in components
+ * that still expect the legacy DipStock interface.
+ */
+export function quantToDipStock(rec: QuantRecommendation): DipStock {
+  return {
+    symbol: rec.ticker,
+    name: rec.name,
+    // Use legacy dip percentage as depth, or fallback to 0
+    depth: rec.legacy_dip_pct !== null ? rec.legacy_dip_pct : 0,
+    // We don't have price in quant data, use 0 as placeholder
+    // The StockDetailsPanel will load full info separately
+    last_price: 0,
+    previous_close: null,
+    change_percent: null,
+    days_since_dip: rec.legacy_days_in_dip,
+    high_52w: null,
+    low_52w: null,
+    market_cap: null,
+    sector: null,
+    pe_ratio: null,
+    volume: null,
+    // Map quant metrics to dip metrics for sorting compatibility
+    // marginal_utility is the optimizer's ranking signal
+    dip_score: rec.marginal_utility,
+    recovery_potential: rec.mu_hat,
+  };
 }
 
 // =============================================================================

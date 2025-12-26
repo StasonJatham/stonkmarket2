@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -38,8 +38,10 @@ import {
   updateSymbol, 
   deleteSymbol,
   getCronJobs,
+  getTaskStatus,
   validateSymbol,
-  type Symbol 
+  type Symbol,
+  type TaskStatus,
 } from '@/services/api';
 
 interface SymbolManagerProps {
@@ -51,6 +53,7 @@ export function SymbolManager({ onError }: SymbolManagerProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [nextIngestRun, setNextIngestRun] = useState<string | null>(null);
+  const [taskStatuses, setTaskStatuses] = useState<Record<string, TaskStatus>>({});
   
   // Add/Edit dialog
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -94,7 +97,9 @@ export function SymbolManager({ onError }: SymbolManagerProps) {
 
   // Auto-poll when any symbol is in 'fetching' state
   useEffect(() => {
-    const hasFetching = symbols.some(s => s.fetch_status === 'fetching');
+    const hasFetching = symbols.some(
+      (symbol) => symbol.fetch_status === 'fetching' || symbol.fetch_status === 'pending'
+    );
     if (!hasFetching) return;
 
     const pollInterval = setInterval(() => {
@@ -104,6 +109,63 @@ export function SymbolManager({ onError }: SymbolManagerProps) {
 
     return () => clearInterval(pollInterval);
   }, [symbols]);
+
+  const activeTaskIds = useMemo(
+    () =>
+      symbols
+        .filter(
+          (symbol) =>
+            symbol.task_id &&
+            (symbol.fetch_status === 'pending' || symbol.fetch_status === 'fetching')
+        )
+        .map((symbol) => symbol.task_id as string),
+    [symbols]
+  );
+
+  useEffect(() => {
+    if (activeTaskIds.length === 0) return;
+    let cancelled = false;
+
+    const pollTaskStatuses = async () => {
+      const updates = await Promise.all(
+        activeTaskIds.map(async (taskId) => {
+          try {
+            return await getTaskStatus(taskId);
+          } catch {
+            return null;
+          }
+        })
+      );
+
+      if (cancelled) return;
+
+      setTaskStatuses((prev) => {
+        const next = { ...prev };
+        updates.forEach((status) => {
+          if (status) {
+            next[status.task_id] = status;
+          }
+        });
+        return next;
+      });
+
+      const hasFinished = updates.some(
+        (status) =>
+          status && ['SUCCESS', 'FAILURE', 'REVOKED'].includes(status.status)
+      );
+      if (hasFinished) {
+        getSymbols(true).then(setSymbols).catch(() => {});
+      }
+    };
+
+    pollTaskStatuses();
+    const pollInterval = setInterval(pollTaskStatuses, 2000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(pollInterval);
+    };
+  }, [activeTaskIds]);
 
   async function handleValidateSymbol() {
     if (!formSymbol.trim()) return;
@@ -199,6 +261,47 @@ export function SymbolManager({ onError }: SymbolManagerProps) {
   const ingestHint = nextIngestRun
     ? `Next ingest run: ${new Date(nextIngestRun).toLocaleString()}`
     : 'Ingest queue active';
+
+  const getTaskBadge = (taskId?: string | null) => {
+    if (!taskId) return null;
+    const status = taskStatuses[taskId]?.status;
+    if (!status) {
+      return (
+        <Badge variant="outline" className="text-muted-foreground" title={taskId}>
+          Queued
+        </Badge>
+      );
+    }
+    switch (status) {
+      case 'PENDING':
+      case 'RECEIVED':
+        return (
+          <Badge variant="outline" className="text-muted-foreground" title={taskId}>
+            Queued
+          </Badge>
+        );
+      case 'STARTED':
+        return (
+          <Badge variant="secondary" className="text-primary" title={taskId}>
+            Running
+          </Badge>
+        );
+      case 'RETRY':
+        return (
+          <Badge variant="outline" className="text-muted-foreground" title={taskId}>
+            Retrying
+          </Badge>
+        );
+      case 'FAILURE':
+        return (
+          <Badge variant="destructive" title={taskId}>
+            Failed
+          </Badge>
+        );
+      default:
+        return null;
+    }
+  };
 
   return (
     <Card>
@@ -300,11 +403,8 @@ export function SymbolManager({ onError }: SymbolManagerProps) {
                             Pending
                           </Badge>
                         )}
-                        {symbol.task_id && (symbol.fetch_status === 'pending' || symbol.fetch_status === 'fetching') && (
-                          <Badge variant="outline" className="text-muted-foreground" title={symbol.task_id}>
-                            Queued
-                          </Badge>
-                        )}
+                        {(symbol.fetch_status === 'pending' || symbol.fetch_status === 'fetching') &&
+                          getTaskBadge(symbol.task_id)}
                       </div>
                     </TableCell>
                     <TableCell>{(symbol.min_dip_pct * 100).toFixed(0)}%</TableCell>

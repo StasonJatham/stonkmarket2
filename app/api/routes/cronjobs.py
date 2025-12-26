@@ -26,19 +26,27 @@ from app.schemas.cronjobs import (
 router = APIRouter()
 
 
-def _compute_next_run(cron_expr: str) -> datetime | None:
-    """Compute next run timestamp for a cron expression."""
+def _compute_next_runs(cron_expr: str, count: int = 5) -> list[datetime]:
+    """Compute the next run timestamps for a cron expression."""
     try:
         from croniter import croniter
     except Exception:
-        return None
+        return []
 
     try:
         tz = ZoneInfo(settings.scheduler_timezone)
     except Exception:
         tz = timezone.utc
+
     now = datetime.now(tz)
-    return croniter(cron_expr, now).get_next(datetime)
+    iterator = croniter(cron_expr, now)
+    runs: list[datetime] = []
+    for _ in range(count):
+        try:
+            runs.append(iterator.get_next(datetime))
+        except Exception:
+            break
+    return runs
 
 
 def _validate_job_name(name: str = Path(..., min_length=1, max_length=50)) -> str:
@@ -122,7 +130,8 @@ async def list_cronjobs(
             run_count=j.run_count,
             error_count=j.error_count,
             last_error=j.last_error,
-            next_run=_compute_next_run(j.cron),
+            next_run=next_runs[0] if (next_runs := _compute_next_runs(j.cron)) else None,
+            next_runs=next_runs,
         )
         for j in jobs
     ]
@@ -148,11 +157,13 @@ async def get_cronjob(
             message=f"Cron job '{name}' not found",
             details={"name": name},
         )
+    next_runs = _compute_next_runs(job.cron)
     return CronJobResponse(
         name=job.name,
         cron=job.cron,
         description=job.description,
-        next_run=_compute_next_run(job.cron),
+        next_run=next_runs[0] if next_runs else None,
+        next_runs=next_runs,
     )
 
 
@@ -196,11 +207,13 @@ async def update_cronjob(
     # Reschedule the running job with new cron expression
     await reschedule_job(name, payload.cron)
 
+    next_runs = _compute_next_runs(updated.cron)
     return CronJobResponse(
         name=updated.name,
         cron=updated.cron,
         description=updated.description,
-        next_run=_compute_next_run(updated.cron),
+        next_run=next_runs[0] if next_runs else None,
+        next_runs=next_runs,
     )
 
 

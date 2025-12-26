@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   getAllSuggestions,
@@ -7,11 +7,13 @@ import {
   updateSuggestion,
   refreshSuggestionData,
   retrySuggestionFetch,
+  getTaskStatus,
   getRuntimeSettings,
   updateRuntimeSettings,
   getCronJobs,
   type Suggestion,
   type SuggestionStatus,
+  type TaskStatus,
 } from '@/services/api';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -151,6 +153,7 @@ export function SuggestionManager() {
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
   const [nextIngestRun, setNextIngestRun] = useState<string | null>(null);
+  const [taskStatuses, setTaskStatuses] = useState<Record<string, TaskStatus>>({});
   
   // Action states
   const [actionLoading, setActionLoading] = useState<number | null>(null);
@@ -244,7 +247,10 @@ export function SuggestionManager() {
 
   // Auto-poll when any suggestion is in 'fetching' state
   useEffect(() => {
-    const hasFetching = suggestions.some(s => s.fetch_status === 'fetching');
+    const hasFetching = suggestions.some(
+      (suggestion) =>
+        suggestion.fetch_status === 'fetching' || suggestion.fetch_status === 'pending'
+    );
     if (!hasFetching) return;
 
     const pollInterval = setInterval(() => {
@@ -253,6 +259,63 @@ export function SuggestionManager() {
 
     return () => clearInterval(pollInterval);
   }, [suggestions, loadSuggestions]);
+
+  const activeTaskIds = useMemo(
+    () =>
+      suggestions
+        .filter(
+          (suggestion) =>
+            suggestion.task_id &&
+            (suggestion.fetch_status === 'pending' || suggestion.fetch_status === 'fetching')
+        )
+        .map((suggestion) => suggestion.task_id as string),
+    [suggestions]
+  );
+
+  useEffect(() => {
+    if (activeTaskIds.length === 0) return;
+    let cancelled = false;
+
+    const pollTaskStatuses = async () => {
+      const updates = await Promise.all(
+        activeTaskIds.map(async (taskId) => {
+          try {
+            return await getTaskStatus(taskId);
+          } catch {
+            return null;
+          }
+        })
+      );
+
+      if (cancelled) return;
+
+      setTaskStatuses((prev) => {
+        const next = { ...prev };
+        updates.forEach((status) => {
+          if (status) {
+            next[status.task_id] = status;
+          }
+        });
+        return next;
+      });
+
+      const hasFinished = updates.some(
+        (status) =>
+          status && ['SUCCESS', 'FAILURE', 'REVOKED'].includes(status.status)
+      );
+      if (hasFinished) {
+        loadSuggestions();
+      }
+    };
+
+    pollTaskStatuses();
+    const pollInterval = setInterval(pollTaskStatuses, 2000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(pollInterval);
+    };
+  }, [activeTaskIds, loadSuggestions]);
 
   // Reset page when filter changes
   useEffect(() => {
@@ -354,6 +417,47 @@ export function SuggestionManager() {
   const ingestHint = nextIngestRun
     ? `Next ingest run: ${new Date(nextIngestRun).toLocaleString()}`
     : 'Ingest queue active';
+
+  const getTaskBadge = (taskId?: string | null) => {
+    if (!taskId) return null;
+    const status = taskStatuses[taskId]?.status;
+    if (!status) {
+      return (
+        <Badge variant="outline" className="text-muted-foreground">
+          Queued
+        </Badge>
+      );
+    }
+    switch (status) {
+      case 'PENDING':
+      case 'RECEIVED':
+        return (
+          <Badge variant="outline" className="text-muted-foreground">
+            Queued
+          </Badge>
+        );
+      case 'STARTED':
+        return (
+          <Badge variant="outline" className="bg-primary/10 text-primary border-primary/30">
+            Running
+          </Badge>
+        );
+      case 'RETRY':
+        return (
+          <Badge variant="outline" className="text-muted-foreground">
+            Retrying
+          </Badge>
+        );
+      case 'FAILURE':
+        return (
+          <Badge variant="outline" className="bg-danger/10 text-danger border-danger/30">
+            Failed
+          </Badge>
+        );
+      default:
+        return null;
+    }
+  };
 
   return (
     <TooltipProvider>
@@ -483,14 +587,16 @@ export function SuggestionManager() {
               </TableHeader>
               <TableBody>
                 <AnimatePresence mode="popLayout">
-                  {suggestions.map((suggestion) => (
-                    <motion.tr
-                      key={suggestion.id}
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0 }}
-                      className="border-b"
-                    >
+                  {suggestions.map((suggestion) => {
+                    const taskBadge = getTaskBadge(suggestion.task_id);
+                    return (
+                      <motion.tr
+                        key={suggestion.id}
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0 }}
+                        className="border-b"
+                      >
                       <TableCell className="font-semibold">{suggestion.symbol}</TableCell>
                       <TableCell className="text-muted-foreground max-w-[200px] truncate" title={suggestion.name || undefined}>
                         {suggestion.name || '—'}
@@ -518,18 +624,18 @@ export function SuggestionManager() {
                           ) : (
                             getFetchStatusBadge(suggestion.fetch_status)
                           )}
-                          {suggestion.task_id && (suggestion.fetch_status === 'pending' || suggestion.fetch_status === 'fetching') && (
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Badge variant="outline" className="text-muted-foreground">
-                                  Queued
-                                </Badge>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                <p className="max-w-xs">Task: {suggestion.task_id}</p>
-                              </TooltipContent>
-                            </Tooltip>
-                          )}
+                          {(suggestion.fetch_status === 'pending' || suggestion.fetch_status === 'fetching') &&
+                            suggestion.task_id &&
+                            taskBadge && (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  {taskBadge}
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p className="max-w-xs">Task: {suggestion.task_id}</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            )}
                           {/* Only show retry button for pending suggestions (not approved - use Refresh Data instead) */}
                           {suggestion.status === 'pending' && (suggestion.fetch_status === 'rate_limited' || suggestion.fetch_status === 'error') && (
                             <Button
@@ -619,8 +725,9 @@ export function SuggestionManager() {
                           </span>
                         )}
                       </TableCell>
-                    </motion.tr>
-                  ))}
+                      </motion.tr>
+                    );
+                  })}
                 </AnimatePresence>
               </TableBody>
             </Table>

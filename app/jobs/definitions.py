@@ -13,7 +13,7 @@ Jobs:
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from app.core.logging import get_logger
@@ -21,6 +21,7 @@ from app.repositories import jobs_orm as jobs_repo
 from app.repositories import price_history_orm as price_history_repo
 
 from .registry import register_job
+
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -37,58 +38,58 @@ logger = get_logger("jobs.definitions")
 async def initial_data_ingest_job() -> str:
     """
     Process queued symbols that need initial data fetch.
-    
+
     Uses a 15-minute aggregation window and processes up to 20 symbols per batch.
     - If <20 symbols in queue: process all
     - If >=20 symbols: process 20, rest will be handled in next run
-    
+
     For each symbol:
     1. Fetch full price history (1 year)
     2. Fetch ticker info (fundamentals)
     3. Compute data versions for change tracking
     4. Mark symbol as completed in queue
-    
+
     Schedule: Every 15 minutes
     """
     from app.services.data_providers import get_yfinance_service
-    
+
     logger.info("Starting initial_data_ingest job")
-    
+
     BATCH_SIZE = 20
-    
+
     try:
         # Get pending symbols from the queue (oldest first, limit to batch size)
         rows = await jobs_repo.get_pending_ingest_symbols(BATCH_SIZE)
-        
+
         if not rows:
             return "No symbols in queue"
-        
+
         yf_service = get_yfinance_service()
         processed = 0
         failed = 0
-        
+
         for row in rows:
             queue_id = row.id
             symbol = row.symbol
             attempts = row.attempts or 0
-            
+
             # Mark as processing
             await jobs_repo.mark_ingest_processing(queue_id, attempts + 1)
-            
+
             try:
                 # Fetch price history (1 year) with version tracking
                 prices, price_version = await yf_service.get_price_history(
                     symbol,
                     period="1y",
                 )
-                
+
                 if prices is None or prices.empty:
                     raise ValueError(f"No price data for {symbol}")
-                
+
                 # Save price version for change tracking
                 if price_version:
                     await yf_service.save_data_version(symbol, price_version)
-                
+
                 # Fetch and STORE fundamentals (not just version tracking)
                 from app.services.fundamentals import refresh_fundamentals
                 fundamentals = await refresh_fundamentals(symbol)
@@ -96,24 +97,24 @@ async def initial_data_ingest_job() -> str:
                     logger.debug(f"Stored fundamentals for {symbol}")
                 else:
                     logger.warning(f"No fundamentals available for {symbol}")
-                
+
                 # Get calendar events if available
-                calendar, calendar_version = await yf_service.get_calendar(symbol)
+                _calendar, calendar_version = await yf_service.get_calendar(symbol)
                 if calendar_version:
                     await yf_service.save_data_version(symbol, calendar_version)
-                
+
                 # Insert price history into database
                 await _store_price_history(symbol, prices)
-                
+
                 # Mark as completed
                 await jobs_repo.mark_ingest_completed(queue_id)
                 processed += 1
                 logger.info(f"Ingested initial data for {symbol}")
-                
+
             except Exception as e:
                 logger.error(f"Failed to ingest {symbol}: {e}")
                 failed += 1
-                
+
                 # Check max attempts
                 max_attempts = 3
                 if attempts + 1 >= max_attempts:
@@ -121,34 +122,34 @@ async def initial_data_ingest_job() -> str:
                 else:
                     # Reset to pending for retry
                     await jobs_repo.mark_ingest_pending_retry(queue_id, str(e)[:500])
-        
+
         remaining = await jobs_repo.get_ingest_queue_count()
         message = f"Processed {processed}/{len(rows)} symbols ({failed} failed), {remaining} remaining in queue"
         logger.info(f"initial_data_ingest: {message}")
         return message
-        
+
     except Exception as e:
         logger.error(f"initial_data_ingest failed: {e}")
         raise
 
 
-async def _store_price_history(symbol: str, prices: "pd.DataFrame") -> None:
+async def _store_price_history(symbol: str, prices: pd.DataFrame) -> None:
     """Store price history in database."""
     if prices.empty:
         return
-    
+
     await price_history_repo.save_prices(symbol, prices)
 
 
 async def add_to_ingest_queue(symbol: str, priority: int = 0) -> bool:
     """
     Add a symbol to the ingest queue.
-    
+
     Called when:
     - New symbol is added to watchlist
     - Symbol is suggested and approved
     - Manual trigger via admin
-    
+
     Returns True if added, False if already in queue.
     """
     return await jobs_repo.add_to_ingest_queue(symbol, priority)
@@ -162,10 +163,11 @@ async def data_grab_job() -> str:
 
     Schedule: Mon-Fri at 11pm (after market close)
     """
-    from app.cache.cache import Cache
-    from app.services.runtime_settings import get_runtime_setting
-    from app.services.data_providers import get_yfinance_service
     from datetime import date
+
+    from app.cache.cache import Cache
+    from app.services.data_providers import get_yfinance_service
+    from app.services.runtime_settings import get_runtime_setting
 
     logger.info("Starting data_grab job")
 
@@ -176,7 +178,7 @@ async def data_grab_job() -> str:
             return "No active symbols"
 
         yf_service = get_yfinance_service()
-        
+
         # Fetch latest prices and update dip_state
         updated_count = 0
         changed_symbols = []  # Track which symbols had data changes
@@ -185,8 +187,9 @@ async def data_grab_job() -> str:
         dip_thresholds = await jobs_repo.get_symbol_dip_thresholds()
         latest_dates = await price_history_repo.get_latest_price_dates(tickers)
 
-        from app.services.fundamentals import update_price_based_metrics
         from datetime import timedelta
+
+        from app.services.fundamentals import update_price_based_metrics
 
         today = date.today()
         stale_cutoff_days = 7
@@ -297,7 +300,7 @@ async def data_grab_job() -> str:
         benchmarks = get_runtime_setting("benchmarks", [])
         benchmark_symbols = [b.get("symbol") for b in benchmarks if b.get("symbol")]
         benchmark_count = 0
-        
+
         if benchmark_symbols:
             logger.info(f"Fetching data for {len(benchmark_symbols)} benchmarks")
             for symbol in benchmark_symbols:
@@ -313,7 +316,7 @@ async def data_grab_job() -> str:
         # Targeted cache invalidation - only invalidate caches for symbols that actually changed
         ranking_cache = Cache(prefix="ranking", default_ttl=1800)
         chart_cache = Cache(prefix="chart", default_ttl=3600)
-        
+
         if changed_symbols:
             logger.info(f"Data changed for {len(changed_symbols)} symbols, invalidating their caches")
             for symbol in changed_symbols:
@@ -340,10 +343,11 @@ async def cache_warmup_job() -> str:
 
     Schedule: After data_grab (Mon-Fri at 11:30pm) or on demand
     """
-    from app.dipfinder.service import get_dipfinder_service
-    from app.cache.cache import Cache
-    from app.services.runtime_settings import get_runtime_setting
     from datetime import date, timedelta
+
+    from app.cache.cache import Cache
+    from app.dipfinder.service import get_dipfinder_service
+    from app.services.runtime_settings import get_runtime_setting
 
     logger.info("Starting cache_warmup job")
 
@@ -354,16 +358,16 @@ async def cache_warmup_job() -> str:
         # Add benchmark symbols from runtime settings
         benchmarks = get_runtime_setting("benchmarks", [])
         benchmark_symbols = [b.get("symbol") for b in benchmarks if b.get("symbol")]
-        
+
         # Chart periods to pre-cache
         periods = [90, 180, 365]
-        
+
         service = get_dipfinder_service()
         cached_count = 0
         chart_cache = Cache(prefix="chart", default_ttl=3600)
 
         all_symbols = list(set(symbols + benchmark_symbols))
-        
+
         for symbol in all_symbols:
             for days in periods:
                 cache_key = f"{symbol}:{days}"
@@ -383,7 +387,7 @@ async def cache_warmup_job() -> str:
                         # Build chart data
                         ref_high = float(prices["Close"].max())
                         threshold = ref_high * (1.0 - min_dip_pct)
-                        
+
                         ref_high_date = None
                         dip_start_date = None
                         if "Close" in prices.columns and not prices.empty:
@@ -434,8 +438,8 @@ async def batch_ai_swipe_job() -> str:
     Schedule: Weekly Sunday 3am
     """
     from app.services.batch_scheduler import (
-        schedule_batch_swipe_bios,
         process_completed_batch_jobs,
+        schedule_batch_swipe_bios,
     )
 
     logger.info("Starting batch_ai_swipe job")
@@ -464,8 +468,8 @@ async def batch_ai_analysis_job() -> str:
     Schedule: Weekly Sunday 4am
     """
     from app.services.batch_scheduler import (
-        schedule_batch_dip_analysis,
         process_completed_batch_jobs,
+        schedule_batch_dip_analysis,
     )
 
     logger.info("Starting batch_ai_analysis job")
@@ -516,7 +520,7 @@ async def batch_poll_job() -> str:
 async def fundamentals_refresh_job() -> str:
     """
     Refresh stock fundamentals and financial statements from Yahoo Finance.
-    
+
     Change-driven refresh criteria:
     1. Basic fundamentals never fetched
     2. Basic fundamentals expired (>30 days old)
@@ -527,59 +531,60 @@ async def fundamentals_refresh_job() -> str:
 
     Schedule: Weekly on Sunday at 2am (checks all conditions)
     """
+    from datetime import datetime, timedelta
+
     from app.services.fundamentals import refresh_all_fundamentals
-    from datetime import datetime, timezone, timedelta
 
     logger.info("Starting fundamentals_refresh job")
 
     try:
         # Find symbols that need refresh based on multiple criteria
         rows = await jobs_repo.get_stocks_needing_fundamentals_refresh()
-        
+
         symbols_to_refresh = []
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         seven_days_from_now = now + timedelta(days=7)
-        
+
         for row in rows:
             symbol = row["symbol"]
             fetched_at = row["fetched_at"]
             earnings_date = row["earnings_date"]
             next_earnings_date = row["next_earnings_date"]
             financials_fetched_at = row["financials_fetched_at"]
-            
+
             # Criterion 1: Basic fundamentals never fetched
             if not fetched_at:
                 symbols_to_refresh.append((symbol, "never_fetched"))
                 continue
-            
+
             # Normalize fetched_at to UTC
-            fetched_at_utc = fetched_at.replace(tzinfo=timezone.utc) if fetched_at.tzinfo is None else fetched_at
-            
+            fetched_at_utc = fetched_at.replace(tzinfo=UTC) if fetched_at.tzinfo is None else fetched_at
+
             # Criterion 2: Basic fundamentals expired (>30 days old)
             age_days = (now - fetched_at_utc).days
             if age_days > 30:
                 symbols_to_refresh.append((symbol, f"expired_{age_days}d"))
                 continue
-            
+
             # Criterion 3: Earnings date passed since last fetch
             if earnings_date:
                 earnings_dt = _parse_datetime(earnings_date)
                 if earnings_dt and earnings_dt < now and earnings_dt > fetched_at_utc:
                     symbols_to_refresh.append((symbol, "earnings_passed"))
                     continue
-            
+
             # Criterion 4: Financial statements never fetched
             if not financials_fetched_at:
                 symbols_to_refresh.append((symbol, "financials_never_fetched"))
                 continue
-            
+
             # Criterion 5: Financial statements stale (>90 days - quarterly data)
-            financials_at_utc = financials_fetched_at.replace(tzinfo=timezone.utc) if financials_fetched_at.tzinfo is None else financials_fetched_at
+            financials_at_utc = financials_fetched_at.replace(tzinfo=UTC) if financials_fetched_at.tzinfo is None else financials_fetched_at
             financials_age_days = (now - financials_at_utc).days
             if financials_age_days > 90:
                 symbols_to_refresh.append((symbol, f"financials_stale_{financials_age_days}d"))
                 continue
-            
+
             # Criterion 6: Next earnings date within 7 days (pre-fetch)
             if next_earnings_date:
                 next_earnings_dt = _parse_datetime(next_earnings_date)
@@ -588,24 +593,24 @@ async def fundamentals_refresh_job() -> str:
                     if fetched_at_utc < (next_earnings_dt - timedelta(days=7)):
                         symbols_to_refresh.append((symbol, "upcoming_earnings"))
                         continue
-            
+
             # Otherwise skip - data is fresh enough
             logger.debug(f"Skipping {symbol}: fresh data (age={age_days}d, financials_age={financials_age_days}d)")
-        
+
         if not symbols_to_refresh:
             message = "No symbols need fundamentals refresh"
             logger.info(f"fundamentals_refresh: {message}")
             return message
-        
+
         logger.info(f"Refreshing fundamentals for {len(symbols_to_refresh)} symbols")
-        
+
         # Log reasons for refresh
         reasons = {}
         for _, reason in symbols_to_refresh:
             base_reason = reason.split("_")[0] if reason.startswith("expired") or reason.startswith("financials_stale") else reason
             reasons[base_reason] = reasons.get(base_reason, 0) + 1
         logger.info(f"Refresh reasons: {reasons}")
-        
+
         # Use the existing refresh function with specific symbols
         symbols_only = [s for s, _ in symbols_to_refresh]
         rows_by_symbol = {row["symbol"]: row for row in rows}
@@ -636,19 +641,19 @@ async def fundamentals_refresh_job() -> str:
             if not financials_fetched_at:
                 include_financials = True
             else:
-                financials_at_utc = financials_fetched_at.replace(tzinfo=timezone.utc) if financials_fetched_at.tzinfo is None else financials_fetched_at
+                financials_at_utc = financials_fetched_at.replace(tzinfo=UTC) if financials_fetched_at.tzinfo is None else financials_fetched_at
                 if (now - financials_at_utc).days > 90:
                     include_financials = True
 
             if earnings_date and fetched_at:
                 earnings_dt = _parse_datetime(earnings_date)
-                fetched_at_utc = fetched_at.replace(tzinfo=timezone.utc) if fetched_at.tzinfo is None else fetched_at
+                fetched_at_utc = fetched_at.replace(tzinfo=UTC) if fetched_at.tzinfo is None else fetched_at
                 if earnings_dt and earnings_dt < now and earnings_dt > fetched_at_utc:
                     include_financials = True
 
             if next_earnings_date:
                 next_earnings_dt = _parse_datetime(next_earnings_date)
-                fetched_at_utc = fetched_at.replace(tzinfo=timezone.utc) if fetched_at and fetched_at.tzinfo is None else fetched_at
+                fetched_at_utc = fetched_at.replace(tzinfo=UTC) if fetched_at and fetched_at.tzinfo is None else fetched_at
                 if next_earnings_dt and fetched_at_utc and fetched_at_utc < (next_earnings_dt - timedelta(days=7)):
                     include_financials = True
 
@@ -673,25 +678,25 @@ async def fundamentals_refresh_job() -> str:
 
 def _parse_datetime(dt_value: Any) -> datetime | None:
     """Parse datetime from various formats."""
-    from datetime import datetime, timezone
-    
+    from datetime import datetime
+
     if not dt_value:
         return None
-    
+
     if isinstance(dt_value, datetime):
         if dt_value.tzinfo is None:
-            return dt_value.replace(tzinfo=timezone.utc)
+            return dt_value.replace(tzinfo=UTC)
         return dt_value
-    
+
     if isinstance(dt_value, str):
         try:
             parsed = datetime.fromisoformat(dt_value)
             if parsed.tzinfo is None:
-                return parsed.replace(tzinfo=timezone.utc)
+                return parsed.replace(tzinfo=UTC)
             return parsed
         except ValueError:
             return None
-    
+
     return None
 
 
@@ -704,7 +709,7 @@ async def ai_agents_analysis_job() -> str:
 
     Each agent analyzes stocks using their investment philosophy.
     Results are stored for frontend display.
-    
+
     Uses input version checking to skip symbols whose data hasn't changed.
     """
     from app.services.ai_agents import run_all_agent_analyses
@@ -729,10 +734,10 @@ async def ai_agents_batch_submit_job() -> str:
     Submit AI agent analysis as a batch job for cost savings.
 
     Schedule: Weekly Sunday 3am (before regular ai_agents_analysis)
-    
+
     Uses OpenAI Batch API for ~50% cost reduction.
     Results are collected separately after batch completes.
-    
+
     Workflow:
     1. Check which symbols need analysis (expired or new)
     2. Filter symbols where input data hasn't changed
@@ -750,7 +755,7 @@ async def ai_agents_batch_submit_job() -> str:
             message = f"Batch {result['batch_id']}: {result['submitted']} symbols submitted, {result['skipped']} skipped"
         else:
             message = f"No batch submitted: {result.get('message', 'Unknown reason')}"
-            
+
         logger.info(f"ai_agents_batch_submit: {message}")
         return message
 
@@ -765,25 +770,25 @@ async def ai_agents_batch_collect_job() -> str:
     Collect results from pending AI agent batch jobs.
 
     Schedule: Every 4 hours (batch jobs complete within 24h)
-    
+
     Checks for any completed batch jobs and processes their results.
     """
-    from app.services.openai_client import check_batch
     from app.services.ai_agents import collect_agent_batch
+    from app.services.openai_client import check_batch
 
     logger.info("Starting ai_agents_batch_collect job")
 
     try:
         # Find pending batch jobs
         batch_ids = await jobs_repo.get_pending_batch_jobs()
-        
+
         if not batch_ids:
             return "No pending batch jobs"
-        
+
         collected = 0
         pending = 0
         failed = 0
-        
+
         for batch_id in batch_ids:
             # Check batch status
             status = await check_batch(batch_id)
@@ -791,13 +796,13 @@ async def ai_agents_batch_collect_job() -> str:
                 logger.warning(f"Could not check batch {batch_id}")
                 failed += 1
                 continue
-            
+
             if status["status"] == "completed":
                 # Collect and process results
                 results = await collect_agent_batch(batch_id)
                 collected += len(results)
                 logger.info(f"Collected {len(results)} results from batch {batch_id}")
-                
+
                 # Clear batch_job_id for processed symbols
                 await jobs_repo.clear_batch_job_references(batch_id)
             elif status["status"] in ("failed", "cancelled", "expired"):
@@ -809,7 +814,7 @@ async def ai_agents_batch_collect_job() -> str:
                 # Still in progress
                 pending += 1
                 logger.info(f"Batch {batch_id} still {status['status']}: {status.get('completed_count', 0)}/{status.get('total_count', 0)}")
-        
+
         message = f"Batch collect: {collected} results collected, {pending} pending, {failed} failed"
         logger.info(f"ai_agents_batch_collect: {message}")
         return message
@@ -837,7 +842,7 @@ async def cleanup_job() -> str:
 
         # Expired AI analyses
         await jobs_repo.cleanup_expired_ai_analyses()
-        
+
         # Expired AI agent analyses
         await jobs_repo.cleanup_expired_agent_analyses()
 
@@ -877,6 +882,193 @@ async def portfolio_analytics_worker_job() -> str:
         raise
 
 
+@register_job("quant_recommendations_daily")
+async def quant_recommendations_daily_job() -> str:
+    """
+    Daily quant engine job to pre-compute and cache global recommendations.
+
+    Runs after market close to compute fresh optimizer rankings for all
+    tracked symbols. Results are cached in Redis for fast Dashboard access.
+
+    Schedule: Daily at 10 PM UTC (after US market close)
+    """
+    from datetime import date, timedelta
+
+    import numpy as np
+    import pandas as pd
+
+    from app.cache.cache import Cache
+    from app.quant_engine import QuantEngineService, get_default_config
+    from app.repositories import dips_orm as dips_repo
+    from app.repositories import price_history_orm as price_history_repo
+    from app.repositories import symbols_orm as symbols_repo
+
+    logger.info("Starting quant_recommendations_daily job")
+
+    cache = Cache(prefix="quant", default_ttl=86400)  # 24 hour TTL
+
+    try:
+        # Get all tracked symbols
+        symbols_list = await symbols_repo.list_symbols()
+
+        if not symbols_list:
+            return "No symbols tracked"
+
+        symbols = [s.symbol for s in symbols_list]
+        logger.info(f"Processing {len(symbols)} symbols for quant recommendations")
+
+        # Fetch price history (400 days for proper training)
+        end_date = date.today()
+        start_date = end_date - timedelta(days=400)
+
+        price_dfs: dict[str, pd.Series] = {}
+        for symbol in symbols:
+            df = await price_history_repo.get_prices_as_dataframe(
+                symbol, start_date, end_date
+            )
+            if df is not None and "Close" in df.columns:
+                price_dfs[symbol] = df["Close"]
+
+        if not price_dfs:
+            logger.warning("No price data available")
+            return "No price data"
+
+        prices = pd.DataFrame(price_dfs).dropna(how="all").ffill()
+
+        if len(prices) < 100:
+            logger.warning("Insufficient price history")
+            return "Insufficient price history"
+
+        # Fetch market benchmark (SPY)
+        market_df = await price_history_repo.get_prices_as_dataframe(
+            "SPY", start_date, end_date
+        )
+        market_prices: pd.Series | None = None
+        if market_df is not None and "Close" in market_df.columns:
+            market_prices = market_df["Close"]
+
+        # Get symbol info for names
+        symbol_info: dict[str, dict[str, Any]] = {}
+        for s in symbols_list:
+            symbol_info[s.symbol] = {"name": getattr(s, "name", s.symbol)}
+
+        # Add dip state info (legacy compatibility)
+        dip_states = await dips_repo.get_all_dip_states()
+        for ds in dip_states:
+            if ds.symbol in symbol_info:
+                symbol_info[ds.symbol]["dip_pct"] = ds.dip_pct
+                symbol_info[ds.symbol]["days_in_dip"] = ds.days_in_dip
+                symbol_info[ds.symbol]["domain_score"] = ds.domain_score
+
+        # Initialize and train quant engine
+        config = get_default_config()
+        engine = QuantEngineService(config=config)
+
+        train_result = engine.train(
+            prices=prices,
+            market_prices=market_prices,
+            as_of_date=prices.index.max().to_pydatetime()
+            if hasattr(prices.index.max(), "to_pydatetime")
+            else end_date,
+        )
+
+        if train_result.get("status") == "error":
+            logger.error(f"Training failed: {train_result.get('message')}")
+            return f"Training failed: {train_result.get('message')}"
+
+        # Generate recommendations for different inflow amounts
+        inflow_amounts = [500, 1000, 2000, 5000]
+        cached_count = 0
+
+        for inflow_eur in inflow_amounts:
+            try:
+                # For global view, assume €10k base portfolio
+                assumed_portfolio = max(10000.0, inflow_eur * 10)
+                inflow_weight = inflow_eur / assumed_portfolio
+
+                n_assets = len(prices.columns)
+                w_current = np.zeros(n_assets)
+
+                output = engine.generate_recommendations(
+                    prices=prices,
+                    market_prices=market_prices,
+                    w_current=w_current,
+                    inflow_weight=inflow_weight,
+                    portfolio_value_eur=assumed_portfolio,
+                )
+
+                # Enrich with names and legacy info
+                for rec in output.recommendations:
+                    info = symbol_info.get(rec.ticker, {})
+                    rec.name = info.get("name", rec.ticker)
+                    rec.legacy_dip_pct = info.get("dip_pct")
+                    rec.legacy_days_in_dip = info.get("days_in_dip")
+                    rec.legacy_domain_score = info.get("domain_score")
+
+                # Sort by marginal utility
+                output.recommendations.sort(
+                    key=lambda r: r.marginal_utility, reverse=True
+                )
+
+                # Cache the result
+                cache_data = {
+                    "recommendations": [
+                        {
+                            "ticker": r.ticker,
+                            "name": r.name,
+                            "action": r.action,
+                            "notional_eur": r.notional_eur,
+                            "delta_weight": r.delta_weight,
+                            "target_weight": r.target_weight,
+                            "mu_hat": r.mu_hat,
+                            "uncertainty": r.uncertainty,
+                            "risk_contribution": r.risk_contribution,
+                            "dip_score": r.dip_score,
+                            "dip_bucket": r.dip_bucket,
+                            "marginal_utility": r.marginal_utility,
+                            "legacy_dip_pct": r.legacy_dip_pct,
+                            "legacy_days_in_dip": r.legacy_days_in_dip,
+                            "legacy_domain_score": r.legacy_domain_score,
+                        }
+                        for r in output.recommendations[:40]
+                    ],
+                    "as_of_date": str(output.as_of_date),
+                    "portfolio_value_eur": output.portfolio_value_eur,
+                    "inflow_eur": inflow_eur,
+                    "total_trades": output.total_trades,
+                    "total_transaction_cost_eur": output.total_transaction_cost_eur,
+                    "expected_portfolio_return": output.expected_portfolio_return,
+                    "expected_portfolio_risk": output.expected_portfolio_risk,
+                    "audit": {
+                        "timestamp": str(output.audit.timestamp),
+                        "config_hash": output.audit.config_hash,
+                        "mu_hat_summary": output.audit.mu_hat_summary,
+                        "risk_model_summary": output.audit.risk_model_summary,
+                        "optimizer_status": output.audit.optimizer_status,
+                        "constraint_binding": output.audit.constraint_binding,
+                        "turnover_realized": output.audit.turnover_realized,
+                        "regime_state": output.audit.regime_state,
+                        "dip_stats": output.audit.dip_stats,
+                        "error_message": output.audit.error_message,
+                    },
+                }
+
+                await cache.set(f"recommendations:{inflow_eur}", cache_data)
+                cached_count += 1
+                logger.info(f"Cached recommendations for inflow={inflow_eur}")
+
+            except Exception as e:
+                logger.error(f"Failed to generate recommendations for inflow={inflow_eur}: {e}")
+
+        message = f"Cached {cached_count}/{len(inflow_amounts)} recommendation sets"
+        logger.info(f"quant_recommendations_daily: {message}")
+        return message
+
+    except Exception as e:
+        logger.error(f"quant_recommendations_daily failed: {e}")
+        raise
+
+
 @register_job("quant_engine_monthly")
 async def quant_engine_monthly_job() -> str:
     """
@@ -887,19 +1079,20 @@ async def quant_engine_monthly_job() -> str:
 
     Schedule: 1st of each month at 6 AM
     """
+    from datetime import date, timedelta
+
+    import pandas as pd
+
+    from app.quant_engine import QuantEngineService, get_default_config
     from app.repositories import portfolios_orm as portfolios_repo
     from app.repositories import price_history_orm as price_history_repo
-    from app.quant_engine import QuantEngineService, get_default_config
-    from datetime import date, timedelta
-    import numpy as np
-    import pandas as pd
 
     logger.info("Starting quant_engine_monthly job")
 
     try:
         # Get all active portfolios
         all_portfolios = await portfolios_repo.list_all_active_portfolios()
-        
+
         if not all_portfolios:
             return "No active portfolios"
 
@@ -908,8 +1101,8 @@ async def quant_engine_monthly_job() -> str:
 
         for portfolio in all_portfolios:
             portfolio_id = portfolio["id"]
-            user_id = portfolio["user_id"]
-            
+            portfolio["user_id"]
+
             try:
                 # Get holdings
                 holdings = await portfolios_repo.list_holdings(portfolio_id)
@@ -918,11 +1111,11 @@ async def quant_engine_monthly_job() -> str:
                     continue
 
                 symbols = [h["symbol"] for h in holdings]
-                
+
                 # Fetch price history
                 end_date = date.today()
                 start_date = end_date - timedelta(days=400)
-                
+
                 price_dfs = {}
                 for symbol in symbols:
                     df = await price_history_repo.get_prices_as_dataframe(
@@ -930,23 +1123,23 @@ async def quant_engine_monthly_job() -> str:
                     )
                     if df is not None and "Close" in df.columns:
                         price_dfs[symbol] = df["Close"]
-                
+
                 if not price_dfs:
                     logger.warning(f"No price data for portfolio {portfolio_id}")
                     continue
-                
+
                 prices = pd.DataFrame(price_dfs).dropna(how="all").ffill()
-                
+
                 if len(prices) < 100:
                     logger.warning(f"Insufficient price history for portfolio {portfolio_id}")
                     continue
-                
+
                 # Initialize engine and train
                 config = get_default_config()
                 engine = QuantEngineService(config=config)
-                
+
                 train_result = engine.train(prices)
-                
+
                 if train_result.get("status") == "success":
                     # Store trained model artifacts (could save to DB)
                     logger.info(f"Trained quant engine for portfolio {portfolio_id}")

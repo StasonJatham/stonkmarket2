@@ -202,6 +202,7 @@ def create_api_app() -> FastAPI:
     app.include_router(seo.router, tags=["SEO"])  # No prefix - serves at root for crawlers
     app.include_router(portfolios.router, tags=["Portfolios"])
     app.include_router(quant_engine.router, tags=["Quant Engine"])
+    app.include_router(quant_engine.global_router, tags=["Quant Engine"])
     app.include_router(celery.router, tags=["Celery"])
 
     return app

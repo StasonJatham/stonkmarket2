@@ -15,6 +15,9 @@ class CronJobResponse(BaseModel):
     cron: str = Field(..., description="Cron expression")
     description: Optional[str] = Field(None, description="Job description")
     next_run: Optional[datetime] = Field(None, description="Next scheduled run time")
+    next_runs: List[datetime] = Field(
+        default_factory=list, description="Next scheduled run times"
+    )
 
     model_config = {"from_attributes": True}
 
@@ -96,6 +99,9 @@ class CronJobWithStatsResponse(BaseModel):
     error_count: int = Field(default=0, description="Total error count")
     last_error: Optional[str] = Field(None, description="Last error message")
     next_run: Optional[datetime] = Field(None, description="Next scheduled run time")
+    next_runs: List[datetime] = Field(
+        default_factory=list, description="Next scheduled run times"
+    )
 
     model_config = {"from_attributes": True}
 

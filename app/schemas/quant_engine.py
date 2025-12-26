@@ -14,6 +14,7 @@ class RecommendationRowResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     
     ticker: str = Field(..., description="Asset ticker symbol")
+    name: str | None = Field(None, description="Asset name")
     action: str = Field(..., description="BUY, SELL, or HOLD")
     notional_eur: float = Field(..., description="Trade amount in EUR")
     delta_weight: float = Field(..., description="Weight change from current")
@@ -24,6 +25,10 @@ class RecommendationRowResponse(BaseModel):
     dip_score: float | None = Field(None, description="Statistical DipScore (z-score)")
     dip_bucket: str | None = Field(None, description="DipScore bucket")
     marginal_utility: float = Field(..., description="Marginal utility of position")
+    # Legacy fields for backward compatibility
+    legacy_dip_pct: float | None = Field(None, description="Legacy dip percentage")
+    legacy_days_in_dip: int | None = Field(None, description="Legacy days in dip")
+    legacy_domain_score: float | None = Field(None, description="Legacy domain score")
 
 
 class AuditBlockResponse(BaseModel):

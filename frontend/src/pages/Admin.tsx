@@ -20,10 +20,17 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Separator } from '@/components/ui/separator';
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from '@/components/ui/sheet';
 import {
   Dialog,
   DialogContent,
@@ -31,7 +38,6 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from '@/components/ui/dialog';
 import {
   DropdownMenu,
@@ -39,6 +45,11 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { 
   Play, 
   RefreshCw, 
@@ -54,13 +65,15 @@ import {
   ChevronLeft,
   ChevronRight,
   X,
+  Menu,
+  MoreHorizontal,
   TrendingUp,
   User,
   Cog,
   Lightbulb,
   Sparkles
 } from 'lucide-react';
-import { CronBuilder, validateCron, describeCron } from '@/components/CronBuilder';
+import { CronBuilder, validateCron } from '@/components/CronBuilder';
 import { SymbolManager } from '@/components/SymbolManager';
 import { UserSettings } from '@/components/UserSettings';
 import { MFASetup } from '@/components/MFASetup';
@@ -81,6 +94,12 @@ export function AdminPage() {
   });
 
   const { user } = useAuth();
+  const [activeSection, setActiveSection] = useState(() => {
+    if (typeof window === 'undefined') return 'symbols';
+    return localStorage.getItem('admin-section') || localStorage.getItem('admin-tab') || 'symbols';
+  });
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [cronJobs, setCronJobs] = useState<CronJob[]>([]);
   const [cronLogs, setCronLogs] = useState<CronLogEntry[]>([]);
   const [totalLogs, setTotalLogs] = useState(0);
@@ -95,6 +114,7 @@ export function AdminPage() {
   const [logStatus, setLogStatus] = useState<string | undefined>();
   const [logPage, setLogPage] = useState(0);
   const logsPerPage = 20;
+  const [jobSearch, setJobSearch] = useState('');
 
   // Cron editor
   const [editingJob, setEditingJob] = useState<CronJob | null>(null);
@@ -134,6 +154,11 @@ export function AdminPage() {
   useEffect(() => {
     loadCronJobs();
   }, [loadCronJobs]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    localStorage.setItem('admin-section', activeSection);
+  }, [activeSection]);
 
   useEffect(() => {
     loadCronLogs();
@@ -214,247 +239,206 @@ export function AdminPage() {
   }
 
   const totalPages = Math.ceil(totalLogs / logsPerPage);
+  const filteredCronJobs = cronJobs.filter((job) => {
+    const query = jobSearch.trim().toLowerCase();
+    if (!query) return true;
+    return (
+      job.name.toLowerCase().includes(query) ||
+      job.cron.toLowerCase().includes(query) ||
+      (job.description || '').toLowerCase().includes(query)
+    );
+  });
 
-  return (
-    <div className="space-y-6">
-      {/* Header */}
-      <motion.div 
-        initial={{ opacity: 0, y: -10 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="flex flex-col sm:flex-row sm:items-center justify-between gap-4"
-      >
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Settings</h1>
-          <p className="text-muted-foreground">
-            Manage your account, symbols, and scheduled jobs
-          </p>
+  const sections = [
+    {
+      id: 'symbols',
+      label: 'Symbols',
+      icon: TrendingUp,
+      content: <SymbolManager onError={(msg) => setError(msg)} />,
+    },
+    {
+      id: 'suggestions',
+      label: 'Suggestions',
+      icon: Lightbulb,
+      content: <SuggestionManager />,
+    },
+    {
+      id: 'ai',
+      label: 'AI Content',
+      icon: Sparkles,
+      content: <AIManager />,
+    },
+    {
+      id: 'system',
+      label: 'System',
+      icon: Cog,
+      content: (
+        <div className="max-w-2xl space-y-6">
+          <SystemSettings />
+          <ApiKeyManager />
         </div>
-        <div className="flex items-center gap-3">
-          <Badge variant="outline" className="text-muted-foreground">
-            {user?.username}
-          </Badge>
-          <Button onClick={handleRefreshData} disabled={isRefreshing} variant="outline">
-            {isRefreshing ? (
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-            ) : (
-              <RefreshCw className="h-4 w-4 mr-2" />
-            )}
-            Refresh Data
-          </Button>
+      ),
+    },
+    {
+      id: 'account',
+      label: 'Account',
+      icon: User,
+      content: (
+        <div className="max-w-2xl space-y-6">
+          <UserSettings />
+          <MFASetup />
+          <UserApiKeyManager 
+            onError={(msg) => setError(msg)}
+            onSuccess={() => { /* Could add toast */ }}
+          />
         </div>
-      </motion.div>
-
-      {/* Error Alert */}
-      <AnimatePresence>
-        {error && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            className="flex items-center gap-2 bg-danger/10 text-danger p-4 rounded-xl border border-danger/20"
-          >
-            <AlertCircle className="h-4 w-4 shrink-0" />
-            <span className="flex-1">{error}</span>
-            <Button 
-              variant="ghost" 
-              size="icon"
-              className="h-6 w-6"
-              onClick={() => setError(null)}
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Main Tabs */}
-      <Tabs 
-        defaultValue={localStorage.getItem('admin-tab') || 'symbols'} 
-        onValueChange={(value) => localStorage.setItem('admin-tab', value)}
-        className="space-y-6"
-      >
-        {/* Simplified Tab Navigation */}
-        <div className="w-full">
-          <ScrollArea className="w-full">
-            <TabsList className="inline-flex w-auto">
-              <TabsTrigger value="symbols">
-                <TrendingUp className="h-4 w-4 mr-2" />
-                Symbols
-              </TabsTrigger>
-              <TabsTrigger value="suggestions">
-                <Lightbulb className="h-4 w-4 mr-2" />
-                Suggestions
-              </TabsTrigger>
-              <TabsTrigger value="ai">
-                <Sparkles className="h-4 w-4 mr-2" />
-                AI Content
-              </TabsTrigger>
-              <TabsTrigger value="system">
-                <Cog className="h-4 w-4 mr-2" />
-                System
-              </TabsTrigger>
-              <TabsTrigger value="account">
-                <User className="h-4 w-4 mr-2" />
-                Account
-              </TabsTrigger>
-              <TabsTrigger value="scheduler">
-                <Clock className="h-4 w-4 mr-2" />
-                Scheduler
-              </TabsTrigger>
-            </TabsList>
-          </ScrollArea>
-        </div>
-
-        {/* Symbols Tab */}
-        <TabsContent value="symbols">
-          <SymbolManager />
-        </TabsContent>
-
-        {/* Suggestions Tab */}
-        <TabsContent value="suggestions">
-          <SuggestionManager />
-        </TabsContent>
-
-        {/* AI Content Tab */}
-        <TabsContent value="ai">
-          <AIManager />
-        </TabsContent>
-
-        {/* System Settings Tab - includes Service Keys */}
-        <TabsContent value="system">
-          <div className="max-w-2xl space-y-6">
-            <SystemSettings />
-            <ApiKeyManager />
-          </div>
-        </TabsContent>
-
-        {/* Account Tab - includes Security and User API Keys */}
-        <TabsContent value="account">
-          <div className="max-w-2xl space-y-6">
-            <UserSettings />
-            <MFASetup />
-            <UserApiKeyManager 
-              onError={(msg) => setError(msg)}
-              onSuccess={() => { /* Could add toast */ }}
-            />
-          </div>
-        </TabsContent>
-
-        {/* Scheduler Tab */}
-        <TabsContent value="scheduler">
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="grid gap-4"
-          >
-            {isLoadingJobs ? (
-              <>
-                {[...Array(3)].map((_, i) => (
-                  <Skeleton key={i} className="h-32 rounded-xl" />
-                ))}
-              </>
-            ) : cronJobs.length === 0 ? (
-              <Card>
-                <CardContent className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-                  <Clock className="h-12 w-12 mb-4 opacity-20" />
-                  <p>No scheduled jobs configured</p>
-                </CardContent>
-              </Card>
-            ) : (
-              cronJobs.map((job, index) => (
-                <motion.div
-                  key={job.name}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: index * 0.05 }}
-                >
-                  <Card className="overflow-hidden">
-                    <CardHeader className="pb-3">
-                      <div className="flex items-start justify-between">
-                        <div className="space-y-1">
-                          <CardTitle className="text-xl flex items-center gap-2">
-                            <Clock className="h-5 w-5 text-muted-foreground" />
-                            {job.name}
-                          </CardTitle>
-                          {job.description && (
-                            <CardDescription>{job.description}</CardDescription>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Dialog>
-                            <DialogTrigger asChild>
-                              <Button 
-                                variant="outline" 
-                                size="sm"
-                                onClick={() => openCronEditor(job)}
-                              >
-                                <Settings className="h-4 w-4 mr-1" />
-                                Edit Schedule
-                              </Button>
-                            </DialogTrigger>
-                            <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
-                              <DialogHeader>
-                                <DialogTitle>Edit Schedule</DialogTitle>
-                                <DialogDescription>
-                                  Configure the cron schedule for {editingJob?.name}
-                                </DialogDescription>
-                              </DialogHeader>
-                              <div className="py-4">
-                                <CronBuilder
-                                  value={newCronValue}
-                                  onChange={setNewCronValue}
-                                />
-                              </div>
-                              <DialogFooter>
-                                <Button 
-                                  onClick={handleSaveCron}
-                                  disabled={isSaving || !newCronValue || !validateCron(newCronValue).valid}
-                                >
-                                  {isSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                                  Save Changes
-                                </Button>
-                              </DialogFooter>
-                            </DialogContent>
-                          </Dialog>
-                          
-                          <Button
-                            size="sm"
-                            onClick={() => handleRunNow(job.name)}
-                            disabled={runningJob === job.name}
-                          >
-                            {runningJob === job.name ? (
-                              <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+      ),
+    },
+    {
+      id: 'scheduler',
+      label: 'Scheduler',
+      icon: Clock,
+      content: (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="grid gap-6"
+        >
+          <Card>
+            <CardHeader className="pb-4">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <Clock className="h-5 w-5 text-muted-foreground" />
+                    Scheduled Tasks
+                  </CardTitle>
+                  <CardDescription>
+                    Manage recurring jobs and run them on demand
+                  </CardDescription>
+                </div>
+                <div className="relative w-full sm:w-64">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Search jobs..."
+                    value={jobSearch}
+                    onChange={(event) => setJobSearch(event.target.value)}
+                    className="pl-9"
+                  />
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {isLoadingJobs ? (
+                <div className="space-y-2">
+                  {[...Array(4)].map((_, i) => (
+                    <Skeleton key={i} className="h-12 w-full" />
+                  ))}
+                </div>
+              ) : filteredCronJobs.length === 0 ? (
+                <div className="text-center py-10 text-muted-foreground">
+                  <Clock className="h-10 w-10 mx-auto mb-3 opacity-20" />
+                  <p>
+                    {cronJobs.length === 0 ? 'No scheduled jobs configured' : 'No jobs match your search'}
+                  </p>
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Cron</TableHead>
+                      <TableHead>Next Run</TableHead>
+                      <TableHead className="w-[60px]" />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredCronJobs.map((job) => {
+                      const nextRuns = job.next_runs && job.next_runs.length > 0
+                        ? job.next_runs
+                        : job.next_run ? [job.next_run] : [];
+                      return (
+                        <TableRow key={job.name}>
+                          <TableCell className="font-medium">
+                            {job.description ? (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <span className="cursor-help underline decoration-dotted">
+                                    {job.name}
+                                  </span>
+                                </TooltipTrigger>
+                                <TooltipContent className="max-w-xs">
+                                  {job.description}
+                                </TooltipContent>
+                              </Tooltip>
                             ) : (
-                              <Play className="h-4 w-4 mr-1" />
+                              job.name
                             )}
-                            Run Now
-                          </Button>
-                        </div>
-                      </div>
-                    </CardHeader>
-                    <CardContent className="pt-0">
-                      <div className="flex flex-col sm:flex-row sm:items-center gap-2 p-3 bg-muted/50 rounded-lg">
-                        <Badge variant="outline" className="font-mono text-sm w-fit">
-                          {job.cron}
-                        </Badge>
-                        <span className="text-sm text-muted-foreground">
-                          {describeCron(job.cron)}
-                        </span>
-                        {job.next_run && (
-                          <span className="text-xs text-muted-foreground">
-                            Next: {formatDate(job.next_run)}
-                          </span>
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
-                </motion.div>
-              ))
-            )}
-          </motion.div>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className="font-mono text-xs">
+                              {job.cron}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-sm text-muted-foreground">
+                            {job.next_run ? (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <span className="cursor-help">
+                                    {formatDate(job.next_run)}
+                                  </span>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <div className="space-y-1">
+                                    <p className="text-xs font-medium">Next runs</p>
+                                    {nextRuns.map((run, index) => (
+                                      <p key={`${job.name}-next-${index}`} className="text-xs">
+                                        {formatDate(run)}
+                                      </p>
+                                    ))}
+                                  </div>
+                                </TooltipContent>
+                              </Tooltip>
+                            ) : (
+                              '—'
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon" className="h-8 w-8">
+                                  <MoreHorizontal className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem
+                                  onClick={() => handleRunNow(job.name)}
+                                  disabled={runningJob === job.name}
+                                >
+                                  {runningJob === job.name ? (
+                                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                  ) : (
+                                    <Play className="h-4 w-4 mr-2" />
+                                  )}
+                                  Run now
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => openCronEditor(job)}>
+                                  <Settings className="h-4 w-4 mr-2" />
+                                  Edit schedule
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
 
           {/* Logs Section (inline in Scheduler) */}
-          <Card className="mt-6">
+          <Card>
             <CardHeader className="pb-4">
               <CardTitle className="flex items-center gap-2">
                 <Calendar className="h-5 w-5 text-muted-foreground" />
@@ -594,8 +578,175 @@ export function AdminPage() {
           </Card>
           
           <CeleryMonitorPanel />
-        </TabsContent>
-      </Tabs>
+        </motion.div>
+      ),
+    },
+  ];
+
+  const activeItem = sections.find((section) => section.id === activeSection) || sections[0];
+
+  const buildNavButton = (section: (typeof sections)[number], collapsed: boolean) => {
+    const Icon = section.icon;
+    const isActive = activeSection === section.id;
+    const button = (
+      <Button
+        key={section.id}
+        variant={isActive ? 'secondary' : 'ghost'}
+        size={collapsed ? 'icon' : 'sm'}
+        className={collapsed ? 'w-10 justify-center' : 'w-full justify-start'}
+        onClick={() => {
+          setActiveSection(section.id);
+          setMobileNavOpen(false);
+        }}
+      >
+        <Icon className="h-4 w-4" />
+        {!collapsed && <span className="ml-2">{section.label}</span>}
+      </Button>
+    );
+
+    if (!collapsed) {
+      return button;
+    }
+
+    return (
+      <Tooltip key={section.id}>
+        <TooltipTrigger asChild>
+          {button}
+        </TooltipTrigger>
+        <TooltipContent>{section.label}</TooltipContent>
+      </Tooltip>
+    );
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <motion.div 
+        initial={{ opacity: 0, y: -10 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+      >
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Settings</h1>
+          <p className="text-muted-foreground">
+            Manage your account, symbols, and scheduled jobs
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
+            <SheetTrigger asChild>
+              <Button variant="outline" size="icon" className="lg:hidden">
+                <Menu className="h-4 w-4" />
+              </Button>
+            </SheetTrigger>
+            <SheetContent side="left" className="p-0">
+              <SheetHeader className="px-4 pt-4">
+                <SheetTitle>Settings</SheetTitle>
+              </SheetHeader>
+              <div className="flex flex-col gap-2 px-2 pb-4">
+                {sections.map((section) => buildNavButton(section, false))}
+              </div>
+            </SheetContent>
+          </Sheet>
+          <Badge variant="outline" className="text-muted-foreground">
+            {user?.username}
+          </Badge>
+          <Button onClick={handleRefreshData} disabled={isRefreshing} variant="outline">
+            {isRefreshing ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4 mr-2" />
+            )}
+            Refresh Data
+          </Button>
+        </div>
+      </motion.div>
+
+      {/* Error Alert */}
+      <AnimatePresence>
+        {error && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            className="flex items-center gap-2 bg-danger/10 text-danger p-4 rounded-xl border border-danger/20"
+          >
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            <span className="flex-1">{error}</span>
+            <Button 
+              variant="ghost" 
+              size="icon"
+              className="h-6 w-6"
+              onClick={() => setError(null)}
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <div className="flex gap-6">
+        <aside
+          className={`hidden lg:flex flex-col gap-3 rounded-xl border bg-card p-3 ${sidebarCollapsed ? 'w-16' : 'w-60'}`}
+        >
+          <div className="flex items-center justify-between px-1">
+            {!sidebarCollapsed && (
+              <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Sections
+              </span>
+            )}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setSidebarCollapsed((prev) => !prev)}
+              className="h-7 w-7"
+            >
+              {sidebarCollapsed ? (
+                <ChevronRight className="h-4 w-4" />
+              ) : (
+                <ChevronLeft className="h-4 w-4" />
+              )}
+            </Button>
+          </div>
+          <Separator />
+          <nav className={`flex flex-col gap-2 ${sidebarCollapsed ? 'items-center' : ''}`}>
+            {sections.map((section) => buildNavButton(section, sidebarCollapsed))}
+          </nav>
+        </aside>
+        <div className="flex-1 min-w-0">
+          {activeItem.content}
+        </div>
+      </div>
+
+      <Dialog open={!!editingJob} onOpenChange={(open) => {
+        if (!open) {
+          setEditingJob(null);
+        }
+      }}>
+        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Edit Schedule</DialogTitle>
+            <DialogDescription>
+              Configure the cron schedule for {editingJob?.name}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <CronBuilder
+              value={newCronValue}
+              onChange={setNewCronValue}
+            />
+          </div>
+          <DialogFooter>
+            <Button 
+              onClick={handleSaveCron}
+              disabled={isSaving || !newCronValue || !validateCron(newCronValue).valid}
+            >
+              {isSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Save Changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
