@@ -64,6 +64,10 @@ class DipCard(BaseModel):
     ai_confidence: Optional[int] = Field(
         None, ge=1, le=10, description="AI confidence score"
     )
+    ai_pending: Optional[bool] = Field(
+        None, description="AI refresh queued; data will update asynchronously"
+    )
+    ai_task_id: Optional[str] = Field(None, description="Celery task id for AI refresh")
 
     # Voting
     vote_counts: VoteCounts = Field(default_factory=VoteCounts)

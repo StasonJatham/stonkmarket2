@@ -255,7 +255,7 @@ class TestBatchAISwipeJob:
         from app.jobs.definitions import batch_ai_swipe_job
 
         with patch(
-            "app.services.batch_scheduler.schedule_batch_suggestion_bios",
+            "app.services.batch_scheduler.schedule_batch_swipe_bios",
             new_callable=AsyncMock,
             return_value="batch_123",
         ), patch(

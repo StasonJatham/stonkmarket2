@@ -1,9 +1,12 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   getDipCards,
+  getDipCard,
   refreshAiAnalysis,
   refreshAiField,
+  regenerateSymbolAiSummary,
+  getTaskStatus,
   type DipCard,
   type AiFieldType,
 } from '@/services/api';
@@ -102,6 +105,7 @@ export function AIManager() {
   const [error, setError] = useState<string | null>(null);
   const [regeneratingSymbol, setRegeneratingSymbol] = useState<string | null>(null);
   const [regeneratingField, setRegeneratingField] = useState<AiFieldType | null>(null);
+  const [summaryTasks, setSummaryTasks] = useState<Record<string, string>>({});
   
   // Detail dialog
   const [selectedCard, setSelectedCard] = useState<DipCard | null>(null);
@@ -124,17 +128,136 @@ export function AIManager() {
     loadCards();
   }, [loadCards]);
 
+  const pendingTasks = useMemo(() => {
+    const tasks: { symbol: string; taskId: string; type: 'summary' | 'swipe' }[] = [];
+    dipCards.forEach((card) => {
+      if (card.ai_pending && card.ai_task_id) {
+        tasks.push({ symbol: card.symbol, taskId: card.ai_task_id, type: 'swipe' });
+      }
+    });
+    Object.entries(summaryTasks).forEach(([symbol, taskId]) => {
+      if (taskId) {
+        tasks.push({ symbol, taskId, type: 'summary' });
+      }
+    });
+    return tasks;
+  }, [dipCards, summaryTasks]);
+
+  useEffect(() => {
+    if (pendingTasks.length === 0) return;
+    let cancelled = false;
+
+    const pollTasks = async () => {
+      const results = await Promise.all(
+        pendingTasks.map(async (task) => {
+          try {
+            const status = await getTaskStatus(task.taskId);
+            return { task, status };
+          } catch {
+            return { task, status: null };
+          }
+        })
+      );
+
+      if (cancelled) return;
+
+      const summaryDone = new Set<string>();
+      const swipeDone = new Set<string>();
+      const failedSymbols = new Set<string>();
+
+      results.forEach(({ task, status }) => {
+        if (!status) return;
+        const normalized = status.status.toUpperCase();
+        if (normalized === 'SUCCESS' || normalized === 'FAILURE') {
+          if (task.type === 'summary') {
+            summaryDone.add(task.symbol);
+          } else {
+            swipeDone.add(task.symbol);
+          }
+          if (normalized === 'FAILURE') {
+            failedSymbols.add(task.symbol);
+          }
+        }
+      });
+
+      const refreshSymbols = new Set<string>([...summaryDone, ...swipeDone]);
+      if (refreshSymbols.size > 0) {
+        const refreshedCards = await Promise.all(
+          Array.from(refreshSymbols).map(async (symbol) => {
+            try {
+              return await getDipCard(symbol);
+            } catch {
+              return null;
+            }
+          })
+        );
+
+        if (!cancelled) {
+          setDipCards(prev =>
+            prev.map(card => {
+              const refreshed = refreshedCards.find(r => r?.symbol === card.symbol);
+              return refreshed ?? card;
+            })
+          );
+          if (selectedCard && refreshSymbols.has(selectedCard.symbol)) {
+            const refreshed = refreshedCards.find(r => r?.symbol === selectedCard.symbol);
+            if (refreshed) {
+              setSelectedCard(refreshed);
+            }
+          }
+        }
+      }
+
+      if (summaryDone.size > 0) {
+        setSummaryTasks(prev => {
+          const next = { ...prev };
+          summaryDone.forEach(symbol => {
+            delete next[symbol];
+          });
+          return next;
+        });
+      }
+
+      if (failedSymbols.size > 0) {
+        setError(`AI task failed for ${Array.from(failedSymbols).join(', ')}`);
+      }
+    };
+
+    pollTasks();
+    const interval = setInterval(pollTasks, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [pendingTasks, selectedCard]);
+
   async function handleRegenerateAI(symbol: string) {
     setRegeneratingSymbol(symbol);
     try {
-      const updatedCard = await refreshAiAnalysis(symbol);
-      // Update the card in the list
-      setDipCards(prev => 
-        prev.map(card => card.symbol === symbol ? updatedCard : card)
-      );
-      // If we were viewing this card's details, update it
-      if (selectedCard?.symbol === symbol) {
-        setSelectedCard(updatedCard);
+      const [swipeResult, summaryResult] = await Promise.allSettled([
+        refreshAiAnalysis(symbol),
+        regenerateSymbolAiSummary(symbol),
+      ]);
+
+      if (swipeResult.status === 'fulfilled') {
+        const updatedCard = swipeResult.value;
+        setDipCards(prev =>
+          prev.map(card => card.symbol === symbol ? updatedCard : card)
+        );
+        if (selectedCard?.symbol === symbol) {
+          setSelectedCard(updatedCard);
+        }
+      } else {
+        setError(`Failed to regenerate AI analysis for ${symbol}`);
+      }
+
+      if (summaryResult.status === 'fulfilled') {
+        const taskId = summaryResult.value.task_id;
+        if (taskId) {
+          setSummaryTasks(prev => ({ ...prev, [symbol]: taskId }));
+        }
+      } else {
+        setError(`Failed to regenerate AI summary for ${symbol}`);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : `Failed to regenerate AI for ${symbol}`);
@@ -151,12 +274,18 @@ export function AIManager() {
   async function handleRegenerateField(symbol: string, field: AiFieldType) {
     setRegeneratingField(field);
     try {
+      if (field === 'summary') {
+        const summaryResult = await regenerateSymbolAiSummary(symbol);
+        if (summaryResult.task_id) {
+          setSummaryTasks(prev => ({ ...prev, [symbol]: summaryResult.task_id as string }));
+        }
+        return;
+      }
+
       const updatedCard = await refreshAiField(symbol, field);
-      // Update the card in the list
-      setDipCards(prev => 
+      setDipCards(prev =>
         prev.map(card => card.symbol === symbol ? updatedCard : card)
       );
-      // If we were viewing this card's details, update it
       if (selectedCard?.symbol === symbol) {
         setSelectedCard(updatedCard);
       }
@@ -170,6 +299,8 @@ export function AIManager() {
   // Count cards with/without AI
   const cardsWithAI = dipCards.filter(c => c.swipe_bio).length;
   const cardsWithRating = dipCards.filter(c => c.ai_rating).length;
+  const summaryQueued = selectedCard ? !!summaryTasks[selectedCard.symbol] : false;
+  const swipeQueued = Boolean(selectedCard?.ai_pending && selectedCard?.ai_task_id);
 
   return (
     <div className="space-y-6">
@@ -296,12 +427,17 @@ export function AIManager() {
                             <Eye className="h-4 w-4 mr-1" />
                             View
                           </Button>
+                          {(card.ai_pending || summaryTasks[card.symbol]) && (
+                            <Badge variant="outline" className="text-muted-foreground">
+                              Queued
+                            </Badge>
+                          )}
                           <Button
                             size="sm"
                             variant="outline"
                             className="h-8"
                             onClick={() => handleRegenerateAI(card.symbol)}
-                            disabled={regeneratingSymbol === card.symbol}
+                            disabled={regeneratingSymbol === card.symbol || card.ai_pending || !!summaryTasks[card.symbol]}
                           >
                             {regeneratingSymbol === card.symbol ? (
                               <Loader2 className="h-4 w-4 animate-spin" />
@@ -350,9 +486,9 @@ export function AIManager() {
                       variant="ghost"
                       size="sm"
                       onClick={() => handleRegenerateField(selectedCard.symbol, 'rating')}
-                      disabled={regeneratingField === 'rating'}
+                      disabled={regeneratingField === 'rating' || swipeQueued}
                     >
-                      {regeneratingField === 'rating' ? (
+                      {regeneratingField === 'rating' || swipeQueued ? (
                         <Loader2 className="h-3 w-3 animate-spin" />
                       ) : (
                         <RefreshCw className="h-3 w-3" />
@@ -391,9 +527,9 @@ export function AIManager() {
                       variant="ghost"
                       size="sm"
                       onClick={() => handleRegenerateField(selectedCard.symbol, 'bio')}
-                      disabled={regeneratingField === 'bio'}
+                      disabled={regeneratingField === 'bio' || swipeQueued}
                     >
-                      {regeneratingField === 'bio' ? (
+                      {regeneratingField === 'bio' || swipeQueued ? (
                         <Loader2 className="h-3 w-3 animate-spin" />
                       ) : (
                         <RefreshCw className="h-3 w-3" />
@@ -420,18 +556,25 @@ export function AIManager() {
                       <FileText className="h-4 w-4 text-chart-4" />
                       AI Summary
                     </h4>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleRegenerateField(selectedCard.symbol, 'summary')}
-                      disabled={regeneratingField === 'summary'}
-                    >
-                      {regeneratingField === 'summary' ? (
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                      ) : (
-                        <RefreshCw className="h-3 w-3" />
+                    <div className="flex items-center gap-2">
+                      {summaryQueued && (
+                        <Badge variant="outline" className="text-muted-foreground">
+                          Queued
+                        </Badge>
                       )}
-                    </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleRegenerateField(selectedCard.symbol, 'summary')}
+                        disabled={regeneratingField === 'summary' || summaryQueued}
+                      >
+                        {regeneratingField === 'summary' || summaryQueued ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <RefreshCw className="h-3 w-3" />
+                        )}
+                      </Button>
+                    </div>
                   </div>
                   <div className="bg-muted/30 rounded-lg p-4">
                     {selectedCard.summary_ai ? (
@@ -473,7 +616,12 @@ export function AIManager() {
                 <div className="flex justify-end pt-4 border-t">
                   <Button
                     onClick={() => handleRegenerateAI(selectedCard.symbol)}
-                    disabled={regeneratingSymbol === selectedCard.symbol || regeneratingField !== null}
+                    disabled={
+                      regeneratingSymbol === selectedCard.symbol
+                      || regeneratingField !== null
+                      || swipeQueued
+                      || summaryQueued
+                    }
                   >
                     {regeneratingSymbol === selectedCard.symbol ? (
                       <>

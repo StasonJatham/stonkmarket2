@@ -244,7 +244,7 @@ async def get_all_dip_cards(include_ai: bool = False) -> list[DipCard]:
     Get all current dips as cards.
 
     Args:
-        include_ai: If True, fetch fresh AI analysis for cards without it (slower)
+        include_ai: Kept for backward compatibility (AI refresh is queued at API layer)
         
     Returns:
         List of DipCard objects sorted by dip percentage.

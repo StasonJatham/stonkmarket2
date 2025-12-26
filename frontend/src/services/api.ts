@@ -171,6 +171,14 @@ export interface CronLogsResponse {
   total: number;
 }
 
+export interface TaskStatus {
+  task_id: string;
+  status: string;
+  result?: string | null;
+  error?: string | null;
+  traceback?: string | null;
+}
+
 // API functions with caching
 export async function getRanking(skipCache = false, showAll = false): Promise<RankingResponse> {
   const endpoint = `/dips/ranking?show_all=${showAll}`;
@@ -345,6 +353,44 @@ export async function runCronJobNow(name: string): Promise<CronLogEntry> {
   return fetchAPI<CronLogEntry>(`/cronjobs/${name}/run`, {
     method: 'POST',
   });
+}
+
+export async function getTaskStatus(taskId: string): Promise<TaskStatus> {
+  return fetchAPI<TaskStatus>(`/cronjobs/tasks/${taskId}`);
+}
+
+export interface CeleryWorkerInfo {
+  status?: string;
+  active?: unknown[];
+  processed?: number;
+  total?: Record<string, number>;
+  loadavg?: string | number[];
+  pool?: Record<string, unknown>;
+  uptime?: number;
+}
+
+export type CeleryWorkersResponse = Record<string, CeleryWorkerInfo>;
+
+export interface CeleryQueueInfo {
+  name?: string;
+  messages?: number;
+  consumers?: number;
+  state?: string;
+  [key: string]: unknown;
+}
+
+export type CeleryBrokerInfo = Record<string, unknown>;
+
+export async function getCeleryWorkers(): Promise<CeleryWorkersResponse> {
+  return fetchAPI<CeleryWorkersResponse>('/celery/workers');
+}
+
+export async function getCeleryQueues(): Promise<CeleryQueueInfo[]> {
+  return fetchAPI<CeleryQueueInfo[]>('/celery/queues');
+}
+
+export async function getCeleryBroker(): Promise<CeleryBrokerInfo> {
+  return fetchAPI<CeleryBrokerInfo>('/celery/broker');
 }
 
 export async function refreshData(): Promise<DipStock[]> {
@@ -578,6 +624,8 @@ export interface DipCard {
   ai_rating: 'strong_buy' | 'buy' | 'hold' | 'sell' | 'strong_sell' | null;
   ai_reasoning: string | null;
   ai_confidence: number | null;
+  ai_pending?: boolean | null;
+  ai_task_id?: string | null;
   vote_counts: VoteCounts;
   ipo_year: number | null;
 }
@@ -614,10 +662,15 @@ export async function getDipCard(symbol: string, refreshAi: boolean = false): Pr
 }
 
 export async function voteDip(symbol: string, voteType: VoteType): Promise<{ symbol: string; vote_type: string; message: string }> {
-  return fetchAPI(`/swipe/cards/${symbol}/vote`, {
+  const result = await fetchAPI(`/swipe/cards/${symbol}/vote`, {
     method: 'PUT',
     body: JSON.stringify({ vote_type: voteType }),
   });
+
+  // Ensure swipe lists reflect vote exclusions immediately
+  apiCache.invalidate(/^swipe:cards:/);
+  
+  return result;
 }
 
 export async function getDipStats(symbol: string): Promise<DipStats> {
@@ -632,6 +685,13 @@ export async function refreshAiAnalysis(symbol: string): Promise<DipCard> {
 
 export type AiFieldType = 'rating' | 'bio' | 'summary';
 export type SwipeAiFieldType = 'rating' | 'bio';
+
+export interface AISummaryResponse {
+  symbol: string;
+  summary_ai: string | null;
+  task_id?: string | null;
+  status?: string | null;
+}
 
 /**
  * Regenerate AI field for a dip card.
@@ -657,8 +717,8 @@ export async function refreshAiField(symbol: string, field: AiFieldType): Promis
  * Regenerate AI summary for a symbol.
  * This is a symbol property, not swipe-specific.
  */
-export async function regenerateSymbolAiSummary(symbol: string): Promise<{ symbol: string; summary_ai: string | null }> {
-  const result = await fetchAPI<{ symbol: string; summary_ai: string | null }>(`/symbols/${symbol}/ai/summary`, {
+export async function regenerateSymbolAiSummary(symbol: string): Promise<AISummaryResponse> {
+  const result = await fetchAPI<AISummaryResponse>(`/symbols/${symbol}/ai/summary`, {
     method: 'POST',
   });
   

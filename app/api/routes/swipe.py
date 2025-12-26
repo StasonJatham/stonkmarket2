@@ -6,6 +6,8 @@ from typing import Literal, Optional
 
 from fastapi import APIRouter, Query, Request, Header
 
+from app.cache.cache import Cache
+from app.celery_app import celery_app
 from app.core.exceptions import NotFoundError, ValidationError
 from app.core.security import decode_access_token
 from app.core.client_identity import (
@@ -29,6 +31,24 @@ from app.services import swipe
 
 router = APIRouter()
 
+_ai_refresh_cache = Cache(prefix="swipe_ai_refresh", default_ttl=900)
+
+
+async def _enqueue_swipe_ai_refresh(symbol: str, field: str | None = None) -> str:
+    """Queue swipe AI refresh with lightweight dedupe."""
+    key = f"{symbol}:{field or 'all'}"
+    cached = await _ai_refresh_cache.get(key)
+    if cached and isinstance(cached, dict) and cached.get("task_id"):
+        return cached["task_id"]
+
+    task = celery_app.send_task(
+        "jobs.refresh_dip_ai",
+        args=[symbol.upper()],
+        kwargs={"field": field},
+    )
+    await _ai_refresh_cache.set(key, {"task_id": task.id})
+    return task.id
+
 
 @router.get(
     "/cards",
@@ -39,14 +59,25 @@ router = APIRouter()
 async def get_dip_cards(
     request: Request,
     include_ai: bool = Query(
-        False, description="Fetch fresh AI analysis for cards without it (slower)"
+        False, description="Queue AI refresh for cards missing analysis (async)"
     ),
     exclude_voted: bool = Query(
         False, description="Exclude cards the user has already voted on"
     ),
 ) -> DipCardList:
     """Get all current dips as swipeable cards."""
-    cards = await swipe.get_all_dip_cards(include_ai=include_ai)
+    cards = await swipe.get_all_dip_cards(include_ai=False)
+
+    if include_ai:
+        refreshed_cards = []
+        for card in cards:
+            if card.swipe_bio is None or card.ai_rating is None:
+                task_id = await _enqueue_swipe_ai_refresh(card.symbol)
+                card = card.model_copy(
+                    update={"ai_pending": True, "ai_task_id": task_id}
+                )
+            refreshed_cards.append(card)
+        cards = refreshed_cards
 
     # If exclude_voted, filter out cards the user has already voted on
     if exclude_voted:
@@ -69,20 +100,21 @@ async def get_dip_cards(
     "/cards/{symbol}",
     response_model=DipCard,
     summary="Get single dip card",
-    description="Get a specific dip card with AI analysis.",
+    description="Get a specific dip card with cached AI analysis.",
 )
 async def get_dip_card(
     symbol: str,
     refresh_ai: bool = Query(False, description="Force refresh AI analysis"),
 ) -> DipCard:
     """Get a single dip card with full details."""
-    if refresh_ai:
-        card = await swipe.get_dip_card_with_fresh_ai(symbol.upper())
-    else:
-        card = await swipe.get_dip_card(symbol.upper())
+    card = await swipe.get_dip_card(symbol.upper())
 
     if not card:
         raise NotFoundError(f"Symbol {symbol.upper()} is not currently in a dip")
+
+    if refresh_ai:
+        task_id = await _enqueue_swipe_ai_refresh(symbol.upper())
+        card = card.model_copy(update={"ai_pending": True, "ai_task_id": task_id})
 
     return card
 
@@ -188,32 +220,34 @@ async def get_dip_stats(symbol: str) -> DipStats:
     "/cards/{symbol}/refresh-ai",
     response_model=DipCard,
     summary="Refresh AI analysis",
-    description="Force refresh AI-generated content for a dip.",
+    description="Queue refresh of AI-generated content for a dip.",
 )
 async def refresh_ai_analysis(symbol: str) -> DipCard:
     """Force refresh AI analysis for a dip."""
-    card = await swipe.get_dip_card_with_fresh_ai(symbol.upper(), force_refresh=True)
+    card = await swipe.get_dip_card(symbol.upper())
 
     if not card:
         raise NotFoundError(f"Symbol {symbol.upper()} is not currently in a dip")
 
-    return card
+    task_id = await _enqueue_swipe_ai_refresh(symbol.upper())
+    return card.model_copy(update={"ai_pending": True, "ai_task_id": task_id})
 
 
 @router.post(
     "/cards/{symbol}/refresh-ai/{field}",
     response_model=DipCard,
     summary="Refresh specific AI field",
-    description="Regenerate a swipe-specific AI field: rating or bio. For summary, use /symbols/{symbol}/ai/summary.",
+    description="Queue regeneration for a swipe AI field: rating or bio. For summary, use /symbols/{symbol}/ai/summary.",
 )
 async def refresh_ai_field(
     symbol: str,
     field: Literal["rating", "bio"],
 ) -> DipCard:
     """Regenerate a swipe-specific AI field for a dip (rating or bio)."""
-    card = await swipe.regenerate_ai_field(symbol.upper(), field)
+    card = await swipe.get_dip_card(symbol.upper())
 
     if not card:
         raise NotFoundError(f"Symbol {symbol.upper()} is not currently in a dip")
 
-    return card
+    task_id = await _enqueue_swipe_ai_refresh(symbol.upper(), field)
+    return card.model_copy(update={"ai_pending": True, "ai_task_id": task_id})

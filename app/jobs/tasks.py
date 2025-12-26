@@ -93,6 +93,27 @@ async def _execute_symbol_task(symbol: str, coro: Awaitable[None]) -> str:
         await lock.release()
 
 
+async def _execute_symbol_ai_task(
+    symbol: str,
+    coro: Awaitable[str],
+    lock_suffix: str,
+) -> str:
+    from app.cache.distributed_lock import DistributedLock
+
+    normalized = symbol.upper()
+    lock = DistributedLock(
+        f"symbol:ai:{normalized}:{lock_suffix}", timeout=60 * 20, blocking=False
+    )
+    acquired = await lock.acquire()
+    if not acquired:
+        return f"Skipped {normalized}: AI task already running"
+
+    try:
+        return await coro
+    finally:
+        await lock.release()
+
+
 async def _execute_dipfinder_task(
     tickers: Iterable[str], benchmark: str, windows: Iterable[int]
 ) -> str:
@@ -249,6 +270,82 @@ def process_approved_symbol_task(symbol: str) -> str:
     return _run_async(
         _execute_symbol_task(normalized, _process_approved_symbol(normalized))
     )
+
+
+@celery_app.task(name="jobs.regenerate_symbol_summary")
+def regenerate_symbol_summary_task(symbol: str) -> str:
+    """Regenerate AI summary for a symbol in the background."""
+
+    async def _run() -> str:
+        from app.repositories import symbols_orm as symbols_repo
+        from app.services.stock_info import get_stock_info_async
+        from app.services.openai_client import summarize_company
+        from app.services.runtime_settings import get_runtime_setting
+        from app.cache.cache import Cache
+
+        normalized = symbol.upper()
+
+        if not get_runtime_setting("ai_enrichment_enabled", True):
+            return f"AI enrichment disabled for {normalized}"
+
+        info = await get_stock_info_async(normalized)
+        if not info:
+            return f"No Yahoo Finance data for {normalized}"
+
+        description = info.get("summary")
+        if not description or len(description) < 100:
+            return f"No usable description for {normalized}"
+
+        summary = await summarize_company(
+            symbol=normalized,
+            name=info.get("name"),
+            description=description,
+        )
+
+        if not summary:
+            return f"No AI summary generated for {normalized}"
+
+        await symbols_repo.update_symbol_info(normalized, summary_ai=summary)
+
+        stockinfo_cache = Cache(prefix="stockinfo", default_ttl=3600)
+        await stockinfo_cache.delete(normalized)
+
+        symbols_cache = Cache(prefix="symbols", default_ttl=3600)
+        await symbols_cache.invalidate_pattern("*")
+
+        return f"Regenerated AI summary for {normalized}"
+
+    return _run_async(
+        _execute_symbol_ai_task(symbol, _run(), lock_suffix="summary")
+    )
+
+
+@celery_app.task(name="jobs.refresh_dip_ai")
+def refresh_dip_ai_task(symbol: str, field: str | None = None) -> str:
+    """Refresh swipe AI analysis for a symbol in the background."""
+
+    async def _run() -> str:
+        from app.services import swipe as swipe_service
+
+        normalized = symbol.upper()
+        if field and field not in ("rating", "bio"):
+            return f"Invalid AI field '{field}' for {normalized}"
+
+        if field:
+            card = await swipe_service.regenerate_ai_field(normalized, field)
+            if not card:
+                return f"No dip card for {normalized}"
+            return f"Regenerated AI {field} for {normalized}"
+
+        card = await swipe_service.get_dip_card_with_fresh_ai(
+            normalized, force_refresh=True
+        )
+        if not card:
+            return f"No dip card for {normalized}"
+        return f"Refreshed swipe AI for {normalized}"
+
+    lock_suffix = f"swipe:{field or 'all'}"
+    return _run_async(_execute_symbol_ai_task(symbol, _run(), lock_suffix=lock_suffix))
 
 
 @celery_app.task(name="jobs.dipfinder_run")

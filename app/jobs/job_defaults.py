@@ -30,6 +30,8 @@ JOB_PRIORITIES: dict[str, dict[str, int | str]] = {
     "batch_poll": {"queue": "high", "priority": 8},
     "process_new_symbol": {"queue": "default", "priority": 7},
     "process_approved_symbol": {"queue": "default", "priority": 7},
+    "regenerate_symbol_summary": {"queue": "default", "priority": 6},
+    "refresh_dip_ai": {"queue": "default", "priority": 6},
     "dipfinder_run": {"queue": "default", "priority": 6},
     "initial_data_ingest": {"queue": "default", "priority": 6},
     "fundamentals_refresh": {"queue": "default", "priority": 5},
