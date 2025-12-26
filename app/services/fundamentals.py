@@ -99,6 +99,138 @@ def _safe_date(value: Any) -> Optional[date]:
         return None
 
 
+# =============================================================================
+# Domain Detection and Metrics
+# =============================================================================
+
+
+def _detect_domain(info: dict[str, Any]) -> str:
+    """
+    Detect the domain type of a security from its info.
+    
+    Returns: bank, reit, insurer, utility, biotech, etf, stock
+    """
+    quote_type = (info.get("quote_type") or info.get("quoteType") or "").upper()
+    sector = (info.get("sector") or "").lower()
+    industry = (info.get("industry") or "").lower()
+    name = (info.get("name") or info.get("shortName") or "").lower()
+    
+    # ETFs and funds
+    if quote_type in ("ETF", "MUTUALFUND", "INDEX"):
+        return "etf"
+    
+    # Banks
+    bank_keywords = ["bank", "bancorp", "bancshares", "banking"]
+    if sector == "financial services":
+        if any(kw in industry for kw in ["bank", "credit"]):
+            return "bank"
+        if any(kw in name for kw in bank_keywords):
+            return "bank"
+    
+    # REITs
+    if "reit" in industry or "real estate investment" in industry:
+        return "reit"
+    if quote_type == "REIT":
+        return "reit"
+    if "reit" in name:
+        return "reit"
+    
+    # Insurers
+    insurer_keywords = ["insurance", "insurer", "assurance", "reinsurance"]
+    if any(kw in industry for kw in insurer_keywords):
+        return "insurer"
+    if any(kw in name for kw in insurer_keywords):
+        return "insurer"
+    
+    # Utilities
+    if sector == "utilities":
+        return "utility"
+    
+    # Biotech
+    if "biotech" in industry or "pharmaceutical" in industry:
+        return "biotech"
+    if sector == "healthcare" and "drug" in industry:
+        return "biotech"
+    
+    return "stock"
+
+
+def _calculate_domain_metrics(
+    info: dict[str, Any],
+    financials: Optional[dict[str, Any]],
+    domain: str,
+) -> dict[str, Any]:
+    """
+    Calculate domain-specific metrics from financial statements.
+    
+    Returns dict with:
+    - Banks: net_interest_income, net_interest_margin
+    - REITs: ffo, ffo_per_share, p_ffo
+    - Insurers: loss_ratio, combined_ratio
+    """
+    result = {}
+    
+    if not financials:
+        return result
+    
+    # Get quarterly income statement for most recent data
+    quarterly = financials.get("quarterly", {})
+    income_stmt = quarterly.get("income_statement", {})
+    balance_sheet = quarterly.get("balance_sheet", {})
+    
+    if domain == "bank":
+        # Net Interest Income
+        nii = income_stmt.get("Net Interest Income")
+        if nii:
+            result["net_interest_income"] = int(nii)
+        
+        # Net Interest Margin (NII / Interest-earning assets)
+        total_assets = balance_sheet.get("Total Assets")
+        if nii and total_assets and total_assets > 0:
+            # Rough approximation - real NIM uses interest-earning assets
+            result["net_interest_margin"] = (nii * 4) / total_assets  # Annualized
+    
+    elif domain == "reit":
+        # FFO = Net Income + Depreciation & Amortization
+        net_income = income_stmt.get("Net Income") or info.get("net_income")
+        depreciation = income_stmt.get("Depreciation And Amortization In Income Statement")
+        if not depreciation:
+            depreciation = income_stmt.get("Depreciation Amortization Depletion")
+        
+        if net_income:
+            ffo = int(net_income)
+            if depreciation:
+                ffo += int(depreciation)
+            result["ffo"] = ffo
+            
+            # FFO per share
+            shares = info.get("shares_outstanding") or info.get("sharesOutstanding")
+            if shares and shares > 0:
+                ffo_per_share = ffo / shares
+                result["ffo_per_share"] = round(ffo_per_share, 4)
+                
+                # P/FFO
+                price = info.get("current_price") or info.get("currentPrice") or info.get("regularMarketPrice")
+                if price and ffo_per_share > 0:
+                    result["p_ffo"] = round(price / ffo_per_share, 4)
+    
+    elif domain == "insurer":
+        # Loss ratio = Loss Adjustment Expense / Premiums Earned
+        loss_expense = income_stmt.get("Net Policyholder Benefits And Claims")
+        if not loss_expense:
+            loss_expense = income_stmt.get("Policyholder Benefits And Claims")
+        
+        premiums = income_stmt.get("Total Revenue") or info.get("revenue")
+        
+        if loss_expense and premiums and premiums > 0:
+            result["loss_ratio"] = abs(loss_expense) / premiums
+        
+        # Combined ratio (would need expense ratio too, but often not available)
+        # Just use loss ratio for now
+    
+    return result
+
+
 async def _fetch_fundamentals_from_service(symbol: str) -> Optional[dict[str, Any]]:
     """
     Fetch fundamentals via unified YFinanceService.

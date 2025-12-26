@@ -182,6 +182,23 @@ class Fundamentals(BaseModel):
     short_ratio: Optional[float] = None
     short_percent_of_float: Optional[float] = None
 
+    # Domain classification (for domain-specific analysis)
+    domain: Optional[str] = Field(None, description="Domain type: bank, reit, insurer, etf, etc.")
+    
+    # Financial statement data (domain-specific metrics)
+    financials: Optional[dict[str, Any]] = Field(
+        None, 
+        description="Financial statement data for domain-specific analysis"
+    )
+    
+    # Domain-specific computed metrics
+    net_interest_income: Optional[float] = Field(None, description="For banks: Net Interest Income")
+    net_interest_margin: Optional[float] = Field(None, description="For banks: NIM ratio")
+    ffo: Optional[float] = Field(None, description="For REITs: Funds From Operations")
+    ffo_per_share: Optional[float] = Field(None, description="For REITs: FFO per share")
+    p_ffo: Optional[float] = Field(None, description="For REITs: Price to FFO ratio")
+    loss_ratio: Optional[float] = Field(None, description="For insurers: Loss ratio")
+
     # Raw info for any extra fields
     raw_info: Optional[dict[str, Any]] = None
 

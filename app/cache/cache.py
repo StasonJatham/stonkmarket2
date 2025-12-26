@@ -50,7 +50,8 @@ class Cache:
 
     def __init__(self, prefix: str = "cache", default_ttl: int = None):
         self.prefix = prefix
-        self.default_ttl = default_ttl or settings.cache_default_ttl
+        # Use explicit None check to allow TTL=0 (disabled caching)
+        self.default_ttl = default_ttl if default_ttl is not None else settings.cache_default_ttl
 
     async def get(self, key: str) -> Optional[Any]:
         """Get value from cache."""

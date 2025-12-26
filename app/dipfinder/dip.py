@@ -168,26 +168,34 @@ def compute_dip_percentile(
 def compute_typical_dip(
     dip_series: np.ndarray,
     use_median: bool = True,
+    min_dip_threshold: float = 0.01,
 ) -> float:
     """
     Compute typical (median or mean) dip from historical series.
 
+    Only considers positive dips above min_dip_threshold to avoid
+    including zero/no-dip days which would skew the result.
+
     Args:
-        dip_series: Historical dip series
+        dip_series: Historical dip series (dip values >= 0)
         use_median: If True, use median; else use mean
+        min_dip_threshold: Minimum dip to include (default 1%)
 
     Returns:
-        Typical dip value
+        Typical dip value, or 0.0 if no valid dips
     """
     valid = dip_series[~np.isnan(dip_series)]
-
-    if len(valid) == 0:
+    
+    # Filter to positive dips only (above threshold)
+    positive_dips = valid[valid >= min_dip_threshold]
+    
+    if len(positive_dips) == 0:
         return 0.0
 
     if use_median:
-        return float(np.median(valid))
+        return float(np.median(positive_dips))
     else:
-        return float(np.mean(valid))
+        return float(np.mean(positive_dips))
 
 
 def compute_persistence(

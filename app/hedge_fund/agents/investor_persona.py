@@ -444,6 +444,11 @@ class InvestorPersonaAgent(LLMAgentBase):
         if f.dividend_yield:
             prompt += f"\n- Dividend Yield: {f.dividend_yield:.2%}"
         
+        # Add domain-specific metrics when available
+        domain_section = self._build_domain_section(f)
+        if domain_section:
+            prompt += domain_section
+        
         prompt += """
 
 **Your Task:**
@@ -456,6 +461,83 @@ Respond with a JSON object containing:
 - "key_factors": array of 3-5 key factors driving your recommendation"""
 
         return prompt
+    
+    def _build_domain_section(self, f) -> str:
+        """Build domain-specific section of the prompt based on company type."""
+        domain = (f.domain or "").lower()
+        
+        if not domain:
+            return ""
+        
+        def fmt_money(val) -> str:
+            if val is None:
+                return "N/A"
+            if abs(val) >= 1e12:
+                return f"${val/1e12:.2f}T"
+            if abs(val) >= 1e9:
+                return f"${val/1e9:.2f}B"
+            if abs(val) >= 1e6:
+                return f"${val/1e6:.1f}M"
+            return f"${val:,.0f}"
+        
+        def fmt_pct(val) -> str:
+            if val is None:
+                return "N/A"
+            return f"{val:.2%}"
+        
+        def fmt_ratio(val) -> str:
+            if val is None:
+                return "N/A"
+            return f"{val:.1f}x"
+        
+        lines = []
+        
+        if domain == "bank":
+            lines.append("\n\n**Bank-Specific Metrics:**")
+            if f.net_interest_income is not None:
+                lines.append(f"- Net Interest Income: {fmt_money(f.net_interest_income)}")
+            if f.net_interest_margin is not None:
+                lines.append(f"- Net Interest Margin: {fmt_pct(f.net_interest_margin)}")
+            lines.append("- Note: D/E ratio is less meaningful for banks (leverage is the business)")
+            
+        elif domain == "reit":
+            lines.append("\n\n**REIT-Specific Metrics:**")
+            if f.ffo is not None:
+                lines.append(f"- Funds From Operations (FFO): {fmt_money(f.ffo)}")
+            if f.ffo_per_share is not None:
+                lines.append(f"- FFO per Share: ${f.ffo_per_share:.2f}")
+            if f.p_ffo is not None:
+                lines.append(f"- Price/FFO: {fmt_ratio(f.p_ffo)}")
+            lines.append("- Note: P/E is misleading for REITs due to depreciation; use P/FFO instead")
+            
+        elif domain == "insurer":
+            lines.append("\n\n**Insurance-Specific Metrics:**")
+            if f.loss_ratio is not None:
+                lines.append(f"- Loss Ratio: {fmt_pct(f.loss_ratio)}")
+                if f.loss_ratio < 0.65:
+                    lines.append("  (Healthy underwriting)")
+                elif f.loss_ratio > 0.80:
+                    lines.append("  (Elevated claims, needs attention)")
+            lines.append("- Note: ROE and book value are key metrics for insurers")
+            
+        elif domain == "etf":
+            lines.append("\n\n**ETF Note:**")
+            lines.append("- This is an ETF/fund. Traditional fundamental analysis does not apply.")
+            lines.append("- Focus on: expense ratio, tracking error, liquidity, and asset composition.")
+            
+        elif domain == "utility":
+            lines.append("\n\n**Utility Note:**")
+            lines.append("- Regulated utility with predictable cash flows")
+            lines.append("- Higher debt levels are normal; focus on dividend sustainability")
+            
+        elif domain == "biotech":
+            lines.append("\n\n**Biotech Note:**")
+            lines.append("- Clinical-stage biotech. Traditional metrics may not apply.")
+            lines.append("- Focus on: pipeline, cash runway, clinical trial results, partnerships")
+        
+        if len(lines) > 1:  # More than just the header
+            return "\n".join(lines)
+        return ""
 
     async def run(
         self,
@@ -465,7 +547,18 @@ Respond with a JSON object containing:
         mode: LLMMode = LLMMode.REALTIME,
         run_id: Optional[str] = None,
     ) -> AgentSignal:
-        """Run persona analysis and return signal."""
+        """
+        Run persona analysis and return signal.
+        
+        Args:
+            symbol: Stock ticker symbol
+            data: Market data for analysis
+            mode: LLM execution mode (REALTIME or BATCH)
+            run_id: Optional run ID for batch tracking
+            
+        Returns:
+            AgentSignal with recommendation
+        """
         task = LLMTask(
             custom_id=self.create_custom_id(run_id or "default", symbol, "analysis"),
             agent_id=self.agent_id,
@@ -478,6 +571,22 @@ Respond with a JSON object containing:
             require_json=True,
         )
         
+        # Respect mode parameter - use realtime or batch accordingly
+        if mode == LLMMode.BATCH:
+            # For batch mode, submit task and return a placeholder signal
+            # The actual result will be collected later via collect_batch_results
+            batch_id = await self.gateway.submit_batch([task])
+            logger.info(f"Submitted batch {batch_id} for {symbol} with {self.agent_name}")
+            return self._build_signal(
+                symbol=symbol,
+                signal=Signal.HOLD.value,
+                confidence=0.0,  # Placeholder - will be updated on collection
+                reasoning=f"Batch submitted: {batch_id}",
+                key_factors=["Awaiting batch completion"],
+                metrics={"batch_id": batch_id, "persona": self.persona.id},
+            )
+        
+        # Realtime mode
         result = await self.gateway.run_realtime(task)
         
         if result.failed:
@@ -497,7 +606,8 @@ Respond with a JSON object containing:
             else:
                 parsed = json.loads(result.content)
             
-            signal_str = parsed.get("signal", "hold")
+            # Support both "signal" (gateway realtime) and "rating" (RATING_SCHEMA batch)
+            signal_str = parsed.get("signal") or parsed.get("rating", "hold")
             confidence = parsed.get("confidence", 5)
             reasoning = parsed.get("reasoning", "No reasoning provided")
             key_factors = parsed.get("key_factors", [])

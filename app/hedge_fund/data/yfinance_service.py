@@ -23,6 +23,115 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
+# Domain Detection
+# =============================================================================
+
+
+def _detect_domain(info: dict[str, Any]) -> Optional[str]:
+    """Detect the domain type from ticker info."""
+    quote_type = (info.get("quote_type") or info.get("quoteType") or "").upper()
+    sector = (info.get("sector") or "").lower()
+    industry = (info.get("industry") or "").lower()
+    name = (info.get("name") or info.get("shortName") or "").lower()
+    
+    # ETFs and Funds
+    if quote_type in ("ETF", "MUTUALFUND", "INDEX"):
+        return "etf"
+    
+    # Banks
+    if "bank" in industry or "bank" in name:
+        return "bank"
+    if sector == "financial services" and any(
+        term in industry for term in ["banks", "credit", "savings"]
+    ):
+        return "bank"
+    
+    # REITs
+    if "reit" in industry or "reit" in name or "real estate" in industry:
+        return "reit"
+    
+    # Insurance
+    if "insurance" in industry:
+        return "insurer"
+    
+    # Utilities
+    if sector == "utilities" or "utility" in industry:
+        return "utility"
+    
+    # Biotech
+    if "biotechnology" in industry:
+        return "biotech"
+    
+    return None
+
+
+def _calculate_domain_metrics(
+    info: dict[str, Any], 
+    financials: Optional[dict[str, Any]],
+    domain: Optional[str],
+) -> dict[str, Any]:
+    """Calculate domain-specific metrics from financial statements."""
+    metrics = {}
+    
+    if not financials or not domain:
+        return metrics
+    
+    quarterly = financials.get("quarterly", {})
+    income = quarterly.get("income_statement", {})
+    balance = quarterly.get("balance_sheet", {})
+    cashflow = quarterly.get("cash_flow", {})
+    
+    if domain == "bank":
+        # Net Interest Income
+        nii = income.get("Net Interest Income")
+        if nii:
+            metrics["net_interest_income"] = nii
+            
+            # Calculate NIM proxy: NII (annualized) / Total Assets
+            total_assets = balance.get("Total Assets")
+            if total_assets and total_assets > 0:
+                metrics["net_interest_margin"] = (nii * 4) / total_assets
+    
+    elif domain == "reit":
+        # FFO = Net Income + Depreciation
+        net_income = income.get("Net Income")
+        depreciation = (
+            cashflow.get("Depreciation Amortization Depletion") or
+            cashflow.get("Depreciation And Amortization")
+        )
+        
+        if net_income is not None and depreciation is not None:
+            ffo = net_income + depreciation
+            metrics["ffo"] = ffo * 4  # Annualize
+            
+            shares = info.get("shares_outstanding") or info.get("sharesOutstanding")
+            current_price = info.get("current_price") or info.get("regularMarketPrice")
+            
+            if shares and shares > 0:
+                ffo_per_share = (ffo * 4) / shares
+                metrics["ffo_per_share"] = ffo_per_share
+                
+                if current_price and ffo_per_share > 0:
+                    metrics["p_ffo"] = current_price / ffo_per_share
+    
+    elif domain == "insurer":
+        # Loss Ratio = Losses / Premiums (approximated by revenue)
+        loss_expense = (
+            income.get("Net Policyholder Benefits And Claims") or
+            income.get("Loss Adjustment Expense")
+        )
+        revenue = (
+            income.get("Total Revenue") or
+            income.get("Operating Revenue")
+        )
+        
+        if loss_expense and revenue and revenue > 0:
+            metrics["loss_ratio"] = loss_expense / revenue
+    
+    return metrics
+
+
+# =============================================================================
 # Async wrappers using unified YFinanceService
 # =============================================================================
 
@@ -110,12 +219,26 @@ async def get_calendar_events(symbol: str) -> CalendarEvents:
     )
 
 
-async def get_fundamentals(symbol: str) -> Fundamentals:
-    """Get fundamental data for a symbol."""
-    info = await get_ticker_info(symbol)
+async def get_fundamentals(symbol: str, include_financials: bool = True) -> Fundamentals:
+    """Get fundamental data for a symbol, including domain-specific metrics."""
+    service = get_yfinance_service()
+    
+    # Fetch info and optionally financials concurrently
+    if include_financials:
+        info, financials = await asyncio.gather(
+            get_ticker_info(symbol),
+            service.get_financials(symbol),
+        )
+    else:
+        info = await get_ticker_info(symbol)
+        financials = None
     
     if not info:
         return Fundamentals(symbol=symbol, name=symbol)
+    
+    # Detect domain and calculate domain-specific metrics
+    domain = _detect_domain(info)
+    domain_metrics = _calculate_domain_metrics(info, financials, domain)
     
     return Fundamentals(
         symbol=symbol,
@@ -166,6 +289,16 @@ async def get_fundamentals(symbol: str) -> Fundamentals:
         float_shares=_safe_float(info.get("float_shares") or info.get("floatShares")),
         short_ratio=_safe_float(info.get("short_ratio") or info.get("shortRatio")),
         short_percent_of_float=_safe_float(info.get("short_percent_of_float") or info.get("shortPercentOfFloat")),
+        
+        # Domain-specific
+        domain=domain,
+        financials=financials,
+        net_interest_income=domain_metrics.get("net_interest_income"),
+        net_interest_margin=domain_metrics.get("net_interest_margin"),
+        ffo=domain_metrics.get("ffo"),
+        ffo_per_share=domain_metrics.get("ffo_per_share"),
+        p_ffo=domain_metrics.get("p_ffo"),
+        loss_ratio=domain_metrics.get("loss_ratio"),
         
         raw_info=info,
     )

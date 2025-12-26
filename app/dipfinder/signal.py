@@ -43,6 +43,7 @@ class MarketContext:
     dip_stock: float  # Stock dip fraction
     excess_dip: float  # Stock dip - benchmark dip
     dip_class: DipClass
+    benchmark_data_available: bool = True  # False if benchmark data was insufficient
 
     def to_dict(self) -> dict:
         """Convert to dictionary."""
@@ -52,6 +53,7 @@ class MarketContext:
             "dip_stock": round(self.dip_stock, 6),
             "excess_dip": round(self.excess_dip, 6),
             "dip_class": self.dip_class.value,
+            "benchmark_data_available": self.benchmark_data_available,
         }
 
 
@@ -210,7 +212,8 @@ def compute_market_context(
     )
 
     # Compute benchmark dip
-    if len(benchmark_prices) >= window:
+    benchmark_data_available = len(benchmark_prices) >= window
+    if benchmark_data_available:
         benchmark_dips = compute_dip_series_windowed(benchmark_prices, window)
         dip_mkt = float(benchmark_dips[-1]) if not np.isnan(benchmark_dips[-1]) else 0.0
     else:
@@ -226,6 +229,7 @@ def compute_market_context(
         dip_stock=dip_stock,
         excess_dip=excess_dip,
         dip_class=dip_class,
+        benchmark_data_available=benchmark_data_available,
     )
 
 
@@ -257,9 +261,10 @@ def compute_dip_score(
 
     # Base score from dip magnitude (max 40 points)
     # More dip = higher score (for buying opportunity)
-    # Scale from min_dip_abs (baseline) to 40% (extreme)
+    # Scale from min_dip_abs (baseline = 0 points) to 40% (extreme = 40 points)
+    # Start at 0, not 20 - minimal dips just above threshold should score low
     magnitude_factor = min((dip_metrics.dip_pct - config.min_dip_abs) / 0.30, 1.0)
-    score += 20 + magnitude_factor * 20
+    score += magnitude_factor * 40
 
     # Percentile/rarity score (max 25 points)
     # Higher percentile = rarer dip = higher score
@@ -274,7 +279,7 @@ def compute_dip_score(
     # Persistence score (max 10 points)
     if dip_metrics.persist_days >= config.min_persist_days:
         persist_factor = min(dip_metrics.persist_days / 10, 1.0)
-        score += 5 + persist_factor * 5
+        score += persist_factor * 10
 
     # Classification adjustment (max 5 points)
     if market_context.dip_class == DipClass.STOCK_SPECIFIC:
@@ -375,6 +380,18 @@ def compute_signal(
     if config is None:
         config = get_dipfinder_config()
 
+    # Validate/normalize weights to ensure they sum to 1.0
+    weight_sum = config.weight_dip + config.weight_quality + config.weight_stability
+    if abs(weight_sum - 1.0) > 0.001:
+        # Normalize at runtime if weights don't sum to 1
+        w_dip = config.weight_dip / weight_sum
+        w_quality = config.weight_quality / weight_sum
+        w_stability = config.weight_stability / weight_sum
+    else:
+        w_dip = config.weight_dip
+        w_quality = config.weight_quality
+        w_stability = config.weight_stability
+
     # Compute dip metrics
     dip_metrics = compute_dip_metrics(ticker, stock_prices, window, config)
 
@@ -392,15 +409,15 @@ def compute_signal(
     if dip_metrics.dip_pct < config.min_dip_abs:
         # No meaningful dip - score is just quality/stability with low cap
         final_score = min(
-            config.weight_quality * quality_metrics.score
-            + config.weight_stability * stability_metrics.score,
+            w_quality * quality_metrics.score
+            + w_stability * stability_metrics.score,
             25.0  # Cap at 25 for non-dip stocks
         )
     else:
         final_score = (
-            config.weight_dip * dip_score
-            + config.weight_quality * quality_metrics.score
-            + config.weight_stability * stability_metrics.score
+            w_dip * dip_score
+            + w_quality * quality_metrics.score
+            + w_stability * stability_metrics.score
         )
 
     # Determine alert level

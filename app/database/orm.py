@@ -743,14 +743,43 @@ class StockFundamentals(Base):
     earnings_estimate_high: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 4))
     earnings_estimate_low: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 4))
     earnings_estimate_avg: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 4))
+    earnings_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))  # Last earnings date
+    
+    # Domain Classification
+    domain: Mapped[Optional[str]] = mapped_column(String(20))  # bank, reit, insurer, utility, biotech, etf, stock
+    
+    # Financial Statements (JSONB - quarterly and annual income stmt, balance sheet, cash flow)
+    income_stmt_quarterly: Mapped[Optional[dict]] = mapped_column(JSONB)
+    income_stmt_annual: Mapped[Optional[dict]] = mapped_column(JSONB)
+    balance_sheet_quarterly: Mapped[Optional[dict]] = mapped_column(JSONB)
+    balance_sheet_annual: Mapped[Optional[dict]] = mapped_column(JSONB)
+    cash_flow_quarterly: Mapped[Optional[dict]] = mapped_column(JSONB)
+    cash_flow_annual: Mapped[Optional[dict]] = mapped_column(JSONB)
+    
+    # Domain-Specific Metrics (pre-calculated from financial statements)
+    # Banks
+    net_interest_income: Mapped[Optional[int]] = mapped_column(BigInteger)  # NII from income stmt
+    net_interest_margin: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 6))  # NIM = NII / Interest-earning assets
+    
+    # REITs
+    ffo: Mapped[Optional[int]] = mapped_column(BigInteger)  # Funds From Operations = Net Income + D&A
+    ffo_per_share: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 4))
+    p_ffo: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 4))  # Price / FFO per share
+    
+    # Insurers
+    loss_ratio: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 6))  # Loss adj expense / Premiums
+    combined_ratio: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 6))  # Loss ratio + expense ratio
     
     # Timestamps
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    financials_fetched_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))  # When statements were fetched
 
     __table_args__ = (
         Index("idx_stock_fundamentals_symbol", "symbol"),
         Index("idx_stock_fundamentals_expires", "expires_at"),
+        Index("idx_stock_fundamentals_domain", "domain"),
+        Index("idx_stock_fundamentals_next_earnings", "next_earnings_date"),
     )
 
 

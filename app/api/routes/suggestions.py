@@ -238,8 +238,7 @@ async def suggest_stock(
             raise ValidationError(message=reason, details={"symbol": symbol})
 
     # Fetch stock info from yfinance
-    loop = asyncio.get_event_loop()
-    stock_info = await loop.run_in_executor(_executor, _get_stock_info_full, symbol)
+    stock_info = await get_stock_info_full_async(symbol)
     
     # If symbol is completely invalid (not rate limited), reject the suggestion
     if stock_info["fetch_status"] == "invalid":
@@ -463,28 +462,42 @@ async def search_stored_suggestions(
     2. Already tracked symbols
     
     Fast endpoint suitable for real-time debounced search.
+    Results are ordered by relevance: exact match > prefix match > contains match.
     """
-    search_pattern = f"%{q.upper()}%"
+    query_upper = q.upper().strip()
+    search_pattern = f"%{query_upper}%"
+    prefix_pattern = f"{query_upper}%"
     
     # Search in suggestions first (pending ones)
+    # Use CASE to rank: exact=0, prefix=1, contains=2
     suggestion_rows = await fetch_all(
-        """SELECT symbol, company_name as name, sector, 'suggestion' as source, vote_score
+        """SELECT symbol, company_name as name, sector, 'suggestion' as source, vote_score,
+                  CASE 
+                      WHEN UPPER(symbol) = $3 THEN 0
+                      WHEN UPPER(symbol) LIKE $2 THEN 1
+                      ELSE 2
+                  END as match_rank
            FROM stock_suggestions 
            WHERE status = 'pending'
              AND (UPPER(symbol) LIKE $1 OR UPPER(company_name) LIKE $1)
-           ORDER BY vote_score DESC
-           LIMIT $2""",
-        search_pattern, limit,
+           ORDER BY match_rank, vote_score DESC
+           LIMIT $4""",
+        search_pattern, prefix_pattern, query_upper, limit,
     )
     
-    # Search in tracked symbols (sector is directly on symbols table)
+    # Search in tracked symbols with same ranking
     symbol_rows = await fetch_all(
-        """SELECT symbol, name, sector, 'tracked' as source, 0 as vote_score
+        """SELECT symbol, name, sector, 'tracked' as source, 0 as vote_score,
+                  CASE 
+                      WHEN UPPER(symbol) = $3 THEN 0
+                      WHEN UPPER(symbol) LIKE $2 THEN 1
+                      ELSE 2
+                  END as match_rank
            FROM symbols
            WHERE UPPER(symbol) LIKE $1 OR UPPER(name) LIKE $1
-           ORDER BY symbol
-           LIMIT $2""",
-        search_pattern, limit,
+           ORDER BY match_rank, symbol
+           LIMIT $4""",
+        search_pattern, prefix_pattern, query_upper, limit,
     )
     
     # Combine and dedupe (prefer tracked over suggestions)
@@ -855,8 +868,7 @@ async def retry_suggestion_fetch(
     symbol = suggestion["symbol"]
     
     # Fetch stock info
-    loop = asyncio.get_event_loop()
-    stock_info = await loop.run_in_executor(_executor, _get_stock_info_full, symbol)
+    stock_info = await get_stock_info_full_async(symbol)
     
     # Update suggestion with fetched data
     await execute(
@@ -925,8 +937,7 @@ async def backfill_suggestion_data(
         
         try:
             # Fetch stock info
-            loop = asyncio.get_event_loop()
-            stock_info = await loop.run_in_executor(_executor, _get_stock_info_full, symbol)
+            stock_info = await get_stock_info_full_async(symbol)
             
             # Update suggestion with fetched data
             await execute(
@@ -1011,8 +1022,10 @@ async def _process_approved_symbol(symbol: str) -> None:
         full_summary = info.get("summary")  # longBusinessSummary from yfinance
         
         # Generate AI summary from the long description (only on first import)
+        # Respects ai_enrichment_enabled setting
         ai_summary = None
-        if full_summary and len(full_summary) > 100:
+        ai_enabled = get_runtime_setting("ai_enrichment_enabled", True)
+        if ai_enabled and full_summary and len(full_summary) > 100:
             # Check if we already have an AI summary
             existing = await fetch_one(
                 "SELECT summary_ai FROM symbols WHERE symbol = $1",
@@ -1090,43 +1103,49 @@ async def _process_approved_symbol(symbol: str) -> None:
             dip_pct,
         )
         
-        # Step 3: Generate AI bio
-        bio = await generate_bio(
-            symbol=symbol,
-            dip_pct=dip_pct,
-        )
+        # Check if AI enrichment is enabled before running AI work
+        ai_enabled = get_runtime_setting("ai_enrichment_enabled", True)
         
-        # Step 4: Generate AI rating
-        rating_data = await rate_dip(
-            symbol=symbol,
-            current_price=current_price,
-            ref_high=ath_price,
-            dip_pct=dip_pct,
-        )
-        
-        # Step 5: Store AI analysis
-        if bio or rating_data:
-            await dip_votes_repo.upsert_ai_analysis(
+        if ai_enabled:
+            # Step 3: Generate AI bio
+            bio = await generate_bio(
                 symbol=symbol,
-                swipe_bio=bio,
-                ai_rating=rating_data.get("rating") if rating_data else None,
-                ai_reasoning=rating_data.get("reasoning") if rating_data else None,
-                is_batch=False,
+                dip_pct=dip_pct,
             )
-            logger.info(f"Generated AI content for {symbol}: bio={'yes' if bio else 'no'}, rating={rating_data.get('rating') if rating_data else 'none'}")
-        else:
-            logger.warning(f"No AI content generated for {symbol}")
-        
-        # Step 5.5: Run AI agent analysis (Warren Buffett, Peter Lynch, etc.)
-        try:
-            from app.services.ai_agents import run_agent_analysis
-            agent_result = await run_agent_analysis(symbol)
-            if agent_result:
-                logger.info(f"AI agents for {symbol}: {agent_result.overall_signal} ({agent_result.overall_confidence}%)")
+            
+            # Step 4: Generate AI rating
+            rating_data = await rate_dip(
+                symbol=symbol,
+                current_price=current_price,
+                ref_high=ath_price,
+                dip_pct=dip_pct,
+            )
+            
+            # Step 5: Store AI analysis
+            if bio or rating_data:
+                await dip_votes_repo.upsert_ai_analysis(
+                    symbol=symbol,
+                    swipe_bio=bio,
+                    ai_rating=rating_data.get("rating") if rating_data else None,
+                    ai_reasoning=rating_data.get("reasoning") if rating_data else None,
+                    is_batch=False,
+                )
+                logger.info(f"Generated AI content for {symbol}: bio={'yes' if bio else 'no'}, rating={rating_data.get('rating') if rating_data else 'none'}")
             else:
-                logger.warning(f"No agent analysis generated for {symbol}")
-        except Exception as agent_err:
-            logger.warning(f"AI agents error for {symbol}: {agent_err}")
+                logger.warning(f"No AI content generated for {symbol}")
+            
+            # Step 5.5: Run AI agent analysis (Warren Buffett, Peter Lynch, etc.)
+            try:
+                from app.services.ai_agents import run_agent_analysis
+                agent_result = await run_agent_analysis(symbol)
+                if agent_result:
+                    logger.info(f"AI agents for {symbol}: {agent_result.overall_signal} ({agent_result.overall_confidence}%)")
+                else:
+                    logger.warning(f"No agent analysis generated for {symbol}")
+            except Exception as agent_err:
+                logger.warning(f"AI agents error for {symbol}: {agent_err}")
+        else:
+            logger.info(f"AI enrichment disabled, skipping AI content generation for {symbol}")
         
         # Step 6: Mark as fetched and invalidate ranking cache
         # Update both stock_suggestions AND symbols tables

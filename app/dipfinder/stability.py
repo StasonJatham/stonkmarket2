@@ -16,6 +16,7 @@ import numpy as np
 
 from .config import DipFinderConfig, get_dipfinder_config
 from .dip import compute_dip_series_windowed, compute_typical_dip
+from .fundamentals import normalize_debt_to_equity
 
 
 @dataclass
@@ -284,13 +285,9 @@ def _compute_fundamental_stability_score(info: Dict[str, Any]) -> float:
         weights.append(0.20)
 
     # 3. Debt to equity (lower = less risk) - weight 0.15
-    de = info.get("debtToEquity") or info.get("debt_to_equity")
+    raw_de = info.get("debtToEquity") or info.get("debt_to_equity")
+    de = normalize_debt_to_equity(raw_de)
     if de is not None:
-        # Note: de can be stored as ratio (0.5) or percentage (50)
-        # Normalize to ratio form
-        if de > 10:  # Likely percentage form
-            de = de / 100
-        
         if de < 0.3:
             scores.append(90.0)
         elif de < 0.5:

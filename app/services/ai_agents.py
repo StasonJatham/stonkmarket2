@@ -46,16 +46,27 @@ def _compute_input_hash(fundamentals: dict[str, Any], stock_data: dict[str, Any]
     
     Combines fundamentals and stock info into a single hash.
     Used to skip AI analysis if input data hasn't changed.
+    
+    IMPORTANT: Include ALL fields used in _format_metrics_for_prompt()
+    to ensure cache invalidation when any input changes.
     """
-    # Combine key data points that affect AI analysis
+    # Combine ALL data points used in prompts for accurate change detection
     key_data = {
         "fundamentals": {
             k: v for k, v in fundamentals.items() 
             if v is not None and k in (
-                "pe_ratio", "forward_pe", "peg_ratio", "price_to_book", 
-                "profit_margin", "operating_margin", "return_on_equity",
-                "debt_to_equity", "revenue_growth", "earnings_growth",
-                "beta", "recommendation",
+                # Valuation metrics
+                "pe_ratio", "forward_pe", "peg_ratio", "price_to_book", "ev_to_ebitda",
+                # Profitability metrics
+                "profit_margin", "operating_margin", "return_on_equity", "return_on_assets",
+                # Financial health
+                "debt_to_equity", "current_ratio", "free_cash_flow",
+                # Growth metrics  
+                "revenue_growth", "earnings_growth",
+                # Risk metrics
+                "beta", "short_percent_of_float",
+                # Analyst data
+                "recommendation", "target_mean_price",
             )
         },
         "stock": {
@@ -131,7 +142,28 @@ AGENTS = {
     },
 }
 
-SignalType = Literal["bullish", "bearish", "neutral"]
+# Standard 5-value signal taxonomy (matches hedge_fund.schemas.Signal)
+SignalType = Literal["strong_buy", "buy", "hold", "sell", "strong_sell"]
+
+# Mapping for legacy 3-value signals (backward compatibility)
+LEGACY_SIGNAL_MAP: dict[str, SignalType] = {
+    "bullish": "buy",
+    "bearish": "sell",
+    "neutral": "hold",
+}
+
+
+def _normalize_signal(signal: str) -> SignalType:
+    """Normalize signal to standard 5-value taxonomy."""
+    signal = signal.lower().strip()
+    # Already standard format
+    if signal in ("strong_buy", "buy", "hold", "sell", "strong_sell"):
+        return signal  # type: ignore
+    # Legacy 3-value format
+    if signal in LEGACY_SIGNAL_MAP:
+        return LEGACY_SIGNAL_MAP[signal]
+    # Default to hold for unknown
+    return "hold"
 
 
 @dataclass
@@ -139,7 +171,7 @@ class AgentVerdict:
     """An individual agent's verdict on a stock."""
     agent_id: str
     agent_name: str
-    signal: SignalType
+    signal: SignalType  # strong_buy | buy | hold | sell | strong_sell
     confidence: int  # 0-100
     reasoning: str
     key_factors: list[str]
@@ -256,8 +288,8 @@ FINANCIAL DATA:
 
 Provide your analysis as JSON with these exact fields:
 {{
-    "signal": "bullish" | "bearish" | "neutral",
-    "confidence": 0-100,
+    "rating": "strong_buy" | "buy" | "hold" | "sell" | "strong_sell",
+    "confidence": 1-10,
     "reasoning": "2-3 sentence explanation in your voice",
     "key_factors": ["factor1", "factor2", "factor3"]
 }}
@@ -281,11 +313,20 @@ Be specific about what the numbers tell you. If data is missing, factor that int
         else:
             data = result
         
+        # Extract signal from "rating" field (RATING_SCHEMA uses "rating", not "signal")
+        # Also support "signal" for backward compat with any legacy responses
+        raw_signal = data.get("rating") or data.get("signal", "hold")
+        signal = _normalize_signal(raw_signal)
+        
+        # Scale confidence from 1-10 to 0-100 (RATING_SCHEMA uses 1-10)
+        raw_confidence = data.get("confidence", 5)
+        confidence = min(100, max(0, int(raw_confidence) * 10))
+        
         return AgentVerdict(
             agent_id=agent_id,
             agent_name=agent["name"],
-            signal=data.get("signal", "neutral"),
-            confidence=min(100, max(0, int(data.get("confidence", 50)))),
+            signal=signal,
+            confidence=confidence,
             reasoning=data.get("reasoning", ""),
             key_factors=data.get("key_factors", []),
         )
@@ -297,40 +338,56 @@ Be specific about what the numbers tell you. If data is missing, factor that int
 def _aggregate_signals(verdicts: list[AgentVerdict]) -> tuple[SignalType, int, str]:
     """Aggregate individual agent verdicts into overall signal."""
     if not verdicts:
-        return "neutral", 0, "No agent analysis available"
+        return "hold", 0, "No agent analysis available"
+    
+    # Numeric scores for 5-value signals
+    SIGNAL_SCORES = {
+        "strong_buy": 2,
+        "buy": 1,
+        "hold": 0,
+        "sell": -1,
+        "strong_sell": -2,
+    }
     
     # Weight signals by confidence
-    bullish_score = 0
-    bearish_score = 0
-    neutral_score = 0
+    weighted_sum = 0.0
+    total_weight = 0.0
     total_confidence = 0
+    
+    bullish_agents = []  # strong_buy or buy
+    bearish_agents = []  # sell or strong_sell
     
     for v in verdicts:
         weight = v.confidence / 100
+        total_weight += weight
         total_confidence += v.confidence
-        if v.signal == "bullish":
-            bullish_score += weight
-        elif v.signal == "bearish":
-            bearish_score += weight
-        else:
-            neutral_score += weight
+        weighted_sum += SIGNAL_SCORES.get(v.signal, 0) * weight
+        
+        if v.signal in ("strong_buy", "buy"):
+            bullish_agents.append(v.agent_name)
+        elif v.signal in ("sell", "strong_sell"):
+            bearish_agents.append(v.agent_name)
     
-    # Determine overall signal
-    max_score = max(bullish_score, bearish_score, neutral_score)
-    if max_score == bullish_score and bullish_score > bearish_score + neutral_score * 0.5:
-        overall_signal: SignalType = "bullish"
-    elif max_score == bearish_score and bearish_score > bullish_score + neutral_score * 0.5:
-        overall_signal = "bearish"
+    # Determine overall signal from weighted average
+    if total_weight > 0:
+        avg_score = weighted_sum / total_weight
+        if avg_score >= 1.5:
+            overall_signal: SignalType = "strong_buy"
+        elif avg_score >= 0.5:
+            overall_signal = "buy"
+        elif avg_score > -0.5:
+            overall_signal = "hold"
+        elif avg_score > -1.5:
+            overall_signal = "sell"
+        else:
+            overall_signal = "strong_sell"
     else:
-        overall_signal = "neutral"
+        overall_signal = "hold"
     
     # Calculate overall confidence
     overall_confidence = int(total_confidence / len(verdicts)) if verdicts else 0
     
     # Generate summary
-    bullish_agents = [v.agent_name for v in verdicts if v.signal == "bullish"]
-    bearish_agents = [v.agent_name for v in verdicts if v.signal == "bearish"]
-    
     summary_parts = []
     if bullish_agents:
         summary_parts.append(f"Bullish: {', '.join(bullish_agents)}")
@@ -600,8 +657,8 @@ FINANCIAL DATA:
 
 Provide your analysis as JSON with these exact fields:
 {{
-    "signal": "bullish" | "bearish" | "neutral",
-    "confidence": 0-100,
+    "rating": "strong_buy" | "buy" | "hold" | "sell" | "strong_sell",
+    "confidence": 1-10,
     "reasoning": "2-3 sentence explanation in your voice",
     "key_factors": ["factor1", "factor2", "factor3"]
 }}
@@ -733,27 +790,30 @@ async def collect_agent_batch(batch_id: str) -> dict[str, AgentAnalysisResult]:
         custom_id = item.get("custom_id", "")
         result_data = item.get("result")
         
-        # Parse custom_id format: "agent_{agent_id}_{symbol}_{batch_run_id}"
-        parts = custom_id.split("_")
-        if len(parts) >= 4 and parts[0] == "agent":
-            agent_id = parts[1]  # e.g., "warren" from "warren_buffett"
-            # Handle multi-part agent IDs like "warren_buffett"
-            # Find the symbol by looking for uppercase after the agent parts
-            # Better approach: find first all-caps part
-            symbol = None
-            for i, part in enumerate(parts[2:], start=2):
-                if part.isupper() or (part.isalnum() and part[0].isupper()):
-                    symbol = part
-                    # Agent ID is everything between "agent" and symbol
-                    agent_id = "_".join(parts[1:i])
-                    break
-            if not symbol:
-                logger.warning(f"Could not parse symbol from custom_id: {custom_id}")
-                continue
+        # Parse custom_id format: "batch_run_id:symbol:agent_id:task"
+        # Colon-delimited to avoid ambiguity with multi-part agent IDs like "warren_buffett"
+        parts = custom_id.split(":")
+        if len(parts) >= 3:
+            # parts[0] = batch_run_id, parts[1] = symbol, parts[2] = agent_id
+            symbol = parts[1]
+            agent_id = parts[2]
         else:
-            # Legacy format or unknown
-            logger.warning(f"Unknown custom_id format: {custom_id}")
-            continue
+            # Legacy underscore format fallback: "agent_{agent_id}_{symbol}_{batch_run_id}"
+            underscore_parts = custom_id.split("_")
+            if len(underscore_parts) >= 4 and underscore_parts[0] == "agent":
+                # Find the symbol by looking for uppercase after the agent parts
+                symbol = None
+                for i, part in enumerate(underscore_parts[2:], start=2):
+                    if part.isupper() or (part.isalnum() and part[0].isupper()):
+                        symbol = part
+                        agent_id = "_".join(underscore_parts[1:i])
+                        break
+                if not symbol:
+                    logger.warning(f"Could not parse symbol from custom_id: {custom_id}")
+                    continue
+            else:
+                logger.warning(f"Unknown custom_id format: {custom_id}")
+                continue
         
         if not result_data or not isinstance(result_data, dict):
             continue
@@ -766,12 +826,19 @@ async def collect_agent_batch(batch_id: str) -> dict[str, AgentAnalysisResult]:
         if symbol not in symbol_verdicts:
             symbol_verdicts[symbol] = []
         
-        # Build verdict from result
+        # Build verdict from result - use "rating" field (RATING_SCHEMA) with "signal" fallback
+        raw_signal = result_data.get("rating") or result_data.get("signal", "hold")
+        signal = _normalize_signal(raw_signal)
+        
+        # Scale confidence from 1-10 to 0-100
+        raw_confidence = result_data.get("confidence", 5)
+        confidence = min(100, max(0, int(raw_confidence) * 10))
+        
         verdict = AgentVerdict(
             agent_id=agent_id,
             agent_name=agent_name,
-            signal=result_data.get("signal", "neutral"),
-            confidence=min(100, max(0, int(result_data.get("confidence", 50)))),
+            signal=signal,
+            confidence=confidence,
             reasoning=result_data.get("reasoning", ""),
             key_factors=result_data.get("key_factors", []),
         )

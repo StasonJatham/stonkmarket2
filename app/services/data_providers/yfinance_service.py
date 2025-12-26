@@ -467,6 +467,97 @@ class YFinanceService:
             logger.debug(f"yfinance calendar failed for {symbol}: {e}")
             return None
     
+    def _fetch_financials_sync(self, symbol: str) -> Optional[dict[str, Any]]:
+        """
+        Fetch financial statements from yfinance (blocking).
+        
+        Returns quarterly and annual:
+        - Income statement (revenue, net income, interest income/expense, etc.)
+        - Balance sheet (assets, liabilities, equity, loans, deposits, etc.)
+        - Cash flow (operating, investing, financing, depreciation, etc.)
+        
+        Data is normalized to dicts with metric names as keys and most recent value.
+        """
+        if not self._limiter.acquire_sync():
+            logger.warning(f"Rate limit timeout for financials: {symbol}")
+            return None
+        
+        try:
+            ticker = yf.Ticker(symbol)
+            
+            result = {
+                "symbol": symbol.upper(),
+                "quarterly": {},
+                "annual": {},
+                "fetched_at": datetime.now(timezone.utc).isoformat(),
+            }
+            
+            # Helper to extract most recent values from DataFrame
+            def extract_latest(df: pd.DataFrame) -> dict[str, Optional[float]]:
+                if df is None or df.empty:
+                    return {}
+                extracted = {}
+                for metric in df.index:
+                    try:
+                        val = df.loc[metric].iloc[0]  # Most recent quarter/year
+                        if pd.notna(val):
+                            extracted[str(metric)] = float(val)
+                    except (KeyError, IndexError, ValueError, TypeError):
+                        pass
+                return extracted
+            
+            # Quarterly statements
+            try:
+                result["quarterly"]["income_statement"] = extract_latest(ticker.quarterly_income_stmt)
+            except Exception as e:
+                logger.debug(f"quarterly_income_stmt failed for {symbol}: {e}")
+                result["quarterly"]["income_statement"] = {}
+            
+            try:
+                result["quarterly"]["balance_sheet"] = extract_latest(ticker.quarterly_balance_sheet)
+            except Exception as e:
+                logger.debug(f"quarterly_balance_sheet failed for {symbol}: {e}")
+                result["quarterly"]["balance_sheet"] = {}
+            
+            try:
+                result["quarterly"]["cash_flow"] = extract_latest(ticker.quarterly_cashflow)
+            except Exception as e:
+                logger.debug(f"quarterly_cashflow failed for {symbol}: {e}")
+                result["quarterly"]["cash_flow"] = {}
+            
+            # Annual statements
+            try:
+                result["annual"]["income_statement"] = extract_latest(ticker.income_stmt)
+            except Exception as e:
+                logger.debug(f"income_stmt failed for {symbol}: {e}")
+                result["annual"]["income_statement"] = {}
+            
+            try:
+                result["annual"]["balance_sheet"] = extract_latest(ticker.balance_sheet)
+            except Exception as e:
+                logger.debug(f"balance_sheet failed for {symbol}: {e}")
+                result["annual"]["balance_sheet"] = {}
+            
+            try:
+                result["annual"]["cash_flow"] = extract_latest(ticker.cashflow)
+            except Exception as e:
+                logger.debug(f"cashflow failed for {symbol}: {e}")
+                result["annual"]["cash_flow"] = {}
+            
+            # Log what we found for debugging
+            q_income_count = len(result["quarterly"]["income_statement"])
+            q_balance_count = len(result["quarterly"]["balance_sheet"])
+            q_cash_count = len(result["quarterly"]["cash_flow"])
+            logger.debug(
+                f"Financials for {symbol}: quarterly income={q_income_count}, "
+                f"balance={q_balance_count}, cash_flow={q_cash_count}"
+            )
+            
+            return result
+        except Exception as e:
+            logger.warning(f"yfinance financials failed for {symbol}: {e}")
+            return None
+    
     # =========================================================================
     # Async Public API
     # =========================================================================
@@ -549,6 +640,80 @@ class YFinanceService:
             )
         
         return data
+    
+    async def get_financials(
+        self,
+        symbol: str,
+        skip_cache: bool = False,
+    ) -> Optional[dict[str, Any]]:
+        """
+        Get financial statements with caching.
+        
+        Returns quarterly and annual income statement, balance sheet, and cash flow.
+        Useful for domain-specific analysis:
+        - Banks: Net Interest Income, Interest Expense, Provision for Credit Losses
+        - REITs: Depreciation (for FFO calculation)
+        - Insurers: Loss Adjustment Expense, Net Policyholder Benefits
+        - All: Revenue, Net Income, Operating Cash Flow, Capital Expenditures
+        
+        Cache hierarchy:
+        1. Memory cache (60s)
+        2. Valkey cache (5min)
+        """
+        symbol = symbol.upper()
+        cache_key = f"financials:{symbol}"
+        
+        if not skip_cache:
+            # L1: Memory
+            mem_data = self._get_from_memory(cache_key)
+            if mem_data is not None:
+                logger.debug(f"Financials cache hit L1 (memory) for {symbol}")
+                return mem_data
+            
+            # L2: Valkey
+            valkey_data = await self._info_cache.get(cache_key)
+            if valkey_data is not None:
+                logger.debug(f"Financials cache hit L2 (valkey) for {symbol}")
+                self._set_in_memory(cache_key, valkey_data)
+                return valkey_data
+        
+        # Cache miss - fetch from yfinance
+        logger.debug(f"Financials cache miss for {symbol}, fetching from yfinance")
+        loop = asyncio.get_event_loop()
+        data = await loop.run_in_executor(_executor, self._fetch_financials_sync, symbol)
+        
+        if data:
+            # Store in cache
+            self._set_in_memory(cache_key, data)
+            await self._info_cache.set(cache_key, data)
+        
+        return data
+    
+    async def get_ticker_info_with_financials(
+        self,
+        symbol: str,
+        skip_cache: bool = False,
+    ) -> Optional[dict[str, Any]]:
+        """
+        Get ticker info enriched with financial statement data.
+        
+        Combines get_ticker_info() with get_financials() for comprehensive analysis.
+        The 'financials' key is added to the standard info dict.
+        """
+        # Fetch both in parallel
+        info_task = asyncio.create_task(self.get_ticker_info(symbol, skip_cache=skip_cache))
+        financials_task = asyncio.create_task(self.get_financials(symbol, skip_cache=skip_cache))
+        
+        info, financials = await asyncio.gather(info_task, financials_task)
+        
+        if info is None:
+            return None
+        
+        # Merge financials into info
+        if financials:
+            info["financials"] = financials
+        
+        return info
     
     async def get_price_history(
         self,

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import warnings
 from functools import lru_cache
 from typing import List, Optional
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -196,6 +197,29 @@ class Settings(BaseSettings):
         if upper not in valid:
             raise ValueError(f"log_level must be one of {valid}")
         return upper
+
+    @model_validator(mode="after")
+    def validate_pool_sizes(self) -> "Settings":
+        """Validate db_pool_max_size >= db_pool_min_size."""
+        if self.db_pool_max_size < self.db_pool_min_size:
+            raise ValueError(
+                f"db_pool_max_size ({self.db_pool_max_size}) must be >= "
+                f"db_pool_min_size ({self.db_pool_min_size})"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def check_production_auth_secret(self) -> "Settings":
+        """Warn if using default auth_secret in production."""
+        default_secret = "dev-secret-please-change-in-production-min-32-chars"
+        if self.environment == "production" and self.auth_secret == default_secret:
+            warnings.warn(
+                "SECURITY WARNING: Using default auth_secret in production! "
+                "Set AUTH_SECRET environment variable to a secure random value.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+        return self
 
     @property
     def is_production(self) -> bool:

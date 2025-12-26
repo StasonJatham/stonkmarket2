@@ -78,7 +78,11 @@ class AIAgentsServiceAdapter(ExternalAgentAdapter):
         run_id: Optional[str] = None,
     ) -> AgentSignal:
         """Run the external agent and convert result to AgentSignal."""
-        from app.services.ai_agents import _run_single_agent, AGENTS
+        from app.services.ai_agents import (
+            _run_single_agent,
+            _format_metrics_for_prompt,
+            AGENTS,
+        )
 
         # Get agent config
         agent_config = AGENTS.get(self.external_agent_id)
@@ -95,15 +99,16 @@ class AIAgentsServiceAdapter(ExternalAgentAdapter):
         # Get fundamentals in expected format
         fundamentals = self._convert_fundamentals(data.fundamentals)
         stock_data = self._convert_stock_data(data)
+        
+        # Format metrics text for the prompt
+        metrics_text = _format_metrics_for_prompt(fundamentals, stock_data)
 
         try:
-            # Call the existing agent
+            # Call the existing agent with correct signature
             verdict = await _run_single_agent(
-                symbol=symbol,
                 agent_id=self.external_agent_id,
-                agent_config=agent_config,
-                fundamentals=fundamentals,
-                stock_data=stock_data,
+                symbol=symbol,
+                metrics_text=metrics_text,
             )
 
             if verdict:

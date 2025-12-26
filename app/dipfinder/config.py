@@ -92,6 +92,16 @@ class DipFinderSettings(BaseSettings):
         default=0.25, ge=0, le=1, description="Weight for stability score in final"
     )
 
+    # Domain-specific scoring
+    dipfinder_domain_scoring_enabled: bool = Field(
+        default=True,
+        description="Enable domain-specific scoring (banks, REITs, ETFs, etc.)",
+    )
+    dipfinder_domain_scoring_log_enabled: bool = Field(
+        default=False,
+        description="Log domain classification and scoring details",
+    )
+
     # Default benchmark
     dipfinder_default_benchmark: str = Field(
         default="SPY", description="Default benchmark ticker"
@@ -181,6 +191,10 @@ class DipFinderConfig:
     # History
     history_years: int = 5
 
+    # Domain-specific scoring
+    domain_scoring_enabled: bool = True
+    domain_scoring_log_enabled: bool = False
+
     @classmethod
     def from_settings(
         cls, settings: Optional[DipFinderSettings] = None
@@ -213,6 +227,8 @@ class DipFinderConfig:
             yf_batch_delay=settings.dipfinder_yf_batch_delay,
             yf_info_delay=settings.dipfinder_yf_info_delay,
             history_years=settings.dipfinder_history_years,
+            domain_scoring_enabled=settings.dipfinder_domain_scoring_enabled,
+            domain_scoring_log_enabled=settings.dipfinder_domain_scoring_log_enabled,
         )
 
     def with_overrides(

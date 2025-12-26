@@ -57,7 +57,7 @@ async def _get_logo_dev_public_key() -> Optional[str]:
 async def _fetch_logo_from_api(
     symbol: str,
     theme: LogoTheme,
-    timeout: float = 10.0,
+    timeout: Optional[float] = None,
 ) -> Optional[bytes]:
     """
     Fetch logo from Logo.dev ticker API.
@@ -65,11 +65,14 @@ async def _fetch_logo_from_api(
     Args:
         symbol: Stock ticker symbol
         theme: Light or dark theme
-        timeout: Request timeout in seconds
+        timeout: Request timeout in seconds (defaults to settings.external_api_timeout)
         
     Returns:
         WebP image bytes or None if failed
     """
+    if timeout is None:
+        timeout = float(settings.external_api_timeout)
+        
     # Get API key (must be publishable key for image CDN)
     api_key = await _get_logo_dev_public_key()
     if not api_key:
@@ -110,7 +113,7 @@ async def _fetch_logo_from_api(
 async def _fetch_favicon_fallback(
     website: Optional[str],
     symbol: str,
-    timeout: float = 5.0,
+    timeout: Optional[float] = None,
 ) -> Optional[bytes]:
     """
     Fetch favicon as fallback using DuckDuckGo's icon service.
@@ -119,12 +122,15 @@ async def _fetch_favicon_fallback(
     Args:
         website: Company website URL (from yfinance)
         symbol: Stock symbol (for logging only)
-        timeout: Request timeout
+        timeout: Request timeout (defaults to settings.external_api_timeout)
         
     Returns:
         Image bytes or None
     """
     from urllib.parse import urlparse
+    
+    if timeout is None:
+        timeout = float(settings.external_api_timeout)
     
     # Extract domain from website URL
     domain = None

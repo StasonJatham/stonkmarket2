@@ -1181,15 +1181,16 @@ async def submit_batch(
     # Build JSONL
     jsonl_lines = []
     for i, item in enumerate(items):
-        # Build custom_id - include agent_id if present for agent batch items
+        # Build custom_id using colon-delimited format to avoid ambiguity
+        # Colons are safe in custom_id and not present in symbols/agent IDs
         symbol = item.get('symbol', 'unknown')
         agent_id = item.get('agent_id', '')
         if agent_id:
-            # Agent batch format: "agent_{agent_id}_{symbol}_{batch_run_id}"
-            custom_id = f"agent_{agent_id}_{symbol}_{batch_run_id}"
+            # Agent batch format: "batch_run_id:symbol:agent_id:task"
+            custom_id = f"{batch_run_id}:{symbol}:{agent_id}:{task.value}"
         else:
-            # Standard format: "{task}_{index}_{symbol}_{batch_run_id}"
-            custom_id = f"{task.value}_{i}_{symbol}_{batch_run_id}"
+            # Standard format: "batch_run_id:symbol:idx:task"
+            custom_id = f"{batch_run_id}:{symbol}:{i}:{task.value}"
         prompt = _build_prompt(task, item)
         
         # For RATING, we use structured outputs (no hint needed)

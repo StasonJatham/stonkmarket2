@@ -25,6 +25,23 @@ logger = get_logger("dipfinder.fundamentals")
 _info_cache: Dict[str, tuple[float, Dict[str, Any]]] = {}
 
 
+def normalize_debt_to_equity(de: Optional[float]) -> Optional[float]:
+    """
+    Normalize debt-to-equity to ratio form (0.5 = 50% debt).
+    
+    yfinance may return D/E as:
+    - Ratio form: 0.5, 1.0, 2.0
+    - Percentage form: 50, 100, 200
+    
+    This function detects and normalizes to ratio form.
+    """
+    if de is None:
+        return None
+    if de > 10:  # Likely percentage form (D/E > 1000% is extremely rare)
+        return de / 100
+    return de
+
+
 @dataclass
 class QualityMetrics:
     """Quality metrics and score for a stock."""
@@ -221,7 +238,8 @@ def _compute_profitability_score(info: Dict[str, Any]) -> tuple[float, Dict[str,
 
 def _compute_balance_sheet_score(info: Dict[str, Any]) -> tuple[float, Dict[str, Any]]:
     """Compute balance sheet sub-score."""
-    debt_to_equity = _safe_float(info.get("debtToEquity"))
+    raw_de = _safe_float(info.get("debtToEquity"))
+    debt_to_equity = normalize_debt_to_equity(raw_de)
     current_ratio = _safe_float(info.get("currentRatio"))
 
     factors = {
@@ -229,14 +247,29 @@ def _compute_balance_sheet_score(info: Dict[str, Any]) -> tuple[float, Dict[str,
         "current_ratio": current_ratio,
     }
 
-    # Score debt to equity (lower is better, 0-50% good, >200% bad)
-    de_score = _normalize_score(
-        debt_to_equity,
-        optimal=20.0,  # 20% D/E is good
-        good_range=(0.0, 80.0),
-        bad_threshold=250.0,
-        inverse=True,
-    )
+    # Score debt to equity (lower is better)
+    # D/E is normalized to ratio form: 0.5 = 50%, 1.0 = 100%, 2.0 = 200%
+    # Scoring: monotonically decreasing - higher D/E = lower score
+    if debt_to_equity is not None:
+        if debt_to_equity <= 0.2:
+            de_score = 95.0  # Excellent: very low leverage
+        elif debt_to_equity <= 0.5:
+            # Good range: 0.2-0.5 → score 75-95
+            de_score = 95.0 - (debt_to_equity - 0.2) * (20 / 0.3)
+        elif debt_to_equity <= 0.8:
+            # Acceptable: 0.5-0.8 → score 60-75
+            de_score = 75.0 - (debt_to_equity - 0.5) * (15 / 0.3)
+        elif debt_to_equity <= 1.5:
+            # Elevated: 0.8-1.5 → score 40-60
+            de_score = 60.0 - (debt_to_equity - 0.8) * (20 / 0.7)
+        elif debt_to_equity <= 2.5:
+            # High: 1.5-2.5 → score 20-40
+            de_score = 40.0 - (debt_to_equity - 1.5) * (20 / 1.0)
+        else:
+            # Very high: >2.5 → score 20 or less
+            de_score = max(10.0, 20.0 - (debt_to_equity - 2.5) * 5)
+    else:
+        de_score = 50.0  # Neutral for missing data
 
     # Score current ratio (1.5-2.5 optimal)
     cr_score = _normalize_score(
@@ -718,6 +751,9 @@ async def compute_quality_score(
     """
     Compute quality score for a stock.
 
+    If domain-specific scoring is enabled (default), uses specialized adapters
+    for banks, REITs, ETFs, etc. Otherwise falls back to generic scoring.
+
     Args:
         ticker: Stock ticker symbol
         info: Pre-fetched yfinance info (fetches if None)
@@ -727,6 +763,9 @@ async def compute_quality_score(
     Returns:
         QualityMetrics with score and contributing factors
     """
+    if config is None:
+        config = get_dipfinder_config()
+        
     if info is None:
         info = await fetch_stock_info(ticker, config)
 
@@ -746,6 +785,19 @@ async def compute_quality_score(
             fields_available=0,
         )
 
+    # Domain-specific scoring path
+    if config.domain_scoring_enabled:
+        return await _compute_domain_quality_score(ticker, merged_info, config)
+
+    # Legacy generic scoring path
+    return await _compute_generic_quality_score(ticker, merged_info)
+
+
+async def _compute_generic_quality_score(
+    ticker: str,
+    merged_info: Dict[str, Any],
+) -> QualityMetrics:
+    """Compute quality score using legacy generic scoring (all securities same weights)."""
     # Compute sub-scores
     prof_score, prof_factors = _compute_profitability_score(merged_info)
     bs_score, bs_factors = _compute_balance_sheet_score(merged_info)
@@ -817,6 +869,94 @@ async def compute_quality_score(
         valuation_score=val_score,
         analyst_score=analyst_score,
         risk_score=risk_score,
+        fields_available=fields_available,
+        fields_total=16,
+    )
+
+
+async def _compute_domain_quality_score(
+    ticker: str,
+    merged_info: Dict[str, Any],
+    config: DipFinderConfig,
+) -> QualityMetrics:
+    """Compute quality score using domain-specific scoring adapters."""
+    from app.dipfinder.domain import classify_domain, get_domain_from_info
+    from app.dipfinder.domain_scoring import compute_domain_score
+    
+    # Classify the security's domain
+    classification = get_domain_from_info(merged_info)
+    
+    if config.domain_scoring_log_enabled:
+        logger.info(f"Domain classification for {ticker}: {classification}")
+    
+    # Compute domain-specific score
+    domain_result = compute_domain_score(classification, merged_info)
+    
+    if config.domain_scoring_log_enabled:
+        logger.info(
+            f"Domain score for {ticker}: {domain_result.final_score:.1f} "
+            f"(domain={domain_result.domain.value}, confidence={domain_result.domain_confidence:.0%}, "
+            f"data_completeness={domain_result.data_completeness:.0%})"
+        )
+    
+    # Map domain result to QualityMetrics
+    # We still extract the standard factors for compatibility with existing code
+    prof_score, prof_factors = _compute_profitability_score(merged_info)
+    bs_score, bs_factors = _compute_balance_sheet_score(merged_info)
+    cash_score, cash_factors = _compute_cash_generation_score(merged_info)
+    growth_score, growth_factors = _compute_growth_score(merged_info)
+    liq_score, liq_factors = _compute_liquidity_score(merged_info)
+    val_score, val_factors = _compute_valuation_score(merged_info)
+    analyst_score_val, analyst_factors = _compute_analyst_score(merged_info)
+    risk_score_val, risk_factors = _compute_risk_score(merged_info)
+    
+    # Count available fields
+    all_factors = {
+        **prof_factors,
+        **bs_factors,
+        **cash_factors,
+        **growth_factors,
+        **liq_factors,
+        **val_factors,
+        **analyst_factors,
+        **risk_factors,
+    }
+    fields_available = sum(1 for v in all_factors.values() if v is not None)
+    target_upside = analyst_factors.get("target_upside")
+    
+    # Use domain-specific final score but keep legacy sub-scores for backward compat
+    return QualityMetrics(
+        ticker=ticker,
+        score=domain_result.final_score,  # Domain-specific score!
+        profit_margin=prof_factors.get("profit_margin"),
+        operating_margin=prof_factors.get("operating_margin"),
+        debt_to_equity=bs_factors.get("debt_to_equity"),
+        current_ratio=bs_factors.get("current_ratio"),
+        free_cash_flow=cash_factors.get("free_cash_flow"),
+        fcf_to_market_cap=cash_factors.get("fcf_to_market_cap"),
+        revenue_growth=growth_factors.get("revenue_growth"),
+        earnings_growth=growth_factors.get("earnings_growth"),
+        market_cap=liq_factors.get("market_cap"),
+        avg_volume=liq_factors.get("avg_volume"),
+        pe_ratio=val_factors.get("pe_ratio"),
+        forward_pe=val_factors.get("forward_pe"),
+        peg_ratio=val_factors.get("peg_ratio"),
+        ev_to_ebitda=val_factors.get("ev_to_ebitda"),
+        return_on_equity=_safe_float(merged_info.get("returnOnEquity") or merged_info.get("return_on_equity")),
+        return_on_assets=_safe_float(merged_info.get("returnOnAssets") or merged_info.get("return_on_assets")),
+        recommendation=analyst_factors.get("recommendation"),
+        target_upside=target_upside,
+        short_percent_of_float=risk_factors.get("short_percent_of_float"),
+        institutional_ownership=risk_factors.get("institutional_ownership"),
+        # Sub-scores are domain-specific where applicable
+        profitability_score=prof_score,
+        balance_sheet_score=bs_score,
+        cash_generation_score=cash_score,
+        growth_score=growth_score,
+        liquidity_score=liq_score,
+        valuation_score=val_score,
+        analyst_score=analyst_score_val,
+        risk_score=risk_score_val,
         fields_available=fields_available,
         fields_total=16,
     )

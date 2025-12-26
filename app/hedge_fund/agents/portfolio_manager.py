@@ -72,7 +72,8 @@ class PortfolioManager(CalculationAgentBase):
         """
         Aggregate multiple agent signals into a consensus report.
         
-        Uses confidence-weighted voting to determine consensus signal.
+        Filters signals below min_confidence threshold, then uses
+        confidence-weighted voting to determine consensus signal.
         """
         if not signals:
             return PerTickerReport(
@@ -85,7 +86,24 @@ class PortfolioManager(CalculationAgentBase):
         
         symbol = signals[0].symbol
         
-        # Confidence-weighted voting
+        # Filter signals below min_confidence threshold
+        # Low-confidence signals should not influence the consensus
+        confident_signals = [s for s in signals if s.confidence >= self.min_confidence]
+        
+        if not confident_signals:
+            # All signals below threshold - return hold with low confidence
+            return PerTickerReport(
+                symbol=symbol,
+                signals=signals,  # Keep original signals for reference
+                consensus_signal=Signal.HOLD,
+                consensus_confidence=0.0,
+                summary="All signals below confidence threshold",
+                bullish_count=0,
+                bearish_count=0,
+                neutral_count=len(signals),
+            )
+        
+        # Confidence-weighted voting on filtered signals
         weighted_votes = defaultdict(float)
         total_weight = 0.0
         
@@ -93,7 +111,7 @@ class PortfolioManager(CalculationAgentBase):
         bearish_count = 0
         neutral_count = 0
         
-        for signal in signals:
+        for signal in confident_signals:
             weight = signal.confidence
             weighted_votes[signal.signal] += weight
             total_weight += weight
@@ -116,7 +134,7 @@ class PortfolioManager(CalculationAgentBase):
         
         # Calculate weighted average score for summary
         weighted_score = sum(
-            SIGNAL_VALUES[s.signal] * s.confidence for s in signals
+            SIGNAL_VALUES[s.signal] * s.confidence for s in confident_signals
         ) / total_weight if total_weight > 0 else 0
         
         # Build summary
