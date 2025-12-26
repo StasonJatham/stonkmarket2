@@ -917,9 +917,9 @@ async def quant_recommendations_daily_job() -> str:
         symbols = [s.symbol for s in symbols_list]
         logger.info(f"Processing {len(symbols)} symbols for quant recommendations")
 
-        # Fetch price history (400 days for proper training)
+        # Fetch price history (550 days for proper training with buffer)
         end_date = date.today()
-        start_date = end_date - timedelta(days=400)
+        start_date = end_date - timedelta(days=550)
 
         price_dfs: dict[str, pd.Series] = {}
         for symbol in symbols:
@@ -1112,9 +1112,9 @@ async def quant_engine_monthly_job() -> str:
 
                 symbols = [h["symbol"] for h in holdings]
 
-                # Fetch price history
+                # Fetch price history (550 days for sufficient training buffer)
                 end_date = date.today()
-                start_date = end_date - timedelta(days=400)
+                start_date = end_date - timedelta(days=550)
 
                 price_dfs = {}
                 for symbol in symbols:

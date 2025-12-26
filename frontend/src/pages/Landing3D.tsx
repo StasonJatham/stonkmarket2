@@ -44,7 +44,7 @@ export function Landing3D() {
       <Canvas
         className="landing3d-canvas"
         dpr={quality.dpr}
-        camera={{ position: [0, 3, 16], fov: 50, near: 0.1, far: 250 }}
+        camera={{ position: [0, 2, 12], fov: 55, near: 0.1, far: 200 }}
         gl={{ antialias: quality.tier !== 'low', powerPreference: 'high-performance' }}
       >
         <SceneRoot
