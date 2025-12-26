@@ -54,6 +54,14 @@ from .portfolio import (
     PortfolioAnalyticsResponse,
     PortfolioAnalyticsJobResponse,
 )
+from .quant_engine import (
+    GenerateRecommendationsRequest,
+    EngineOutputResponse,
+    RecommendationRowResponse,
+    AuditBlockResponse,
+    ValidationResultResponse,
+    TuningResultResponse,
+)
 
 __all__ = [
     # Auth
@@ -99,6 +107,13 @@ __all__ = [
     "PortfolioAnalyticsRequest",
     "PortfolioAnalyticsResponse",
     "PortfolioAnalyticsJobResponse",
+    # Quant Engine
+    "GenerateRecommendationsRequest",
+    "EngineOutputResponse",
+    "RecommendationRowResponse",
+    "AuditBlockResponse",
+    "ValidationResultResponse",
+    "TuningResultResponse",
     # Common
     "ErrorResponse",
     "HealthResponse",

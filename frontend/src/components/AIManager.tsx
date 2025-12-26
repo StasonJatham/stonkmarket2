@@ -195,14 +195,26 @@ export function AIManager() {
         if (!cancelled) {
           setDipCards(prev =>
             prev.map(card => {
+              if (!refreshSymbols.has(card.symbol)) {
+                return card;
+              }
               const refreshed = refreshedCards.find(r => r?.symbol === card.symbol);
-              return refreshed ?? card;
+              if (refreshed) {
+                return refreshed;
+              }
+              return { ...card, ai_pending: false, ai_task_id: null };
             })
           );
           if (selectedCard && refreshSymbols.has(selectedCard.symbol)) {
             const refreshed = refreshedCards.find(r => r?.symbol === selectedCard.symbol);
             if (refreshed) {
               setSelectedCard(refreshed);
+            } else {
+              setSelectedCard({
+                ...selectedCard,
+                ai_pending: false,
+                ai_task_id: null,
+              });
             }
           }
         }
@@ -277,7 +289,7 @@ export function AIManager() {
       if (field === 'summary') {
         const summaryResult = await regenerateSymbolAiSummary(symbol);
         if (summaryResult.task_id) {
-          setSummaryTasks(prev => ({ ...prev, [symbol]: summaryResult.task_id as string }));
+          setSummaryTasks(prev => ({ ...prev, [symbol]: summaryResult.task_id }));
         }
         return;
       }

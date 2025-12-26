@@ -255,20 +255,20 @@ def portfolio_analytics_worker_task() -> str:
 @celery_app.task(name="jobs.process_new_symbol")
 def process_new_symbol_task(symbol: str) -> str:
     """Process a newly created symbol in the background."""
-    from app.api.routes.symbols import _process_new_symbol
+    from app.services.symbol_processing import process_new_symbol
 
     normalized = symbol.upper()
-    return _run_async(_execute_symbol_task(normalized, _process_new_symbol(normalized)))
+    return _run_async(_execute_symbol_task(normalized, process_new_symbol(normalized)))
 
 
 @celery_app.task(name="jobs.process_approved_symbol")
 def process_approved_symbol_task(symbol: str) -> str:
     """Process an approved suggestion in the background."""
-    from app.api.routes.suggestions import _process_approved_symbol
+    from app.services.symbol_processing import process_approved_symbol
 
     normalized = symbol.upper()
     return _run_async(
-        _execute_symbol_task(normalized, _process_approved_symbol(normalized))
+        _execute_symbol_task(normalized, process_approved_symbol(normalized))
     )
 
 

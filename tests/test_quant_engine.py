@@ -596,3 +596,109 @@ class TestQuantEngineService:
         if result.get("status") == "success":
             assert service.alpha_model is not None
             assert service.risk_model is not None
+
+
+class TestQuantEngineAPI:
+    """Test the API routes for the quant engine."""
+
+    def test_quant_engine_route_imports(self):
+        """Route module should import successfully."""
+        from app.api.routes.quant_engine import router
+        
+        assert router is not None
+        assert router.prefix == "/portfolios"
+
+    def test_quant_engine_schemas_valid(self):
+        """Schemas should be valid Pydantic models."""
+        from app.schemas.quant_engine import (
+            GenerateRecommendationsRequest,
+            EngineOutputResponse,
+            RecommendationRowResponse,
+            AuditBlockResponse,
+        )
+        
+        # Test request model
+        req = GenerateRecommendationsRequest(
+            portfolio_value_eur=10000.0,
+            inflow_eur=1000.0,
+        )
+        assert req.portfolio_value_eur == 10000.0
+        assert req.inflow_eur == 1000.0
+        assert req.force_retrain is False
+        
+        # Test recommendation model
+        rec = RecommendationRowResponse(
+            ticker="AAPL",
+            action="BUY",
+            notional_eur=500.0,
+            delta_weight=0.05,
+            target_weight=0.10,
+            mu_hat=0.02,
+            uncertainty=0.01,
+            risk_contribution=0.08,
+            marginal_utility=0.015,
+        )
+        assert rec.ticker == "AAPL"
+        assert rec.action == "BUY"
+
+    def test_engine_output_to_response_helper(self):
+        """Helper function should convert engine output to response."""
+        from app.api.routes.quant_engine import _engine_output_to_response
+        from app.quant_engine.types import (
+            EngineOutput,
+            RecommendationRow,
+            AuditBlock,
+            SolverStatus,
+            ActionType,
+            MuHatUncertainty,
+            RiskInfo,
+        )
+        from datetime import date
+        
+        # Create mock engine output
+        rec = RecommendationRow(
+            ticker="AAPL",
+            name="Apple Inc.",
+            action=ActionType.BUY,
+            notional_eur=500.0,
+            delta_weight=0.05,
+            mu_hat=0.02,
+            mu_hat_uncertainty=MuHatUncertainty(
+                ci_low=0.01,
+                ci_high=0.03,
+                oos_rmse=0.005,
+            ),
+            risk=RiskInfo(marginal_vol=0.15, mcr=0.08),
+            delta_utility_net=0.015,
+            trade_cost_eur=1.0,
+            constraints=[],
+            dip=None,
+        )
+        
+        audit = AuditBlock(
+            model_weights={"ridge": 0.7, "lasso": 0.3},
+            oos_scores={"ridge": {"mse": 0.001}},
+            risk_model={"n_factors": 5},
+            hyperparams={"lambda_risk": 10.0},
+            data_hash="abc123",
+        )
+        
+        output = EngineOutput(
+            as_of=date.today(),
+            portfolio_value_eur=10000.0,
+            inflow_eur=1000.0,
+            solver_status=SolverStatus.OPTIMAL,
+            recommendations=[rec],
+            audit=audit,
+            total_trades=1,
+            total_transaction_cost_eur=1.0,
+            expected_portfolio_return=0.02,
+            expected_portfolio_risk=0.15,
+        )
+        
+        response = _engine_output_to_response(output)
+        
+        assert response.portfolio_value_eur == 10000.0
+        assert len(response.recommendations) == 1
+        assert response.recommendations[0].ticker == "AAPL"
+        assert response.audit.optimizer_status == "optimal"

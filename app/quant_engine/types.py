@@ -411,6 +411,10 @@ class EngineOutput:
     solver_status: SolverStatus
     recommendations: list[RecommendationRow]
     audit: AuditBlock
+    total_trades: int = 0
+    total_transaction_cost_eur: float = 0.0
+    expected_portfolio_return: float = 0.0
+    expected_portfolio_risk: float = 0.0
     diagnostics: dict[str, Any] | None = None  # Optional dip/regime info
     
     def to_dict(self) -> dict[str, Any]:
@@ -422,6 +426,10 @@ class EngineOutput:
             "solver_status": self.solver_status.value,
             "recommendations": [r.to_dict() for r in self.recommendations],
             "audit": self.audit.to_dict(),
+            "total_trades": self.total_trades,
+            "total_transaction_cost_eur": round(self.total_transaction_cost_eur, 2),
+            "expected_portfolio_return": round(self.expected_portfolio_return, 5),
+            "expected_portfolio_risk": round(self.expected_portfolio_risk, 5),
             "diagnostics": self.diagnostics,
         }
 
