@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 
 from app.core.logging import get_logger
 from app.database.connection import get_session
 from app.database.orm import SettingsChangeHistory
+
 
 logger = get_logger("repositories.settings_history")
 
@@ -19,9 +20,9 @@ async def log_change(
     setting_key: str,
     old_value: Any,
     new_value: Any,
-    changed_by: Optional[int] = None,
-    changed_by_username: Optional[str] = None,
-    change_reason: Optional[str] = None,
+    changed_by: int | None = None,
+    changed_by_username: str | None = None,
+    change_reason: str | None = None,
 ) -> int:
     """Log a settings change to the history table.
     
@@ -55,8 +56,8 @@ async def log_change(
 
 
 async def list_changes(
-    setting_type: Optional[str] = None,
-    setting_key: Optional[str] = None,
+    setting_type: str | None = None,
+    setting_key: str | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> tuple[list[dict], int]:
@@ -75,7 +76,7 @@ async def list_changes(
         # Build base query
         query = select(SettingsChangeHistory)
         count_query = select(func.count()).select_from(SettingsChangeHistory)
-        
+
         # Apply filters
         if setting_type:
             query = query.where(SettingsChangeHistory.setting_type == setting_type)
@@ -83,16 +84,16 @@ async def list_changes(
         if setting_key:
             query = query.where(SettingsChangeHistory.setting_key == setting_key)
             count_query = count_query.where(SettingsChangeHistory.setting_key == setting_key)
-        
+
         # Get total count
         count_result = await session.execute(count_query)
         total = count_result.scalar() or 0
-        
+
         # Get records with pagination
         query = query.order_by(SettingsChangeHistory.created_at.desc()).offset(offset).limit(limit)
         result = await session.execute(query)
         rows = result.scalars().all()
-        
+
         changes = [
             {
                 "id": row.id,
@@ -110,11 +111,11 @@ async def list_changes(
             }
             for row in rows
         ]
-        
+
         return changes, total
 
 
-async def get_change(change_id: int) -> Optional[dict]:
+async def get_change(change_id: int) -> dict | None:
     """Get a single settings change by ID.
     
     Args:
@@ -128,10 +129,10 @@ async def get_change(change_id: int) -> Optional[dict]:
             select(SettingsChangeHistory).where(SettingsChangeHistory.id == change_id)
         )
         row = result.scalar_one_or_none()
-        
+
         if not row:
             return None
-            
+
         return {
             "id": row.id,
             "setting_type": row.setting_type,
@@ -150,7 +151,7 @@ async def get_change(change_id: int) -> Optional[dict]:
 
 async def mark_as_reverted(
     change_id: int,
-    reverted_by: Optional[int] = None,
+    reverted_by: int | None = None,
 ) -> bool:
     """Mark a change as reverted.
     
@@ -166,15 +167,15 @@ async def mark_as_reverted(
             select(SettingsChangeHistory).where(SettingsChangeHistory.id == change_id)
         )
         record = result.scalar_one_or_none()
-        
+
         if not record:
             return False
-            
+
         record.reverted = True
         record.reverted_at = datetime.utcnow()
         record.reverted_by = reverted_by
         await session.commit()
-        
+
         logger.info(f"Marked change {change_id} as reverted by user {reverted_by}")
         return True
 
@@ -183,7 +184,7 @@ async def get_last_change_for_key(
     setting_type: str,
     setting_key: str,
     exclude_reverted: bool = True,
-) -> Optional[dict]:
+) -> dict | None:
     """Get the most recent change for a specific setting.
     
     Args:
@@ -200,18 +201,18 @@ async def get_last_change_for_key(
             .where(SettingsChangeHistory.setting_type == setting_type)
             .where(SettingsChangeHistory.setting_key == setting_key)
         )
-        
+
         if exclude_reverted:
             query = query.where(SettingsChangeHistory.reverted == False)  # noqa: E712
-        
+
         query = query.order_by(SettingsChangeHistory.created_at.desc()).limit(1)
-        
+
         result = await session.execute(query)
         row = result.scalar_one_or_none()
-        
+
         if not row:
             return None
-            
+
         return {
             "id": row.id,
             "setting_type": row.setting_type,

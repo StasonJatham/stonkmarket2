@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
-from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Path, Query
 
 from app.api.dependencies import require_admin
+from app.core.config import settings
 from app.core.exceptions import NotFoundError
 from app.core.security import TokenData
-from app.core.config import settings
 from app.jobs import enqueue_job, get_task_status
 from app.repositories import cronjobs_orm as cron_repo
 from app.repositories import settings_history_orm as settings_history_repo
@@ -22,6 +21,7 @@ from app.schemas.cronjobs import (
     JobStatusResponse,
     TaskStatusResponse,
 )
+
 
 router = APIRouter()
 
@@ -36,7 +36,7 @@ def _compute_next_runs(cron_expr: str, count: int = 5) -> list[datetime]:
     try:
         tz = ZoneInfo(settings.scheduler_timezone)
     except Exception:
-        tz = timezone.utc
+        tz = UTC
 
     now = datetime.now(tz)
     iterator = croniter(cron_expr, now)
@@ -63,8 +63,8 @@ def _validate_job_name(name: str = Path(..., min_length=1, max_length=50)) -> st
 async def get_cron_logs(
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
-    search: Optional[str] = Query(None),
-    status: Optional[str] = Query(None),
+    search: str | None = Query(None),
+    status: str | None = Query(None),
     admin: TokenData = Depends(require_admin),
 ) -> dict:
     """Get cron job logs - currently returns last run info from jobs."""
@@ -110,13 +110,13 @@ async def get_cron_logs(
 
 @router.get(
     "",
-    response_model=List[CronJobWithStatsResponse],
+    response_model=list[CronJobWithStatsResponse],
     summary="List all cron jobs",
     description="Get all configured cron jobs with execution stats (admin only).",
 )
 async def list_cronjobs(
     admin: TokenData = Depends(require_admin),
-) -> List[CronJobWithStatsResponse]:
+) -> list[CronJobWithStatsResponse]:
     """List all cron jobs with stats."""
     jobs = await cron_repo.list_cronjobs_with_stats()
     return [
@@ -246,14 +246,14 @@ async def run_cronjob(
             status="queued",
             message="Job enqueued",
             task_id=task_id,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
     except Exception as exc:
         return JobStatusResponse(
             name=name,
             status="error",
             message=str(exc),
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
 
 

@@ -16,25 +16,24 @@ Tuned parameters:
 
 from __future__ import annotations
 
+import itertools
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Callable
-import itertools
+from typing import Any
 
 import numpy as np
 import pandas as pd
 
 from app.quant_engine.types import (
-    QuantConfig,
     HyperparameterLog,
-    WalkForwardFold,
+    QuantConfig,
 )
 from app.quant_engine.walk_forward import (
     WalkForwardValidator,
-    generate_walk_forward_splits,
-    split_data,
 )
+
 
 logger = logging.getLogger(__name__)
 
@@ -42,27 +41,27 @@ logger = logging.getLogger(__name__)
 @dataclass
 class HyperparameterGrid:
     """Grid of hyperparameters to search."""
-    
+
     # History window (months)
     history_months: list[int] = None
-    
+
     # Alpha model regularization
     ridge_alpha: list[float] = None
     lasso_alpha: list[float] = None
     ensemble_method: list[str] = None
-    
+
     # Dip adjustment
     dip_k: list[float] = None
-    
+
     # Risk model
     n_pca_factors: list[int] = None
     min_variance_explained: list[float] = None
-    
+
     # Optimizer
     lambda_risk: list[float] = None
     turnover_penalty: list[float] = None
     max_weight: list[float] = None
-    
+
     def __post_init__(self):
         """Set defaults."""
         if self.history_months is None:
@@ -85,7 +84,7 @@ class HyperparameterGrid:
             self.turnover_penalty = [0.0005, 0.001, 0.002]
         if self.max_weight is None:
             self.max_weight = [0.10, 0.15, 0.20]
-    
+
     def to_list(self) -> list[dict[str, Any]]:
         """Convert to list of parameter dictionaries."""
         params = {
@@ -99,15 +98,15 @@ class HyperparameterGrid:
             "turnover_penalty": self.turnover_penalty,
             "max_weight": self.max_weight,
         }
-        
+
         keys = list(params.keys())
         values = list(params.values())
-        
+
         combinations = list(itertools.product(*values))
-        
+
         return [dict(zip(keys, combo)) for combo in combinations]
-    
-    def get_reduced_grid(self) -> "HyperparameterGrid":
+
+    def get_reduced_grid(self) -> HyperparameterGrid:
         """Get reduced grid for fast search."""
         return HyperparameterGrid(
             history_months=[36],
@@ -125,7 +124,7 @@ class HyperparameterGrid:
 @dataclass
 class TuningResult:
     """Result from hyperparameter tuning."""
-    
+
     best_params: dict[str, Any]
     best_score: float
     all_results: list[HyperparameterLog]
@@ -137,7 +136,7 @@ class HyperparameterTuner:
     """
     Nested walk-forward hyperparameter tuner.
     """
-    
+
     def __init__(
         self,
         base_config: QuantConfig,
@@ -167,20 +166,20 @@ class HyperparameterTuner:
         self.max_evaluations = max_evaluations
         self.random_search = random_search
         self.rng = np.random.default_rng(random_seed)
-    
+
     def _sample_params(self, n: int) -> list[dict[str, Any]]:
         """Sample n parameter combinations."""
         all_params = self.grid.to_list()
-        
+
         if len(all_params) <= n:
             return all_params
-        
+
         if self.random_search:
             indices = self.rng.choice(len(all_params), size=n, replace=False)
             return [all_params[i] for i in indices]
         else:
             return all_params[:n]
-    
+
     def _update_config(
         self,
         params: dict[str, Any],
@@ -215,9 +214,9 @@ class HyperparameterTuner:
             ),
             "shrinkage_factor": self.base_config.shrinkage_factor,
         }
-        
+
         return QuantConfig(**config_dict)
-    
+
     def tune(
         self,
         returns: pd.DataFrame,
@@ -242,40 +241,40 @@ class HyperparameterTuner:
             Tuning results.
         """
         import time
-        
+
         start_time = time.time()
-        
+
         param_combinations = self._sample_params(self.max_evaluations)
         logger.info(f"Tuning {len(param_combinations)} parameter combinations")
-        
+
         all_results = []
         best_score = float("-inf")
         best_params = None
-        
+
         for i, params in enumerate(param_combinations):
             logger.info(f"Evaluating params {i + 1}/{len(param_combinations)}: {params}")
-            
+
             try:
                 config = self._update_config(params)
-                
+
                 validator = WalkForwardValidator(config)
-                
+
                 model_fn = model_factory(config)
                 optimize_fn = optimize_factory(config)
-                
+
                 result = validator.run_validation(
                     returns=returns,
                     model_fn=model_fn,
                     optimize_fn=optimize_fn,
                 )
-                
+
                 # Objective: Sharpe - drawdown penalty - turnover penalty
                 score = (
                     result.aggregate_sharpe
                     - 0.5 * result.aggregate_max_drawdown
                     - 0.1 * result.total_turnover
                 )
-                
+
                 log = HyperparameterLog(
                     timestamp=datetime.now(),
                     parameters=params,
@@ -287,16 +286,16 @@ class HyperparameterTuner:
                     selected=False,  # Will update for best
                 )
                 all_results.append(log)
-                
+
                 if score > best_score:
                     best_score = score
                     best_params = params
                     logger.info(f"New best score: {score:.4f}")
-                
+
             except Exception as e:
                 logger.warning(f"Failed to evaluate params {params}: {e}")
                 continue
-        
+
         # Mark best as selected
         for log in all_results:
             if log.parameters == best_params:
@@ -312,14 +311,14 @@ class HyperparameterTuner:
                     baseline_sharpe=log.baseline_sharpe,
                     selected=True,
                 )
-        
+
         elapsed = time.time() - start_time
-        
+
         logger.info(
             f"Tuning complete: best_score={best_score:.4f}, "
             f"best_params={best_params}, elapsed={elapsed:.1f}s"
         )
-        
+
         return TuningResult(
             best_params=best_params or {},
             best_score=best_score,
@@ -327,7 +326,7 @@ class HyperparameterTuner:
             n_evaluations=len(param_combinations),
             tuning_time_seconds=elapsed,
         )
-    
+
     def tune_dip_k_only(
         self,
         returns: pd.DataFrame,
@@ -358,9 +357,9 @@ class HyperparameterTuner:
         """
         if k_values is None:
             k_values = [0.0, 0.02, 0.05, 0.1, 0.15, 0.2, 0.3]
-        
+
         scores = {}
-        
+
         for k in k_values:
             # Adjust mu_hat by dip score
             # μ_hat_adj = μ_hat + k * max(0, -DipScore)
@@ -370,17 +369,17 @@ class HyperparameterTuner:
                 latest_dip = dip_scores.iloc[-1] if len(dip_scores) > 0 else pd.Series(dtype=float)
                 dip_boost = k * (-latest_dip).clip(lower=0)
                 mu_hat_adj = mu_hat_base + dip_boost.reindex(mu_hat_base.index, fill_value=0)
-            
+
             # Simple forward return correlation
             forward_returns = returns.mean()  # Average return
             corr = mu_hat_adj.corr(forward_returns)
-            
+
             scores[k] = corr if not np.isnan(corr) else 0.0
-        
+
         best_k = max(scores, key=scores.get)
-        
+
         logger.info(f"Dip k tuning: best_k={best_k}, scores={scores}")
-        
+
         return best_k, scores
 
 

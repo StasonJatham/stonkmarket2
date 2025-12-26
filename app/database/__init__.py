@@ -9,65 +9,66 @@ New code should use SQLAlchemy ORM with get_session().
 
 # asyncpg interface (raw SQL - legacy, being migrated to ORM)
 from .connection import (
-    init_pg_pool,
+    close_database,
     close_pg_pool,
-    get_pg_pool,
-    get_pg_connection,
-    fetch_one,
-    fetch_all,
-    fetch_val,
+    close_sqlalchemy_engine,
     execute,
     execute_many,
-    transaction,
+    fetch_all,
+    fetch_one,
+    fetch_val,
     get_async_database_url,
+    get_engine,
+    get_pg_connection,
+    get_pg_pool,
+    get_session,
+    init_database,
+    init_pg_pool,
     # SQLAlchemy interface
     init_sqlalchemy_engine,
-    close_sqlalchemy_engine,
-    get_session,
-    get_engine,
-    init_database,
-    close_database,
+    transaction,
 )
 
 # SQLAlchemy ORM models
 from .orm import (
-    Base,
-    # Auth & Security
-    AuthUser,
-    SecureApiKey,
-    UserApiKey,
-    # Symbols & Dips
-    Symbol,
-    DipState,
-    DipHistory,
-    # Suggestions
-    StockSuggestion,
-    SuggestionVote,
-    # Voting
-    DipVote,
-    DipAIAnalysis,
+    # AI
+    AiAgentAnalysis,
+    AnalysisVersion,
     # API & Batch
     ApiUsage,
+    # Auth & Security
+    AuthUser,
+    Base,
     BatchJob,
     BatchTaskError,
     # Scheduler
     CronJob,
-    # DipFinder
-    PriceHistory,
-    DipfinderSignal,
+    DataVersion,
+    DipAIAnalysis,
     DipfinderConfig,
     DipfinderHistory,
-    YfinanceInfoCache,
-    # AI
-    AiAgentAnalysis,
+    DipfinderSignal,
+    DipHistory,
+    DipState,
+    # Voting
+    DipVote,
+    # DipFinder
+    PriceHistory,
+    SecureApiKey,
     StockFundamentals,
+    # Suggestions
+    StockSuggestion,
+    SuggestionVote,
+    # Symbols & Dips
+    Symbol,
+    SymbolIngestQueue,
+    SymbolSearchLog,
     # Search & Versioning
     SymbolSearchResult,
-    SymbolSearchLog,
-    DataVersion,
-    AnalysisVersion,
-    SymbolIngestQueue,
+    UserApiKey,
+    YfinanceInfoCache,
 )
+
 
 __all__ = [
     # asyncpg helpers

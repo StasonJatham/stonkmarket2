@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 from pydantic import BaseModel, Field
 
 
@@ -34,12 +32,12 @@ class ApiKeyResponse(BaseModel):
 
     id: int
     key_name: str
-    key_hint: Optional[str] = Field(
+    key_hint: str | None = Field(
         None, description="Partial key hint like 'sk-...abc1'"
     )
     created_at: str
     updated_at: str
-    created_by: Optional[str] = Field(
+    created_by: str | None = Field(
         None, description="Username who created the key (None for system-seeded keys)"
     )
 

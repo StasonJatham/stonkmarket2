@@ -8,22 +8,22 @@ Usage:
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Optional
 
-from sqlalchemy import select, delete, func, distinct, case, and_
+from sqlalchemy import and_, delete, distinct, func, select
 
+from app.core.logging import get_logger
 from app.database.connection import get_session
 from app.database.orm import DipHistory
-from app.core.logging import get_logger
+
 
 logger = get_logger("repositories.dip_history_orm")
 
 
 async def get_dip_changes(
     hours: int = 24,
-    action: Optional[str] = None,
+    action: str | None = None,
     limit: int = 100,
 ) -> list[dict]:
     """
@@ -37,19 +37,19 @@ async def get_dip_changes(
     Returns:
         List of change records with symbol, action, price info, and timestamp
     """
-    since = datetime.now(timezone.utc) - timedelta(hours=hours)
+    since = datetime.now(UTC) - timedelta(hours=hours)
 
     async with get_session() as session:
         stmt = (
             select(DipHistory)
             .where(DipHistory.recorded_at >= since)
         )
-        
+
         if action:
             stmt = stmt.where(DipHistory.action == action)
-        
+
         stmt = stmt.order_by(DipHistory.recorded_at.desc()).limit(limit)
-        
+
         result = await session.execute(stmt)
         rows = result.scalars().all()
 
@@ -73,7 +73,7 @@ async def get_dip_changes_summary(hours: int = 24) -> dict:
     Returns:
         Summary with counts of added, removed, updated dips
     """
-    since = datetime.now(timezone.utc) - timedelta(hours=hours)
+    since = datetime.now(UTC) - timedelta(hours=hours)
 
     async with get_session() as session:
         result = await session.execute(
@@ -102,7 +102,7 @@ async def get_dip_changes_summary(hours: int = 24) -> dict:
 
 async def get_symbols_added_since(hours: int = 24) -> list[str]:
     """Get list of symbols added in the last X hours."""
-    since = datetime.now(timezone.utc) - timedelta(hours=hours)
+    since = datetime.now(UTC) - timedelta(hours=hours)
 
     async with get_session() as session:
         result = await session.execute(
@@ -119,7 +119,7 @@ async def get_symbols_added_since(hours: int = 24) -> list[str]:
 
 async def get_symbols_removed_since(hours: int = 24) -> list[str]:
     """Get list of symbols removed in the last X hours."""
-    since = datetime.now(timezone.utc) - timedelta(hours=hours)
+    since = datetime.now(UTC) - timedelta(hours=hours)
 
     async with get_session() as session:
         result = await session.execute(
@@ -136,7 +136,7 @@ async def get_symbols_removed_since(hours: int = 24) -> list[str]:
 
 async def get_symbol_history(symbol: str, days: int = 30) -> list[dict]:
     """Get the history of changes for a specific symbol."""
-    since = datetime.now(timezone.utc) - timedelta(days=days)
+    since = datetime.now(UTC) - timedelta(days=days)
 
     async with get_session() as session:
         result = await session.execute(
@@ -166,9 +166,9 @@ async def get_symbol_history(symbol: str, days: int = 30) -> list[dict]:
 async def manually_record_change(
     symbol: str,
     action: str,
-    current_price: Optional[float] = None,
-    ath_price: Optional[float] = None,
-    dip_percentage: Optional[float] = None,
+    current_price: float | None = None,
+    ath_price: float | None = None,
+    dip_percentage: float | None = None,
 ) -> int:
     """
     Manually record a dip change (used for migrations or manual adjustments).
@@ -195,7 +195,7 @@ async def cleanup_old_history(days: int = 90) -> int:
     Returns:
         Number of records deleted
     """
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    cutoff = datetime.now(UTC) - timedelta(days=days)
 
     async with get_session() as session:
         result = await session.execute(
@@ -203,6 +203,6 @@ async def cleanup_old_history(days: int = 90) -> int:
         )
         await session.commit()
         count = result.rowcount
-        
+
     logger.info(f"Cleaned up {count} old dip history records")
     return count

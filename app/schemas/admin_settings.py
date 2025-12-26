@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, List, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -14,7 +14,7 @@ class BenchmarkConfig(BaseModel):
     id: str = Field(..., description="Unique identifier for the benchmark")
     symbol: str = Field(..., description="Yahoo Finance symbol for the benchmark")
     name: str = Field(..., description="Display name for the benchmark")
-    description: Optional[str] = Field(None, description="Description of the benchmark")
+    description: str | None = Field(None, description="Description of the benchmark")
 
 
 class AppSettingsResponse(BaseModel):
@@ -92,7 +92,7 @@ class RuntimeSettingsResponse(BaseModel):
     cache_ttl_charts: int = Field(
         default=0, ge=0, le=7200, description="Cache TTL for price charts (seconds, 0=disabled)"
     )
-    benchmarks: List[BenchmarkConfig] = Field(
+    benchmarks: list[BenchmarkConfig] = Field(
         default_factory=list, description="Configured benchmark indices"
     )
 
@@ -100,21 +100,21 @@ class RuntimeSettingsResponse(BaseModel):
 class RuntimeSettingsUpdate(BaseModel):
     """Runtime settings update request."""
 
-    signal_threshold_strong_buy: Optional[float] = Field(default=None, ge=0, le=100)
-    signal_threshold_buy: Optional[float] = Field(default=None, ge=0, le=100)
-    signal_threshold_hold: Optional[float] = Field(default=None, ge=0, le=100)
-    ai_enrichment_enabled: Optional[bool] = None
-    ai_batch_size: Optional[int] = Field(default=None, ge=0, le=50)
-    ai_model: Optional[str] = None
-    suggestion_cleanup_days: Optional[int] = Field(default=None, ge=1, le=365)
-    auto_approve_votes: Optional[int] = Field(default=None, ge=1, le=1000)
+    signal_threshold_strong_buy: float | None = Field(default=None, ge=0, le=100)
+    signal_threshold_buy: float | None = Field(default=None, ge=0, le=100)
+    signal_threshold_hold: float | None = Field(default=None, ge=0, le=100)
+    ai_enrichment_enabled: bool | None = None
+    ai_batch_size: int | None = Field(default=None, ge=0, le=50)
+    ai_model: str | None = None
+    suggestion_cleanup_days: int | None = Field(default=None, ge=1, le=365)
+    auto_approve_votes: int | None = Field(default=None, ge=1, le=1000)
     # Cache TTL settings (0 = disabled)
-    cache_ttl_symbols: Optional[int] = Field(default=None, ge=0, le=3600)
-    cache_ttl_suggestions: Optional[int] = Field(default=None, ge=0, le=3600)
-    cache_ttl_ai_content: Optional[int] = Field(default=None, ge=0, le=7200)
-    cache_ttl_ranking: Optional[int] = Field(default=None, ge=0, le=7200)
-    cache_ttl_charts: Optional[int] = Field(default=None, ge=0, le=7200)
-    benchmarks: Optional[List[BenchmarkConfig]] = None
+    cache_ttl_symbols: int | None = Field(default=None, ge=0, le=3600)
+    cache_ttl_suggestions: int | None = Field(default=None, ge=0, le=3600)
+    cache_ttl_ai_content: int | None = Field(default=None, ge=0, le=7200)
+    cache_ttl_ranking: int | None = Field(default=None, ge=0, le=7200)
+    cache_ttl_charts: int | None = Field(default=None, ge=0, le=7200)
+    benchmarks: list[BenchmarkConfig] | None = None
 
 
 class CronJobSummary(BaseModel):
@@ -122,9 +122,9 @@ class CronJobSummary(BaseModel):
 
     name: str
     cron: str
-    description: Optional[str] = None
-    last_run: Optional[str] = None
-    last_status: Optional[str] = None
+    description: str | None = None
+    last_run: str | None = None
+    last_status: str | None = None
 
 
 class SystemStatusResponse(BaseModel):
@@ -132,7 +132,7 @@ class SystemStatusResponse(BaseModel):
 
     app_settings: AppSettingsResponse
     runtime_settings: RuntimeSettingsResponse
-    cronjobs: List[CronJobSummary]
+    cronjobs: list[CronJobSummary]
     openai_configured: bool
     logo_dev_configured: bool
     total_symbols: int
@@ -152,10 +152,10 @@ class BatchJobResponse(BaseModel):
     total_requests: int = Field(default=0, description="Total items in batch")
     completed_requests: int = Field(default=0, description="Successfully completed items")
     failed_requests: int = Field(default=0, description="Failed items")
-    estimated_cost_usd: Optional[float] = Field(default=None, description="Estimated cost in USD")
-    actual_cost_usd: Optional[float] = Field(default=None, description="Actual cost in USD")
-    created_at: Optional[str] = None
-    completed_at: Optional[str] = None
+    estimated_cost_usd: float | None = Field(default=None, description="Estimated cost in USD")
+    actual_cost_usd: float | None = Field(default=None, description="Actual cost in USD")
+    created_at: str | None = None
+    completed_at: str | None = None
 
     @property
     def progress_pct(self) -> float:
@@ -168,7 +168,7 @@ class BatchJobResponse(BaseModel):
 class BatchJobListResponse(BaseModel):
     """Response for batch job list."""
 
-    jobs: List[BatchJobResponse]
+    jobs: list[BatchJobResponse]
     total: int
     active_count: int = Field(default=0, description="Number of actively processing jobs")
 
@@ -182,21 +182,21 @@ class SettingsChangeHistoryItem(BaseModel):
     id: int
     setting_type: str = Field(..., description="Type of setting (runtime, cronjob, api_key)")
     setting_key: str = Field(..., description="The specific setting key that changed")
-    old_value: Optional[Any] = Field(None, description="Previous value")
-    new_value: Optional[Any] = Field(None, description="New value")
-    changed_by: Optional[int] = Field(None, description="User ID who made the change")
-    changed_by_username: Optional[str] = Field(None, description="Username who made the change")
-    change_reason: Optional[str] = Field(None, description="Reason for the change")
+    old_value: Any | None = Field(None, description="Previous value")
+    new_value: Any | None = Field(None, description="New value")
+    changed_by: int | None = Field(None, description="User ID who made the change")
+    changed_by_username: str | None = Field(None, description="Username who made the change")
+    change_reason: str | None = Field(None, description="Reason for the change")
     reverted: bool = Field(default=False, description="Whether this change has been reverted")
-    reverted_at: Optional[datetime] = Field(None, description="When the change was reverted")
-    reverted_by: Optional[int] = Field(None, description="User ID who reverted the change")
+    reverted_at: datetime | None = Field(None, description="When the change was reverted")
+    reverted_by: int | None = Field(None, description="User ID who reverted the change")
     created_at: datetime = Field(..., description="When the change was made")
 
 
 class SettingsChangeHistoryResponse(BaseModel):
     """Response for settings change history list."""
 
-    changes: List[SettingsChangeHistoryItem]
+    changes: list[SettingsChangeHistoryItem]
     total: int
     limit: int
     offset: int
@@ -205,7 +205,7 @@ class SettingsChangeHistoryResponse(BaseModel):
 class RevertChangeRequest(BaseModel):
     """Request to revert a settings change."""
 
-    reason: Optional[str] = Field(None, description="Optional reason for reverting")
+    reason: str | None = Field(None, description="Optional reason for reverting")
 
 
 class RevertChangeResponse(BaseModel):
@@ -215,4 +215,4 @@ class RevertChangeResponse(BaseModel):
     message: str
     reverted_setting_type: str
     reverted_setting_key: str
-    restored_value: Optional[Any] = None
+    restored_value: Any | None = None

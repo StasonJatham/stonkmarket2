@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -14,7 +14,7 @@ class ErrorResponse(BaseModel):
     error: str = Field(..., description="Error code", examples=["NOT_FOUND"])
     message: str = Field(..., description="Human-readable error message")
     status: int = Field(..., description="HTTP status code")
-    details: Optional[Dict[str, Any]] = Field(
+    details: dict[str, Any] | None = Field(
         default=None, description="Additional error details"
     )
 
@@ -38,8 +38,8 @@ class HealthResponse(BaseModel):
         examples=["healthy", "degraded", "unhealthy"],
     )
     version: str = Field(..., description="Application version")
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    checks: Dict[str, bool] = Field(
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    checks: dict[str, bool] = Field(
         default_factory=dict, description="Individual service health checks"
     )
 

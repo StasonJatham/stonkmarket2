@@ -11,6 +11,7 @@ from typing import Optional
 from app.hedge_fund.agents.base import AgentBase, AgentSignal
 from app.hedge_fund.schemas import AgentType, LLMMode, MarketData, Signal
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -75,13 +76,13 @@ class AIAgentsServiceAdapter(ExternalAgentAdapter):
         data: MarketData,
         *,
         mode: LLMMode = LLMMode.REALTIME,
-        run_id: Optional[str] = None,
+        run_id: str | None = None,
     ) -> AgentSignal:
         """Run the external agent and convert result to AgentSignal."""
         from app.services.ai_agents import (
-            _run_single_agent,
-            _format_metrics_for_prompt,
             AGENTS,
+            _format_metrics_for_prompt,
+            _run_single_agent,
         )
 
         # Get agent config
@@ -99,7 +100,7 @@ class AIAgentsServiceAdapter(ExternalAgentAdapter):
         # Get fundamentals in expected format
         fundamentals = self._convert_fundamentals(data.fundamentals)
         stock_data = self._convert_stock_data(data)
-        
+
         # Format metrics text for the prompt
         metrics_text = _format_metrics_for_prompt(fundamentals, stock_data)
 
@@ -139,7 +140,7 @@ class AIAgentsServiceAdapter(ExternalAgentAdapter):
                 symbol=symbol,
                 signal=Signal.HOLD.value,
                 confidence=0.1,
-                reasoning=f"External agent failed: {str(e)}",
+                reasoning=f"External agent failed: {e!s}",
                 key_factors=["Error"],
             )
 
@@ -206,7 +207,7 @@ class FundamentalsServiceAdapter(ExternalAgentAdapter):
         data: MarketData,
         *,
         mode: LLMMode = LLMMode.REALTIME,
-        run_id: Optional[str] = None,
+        run_id: str | None = None,
     ) -> AgentSignal:
         """Get quality score from fundamentals service."""
         from app.dipfinder.fundamentals import calculate_quality_metrics
@@ -275,7 +276,7 @@ class FundamentalsServiceAdapter(ExternalAgentAdapter):
                 symbol=symbol,
                 signal=Signal.HOLD.value,
                 confidence=0.1,
-                reasoning=f"Quality calculation failed: {str(e)}",
+                reasoning=f"Quality calculation failed: {e!s}",
                 key_factors=["Error"],
             )
 
@@ -314,10 +315,10 @@ class OpenAIRatingAdapter(ExternalAgentAdapter):
         data: MarketData,
         *,
         mode: LLMMode = LLMMode.REALTIME,
-        run_id: Optional[str] = None,
+        run_id: str | None = None,
     ) -> AgentSignal:
         """Get rating from OpenAI client."""
-        from app.services.openai_client import generate, TaskType
+        from app.services.openai_client import TaskType, generate
 
         try:
             # Build context for rating
@@ -366,7 +367,7 @@ class OpenAIRatingAdapter(ExternalAgentAdapter):
                 symbol=symbol,
                 signal=Signal.HOLD.value,
                 confidence=0.1,
-                reasoning=f"Rating failed: {str(e)}",
+                reasoning=f"Rating failed: {e!s}",
                 key_factors=["Error"],
             )
 

@@ -18,14 +18,14 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
-from typing import Optional
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
+from app.core.logging import get_logger
 from app.database.connection import get_session
 from app.database.orm import DipState
-from app.core.logging import get_logger
+
 
 logger = get_logger("repositories.dip_state_orm")
 
@@ -49,7 +49,7 @@ async def upsert_dip_state(
     """
     async with get_session() as session:
         now = datetime.utcnow()
-        
+
         stmt = insert(DipState).values(
             symbol=symbol.upper(),
             current_price=Decimal(str(current_price)),
@@ -66,13 +66,13 @@ async def upsert_dip_state(
                 "last_updated": now,
             }
         )
-        
+
         await session.execute(stmt)
         await session.commit()
         return True
 
 
-async def get_dip_state(symbol: str) -> Optional[DipState]:
+async def get_dip_state(symbol: str) -> DipState | None:
     """Get dip state for a symbol.
     
     Args:
@@ -102,7 +102,7 @@ async def delete_dip_state(symbol: str) -> bool:
             select(DipState).where(DipState.symbol == symbol.upper())
         )
         dip = result.scalar_one_or_none()
-        
+
         if dip:
             await session.delete(dip)
             await session.commit()
@@ -121,7 +121,7 @@ async def get_dip_states_for_symbols(symbols: list[str]) -> dict[str, DipState]:
     """
     if not symbols:
         return {}
-    
+
     async with get_session() as session:
         upper_symbols = [s.upper() for s in symbols]
         result = await session.execute(

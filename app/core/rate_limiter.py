@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-import time
 import threading
-from typing import Optional
+import time
 from functools import wraps
 
 from app.core.logging import get_logger
+
 
 logger = get_logger("core.rate_limiter")
 
@@ -19,7 +19,7 @@ class RateLimiter:
     
     Thread-safe and async-compatible.
     """
-    
+
     def __init__(
         self,
         name: str,
@@ -40,8 +40,8 @@ class RateLimiter:
         self.tokens = float(burst_size)
         self.last_update = time.monotonic()
         self._lock = threading.Lock()
-        self._async_lock: Optional[asyncio.Lock] = None
-        
+        self._async_lock: asyncio.Lock | None = None
+
     def _refill(self) -> None:
         """Refill tokens based on time elapsed."""
         now = time.monotonic()
@@ -51,7 +51,7 @@ class RateLimiter:
             self.tokens + elapsed * self.calls_per_second
         )
         self.last_update = now
-        
+
     def acquire_sync(self, timeout: float = 30.0) -> bool:
         """
         Acquire a token synchronously, blocking if necessary.
@@ -63,25 +63,25 @@ class RateLimiter:
             True if token acquired, False if timeout
         """
         start = time.monotonic()
-        
+
         while True:
             with self._lock:
                 self._refill()
-                
+
                 if self.tokens >= 1.0:
                     self.tokens -= 1.0
                     return True
-                    
+
                 # Calculate wait time
                 wait_time = (1.0 - self.tokens) / self.calls_per_second
-                
+
             if time.monotonic() - start + wait_time > timeout:
                 logger.warning(f"Rate limiter {self.name} timeout after {timeout}s")
                 return False
-                
+
             logger.debug(f"Rate limiter {self.name} waiting {wait_time:.2f}s")
             time.sleep(min(wait_time, 0.5))  # Sleep in chunks to allow timeout
-            
+
     async def acquire(self, timeout: float = 30.0) -> bool:
         """
         Acquire a token asynchronously, waiting if necessary.
@@ -94,27 +94,27 @@ class RateLimiter:
         """
         if self._async_lock is None:
             self._async_lock = asyncio.Lock()
-            
+
         start = time.monotonic()
-        
+
         while True:
             async with self._async_lock:
                 with self._lock:
                     self._refill()
-                    
+
                     if self.tokens >= 1.0:
                         self.tokens -= 1.0
                         return True
-                        
+
                     wait_time = (1.0 - self.tokens) / self.calls_per_second
-                    
+
             if time.monotonic() - start + wait_time > timeout:
                 logger.warning(f"Rate limiter {self.name} timeout after {timeout}s")
                 return False
-                
+
             logger.debug(f"Rate limiter {self.name} waiting {wait_time:.2f}s")
             await asyncio.sleep(min(wait_time, 0.5))
-            
+
     def status(self) -> dict:
         """Get current rate limiter status."""
         with self._lock:

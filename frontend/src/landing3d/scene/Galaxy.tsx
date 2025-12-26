@@ -59,7 +59,13 @@ export function Galaxy({ assets, snapshot, count }: GalaxyProps) {
         onPointerOut={() => setHovered(null)}
       >
         <sphereGeometry args={[0.22, 18, 18]} />
-        <meshStandardMaterial emissive="#1a4666" color="#0d1c2a" roughness={0.35} metalness={0.3} />
+        <meshStandardMaterial
+          emissive="#1a4666"
+          color="#0d1c2a"
+          roughness={0.35}
+          metalness={0.3}
+          vertexColors
+        />
       </instancedMesh>
 
       {hoveredPoint && (

@@ -16,9 +16,10 @@ from datetime import date, timedelta
 
 from sqlalchemy import delete, func
 
-from app.database.connection import get_session
-from app.database.orm import DipfinderSignal, YfinanceInfoCache, PriceHistory
 from app.core.logging import get_logger
+from app.database.connection import get_session
+from app.database.orm import DipfinderSignal, PriceHistory, YfinanceInfoCache
+
 
 logger = get_logger("repositories.cleanup_orm")
 
@@ -61,7 +62,7 @@ async def delete_old_price_history(days: int = 730) -> int:
         Number of deleted rows
     """
     cutoff_date = date.today() - timedelta(days=days)
-    
+
     async with get_session() as session:
         result = await session.execute(
             delete(PriceHistory).where(PriceHistory.date < cutoff_date)

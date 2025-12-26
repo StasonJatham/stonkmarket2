@@ -68,9 +68,9 @@ from celery.signals import worker_process_shutdown
 @worker_process_shutdown.connect
 def worker_process_shutdown_handler(**kwargs):
     """Clean up async resources when worker process shuts down."""
-    from app.jobs.tasks import _worker_loop
     from app.cache.client import close_valkey_client
-    
+    from app.jobs.tasks import _worker_loop
+
     if _worker_loop and not _worker_loop.is_closed():
         try:
             _worker_loop.run_until_complete(close_valkey_client())

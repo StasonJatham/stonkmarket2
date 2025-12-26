@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from functools import lru_cache
-from typing import List, Optional
 
 from pydantic import ConfigDict, Field
 from pydantic_settings import BaseSettings
@@ -20,7 +19,7 @@ class DipFinderSettings(BaseSettings):
     model_config = ConfigDict(extra="ignore")
 
     # Available windows for dip calculation
-    dipfinder_windows: List[int] = Field(
+    dipfinder_windows: list[int] = Field(
         default=[7, 30, 100, 365],
         description="Available windows for dip calculation (days)",
     )
@@ -149,7 +148,7 @@ class DipFinderConfig:
     """
 
     # Windows
-    windows: List[int] = field(default_factory=lambda: [7, 30, 100, 365])
+    windows: list[int] = field(default_factory=lambda: [7, 30, 100, 365])
 
     # Dip thresholds
     min_dip_abs: float = 0.10
@@ -197,8 +196,8 @@ class DipFinderConfig:
 
     @classmethod
     def from_settings(
-        cls, settings: Optional[DipFinderSettings] = None
-    ) -> "DipFinderConfig":
+        cls, settings: DipFinderSettings | None = None
+    ) -> DipFinderConfig:
         """Create config from settings."""
         if settings is None:
             settings = DipFinderSettings()
@@ -233,13 +232,13 @@ class DipFinderConfig:
 
     def with_overrides(
         self,
-        min_dip_abs: Optional[float] = None,
-        min_persist_days: Optional[int] = None,
-        dip_percentile_threshold: Optional[float] = None,
-        dip_vs_typical_threshold: Optional[float] = None,
-        quality_gate: Optional[float] = None,
-        stability_gate: Optional[float] = None,
-    ) -> "DipFinderConfig":
+        min_dip_abs: float | None = None,
+        min_persist_days: int | None = None,
+        dip_percentile_threshold: float | None = None,
+        dip_vs_typical_threshold: float | None = None,
+        quality_gate: float | None = None,
+        stability_gate: float | None = None,
+    ) -> DipFinderConfig:
         """Return a new config with optional overrides applied."""
         from dataclasses import replace
 

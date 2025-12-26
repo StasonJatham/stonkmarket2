@@ -3,37 +3,33 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime, timedelta
-from typing import List, Optional
 
-from fastapi import APIRouter, Depends, Query, Request, Header
+from fastapi import APIRouter, Depends, Header, Query, Request
 
 from app.api.dependencies import require_admin
-from app.core.exceptions import ValidationError, NotFoundError
-from app.core.logging import get_logger
-from app.core.security import TokenData, decode_access_token
 from app.celery_app import celery_app
 from app.core.client_identity import (
-    get_client_fingerprint,
-    get_server_fingerprint,
-    check_vote_allowed,
-    record_vote,
     check_can_suggest,
-    record_suggestion,
+    check_vote_allowed,
+    get_server_fingerprint,
     get_voted_symbols,
-    RiskLevel,
+    record_suggestion,
+    record_vote,
 )
-from app.database.connection import get_session
-from sqlalchemy import text
+from app.core.exceptions import NotFoundError, ValidationError
+from app.core.logging import get_logger
+from app.core.security import TokenData, decode_access_token
+from app.repositories import auth_user_orm as auth_repo
 from app.repositories import suggestions_orm as suggestions_repo
 from app.repositories import symbols_orm as symbols_repo
-from app.repositories import dip_state_orm as dip_state_repo
-from app.repositories import auth_user_orm as auth_repo
 from app.services.runtime_settings import get_runtime_setting
 from app.services.suggestion_stock_info import (
-    validate_symbol_format as _validate_symbol_format,
     get_stock_info_full_async,
 )
+from app.services.suggestion_stock_info import (
+    validate_symbol_format as _validate_symbol_format,
+)
+
 
 logger = get_logger("api.routes.suggestions")
 
@@ -94,47 +90,47 @@ async def _check_and_apply_auto_approval(
     4. Suggestion age >= auto_approve_min_age_hours
     """
     from app.core.config import settings
-    
+
     # 1. Check if auto-approval is enabled
     if not settings.auto_approve_enabled:
         logger.debug(f"Auto-approval disabled for {symbol}")
         return False
-    
+
     # 2. Check vote count threshold (runtime-configurable)
     auto_approve_threshold = get_runtime_setting("auto_approve_votes", settings.auto_approve_votes)
     if new_score < auto_approve_threshold:
         logger.debug(f"Auto-approval: {symbol} has {new_score} votes, need {auto_approve_threshold}")
         return False
-    
+
     # 3. Check unique voter count
     unique_voters = await suggestions_repo.get_unique_voter_count(suggestion_id)
-    
+
     if unique_voters < settings.auto_approve_unique_voters:
         logger.debug(
             f"Auto-approval: {symbol} has {unique_voters} unique voters, "
             f"need {settings.auto_approve_unique_voters}"
         )
         return False
-    
+
     # 4. Check suggestion age
     age_hours = await suggestions_repo.get_suggestion_age_hours(suggestion_id)
-    
+
     if age_hours < settings.auto_approve_min_age_hours:
         logger.debug(
             f"Auto-approval: {symbol} is {age_hours:.1f}h old, "
             f"need {settings.auto_approve_min_age_hours}h"
         )
         return False
-    
+
     # All conditions met - auto-approve
     await suggestions_repo.auto_approve_suggestion(suggestion_id)
-    
+
     logger.info(
         f"Auto-approved {symbol}: {new_score} votes (>={auto_approve_threshold}), "
         f"{unique_voters} unique voters (>={settings.auto_approve_unique_voters}), "
         f"{age_hours:.1f}h old (>={settings.auto_approve_min_age_hours}h)"
     )
-    
+
     return True
 
 
@@ -160,7 +156,7 @@ async def get_suggestion_settings():
 async def suggest_stock(
     request: Request,
     symbol: str = Query(..., min_length=1, max_length=10, description="Stock symbol (1-10 chars, letters/numbers/dots only)"),
-    authorization: Optional[str] = Header(default=None),
+    authorization: str | None = Header(default=None),
 ):
     """
     Suggest a new stock to be tracked.
@@ -180,10 +176,10 @@ async def suggest_stock(
                 is_admin = True
         except Exception:
             pass  # Not a valid token, continue as anonymous
-    
+
     # Validate symbol format
     symbol = _validate_symbol_format(symbol)
-    
+
     # Get server-generated fingerprint (not client-provided)
     server_fp = get_server_fingerprint(request)
     fingerprint_hash = hashlib.sha256(server_fp.encode()).hexdigest()[:32]
@@ -214,7 +210,7 @@ async def suggest_stock(
 
         current_status = existing.status
         auto_approved = False
-        
+
         # Check for auto-approval if still pending
         if current_status == "pending":
             auto_approved = await _check_and_apply_auto_approval(
@@ -251,14 +247,14 @@ async def suggest_stock(
 
     # Fetch stock info from yfinance
     stock_info = await get_stock_info_full_async(symbol)
-    
+
     # If symbol is completely invalid (not rate limited), reject the suggestion
     if stock_info["fetch_status"] == "invalid":
         raise ValidationError(
             message=stock_info["fetch_error"] or "Symbol not found",
             details={"symbol": symbol}
         )
-    
+
     # Create suggestion with fetched data (or with pending fetch status if rate limited)
     new_suggestion = await suggestions_repo.create_suggestion(
         symbol=symbol,
@@ -277,7 +273,7 @@ async def suggest_stock(
     # Record suggestion for rate limiting (skip for admins)
     if not is_admin:
         await record_suggestion(request)
-    
+
     # Record vote (suggesting also counts as voting - skip for admins)
     if not is_admin:
         await record_vote(request, symbol)
@@ -288,14 +284,14 @@ async def suggest_stock(
         fingerprint=fingerprint_hash,
         vote_type="up",
     )
-    
+
     response = {
         "message": "Stock suggested successfully",
         "symbol": symbol,
         "vote_count": 1,
         "status": "pending",
     }
-    
+
     # Include fetch status info if not fully fetched
     if stock_info["fetch_status"] == "rate_limited":
         response["fetch_status"] = "rate_limited"
@@ -306,7 +302,7 @@ async def suggest_stock(
         response["fetch_status"] = stock_info["fetch_status"]
         if stock_info.get("fetch_error"):
             response["fetch_error"] = stock_info["fetch_error"]
-    
+
     return response
 
 
@@ -314,7 +310,7 @@ async def suggest_stock(
 async def vote_for_suggestion(
     request: Request,
     symbol: str,
-    authorization: Optional[str] = Header(default=None),
+    authorization: str | None = Header(default=None),
 ):
     """
     Vote for an existing stock suggestion.
@@ -325,7 +321,7 @@ async def vote_for_suggestion(
     Admins bypass the cooldown entirely.
     """
     symbol = symbol.strip().upper()
-    
+
     # Check if admin - bypass cooldown for admins
     is_admin = False
     if authorization and authorization.startswith("Bearer "):
@@ -336,11 +332,11 @@ async def vote_for_suggestion(
                 is_admin = True
         except Exception:
             pass
-    
+
     # === Risk Assessment + Cooldown Check (skip for admin) ===
     if not is_admin:
         check = await check_vote_allowed(request, symbol)
-        
+
         if not check.allowed:
             raise ValidationError(
                 check.reason,
@@ -372,7 +368,7 @@ async def vote_for_suggestion(
     current_status = suggestion.status
     auto_approved = False
     task_id = None
-    
+
     # Check for auto-approval if still pending
     if current_status == "pending":
         auto_approve_threshold = get_runtime_setting("auto_approve_votes", 10)
@@ -390,7 +386,7 @@ async def vote_for_suggestion(
             )
 
     response = {
-        "message": "Vote recorded", 
+        "message": "Vote recorded",
         "symbol": symbol,
         "vote_count": new_score,
         "status": current_status,
@@ -402,7 +398,7 @@ async def vote_for_suggestion(
     return response
 
 
-@router.get("/top", response_model=List[dict])
+@router.get("/top", response_model=list[dict])
 async def get_top_suggestions(
     request: Request,
     limit: int = Query(10, ge=1, le=50),
@@ -418,14 +414,14 @@ async def get_top_suggestions(
     voted_symbols = set()
     if exclude_voted:
         voted_symbols = await get_voted_symbols(request)
-    
+
     # Use ORM to get pending suggestions
     suggestions, _ = await suggestions_repo.list_all_suggestions(
         status="pending",
         limit=limit + len(voted_symbols),
         offset=0,
     )
-    
+
     # Filter out voted symbols and convert to response format
     results = []
     for suggestion in suggestions:
@@ -442,11 +438,11 @@ async def get_top_suggestions(
             })
             if len(results) >= limit:
                 break
-    
+
     return results
 
 
-@router.get("/search", response_model=List[dict])
+@router.get("/search", response_model=list[dict])
 async def search_stored_suggestions(
     q: str = Query(..., min_length=1, max_length=50, description="Search query"),
     limit: int = Query(10, ge=1, le=20),
@@ -464,14 +460,14 @@ async def search_stored_suggestions(
     """
     # Search in suggestions (pending ones) using ORM
     suggestion_rows = await suggestions_repo.search_pending_suggestions(q, limit)
-    
+
     # Search in tracked symbols using ORM
     symbol_rows = await suggestions_repo.search_tracked_symbols(q, limit)
-    
+
     # Combine and dedupe (prefer tracked over suggestions)
     seen_symbols = set()
     results = []
-    
+
     # Add tracked symbols first (they're already in our system)
     for row in symbol_rows:
         if row["symbol"] not in seen_symbols:
@@ -483,7 +479,7 @@ async def search_stored_suggestions(
                 "source": "tracked",
                 "vote_count": None,
             })
-    
+
     # Add pending suggestions
     for row in suggestion_rows:
         if row["symbol"] not in seen_symbols:
@@ -495,7 +491,7 @@ async def search_stored_suggestions(
                 "source": "suggestion",
                 "vote_count": row["vote_score"],
             })
-    
+
     return results[:limit]
 
 
@@ -514,8 +510,9 @@ async def list_pending_suggestions(
         offset=offset,
     )
 
-    from app.services.task_tracking import get_symbol_task
     import asyncio
+
+    from app.services.task_tracking import get_symbol_task
     task_ids = await asyncio.gather(
         *(get_symbol_task(s.symbol) for s in suggestions)
     )
@@ -553,7 +550,7 @@ async def list_pending_suggestions(
 
 @router.get("", response_model=dict)
 async def list_all_suggestions(
-    status: Optional[str] = Query(None),
+    status: str | None = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     admin: TokenData = Depends(require_admin),
@@ -568,8 +565,9 @@ async def list_all_suggestions(
         offset=offset,
     )
 
-    from app.services.task_tracking import get_symbol_task
     import asyncio
+
+    from app.services.task_tracking import get_symbol_task
     task_ids = await asyncio.gather(
         *(get_symbol_task(s.symbol) for s in suggestions)
     )
@@ -683,7 +681,7 @@ async def refresh_suggestion_data(
         )
 
     symbol = suggestion.symbol
-    
+
     await suggestions_repo.set_suggestion_fetching(symbol)
     await symbols_repo.update_fetch_status(
         symbol,
@@ -720,22 +718,22 @@ async def update_suggestion(
         )
 
     updates = {}
-    
+
     if new_symbol:
         # Validate the new symbol
         new_symbol = _validate_symbol_format(new_symbol)
-        
+
         # Check if the new symbol already exists
         existing = await suggestions_repo.check_symbol_exists_in_other_suggestion(
             new_symbol, suggestion_id
         )
-        
+
         if existing:
             raise ValidationError(
                 message=f"Symbol {new_symbol} already exists as a suggestion",
                 details={"new_symbol": new_symbol},
             )
-        
+
         updates["symbol"] = new_symbol
 
     if not updates:
@@ -781,10 +779,10 @@ async def retry_suggestion_fetch(
         )
 
     symbol = suggestion.symbol
-    
+
     # Fetch stock info
     stock_info = await get_stock_info_full_async(symbol)
-    
+
     # Update suggestion with fetched data
     await suggestions_repo.update_suggestion_stock_info(
         symbol=symbol,
@@ -798,9 +796,9 @@ async def retry_suggestion_fetch(
         fetch_status=stock_info["fetch_status"],
         fetch_error=stock_info["fetch_error"],
     )
-    
+
     logger.info(f"Retried fetch for {symbol}: {stock_info['fetch_status']}")
-    
+
     return {
         "message": f"Retried fetch for {symbol}",
         "symbol": symbol,
@@ -821,21 +819,21 @@ async def backfill_suggestion_data(
     """
     # Get suggestions with pending fetch status
     suggestions = await suggestions_repo.list_suggestions_needing_backfill(limit)
-    
+
     if not suggestions:
         return {"message": "No suggestions need backfilling", "processed": 0}
-    
+
     processed = 0
     errors = []
-    
+
     for suggestion in suggestions:
         symbol = suggestion.symbol
         suggestion_id = suggestion.id
-        
+
         try:
             # Fetch stock info
             stock_info = await get_stock_info_full_async(symbol)
-            
+
             # Update suggestion with fetched data
             await suggestions_repo.update_suggestion_stock_info(
                 symbol=symbol,
@@ -851,11 +849,11 @@ async def backfill_suggestion_data(
             )
             processed += 1
             logger.info(f"Backfilled data for {symbol}: {stock_info['fetch_status']}")
-            
+
         except Exception as e:
             errors.append({"symbol": symbol, "error": str(e)})
             logger.error(f"Error backfilling {symbol}: {e}")
-    
+
     return {
         "message": f"Processed {processed} suggestions",
         "processed": processed,

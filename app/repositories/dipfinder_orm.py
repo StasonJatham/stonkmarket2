@@ -12,23 +12,24 @@ Usage:
 from __future__ import annotations
 
 import json
-from datetime import date, datetime, timedelta, timezone
+from collections.abc import Sequence
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
-from typing import Any, Optional, Sequence
 
-from sqlalchemy import select, and_, or_, func
+from sqlalchemy import and_, select
 from sqlalchemy.dialects.postgresql import insert
 
-from app.database.connection import get_session
-from app.database.orm import DipfinderSignal, DipfinderHistory, DipState
 from app.core.logging import get_logger
+from app.database.connection import get_session
+from app.database.orm import DipfinderHistory, DipfinderSignal, DipState
+
 
 logger = get_logger("repositories.dipfinder_orm")
 
 
 async def get_latest_signals(
     limit: int = 50,
-    min_final_score: Optional[float] = None,
+    min_final_score: float | None = None,
     only_alerts: bool = False,
 ) -> Sequence[DipfinderSignal]:
     """Get latest dipfinder signals.
@@ -43,18 +44,18 @@ async def get_latest_signals(
     """
     async with get_session() as session:
         query = select(DipfinderSignal)
-        
+
         conditions = []
         if min_final_score is not None:
             conditions.append(DipfinderSignal.final_score >= min_final_score)
         if only_alerts:
             conditions.append(DipfinderSignal.should_alert == True)
-        
+
         if conditions:
             query = query.where(and_(*conditions))
-        
+
         query = query.order_by(DipfinderSignal.final_score.desc()).limit(limit)
-        
+
         result = await session.execute(query)
         return result.scalars().all()
 
@@ -72,8 +73,8 @@ async def get_dip_history(
     Returns:
         Sequence of DipfinderHistory objects
     """
-    since = datetime.now(timezone.utc) - timedelta(days=days)
-    
+    since = datetime.now(UTC) - timedelta(days=days)
+
     async with get_session() as session:
         result = await session.execute(
             select(DipfinderHistory)
@@ -88,7 +89,7 @@ async def get_dip_history(
         return result.scalars().all()
 
 
-async def get_dip_state(ticker: str) -> Optional[DipState]:
+async def get_dip_state(ticker: str) -> DipState | None:
     """Get dip state for a ticker (ATH-based source of truth).
     
     Args:
@@ -108,7 +109,7 @@ async def get_previous_signal(
     ticker: str,
     window_days: int,
     before_date: date,
-) -> Optional[DipfinderSignal]:
+) -> DipfinderSignal | None:
     """Get the previous signal for a ticker/window before a given date.
     
     Args:
@@ -157,7 +158,7 @@ async def save_signal(
     reason: str,
     quality_factors: dict,
     stability_factors: dict,
-    expires_at: Optional[datetime] = None,
+    expires_at: datetime | None = None,
 ) -> bool:
     """Save a dipfinder signal to database.
     
@@ -165,8 +166,8 @@ async def save_signal(
         True if saved successfully
     """
     if expires_at is None:
-        expires_at = datetime.now(timezone.utc) + timedelta(days=7)
-    
+        expires_at = datetime.now(UTC) + timedelta(days=7)
+
     async with get_session() as session:
         stmt = insert(DipfinderSignal).values(
             ticker=ticker.upper(),
@@ -214,7 +215,7 @@ async def save_signal(
                 "expires_at": expires_at,
             }
         )
-        
+
         await session.execute(stmt)
         await session.commit()
         return True

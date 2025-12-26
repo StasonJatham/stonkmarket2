@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-from typing import Optional
 
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
@@ -52,7 +51,7 @@ def encrypt_api_key(plaintext_key: str) -> str:
     return encrypted.decode()
 
 
-def decrypt_api_key(encrypted_key: str) -> Optional[str]:
+def decrypt_api_key(encrypted_key: str) -> str | None:
     """
     Decrypt an API key from storage.
 

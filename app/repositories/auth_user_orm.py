@@ -9,15 +9,15 @@ Usage:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
+from app.core.logging import get_logger
 from app.database.connection import get_session
 from app.database.orm import AuthUser as AuthUserORM
-from app.core.logging import get_logger
+
 
 logger = get_logger("repositories.auth_user_orm")
 
@@ -30,13 +30,13 @@ class AuthUser:
     username: str
     password_hash: str
     is_admin: bool = False
-    mfa_secret: Optional[str] = None
+    mfa_secret: str | None = None
     mfa_enabled: bool = False
-    mfa_backup_codes: Optional[str] = None  # JSON list of hashed backup codes
-    updated_at: Optional[datetime] = None
+    mfa_backup_codes: str | None = None  # JSON list of hashed backup codes
+    updated_at: datetime | None = None
 
     @classmethod
-    def from_orm(cls, user: AuthUserORM) -> "AuthUser":
+    def from_orm(cls, user: AuthUserORM) -> AuthUser:
         """Create from ORM model."""
         return cls(
             id=user.id,
@@ -50,23 +50,23 @@ class AuthUser:
         )
 
 
-async def get_user(username: str) -> Optional[AuthUser]:
+async def get_user(username: str) -> AuthUser | None:
     """Get a user by username."""
     async with get_session() as session:
         result = await session.execute(
             select(AuthUserORM).where(AuthUserORM.username == username.lower())
         )
         user = result.scalar_one_or_none()
-        
+
         if user:
             return AuthUser.from_orm(user)
         return None
 
 
-async def upsert_user(username: str, password_hash: str) -> Optional[AuthUser]:
+async def upsert_user(username: str, password_hash: str) -> AuthUser | None:
     """Create or update a user."""
-    now = datetime.now(timezone.utc)
-    
+    now = datetime.now(UTC)
+
     async with get_session() as session:
         stmt = insert(AuthUserORM).values(
             username=username.lower(),
@@ -82,7 +82,7 @@ async def upsert_user(username: str, password_hash: str) -> Optional[AuthUser]:
         )
         await session.execute(stmt)
         await session.commit()
-    
+
     return await get_user(username)
 
 
@@ -93,10 +93,10 @@ async def set_mfa_secret(username: str, mfa_secret: str) -> bool:
             select(AuthUserORM).where(AuthUserORM.username == username.lower())
         )
         user = result.scalar_one_or_none()
-        
+
         if user:
             user.mfa_secret = mfa_secret
-            user.updated_at = datetime.now(timezone.utc)
+            user.updated_at = datetime.now(UTC)
             await session.commit()
             return True
         return False
@@ -109,11 +109,11 @@ async def enable_mfa(username: str, backup_codes: str) -> bool:
             select(AuthUserORM).where(AuthUserORM.username == username.lower())
         )
         user = result.scalar_one_or_none()
-        
+
         if user:
             user.mfa_enabled = True
             user.mfa_backup_codes = backup_codes
-            user.updated_at = datetime.now(timezone.utc)
+            user.updated_at = datetime.now(UTC)
             await session.commit()
             return True
         return False
@@ -126,12 +126,12 @@ async def disable_mfa(username: str) -> bool:
             select(AuthUserORM).where(AuthUserORM.username == username.lower())
         )
         user = result.scalar_one_or_none()
-        
+
         if user:
             user.mfa_enabled = False
             user.mfa_secret = None
             user.mfa_backup_codes = None
-            user.updated_at = datetime.now(timezone.utc)
+            user.updated_at = datetime.now(UTC)
             await session.commit()
             return True
         return False
@@ -140,13 +140,13 @@ async def disable_mfa(username: str) -> bool:
 async def verify_and_consume_backup_code(username: str, code_hash: str) -> bool:
     """Verify a backup code and remove it from the list."""
     import json
-    
+
     async with get_session() as session:
         result = await session.execute(
             select(AuthUserORM).where(AuthUserORM.username == username.lower())
         )
         user = result.scalar_one_or_none()
-        
+
         if not user or not user.mfa_backup_codes:
             return False
 
@@ -155,7 +155,7 @@ async def verify_and_consume_backup_code(username: str, code_hash: str) -> bool:
             if code_hash in backup_codes:
                 backup_codes.remove(code_hash)
                 user.mfa_backup_codes = json.dumps(backup_codes)
-                user.updated_at = datetime.now(timezone.utc)
+                user.updated_at = datetime.now(UTC)
                 await session.commit()
                 return True
         except (json.JSONDecodeError, TypeError):
@@ -164,14 +164,14 @@ async def verify_and_consume_backup_code(username: str, code_hash: str) -> bool:
     return False
 
 
-async def get_single_user() -> Optional[AuthUser]:
+async def get_single_user() -> AuthUser | None:
     """Get the single user for single-user mode."""
     async with get_session() as session:
         result = await session.execute(
             select(AuthUserORM).limit(1)
         )
         user = result.scalar_one_or_none()
-        
+
         if user:
             return AuthUser.from_orm(user)
         return None
@@ -193,10 +193,10 @@ async def update_password(username: str, password_hash: str) -> bool:
             select(AuthUserORM).where(AuthUserORM.username == username.lower())
         )
         user = result.scalar_one_or_none()
-        
+
         if user:
             user.password_hash = password_hash
-            user.updated_at = datetime.now(timezone.utc)
+            user.updated_at = datetime.now(UTC)
             await session.commit()
             return True
         return False
@@ -218,12 +218,12 @@ async def migrate_username(
             select(AuthUserORM).where(AuthUserORM.username == old_username.lower())
         )
         old_user = result.scalar_one_or_none()
-        
+
         if not old_user:
             return False
-        
-        now = datetime.now(timezone.utc)
-        
+
+        now = datetime.now(UTC)
+
         # Create new user with all settings from old user
         new_user = AuthUserORM(
             username=new_username.lower(),
@@ -236,7 +236,7 @@ async def migrate_username(
             updated_at=now,
         )
         session.add(new_user)
-        
+
         # Delete old user
         await session.delete(old_user)
         await session.commit()
@@ -252,21 +252,21 @@ async def seed_admin_from_env() -> None:
     """
     from app.core.config import settings
     from app.core.security import hash_password, verify_password
-    
+
     username = settings.admin_user
     password = settings.admin_pass
-    
+
     if not username or not password:
         logger.warning("ADMIN_USER or ADMIN_PASS not set in environment")
         return
-    
+
     if password == "changeme":
         logger.warning("ADMIN_PASS is set to default 'changeme' - please set a secure password!")
-    
+
     # Check if user exists
     existing = await get_user(username)
-    now = datetime.now(timezone.utc)
-    
+    now = datetime.now(UTC)
+
     if existing:
         # User exists - update password hash if needed
         if not verify_password(password, existing.password_hash):

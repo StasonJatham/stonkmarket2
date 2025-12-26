@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import List, Optional
-
 from fastapi import APIRouter, Depends, Path, Query, status
 from pydantic import BaseModel
 
@@ -16,7 +14,7 @@ from app.core.security import TokenData
 from app.repositories import symbols_orm as symbol_repo
 from app.schemas.symbols import SymbolCreate, SymbolResponse, SymbolUpdate
 from app.services.stock_info import get_stock_info
-from app.services.runtime_settings import get_cache_ttl
+
 
 logger = get_logger("api.routes.symbols")
 
@@ -110,23 +108,23 @@ async def validate_symbol(
 class SymbolSearchResult(BaseModel):
     """Result item from symbol search."""
     symbol: str
-    name: Optional[str] = None
-    sector: Optional[str] = None
-    quote_type: Optional[str] = None
-    market_cap: Optional[float] = None
-    pe_ratio: Optional[float] = None
-    source: Optional[str] = None  # "local", "cached", or "api"
-    score: Optional[float] = None  # Relevance score (0-1)
+    name: str | None = None
+    sector: str | None = None
+    quote_type: str | None = None
+    market_cap: float | None = None
+    pe_ratio: float | None = None
+    source: str | None = None  # "local", "cached", or "api"
+    score: float | None = None  # Relevance score (0-1)
 
 
 class SymbolSearchResponse(BaseModel):
     """Response for symbol search."""
     query: str
-    results: List[SymbolSearchResult]
+    results: list[SymbolSearchResult]
     count: int
     suggest_fresh_search: bool = False
     search_type: str = "local"  # "local" or "api"
-    next_cursor: Optional[str] = None  # Cursor for pagination
+    next_cursor: str | None = None  # Cursor for pagination
 
 
 @router.get(
@@ -139,7 +137,7 @@ async def search_symbols(
     query: str = Path(..., min_length=2, max_length=50, description="Search query"),
     limit: int = Query(10, ge=1, le=50, description="Maximum results to return"),
     fresh: bool = Query(False, description="Force fresh search from yfinance API"),
-    cursor: Optional[str] = Query(None, description="Pagination cursor from previous response"),
+    cursor: str | None = Query(None, description="Pagination cursor from previous response"),
 ) -> SymbolSearchResponse:
     """
     Search for stock symbols.
@@ -160,14 +158,14 @@ async def search_symbols(
     - Pagination not supported for fresh API search
     """
     from app.services.symbol_search import search_symbols as do_search
-    
+
     result = await do_search(
-        query, 
-        max_results=limit, 
+        query,
+        max_results=limit,
         force_api=fresh,
         cursor=cursor,
     )
-    
+
     return SymbolSearchResponse(
         query=query,
         results=[SymbolSearchResult(**r) for r in result["results"]],
@@ -181,22 +179,22 @@ async def search_symbols(
 class SymbolAutocompleteResult(BaseModel):
     """Simple result for autocomplete."""
     symbol: str
-    name: Optional[str] = None
+    name: str | None = None
 
 
 @router.get(
     "/autocomplete/{partial}",
-    response_model=List[SymbolAutocompleteResult],
+    response_model=list[SymbolAutocompleteResult],
     summary="Autocomplete symbols",
     description="Get autocomplete suggestions for partial symbol/name input. Optimized for speed.",
 )
 async def autocomplete_symbols(
     partial: str = Path(..., min_length=1, max_length=20, description="Partial input"),
     limit: int = Query(5, ge=1, le=10, description="Maximum suggestions"),
-) -> List[SymbolAutocompleteResult]:
+) -> list[SymbolAutocompleteResult]:
     """Get autocomplete suggestions for symbol input."""
     from app.services.symbol_search import get_symbol_suggestions
-    
+
     results = await get_symbol_suggestions(partial, limit=limit)
     return [SymbolAutocompleteResult(**r) for r in results]
 
@@ -204,28 +202,28 @@ async def autocomplete_symbols(
 class SymbolFundamentalsResponse(BaseModel):
     """Fundamentals data for a symbol."""
     symbol: str
-    pe_ratio: Optional[float] = None
-    forward_pe: Optional[float] = None
-    peg_ratio: Optional[float] = None
-    price_to_book: Optional[float] = None
-    profit_margin: Optional[str] = None
-    gross_margin: Optional[str] = None
-    return_on_equity: Optional[str] = None
-    debt_to_equity: Optional[str] = None
-    current_ratio: Optional[str] = None
-    revenue_growth: Optional[str] = None
-    earnings_growth: Optional[str] = None
-    free_cash_flow: Optional[str] = None
-    recommendation: Optional[str] = None
-    target_mean_price: Optional[float] = None
-    num_analyst_opinions: Optional[int] = None
-    beta: Optional[str] = None
-    next_earnings_date: Optional[str] = None
+    pe_ratio: float | None = None
+    forward_pe: float | None = None
+    peg_ratio: float | None = None
+    price_to_book: float | None = None
+    profit_margin: str | None = None
+    gross_margin: str | None = None
+    return_on_equity: str | None = None
+    debt_to_equity: str | None = None
+    current_ratio: str | None = None
+    revenue_growth: str | None = None
+    earnings_growth: str | None = None
+    free_cash_flow: str | None = None
+    recommendation: str | None = None
+    target_mean_price: float | None = None
+    num_analyst_opinions: int | None = None
+    beta: str | None = None
+    next_earnings_date: str | None = None
     source: str = "database"  # "database" or "api"
-    fetched_at: Optional[str] = None
-    expires_at: Optional[str] = None
+    fetched_at: str | None = None
+    expires_at: str | None = None
     is_stale: bool = False
-    refresh_task_id: Optional[str] = None
+    refresh_task_id: str | None = None
 
 
 @router.get(
@@ -239,19 +237,19 @@ async def get_symbol_fundamentals(
 ) -> SymbolFundamentalsResponse:
     """Get fundamental data for a symbol."""
     from app.services.fundamentals import (
-        get_fundamentals_with_status,
         fetch_fundamentals_live,
+        get_fundamentals_with_status,
     )
-    
+
     symbol_upper = symbol.upper().strip()
     source = "database"
-    
+
     # Try database first (for tracked symbols)
     db_data, is_stale = await get_fundamentals_with_status(
         symbol_upper, allow_stale=True
     )
     refresh_task_id = None
-    
+
     if db_data:
         if is_stale:
             task = celery_app.send_task(
@@ -264,12 +262,12 @@ async def get_symbol_fundamentals(
             if val is None:
                 return None
             return f"{float(val) * 100:.1f}%"
-        
+
         def fmt_ratio(val):
             if val is None:
                 return None
             return f"{float(val):.2f}"
-        
+
         def fmt_large_num(val):
             if val is None:
                 return None
@@ -281,7 +279,7 @@ async def get_symbol_fundamentals(
             if val >= 1e6:
                 return f"${val / 1e6:.1f}M"
             return f"${val:,.0f}"
-        
+
         data = {
             "pe_ratio": db_data.get("pe_ratio"),
             "forward_pe": db_data.get("forward_pe"),
@@ -306,13 +304,13 @@ async def get_symbol_fundamentals(
         data = await fetch_fundamentals_live(symbol_upper)
         source = "api"
         is_stale = False
-    
+
     if not data:
         raise NotFoundError(
             message="Fundamentals not available",
             details={"symbol": symbol_upper, "reason": "Symbol may be an ETF/index or not found"}
         )
-    
+
     return SymbolFundamentalsResponse(
         symbol=symbol_upper,
         pe_ratio=data.get("pe_ratio"),
@@ -342,15 +340,16 @@ async def get_symbol_fundamentals(
 
 @router.get(
     "",
-    response_model=List[SymbolResponse],
+    response_model=list[SymbolResponse],
     summary="List all symbols",
     description="Get all tracked stock symbols. Public endpoint.",
 )
-async def list_symbols() -> List[SymbolResponse]:
+async def list_symbols() -> list[SymbolResponse]:
     """List all tracked symbols (public endpoint for signals page)."""
     symbols = await symbol_repo.list_symbols()
-    from app.services.task_tracking import get_symbol_task
     import asyncio
+
+    from app.services.task_tracking import get_symbol_task
     task_ids = await asyncio.gather(
         *(get_symbol_task(s.symbol) for s in symbols)
     )
@@ -533,8 +532,8 @@ class AISummaryResponse(BaseModel):
     """Response for AI summary regeneration."""
     symbol: str
     summary_ai: str | None
-    task_id: Optional[str] = None
-    status: Optional[str] = None
+    task_id: str | None = None
+    status: str | None = None
 
 
 @router.post(
@@ -587,8 +586,8 @@ class AgentAnalysisResponse(BaseModel):
     overall_signal: str
     overall_confidence: int
     summary: str
-    analyzed_at: Optional[str] = None
-    expires_at: Optional[str] = None
+    analyzed_at: str | None = None
+    expires_at: str | None = None
 
 
 class AgentInfoResponse(BaseModel):
@@ -611,23 +610,23 @@ async def get_agent_analysis_endpoint(
 ) -> AgentAnalysisResponse:
     """Get AI agent analysis for a symbol."""
     from app.services.ai_agents import get_agent_analysis, run_agent_analysis
-    
+
     # Verify symbol exists
     sym = await symbol_repo.get_symbol(symbol)
     if not sym:
         raise NotFoundError(f"Symbol {symbol} not found")
-    
+
     # Get existing analysis
     if not force_refresh:
         analysis = await get_agent_analysis(symbol)
         if analysis:
             return AgentAnalysisResponse(**analysis)
-    
+
     # Run new analysis
     result = await run_agent_analysis(symbol)
     if not result:
         raise NotFoundError(f"Could not generate agent analysis for {symbol}")
-    
+
     return AgentAnalysisResponse(
         symbol=result.symbol,
         verdicts=[
@@ -660,19 +659,19 @@ async def refresh_agent_analysis_endpoint(
 ) -> AgentAnalysisResponse:
     """Regenerate AI agent analysis for a symbol."""
     from app.services.ai_agents import run_agent_analysis
-    
+
     # Verify symbol exists
     sym = await symbol_repo.get_symbol(symbol)
     if not sym:
         raise NotFoundError(f"Symbol {symbol} not found")
-    
+
     # Run new analysis
     result = await run_agent_analysis(symbol)
     if not result:
         raise NotFoundError(f"Could not generate agent analysis for {symbol}")
-    
+
     logger.info(f"Refreshed agent analysis for {symbol}: {result.overall_signal} ({result.overall_confidence}%)")
-    
+
     return AgentAnalysisResponse(
         symbol=result.symbol,
         verdicts=[
@@ -702,6 +701,6 @@ async def refresh_agent_analysis_endpoint(
 async def list_agents() -> list[AgentInfoResponse]:
     """List available AI agents and their investment philosophies."""
     from app.services.ai_agents import get_agent_info
-    
+
     agents = get_agent_info()
     return [AgentInfoResponse(**a) for a in agents]

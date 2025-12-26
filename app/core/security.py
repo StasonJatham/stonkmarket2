@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import secrets
-from datetime import datetime, timedelta, timezone
-from typing import Optional
+from datetime import UTC, datetime, timedelta
 
 import bcrypt
 import jwt
@@ -49,10 +48,10 @@ def verify_password(password: str, password_hash: str) -> bool:
 def create_access_token(
     username: str,
     is_admin: bool = False,
-    expires_delta: Optional[timedelta] = None,
+    expires_delta: timedelta | None = None,
 ) -> str:
     """Create a signed JWT access token."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     expires = now + (
         expires_delta or timedelta(minutes=settings.access_token_expire_minutes)
     )
@@ -87,10 +86,10 @@ def decode_access_token(token: str) -> TokenData:
             sub=payload["sub"],
             exp=datetime.fromisoformat(payload["exp"].isoformat())
             if isinstance(payload["exp"], datetime)
-            else datetime.fromtimestamp(payload["exp"], tz=timezone.utc),
+            else datetime.fromtimestamp(payload["exp"], tz=UTC),
             iat=datetime.fromisoformat(payload["iat"].isoformat())
             if isinstance(payload["iat"], datetime)
-            else datetime.fromtimestamp(payload["iat"], tz=timezone.utc),
+            else datetime.fromtimestamp(payload["iat"], tz=UTC),
             iss=payload["iss"],
             aud=payload["aud"],
             jti=payload["jti"],
@@ -125,8 +124,8 @@ async def validate_token_not_revoked(token_data: TokenData) -> bool:
         True if token is valid (not revoked), False if revoked
     """
     from app.cache.token_blacklist import (
-        is_token_blacklisted,
         get_user_token_invalidation_time,
+        is_token_blacklisted,
     )
 
     # Check if specific token is blacklisted

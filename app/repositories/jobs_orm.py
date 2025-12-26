@@ -21,28 +21,29 @@ Usage:
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from collections.abc import Sequence
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
-from typing import Optional, Sequence
 
-from sqlalchemy import select, delete, update, func, and_
+from sqlalchemy import and_, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 
+from app.core.logging import get_logger
 from app.database.connection import get_session
 from app.database.orm import (
-    SymbolIngestQueue,
-    PriceHistory,
-    DipState,
-    Symbol,
-    StockSuggestion,
-    DipAIAnalysis,
     AiAgentAnalysis,
-    UserApiKey,
-    StockFundamentals,
     AnalysisVersion,
+    DipAIAnalysis,
+    DipState,
+    PriceHistory,
+    StockFundamentals,
+    StockSuggestion,
+    Symbol,
+    SymbolIngestQueue,
     SymbolSearchResult,
+    UserApiKey,
 )
-from app.core.logging import get_logger
+
 
 logger = get_logger("repositories.jobs_orm")
 
@@ -83,7 +84,7 @@ async def mark_ingest_processing(queue_id: int, attempts: int) -> None:
             .where(SymbolIngestQueue.id == queue_id)
             .values(
                 status="processing",
-                processing_started_at=datetime.now(timezone.utc),
+                processing_started_at=datetime.now(UTC),
                 attempts=attempts,
             )
         )
@@ -102,7 +103,7 @@ async def mark_ingest_completed(queue_id: int) -> None:
             .where(SymbolIngestQueue.id == queue_id)
             .values(
                 status="completed",
-                completed_at=datetime.now(timezone.utc),
+                completed_at=datetime.now(UTC),
             )
         )
         await session.commit()
@@ -172,7 +173,7 @@ async def add_to_ingest_queue(symbol: str, priority: int = 0) -> bool:
         True if added, False if already in queue
     """
     symbol_upper = symbol.upper()
-    
+
     async with get_session() as session:
         # Check if already in queue
         result = await session.execute(
@@ -182,7 +183,7 @@ async def add_to_ingest_queue(symbol: str, priority: int = 0) -> bool:
         if result.scalar():
             logger.debug(f"Symbol {symbol_upper} already in ingest queue")
             return False
-        
+
         # Insert using ON CONFLICT DO NOTHING for race condition safety
         stmt = insert(SymbolIngestQueue).values(
             symbol=symbol_upper,
@@ -190,9 +191,9 @@ async def add_to_ingest_queue(symbol: str, priority: int = 0) -> bool:
             priority=priority,
             attempts=0,
             max_attempts=3,
-            queued_at=datetime.now(timezone.utc),
+            queued_at=datetime.now(UTC),
         ).on_conflict_do_nothing(index_elements=["symbol"])
-        
+
         await session.execute(stmt)
         await session.commit()
         logger.info(f"Added {symbol_upper} to ingest queue (priority={priority})")
@@ -244,7 +245,7 @@ async def calculate_dip_start_date(
     symbol: str,
     ath_price: float,
     dip_threshold: float,
-) -> Optional[date]:
+) -> date | None:
     """Calculate when a stock first entered the current dip period.
     
     Uses price history to find the first date where the stock dropped
@@ -260,30 +261,30 @@ async def calculate_dip_start_date(
     """
     if ath_price <= 0:
         return None
-    
+
     prices = await get_price_history_chronological(symbol)
-    
+
     if not prices:
         return None
-    
+
     # Calculate the threshold price
     dip_threshold_price = ath_price * (1 - dip_threshold)
-    
+
     # Walk through prices chronologically
     dip_start = None
     currently_in_dip = False
-    
+
     for price in prices:
         price_val = float(price.close) if price.close else 0
         is_dip = price_val <= dip_threshold_price
-        
+
         if is_dip and not currently_in_dip:
             dip_start = price.date
             currently_in_dip = True
         elif not is_dip and currently_in_dip:
             dip_start = None
             currently_in_dip = False
-    
+
     return dip_start if currently_in_dip else None
 
 
@@ -337,7 +338,7 @@ async def upsert_dip_state_with_dates(
     current_price: float,
     ath_price: float,
     dip_percentage: float,
-    dip_start_date: Optional[date] = None,
+    dip_start_date: date | None = None,
 ) -> None:
     """Create or update a dip state record.
     
@@ -349,8 +350,8 @@ async def upsert_dip_state_with_dates(
         dip_start_date: When the dip started
     """
     async with get_session() as session:
-        now = datetime.now(timezone.utc)
-        
+        now = datetime.now(UTC)
+
         stmt = insert(DipState).values(
             symbol=symbol.upper(),
             current_price=Decimal(str(current_price)),
@@ -370,7 +371,7 @@ async def upsert_dip_state_with_dates(
                 "last_updated": now,
             }
         )
-        
+
         await session.execute(stmt)
         await session.commit()
 
@@ -473,7 +474,7 @@ async def get_pending_batch_jobs() -> list[str]:
                 and_(
                     AnalysisVersion.batch_job_id.isnot(None),
                     AnalysisVersion.analysis_type == "agent_analysis",
-                    AnalysisVersion.generated_at > datetime.now(timezone.utc) - timedelta(hours=24),
+                    AnalysisVersion.generated_at > datetime.now(UTC) - timedelta(hours=24),
                 )
             )
             .distinct()
@@ -506,7 +507,7 @@ async def cleanup_expired_suggestions() -> int:
     Returns:
         Number of rows deleted
     """
-    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    cutoff = datetime.now(UTC) - timedelta(days=7)
     async with get_session() as session:
         result = await session.execute(
             delete(StockSuggestion)
@@ -527,7 +528,7 @@ async def cleanup_stale_pending_suggestions() -> int:
     Returns:
         Number of rows deleted
     """
-    cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+    cutoff = datetime.now(UTC) - timedelta(days=30)
     async with get_session() as session:
         result = await session.execute(
             delete(StockSuggestion)
@@ -548,7 +549,7 @@ async def cleanup_expired_ai_analyses() -> int:
     Returns:
         Number of rows deleted
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     async with get_session() as session:
         result = await session.execute(
             delete(DipAIAnalysis)
@@ -569,7 +570,7 @@ async def cleanup_expired_agent_analyses() -> int:
     Returns:
         Number of rows deleted
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     async with get_session() as session:
         result = await session.execute(
             delete(AiAgentAnalysis)
@@ -590,7 +591,7 @@ async def cleanup_expired_api_keys() -> int:
     Returns:
         Number of rows deleted
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     async with get_session() as session:
         result = await session.execute(
             delete(UserApiKey)
@@ -611,7 +612,7 @@ async def cleanup_expired_symbol_search_results() -> int:
     Returns:
         Number of rows deleted
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     async with get_session() as session:
         result = await session.execute(
             delete(SymbolSearchResult)

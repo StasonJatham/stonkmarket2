@@ -5,7 +5,7 @@ All agents in the hedge fund module implement this interface.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Optional, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from app.hedge_fund.schemas import (
     AgentSignal,
@@ -46,7 +46,7 @@ class AgentProtocol(Protocol):
         data: MarketData,
         *,
         mode: LLMMode = LLMMode.REALTIME,
-        run_id: Optional[str] = None,
+        run_id: str | None = None,
     ) -> AgentSignal:
         """
         Run analysis and return a signal.
@@ -105,7 +105,7 @@ class AgentBase(ABC):
         data: MarketData,
         *,
         mode: LLMMode = LLMMode.REALTIME,
-        run_id: Optional[str] = None,
+        run_id: str | None = None,
     ) -> AgentSignal:
         """Run analysis and return a signal."""
         pass
@@ -129,8 +129,8 @@ class AgentBase(ABC):
         signal: str,
         confidence: float,
         reasoning: str,
-        key_factors: Optional[list[str]] = None,
-        metrics: Optional[dict[str, Any]] = None,
+        key_factors: list[str] | None = None,
+        metrics: dict[str, Any] | None = None,
     ) -> AgentSignal:
         """Helper to build a properly formatted AgentSignal."""
         from app.hedge_fund.schemas import Signal
@@ -169,7 +169,7 @@ class LLMAgentBase(AgentBase):
             requires_llm=True,
         )
         self._system_prompt = system_prompt
-        self._llm_gateway: Optional[Any] = None
+        self._llm_gateway: Any | None = None
 
     def set_llm_gateway(self, gateway: Any) -> None:
         """Set the LLM gateway for this agent."""
@@ -231,7 +231,7 @@ class CalculationAgentBase(AgentBase):
         data: MarketData,
         *,
         mode: LLMMode = LLMMode.REALTIME,
-        run_id: Optional[str] = None,
+        run_id: str | None = None,
     ) -> AgentSignal:
         """Run calculation-based analysis."""
         # Calculation agents ignore mode - they always run synchronously

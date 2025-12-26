@@ -7,12 +7,13 @@ import os
 import time
 from typing import Any
 
-from celery.beat import Scheduler, ScheduleEntry
+from celery.beat import ScheduleEntry, Scheduler
 from celery.schedules import crontab
 
 from app.core.logging import get_logger
-from app.jobs.job_defaults import get_job_schedule, get_job_priority, seed_cronjobs
+from app.jobs.job_defaults import get_job_priority, seed_cronjobs
 from app.jobs.registry import list_job_names
+
 
 logger = get_logger("jobs.celery_scheduler")
 

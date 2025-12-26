@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import warnings
 from functools import lru_cache
-from typing import List, Optional
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -62,11 +61,11 @@ class Settings(BaseSettings):
     admin_pass: str = Field(default="changeme", min_length=6, alias="ADMIN_PASS")
 
     # Domain and HTTPS
-    domain: Optional[str] = Field(default=None, description="Cookie domain")
+    domain: str | None = Field(default=None, description="Cookie domain")
     https_enabled: bool = Field(default=False, description="Enable secure cookies")
 
     # CORS
-    cors_origins: List[str] = Field(
+    cors_origins: list[str] = Field(
         default_factory=lambda: ["http://localhost:5173", "http://localhost:3000"],
         description="Allowed CORS origins (no wildcards with credentials)",
     )
@@ -120,7 +119,7 @@ class Settings(BaseSettings):
     )
 
     # Stock data
-    default_symbols: List[str] = Field(
+    default_symbols: list[str] = Field(
         default_factory=lambda: [
             "AAPL",
             "MSFT",
@@ -202,7 +201,7 @@ class Settings(BaseSettings):
         return upper
 
     @model_validator(mode="after")
-    def validate_pool_sizes(self) -> "Settings":
+    def validate_pool_sizes(self) -> Settings:
         """Validate db_pool_max_size >= db_pool_min_size."""
         if self.db_pool_max_size < self.db_pool_min_size:
             raise ValueError(
@@ -212,7 +211,7 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
-    def check_production_auth_secret(self) -> "Settings":
+    def check_production_auth_secret(self) -> Settings:
         """Warn if using default auth_secret in production."""
         default_secret = "dev-secret-please-change-in-production-min-32-chars"
         if self.environment == "production" and self.auth_secret == default_secret:

@@ -13,11 +13,11 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from sklearn.linear_model import Ridge, Lasso
-from sklearn.model_selection import TimeSeriesSplit
+from sklearn.linear_model import Lasso, Ridge
 from sklearn.preprocessing import StandardScaler
 
-from app.quant_engine.types import AlphaResult, AlphaModelScore
+from app.quant_engine.types import AlphaModelScore, AlphaResult
+
 
 logger = logging.getLogger(__name__)
 
@@ -59,22 +59,22 @@ def train_ridge(
         Trained model container.
     """
     name = model_name or f"ridge:{alpha}"
-    
+
     # Standardize features
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X.values)
-    
+
     # Train model
     model = Ridge(alpha=alpha, fit_intercept=True)
     model.fit(X_scaled, y.values)
-    
+
     # Get training end date
     if isinstance(X.index, pd.MultiIndex):
         dates = X.index.get_level_values("date")
         train_end = str(max(dates))
     else:
         train_end = str(X.index.max())
-    
+
     return TrainedModel(
         name=name,
         model=model,
@@ -110,19 +110,19 @@ def train_lasso(
         Trained model container.
     """
     name = model_name or f"lasso:{alpha}"
-    
+
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X.values)
-    
+
     model = Lasso(alpha=alpha, fit_intercept=True, max_iter=5000)
     model.fit(X_scaled, y.values)
-    
+
     if isinstance(X.index, pd.MultiIndex):
         dates = X.index.get_level_values("date")
         train_end = str(max(dates))
     else:
         train_end = str(X.index.max())
-    
+
     return TrainedModel(
         name=name,
         model=model,
@@ -153,13 +153,13 @@ def predict(
     """
     # Ensure feature alignment
     X_aligned = X[model.feature_names].copy()
-    
+
     # Scale features
     X_scaled = model.scaler.transform(X_aligned.values)
-    
+
     # Predict
     preds = model.model.predict(X_scaled)
-    
+
     return pd.Series(preds, index=X.index, name=f"pred_{model.name}")
 
 
@@ -189,7 +189,7 @@ def compute_oos_score(
     aligned = pd.concat([y_true, y_pred], axis=1, join="inner")
     aligned.columns = ["true", "pred"]
     aligned = aligned.dropna()
-    
+
     if len(aligned) < 10:
         return AlphaModelScore(
             model_name=model_name,
@@ -198,22 +198,22 @@ def compute_oos_score(
             r2=np.nan,
             n_samples=len(aligned),
         )
-    
+
     residuals = aligned["true"] - aligned["pred"]
     mse = float((residuals ** 2).mean())
     rmse = np.sqrt(mse)
-    
+
     ss_tot = ((aligned["true"] - aligned["true"].mean()) ** 2).sum()
     ss_res = (residuals ** 2).sum()
     r2 = float(1 - ss_res / ss_tot) if ss_tot > 1e-12 else np.nan
-    
+
     # Sharpe of forecast (correlation-based approximation)
     if aligned["pred"].std() > 1e-12:
         corr = aligned["true"].corr(aligned["pred"])
         sharpe = corr * np.sqrt(252 / 21)  # Approximate monthly to annual
     else:
         sharpe = None
-    
+
     return AlphaModelScore(
         model_name=model_name,
         mse=mse,
@@ -261,12 +261,12 @@ def train_and_validate_model(
         trained = train_lasso(X_train, y_train, alpha=alpha)
     else:
         raise ValueError(f"Unknown model type: {model_type}")
-    
+
     # Validate
     y_pred = predict(trained, X_val)
     score = compute_oos_score(y_val, y_pred, trained.name)
     trained.oos_score = score
-    
+
     return trained, score
 
 
@@ -291,8 +291,8 @@ def compute_ensemble_weights(
     """
     if method == "equal":
         n = len(scores)
-        return {name: 1.0 / n for name in scores}
-    
+        return dict.fromkeys(scores, 1.0 / n)
+
     elif method == "inverse_mse":
         # Use inverse MSE as weights (lower MSE = higher weight)
         inv_mse = {}
@@ -301,15 +301,15 @@ def compute_ensemble_weights(
                 inv_mse[name] = 1.0 / score.mse
             else:
                 inv_mse[name] = 1e-6  # Small weight for invalid scores
-        
+
         total = sum(inv_mse.values())
         if total < 1e-12:
             # Fallback to equal weights
             n = len(scores)
-            return {name: 1.0 / n for name in scores}
-        
+            return dict.fromkeys(scores, 1.0 / n)
+
         return {name: w / total for name, w in inv_mse.items()}
-    
+
     else:
         raise ValueError(f"Unknown ensemble method: {method}")
 
@@ -341,28 +341,28 @@ def compute_uncertainty(
     if oos_residuals is None:
         # Use model OOS scores as fallback
         avg_rmse = np.mean([
-            m.oos_score.rmse 
-            for m in models 
+            m.oos_score.rmse
+            for m in models
             if m.oos_score and np.isfinite(m.oos_score.rmse)
         ])
         if not np.isfinite(avg_rmse):
             avg_rmse = 0.1  # Default 10% uncertainty
-        
+
         if isinstance(X.index, pd.MultiIndex):
             assets = X.index.get_level_values("asset").unique()
         else:
             assets = X.index
-        
+
         return pd.Series(avg_rmse, index=assets, name="uncertainty")
-    
+
     # Combine residuals from all models
     all_resid = pd.concat(list(oos_residuals.values()), axis=1)
     uncertainty = all_resid.std(axis=1)
-    
+
     # Group by asset if multi-indexed
     if isinstance(uncertainty.index, pd.MultiIndex):
         uncertainty = uncertainty.groupby(level="asset").mean()
-    
+
     return uncertainty
 
 
@@ -395,14 +395,14 @@ def shrink_mu_hat(
     """
     # Align
     mu_hat, uncertainty = mu_hat.align(uncertainty, join="inner")
-    
+
     max_unc = uncertainty.max()
     if max_unc < 1e-12:
         return mu_hat, pd.Series(0.0, index=mu_hat.index)
-    
+
     shrinkage_factor = (shrinkage_strength * uncertainty / max_unc).clip(upper=1.0)
     mu_shrunk = mu_hat * (1 - shrinkage_factor)
-    
+
     return mu_shrunk, shrinkage_factor
 
 
@@ -434,12 +434,12 @@ def apply_dip_adjustment(
     """
     if dip_k <= 0:
         return mu_hat
-    
+
     mu_hat, dip_scores = mu_hat.align(dip_scores, join="left", fill_value=0)
-    
+
     # Only negative DipScore contributes (underperformance)
     dip_contribution = dip_k * np.maximum(0, -dip_scores)
-    
+
     return mu_hat + dip_contribution
 
 
@@ -450,7 +450,7 @@ class AlphaModelEnsemble:
     Combines Ridge and optionally Lasso models with weights
     determined by out-of-sample performance.
     """
-    
+
     def __init__(
         self,
         ridge_alpha: float = 10.0,
@@ -480,11 +480,11 @@ class AlphaModelEnsemble:
         self.use_lasso = use_lasso
         self.ensemble_method = ensemble_method
         self.shrinkage_strength = shrinkage_strength
-        
+
         self.models: dict[str, TrainedModel] = {}
         self.weights: dict[str, float] = {}
         self.oos_residuals: dict[str, pd.Series] = {}
-    
+
     def fit(
         self,
         X_train: pd.DataFrame,
@@ -512,7 +512,7 @@ class AlphaModelEnsemble:
             OOS scores per model.
         """
         scores = {}
-        
+
         # Train Ridge
         ridge, ridge_score = train_and_validate_model(
             X_train, y_train, X_val, y_val,
@@ -521,11 +521,11 @@ class AlphaModelEnsemble:
         )
         self.models[ridge.name] = ridge
         scores[ridge.name] = ridge_score
-        
+
         # Compute residuals for uncertainty
         y_pred_ridge = predict(ridge, X_val)
         self.oos_residuals[ridge.name] = y_val - y_pred_ridge
-        
+
         # Train Lasso if enabled
         if self.use_lasso and self.lasso_alpha is not None:
             lasso, lasso_score = train_and_validate_model(
@@ -535,20 +535,20 @@ class AlphaModelEnsemble:
             )
             self.models[lasso.name] = lasso
             scores[lasso.name] = lasso_score
-            
+
             y_pred_lasso = predict(lasso, X_val)
             self.oos_residuals[lasso.name] = y_val - y_pred_lasso
-        
+
         # Compute ensemble weights
         self.weights = compute_ensemble_weights(scores, self.ensemble_method)
-        
+
         logger.info(f"Trained {len(self.models)} alpha models")
         logger.info(f"Ensemble weights: {self.weights}")
         for name, score in scores.items():
             logger.info(f"  {name}: MSE={score.mse:.6f}, R2={score.r2:.4f}")
-        
+
         return scores
-    
+
     def predict(
         self,
         X: pd.DataFrame,
@@ -574,46 +574,46 @@ class AlphaModelEnsemble:
         """
         if not self.models:
             raise ValueError("Ensemble not fitted. Call fit() first.")
-        
+
         # Get predictions from each model
         predictions = {}
         for name, model in self.models.items():
             predictions[name] = predict(model, X)
-        
+
         # Compute weighted ensemble
         mu_hat = pd.Series(0.0, index=predictions[list(predictions.keys())[0]].index)
         for name, pred in predictions.items():
             mu_hat += self.weights[name] * pred
-        
+
         # If multi-indexed (date, asset), get latest date per asset
         if isinstance(mu_hat.index, pd.MultiIndex):
             # Group by asset, take latest date
             mu_hat = mu_hat.groupby(level="asset").last()
             for name in predictions:
                 predictions[name] = predictions[name].groupby(level="asset").last()
-        
+
         # Compute uncertainty
         uncertainty = compute_uncertainty(
             list(self.models.values()),
             X,
             self.oos_residuals,
         )
-        
+
         # Apply shrinkage
         mu_hat, shrinkage = shrink_mu_hat(
             mu_hat, uncertainty, self.shrinkage_strength
         )
-        
+
         # Apply dip adjustment (if enabled)
         if dip_scores is not None and dip_k > 0:
             mu_hat = apply_dip_adjustment(mu_hat, dip_scores, dip_k)
-        
+
         oos_scores = {
-            name: model.oos_score 
-            for name, model in self.models.items() 
+            name: model.oos_score
+            for name, model in self.models.items()
             if model.oos_score is not None
         }
-        
+
         return AlphaResult(
             mu_hat=mu_hat,
             mu_hat_raw=predictions,

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
-from typing import Optional
 
 import redis.asyncio as redis
 from redis.asyncio import ConnectionPool, Redis
@@ -12,11 +11,12 @@ from redis.asyncio import ConnectionPool, Redis
 from app.core.config import settings
 from app.core.logging import get_logger
 
+
 logger = get_logger("cache.client")
 
 # Global connection pool
-_pool: Optional[ConnectionPool] = None
-_client: Optional[Redis] = None
+_pool: ConnectionPool | None = None
+_client: Redis | None = None
 
 
 async def init_valkey_pool() -> ConnectionPool:

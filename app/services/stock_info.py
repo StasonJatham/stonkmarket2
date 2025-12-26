@@ -6,11 +6,12 @@ Uses the unified yfinance service for all API calls.
 
 from __future__ import annotations
 
-from typing import Dict, Optional, Any
+from typing import Any
 
 from app.core.logging import get_logger
 from app.schemas.dips import StockInfo
 from app.services.data_providers import get_yfinance_service
+
 
 logger = get_logger("services.stock_info")
 
@@ -18,7 +19,7 @@ logger = get_logger("services.stock_info")
 _yf_service = get_yfinance_service()
 
 
-def is_index_or_etf(symbol: str, quote_type: Optional[str] = None) -> bool:
+def is_index_or_etf(symbol: str, quote_type: str | None = None) -> bool:
     """Check if a symbol is an index, ETF, or fund - detected dynamically from quote_type."""
     if symbol.startswith("^"):
         return True
@@ -27,7 +28,7 @@ def is_index_or_etf(symbol: str, quote_type: Optional[str] = None) -> bool:
     return False
 
 
-async def get_stock_info(symbol: str) -> Optional[StockInfo]:
+async def get_stock_info(symbol: str) -> StockInfo | None:
     """Fetch detailed stock info using unified yfinance service."""
     info = await _yf_service.get_ticker_info(symbol)
     if not info:
@@ -63,7 +64,7 @@ async def get_stock_info(symbol: str) -> Optional[StockInfo]:
     )
 
 
-async def get_stock_info_with_prices(symbol: str) -> Optional[Dict[str, Any]]:
+async def get_stock_info_with_prices(symbol: str) -> dict[str, Any] | None:
     """Fetch stock info including current price and ATH."""
     info = await _yf_service.get_ticker_info(symbol)
     if not info:
@@ -74,7 +75,7 @@ async def get_stock_info_with_prices(symbol: str) -> Optional[Dict[str, Any]]:
     current_price = info.get("current_price") or 0
     previous_close = info.get("previous_close") or 0
     ath_price = info.get("fifty_two_week_high") or 0
-    
+
     # Calculate change percent
     change_percent = None
     if current_price and previous_close and previous_close > 0:
@@ -103,7 +104,7 @@ async def get_stock_info_with_prices(symbol: str) -> Optional[Dict[str, Any]]:
 
 
 # Alias for backwards compatibility
-async def get_stock_info_async(symbol: str) -> Optional[Dict[str, Any]]:
+async def get_stock_info_async(symbol: str) -> dict[str, Any] | None:
     """Async wrapper for get_stock_info_with_prices."""
     return await get_stock_info_with_prices(symbol)
 

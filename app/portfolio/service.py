@@ -5,8 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
-from typing import Any, Optional
+from datetime import UTC, date, datetime, timedelta
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -15,6 +15,7 @@ from app.cache.cache import Cache
 from app.core.logging import get_logger
 from app.dipfinder.service import DatabasePriceProvider
 from app.repositories import portfolios_orm as portfolios_repo
+
 
 logger = get_logger("portfolio.service")
 
@@ -27,7 +28,7 @@ class PortfolioContext:
     prices_by_symbol: dict[str, pd.DataFrame]
     portfolio_values: pd.Series
     returns: pd.Series
-    benchmark_returns: Optional[pd.Series]
+    benchmark_returns: pd.Series | None
 
 
 _analytics_cache = Cache(prefix="portfolio_analytics", default_ttl=1800)
@@ -80,9 +81,9 @@ def _hash_params(params: dict[str, Any]) -> str:
 def _analytics_cache_key(
     portfolio_id: int,
     tool: str,
-    window: Optional[str],
-    start_date: Optional[date],
-    end_date: Optional[date],
+    window: str | None,
+    start_date: date | None,
+    end_date: date | None,
     params: dict[str, Any],
 ) -> str:
     return f"{portfolio_id}:{tool}:{window}:{start_date}:{end_date}:{_hash_params(params)}"
@@ -96,13 +97,13 @@ def _tool_params(tool: str, params: dict[str, Any]) -> dict[str, Any]:
     return params if tool in PARAM_TOOLS else {}
 
 
-def is_cached_result_stale(tool: str, generated_at: Optional[datetime]) -> bool:
+def is_cached_result_stale(tool: str, generated_at: datetime | None) -> bool:
     """Check if a stored result is older than the tool TTL."""
     if generated_at is None:
         return False
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if generated_at.tzinfo is None:
-        generated_at = generated_at.replace(tzinfo=timezone.utc)
+        generated_at = generated_at.replace(tzinfo=UTC)
     return (now - generated_at).total_seconds() > _tool_ttl(tool)
 
 
@@ -124,11 +125,11 @@ async def get_cached_tool_result(
     portfolio_id: int,
     *,
     tool: str,
-    window: Optional[str],
-    start_date: Optional[date],
-    end_date: Optional[date],
+    window: str | None,
+    start_date: date | None,
+    end_date: date | None,
     params: dict[str, Any],
-) -> Optional[dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Return cached or stored analytics result for a tool."""
     tool_params = _tool_params(tool, params)
     cache_key = _analytics_cache_key(
@@ -209,9 +210,9 @@ async def build_portfolio_context(
     portfolio_id: int,
     *,
     user_id: int,
-    start_date: Optional[date] = None,
-    end_date: Optional[date] = None,
-    benchmark: Optional[str] = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    benchmark: str | None = None,
 ) -> PortfolioContext:
     portfolio = await portfolios_repo.get_portfolio(portfolio_id, user_id)
     if not portfolio:
@@ -273,7 +274,7 @@ def _basic_performance_metrics(returns: pd.Series) -> dict[str, Any]:
     }
 
 
-def _tool_result(tool: str, status: str, data: dict[str, Any], warnings: Optional[list[str]] = None) -> dict[str, Any]:
+def _tool_result(tool: str, status: str, data: dict[str, Any], warnings: list[str] | None = None) -> dict[str, Any]:
     return {
         "tool": tool,
         "status": status,
@@ -424,7 +425,7 @@ def run_prophet(context: PortfolioContext) -> dict[str, Any]:
         return _tool_result(tool, "partial", data, ["prophet not available, used linear trend"])
 
 
-def run_vectorbt(context: PortfolioContext, params: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+def run_vectorbt(context: PortfolioContext, params: dict[str, Any] | None = None) -> dict[str, Any]:
     tool = "vectorbt"
     params = params or {}
     symbol = params.get("symbol")
@@ -466,7 +467,7 @@ def run_vectorbt(context: PortfolioContext, params: Optional[dict[str, Any]] = N
         return _tool_result(tool, "partial", data, ["vectorbt not available, used simple SMA backtest"])
 
 
-def run_pandas_ta(context: PortfolioContext, params: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+def run_pandas_ta(context: PortfolioContext, params: dict[str, Any] | None = None) -> dict[str, Any]:
     tool = "pandas_ta"
     params = params or {}
     symbol = params.get("symbol")
@@ -494,7 +495,7 @@ def run_pandas_ta(context: PortfolioContext, params: Optional[dict[str, Any]] = 
         return _tool_result(tool, "partial", data, ["pandas_ta not available, used fallback indicators"])
 
 
-def run_talipp(context: PortfolioContext, params: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+def run_talipp(context: PortfolioContext, params: dict[str, Any] | None = None) -> dict[str, Any]:
     tool = "talipp"
     params = params or {}
     symbol = params.get("symbol")
@@ -516,7 +517,7 @@ def run_talipp(context: PortfolioContext, params: Optional[dict[str, Any]] = Non
         return _tool_result(tool, "partial", {"rsi": rsi}, ["talipp not available, used fallback RSI"])
 
 
-def run_mlfinlab(context: PortfolioContext, params: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+def run_mlfinlab(context: PortfolioContext, params: dict[str, Any] | None = None) -> dict[str, Any]:
     tool = "mlfinlab"
     params = params or {}
     features = params.get("features")
@@ -539,7 +540,7 @@ def run_mlfinlab(context: PortfolioContext, params: Optional[dict[str, Any]] = N
     return _tool_result(tool, "partial", data, warnings)
 
 
-def run_alphalens(context: PortfolioContext, params: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+def run_alphalens(context: PortfolioContext, params: dict[str, Any] | None = None) -> dict[str, Any]:
     tool = "alphalens"
     params = params or {}
     factor = params.get("factor")
@@ -667,11 +668,11 @@ async def run_portfolio_tools(
     *,
     user_id: int,
     tools: list[str],
-    window: Optional[str] = None,
-    start_date: Optional[date] = None,
-    end_date: Optional[date] = None,
-    benchmark: Optional[str] = None,
-    params: Optional[dict[str, Any]] = None,
+    window: str | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    benchmark: str | None = None,
+    params: dict[str, Any] | None = None,
     force_refresh: bool = False,
 ) -> list[dict[str, Any]]:
     """Run portfolio tools and cache/store results."""

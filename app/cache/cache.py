@@ -6,14 +6,16 @@ import asyncio
 import hashlib
 import json
 import time
+from collections.abc import Callable
 from functools import wraps
-from typing import Any, Callable, Optional, TypeVar, Union
+from typing import Any, TypeVar
 
 from app.core.config import settings
 from app.core.logging import get_logger
 
 from .client import get_valkey_client
 from .metrics import cache_metrics
+
 
 logger = get_logger("cache")
 
@@ -24,7 +26,7 @@ CACHE_PREFIX = "stonkmarket"
 CACHE_VERSION = "v1"
 
 
-def cache_key(*parts: Union[str, int, float], prefix: str = "cache") -> str:
+def cache_key(*parts: str | int | float, prefix: str = "cache") -> str:
     """
     Generate a consistent cache key from parts.
 
@@ -53,7 +55,7 @@ class Cache:
         # Use explicit None check to allow TTL=0 (disabled caching)
         self.default_ttl = default_ttl if default_ttl is not None else settings.cache_default_ttl
 
-    async def get(self, key: str) -> Optional[Any]:
+    async def get(self, key: str) -> Any | None:
         """Get value from cache."""
         client = await get_valkey_client()
         full_key = cache_key(key, prefix=self.prefix)
@@ -77,7 +79,7 @@ class Cache:
         self,
         key: str,
         value: Any,
-        ttl: Optional[int] = None,
+        ttl: int | None = None,
     ) -> bool:
         """Set value in cache with TTL.
         
@@ -94,7 +96,7 @@ class Cache:
         if effective_ttl == 0:
             logger.debug(f"Cache disabled (TTL=0) for key: {key}")
             return True
-            
+
         client = await get_valkey_client()
         full_key = cache_key(key, prefix=self.prefix)
         start = time.perf_counter()
@@ -155,7 +157,7 @@ class Cache:
         self,
         key: str,
         factory: Callable[[], Any],
-        ttl: Optional[int] = None,
+        ttl: int | None = None,
     ) -> Any:
         """Get from cache or compute and cache value (cache-aside pattern)."""
         value = await self.get(key)
@@ -177,7 +179,7 @@ class Cache:
         self,
         key: str,
         factory: Callable[[], Any],
-        ttl: Optional[int] = None,
+        ttl: int | None = None,
         lock_timeout: int = 10,
     ) -> Any:
         """
@@ -247,7 +249,7 @@ async def invalidate_pattern(pattern: str) -> int:
 def cached(
     key_prefix: str,
     ttl: int = None,
-    key_builder: Optional[Callable[..., str]] = None,
+    key_builder: Callable[..., str] | None = None,
     with_lock: bool = False,
 ):
     """

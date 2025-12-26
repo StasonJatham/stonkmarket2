@@ -6,11 +6,11 @@ import asyncio
 import time
 import uuid
 from contextlib import asynccontextmanager
-from typing import Optional
 
 from app.core.logging import get_logger
 
 from .client import get_valkey_client
+
 
 logger = get_logger("cache.lock")
 
@@ -29,7 +29,7 @@ class DistributedLock:
         name: str,
         timeout: int = 30,
         blocking: bool = True,
-        blocking_timeout: Optional[float] = None,
+        blocking_timeout: float | None = None,
     ):
         """
         Initialize distributed lock.
@@ -145,7 +145,7 @@ class DistributedLock:
             logger.error(f"Lock extend error: {e}")
             return False
 
-    async def __aenter__(self) -> "DistributedLock":
+    async def __aenter__(self) -> DistributedLock:
         if not await self.acquire():
             raise RuntimeError(f"Failed to acquire lock: {self.name}")
         return self
@@ -159,7 +159,7 @@ async def acquire_lock(
     name: str,
     timeout: int = 30,
     blocking: bool = True,
-    blocking_timeout: Optional[float] = None,
+    blocking_timeout: float | None = None,
 ):
     """
     Context manager for distributed lock.

@@ -11,13 +11,13 @@ The blacklist uses Valkey with automatic expiration matching the token's TTL.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 from app.core.config import settings
 from app.core.logging import get_logger
 
 from .client import get_valkey_client
+
 
 logger = get_logger("cache.token_blacklist")
 
@@ -40,7 +40,7 @@ async def blacklist_token(jti: str, exp: datetime) -> bool:
         key = f"{BLACKLIST_PREFIX}:{jti}"
 
         # Calculate TTL - only need to keep until token expires naturally
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         ttl_seconds = int((exp - now).total_seconds())
 
         if ttl_seconds <= 0:
@@ -81,7 +81,7 @@ async def is_token_blacklisted(jti: str) -> bool:
 
 
 async def blacklist_user_tokens(
-    username: str, before: Optional[datetime] = None
+    username: str, before: datetime | None = None
 ) -> int:
     """
     Blacklist all tokens for a user issued before a given time.
@@ -100,7 +100,7 @@ async def blacklist_user_tokens(
         client = await get_valkey_client()
         key = f"{BLACKLIST_PREFIX}:user:{username}"
 
-        timestamp = before or datetime.now(timezone.utc)
+        timestamp = before or datetime.now(UTC)
 
         # Store for the maximum token lifetime
         ttl = settings.access_token_expire_minutes * 60
@@ -116,7 +116,7 @@ async def blacklist_user_tokens(
         return 0
 
 
-async def get_user_token_invalidation_time(username: str) -> Optional[datetime]:
+async def get_user_token_invalidation_time(username: str) -> datetime | None:
     """
     Get the timestamp before which all tokens for a user are invalid.
 

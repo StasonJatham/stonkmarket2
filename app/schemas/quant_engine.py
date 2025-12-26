@@ -5,14 +5,15 @@ Pydantic schemas for the Quantitative Portfolio Engine API.
 from __future__ import annotations
 
 from datetime import datetime
-from pydantic import BaseModel, Field, ConfigDict
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class RecommendationRowResponse(BaseModel):
     """Single recommendation from the quant engine."""
-    
+
     model_config = ConfigDict(from_attributes=True)
-    
+
     ticker: str = Field(..., description="Asset ticker symbol")
     name: str | None = Field(None, description="Asset name")
     action: str = Field(..., description="BUY, SELL, or HOLD")
@@ -33,7 +34,7 @@ class RecommendationRowResponse(BaseModel):
 
 class AuditBlockResponse(BaseModel):
     """Audit information for transparency and reproducibility."""
-    
+
     timestamp: datetime = Field(..., description="Recommendation timestamp")
     config_hash: int = Field(..., description="Hash of configuration used")
     mu_hat_summary: dict = Field(..., description="Summary stats of expected returns")
@@ -48,7 +49,7 @@ class AuditBlockResponse(BaseModel):
 
 class EngineOutputResponse(BaseModel):
     """Complete response from the quant engine."""
-    
+
     recommendations: list[RecommendationRowResponse] = Field(
         ..., description="Ranked recommendations"
     )
@@ -64,7 +65,7 @@ class EngineOutputResponse(BaseModel):
 
 class GenerateRecommendationsRequest(BaseModel):
     """Request to generate portfolio recommendations."""
-    
+
     portfolio_value_eur: float = Field(..., ge=0, description="Current portfolio value in EUR")
     inflow_eur: float = Field(1000.0, ge=0, description="Monthly inflow in EUR")
     current_weights: dict[str, float] | None = Field(
@@ -75,7 +76,7 @@ class GenerateRecommendationsRequest(BaseModel):
 
 class ValidationResultResponse(BaseModel):
     """Response from walk-forward validation."""
-    
+
     n_folds: int = Field(..., description="Number of walk-forward folds")
     aggregate_sharpe: float = Field(..., description="Aggregate Sharpe ratio")
     aggregate_return: float = Field(..., description="Aggregate return")
@@ -88,7 +89,7 @@ class ValidationResultResponse(BaseModel):
 
 class TuningResultResponse(BaseModel):
     """Response from hyperparameter tuning."""
-    
+
     best_params: dict = Field(..., description="Best hyperparameters found")
     best_score: float = Field(..., description="Best objective score")
     n_evaluations: int = Field(..., description="Number of parameter combinations evaluated")

@@ -42,17 +42,18 @@ import re
 import tempfile
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any
 
-from openai import AsyncOpenAI, APITimeoutError, APIConnectionError, RateLimitError, APIStatusError
+from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI, RateLimitError
 
 from app.core.logging import get_logger
 from app.repositories import api_keys_orm as api_keys_repo
 from app.repositories import api_usage_orm as api_usage_repo
 from app.services.text_cleaner import clean_ai_text, truncate_summary
+
 
 logger = get_logger("openai")
 
@@ -72,7 +73,7 @@ GPT5_PREFIXES = ("gpt-5",)
 # =============================================================================
 # Token Limits by Model (Updated Dec 2024)
 # =============================================================================
-# 
+#
 # Each model has a context window (total input + output tokens) and max output limit.
 # We must ensure: input_tokens + output_tokens <= context_window
 #
@@ -297,9 +298,9 @@ def _build_prompt(task: TaskType, context: dict[str, Any]) -> str:
     # Support custom prompts (e.g., from AI agents)
     if "prompt" in context:
         return context["prompt"]
-    
+
     parts = []
-    
+
     # === BIO: Company identity only, no financial numbers ===
     if task == TaskType.BIO:
         if symbol := context.get("symbol"):
@@ -310,14 +311,14 @@ def _build_prompt(task: TaskType, context: dict[str, Any]) -> str:
             parts.append(f"Sector: {sector}")
         if summary := context.get("summary"):
             parts.append(f"Business: {summary[:400]}")
-        
+
         # Pass mood as boolean only, no specific numbers
         dip = context.get("dip_pct") or context.get("dip_percentage")
         if dip and dip > 5:  # Only flag if meaningfully down
             parts.append("Mood: currently down")
-        
+
         return "\n".join(parts)
-    
+
     # === SUMMARY: Company + description only, no financials ===
     if task == TaskType.SUMMARY:
         if symbol := context.get("symbol"):
@@ -335,9 +336,9 @@ def _build_prompt(task: TaskType, context: dict[str, Any]) -> str:
                 )
                 desc = desc[:max_desc_chars] + "..."
             parts.append(f"\nFull Description:\n{desc}")
-        
+
         return "\n".join(parts)
-    
+
     # === RATING: Full context with all financial data ===
     # Stock identification
     if symbol := context.get("symbol"):
@@ -346,11 +347,11 @@ def _build_prompt(task: TaskType, context: dict[str, Any]) -> str:
         parts.append(f"Company: {name}")
     if sector := context.get("sector"):
         parts.append(f"Sector: {sector}")
-    
+
     # Business info
     if summary := context.get("summary"):
         parts.append(f"Business: {summary[:400]}")
-    
+
     # Price data (RATING only)
     if price := context.get("current_price"):
         parts.append(f"Current Price: ${price:.2f}")
@@ -360,7 +361,7 @@ def _build_prompt(task: TaskType, context: dict[str, Any]) -> str:
         parts.append(f"Dip: -{dip:.1f}% from high")
     if days := context.get("days_below"):
         parts.append(f"Days in dip: {days}")
-    
+
     # Dip classification and computed scores (NEW)
     if dip_class := context.get("dip_classification"):
         parts.append(f"Dip Type: {dip_class}")  # MARKET_DIP, STOCK_SPECIFIC, MIXED
@@ -370,7 +371,7 @@ def _build_prompt(task: TaskType, context: dict[str, Any]) -> str:
         parts.append(f"Quality Score: {quality:.0f}/100")
     if stability := context.get("stability_score"):
         parts.append(f"Stability Score: {stability:.0f}/100")
-    
+
     # Valuation metrics
     if pe := context.get("pe_ratio"):
         parts.append(f"P/E Ratio: {pe:.1f}")
@@ -382,7 +383,7 @@ def _build_prompt(task: TaskType, context: dict[str, Any]) -> str:
         parts.append(f"Price/Book: {ptb}")
     if ev_ebitda := context.get("ev_to_ebitda"):
         parts.append(f"EV/EBITDA: {ev_ebitda}")
-    
+
     # Profitability
     if profit_margin := context.get("profit_margin"):
         parts.append(f"Profit Margin: {profit_margin}")
@@ -390,13 +391,13 @@ def _build_prompt(task: TaskType, context: dict[str, Any]) -> str:
         parts.append(f"Gross Margin: {gross_margin}")
     if roe := context.get("return_on_equity"):
         parts.append(f"ROE: {roe}")
-    
+
     # Growth
     if rev_growth := context.get("revenue_growth"):
         parts.append(f"Revenue Growth: {rev_growth}")
     if earn_growth := context.get("earnings_growth"):
         parts.append(f"Earnings Growth: {earn_growth}")
-    
+
     # Financial health
     if debt_equity := context.get("debt_to_equity"):
         parts.append(f"Debt/Equity: {debt_equity}")
@@ -404,7 +405,7 @@ def _build_prompt(task: TaskType, context: dict[str, Any]) -> str:
         parts.append(f"Current Ratio: {current_ratio}")
     if fcf := context.get("free_cash_flow"):
         parts.append(f"Free Cash Flow: {fcf}")
-    
+
     # Analyst sentiment
     if recommendation := context.get("recommendation"):
         parts.append(f"Analyst Rating: {recommendation}")
@@ -412,7 +413,7 @@ def _build_prompt(task: TaskType, context: dict[str, Any]) -> str:
         parts.append(f"Analyst Target Price: ${target_price:.2f}")
     if num_analysts := context.get("num_analyst_opinions"):
         parts.append(f"Number of Analysts: {num_analysts}")
-    
+
     # Risk indicators
     if beta := context.get("beta"):
         parts.append(f"Beta: {beta}")
@@ -420,14 +421,14 @@ def _build_prompt(task: TaskType, context: dict[str, Any]) -> str:
         parts.append(f"Short % of Float: {short_pct}")
     if inst_pct := context.get("institutional_ownership"):
         parts.append(f"Institutional Ownership: {inst_pct}")
-    
+
     # Market cap (for size context)
     if cap := context.get("market_cap"):
         if cap > 1e12:
             parts.append(f"Market Cap: ${cap/1e12:.1f}T")
         elif cap > 1e9:
             parts.append(f"Market Cap: ${cap/1e9:.1f}B")
-    
+
     return "\n".join(parts)
 
 
@@ -435,35 +436,35 @@ def _build_prompt(task: TaskType, context: dict[str, Any]) -> str:
 # Client Management
 # =============================================================================
 
-_client: Optional[AsyncOpenAI] = None
-_client_created_at: Optional[datetime] = None
+_client: AsyncOpenAI | None = None
+_client_created_at: datetime | None = None
 CLIENT_TTL = timedelta(hours=1)  # Refresh client hourly
 
 
-async def _get_client() -> Optional[AsyncOpenAI]:
+async def _get_client() -> AsyncOpenAI | None:
     """Get or create OpenAI client with connection pooling."""
     global _client, _client_created_at
-    
+
     # Reuse existing client if still valid
     if _client and _client_created_at:
-        if datetime.now(timezone.utc) - _client_created_at < CLIENT_TTL:
+        if datetime.now(UTC) - _client_created_at < CLIENT_TTL:
             return _client
-    
+
     # Get API key from env or database
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         api_key = await api_keys_repo.get_decrypted_key("OPENAI_API_KEY")
-    
+
     if not api_key:
         logger.warning("OpenAI API key not configured")
         return None
-    
+
     _client = AsyncOpenAI(
         api_key=api_key,
         timeout=DEFAULT_TIMEOUT,
         max_retries=0,  # We handle retries ourselves
     )
-    _client_created_at = datetime.now(timezone.utc)
+    _client_created_at = datetime.now(UTC)
     return _client
 
 
@@ -531,16 +532,16 @@ def _calculate_max_description_chars(model: str, instructions: str, base_prompt_
     limits = _get_model_limits(model)
     context_window = limits["context"]
     chars_per_token = limits.get("chars_per_token", 4)
-    
+
     # Reserve tokens for: instructions, base prompt, output, safety buffer
     instruction_tokens = _estimate_tokens(instructions, model)
     base_prompt_tokens = int(base_prompt_chars / chars_per_token * 1.1)
     output_reserve = 500  # Reserve for output
     safety_buffer = 1000  # Extra safety margin
-    
+
     available_tokens = context_window - instruction_tokens - base_prompt_tokens - output_reserve - safety_buffer
     max_chars = int(available_tokens * chars_per_token * 0.9)  # 10% safety
-    
+
     # Clamp to reasonable bounds
     return max(10_000, min(max_chars, 200_000))
 
@@ -550,7 +551,7 @@ def _calculate_safe_output_tokens(
     instructions: str,
     prompt: str,
     desired_output: int,
-    task: Optional[TaskType] = None,
+    task: TaskType | None = None,
 ) -> tuple[int, bool]:
     """
     Calculate safe max_output_tokens that won't exceed model limits.
@@ -576,15 +577,15 @@ def _calculate_safe_output_tokens(
     limits = _get_model_limits(model)
     context_window = limits["context"]
     max_output = limits["max_output"]
-    
+
     # Estimate input tokens (instructions + prompt + some overhead for formatting)
     input_estimate = _estimate_tokens(instructions, model) + _estimate_tokens(prompt, model)
     # Add 100 token buffer for API formatting overhead
     input_estimate += 100
-    
+
     # Calculate available tokens for output
     available_for_output = context_window - input_estimate
-    
+
     # Check if input exceeds context window
     input_overflow = available_for_output <= 0
     if input_overflow:
@@ -593,7 +594,7 @@ def _calculate_safe_output_tokens(
         )
         # Return minimum viable output - caller should handle overflow
         return 100, True
-    
+
     # Get per-task reasoning overhead (or default)
     if _is_gpt5(model):
         if task and task in TASK_CONFIGS:
@@ -603,20 +604,20 @@ def _calculate_safe_output_tokens(
         desired_with_overhead = desired_output + reasoning_overhead
     else:
         desired_with_overhead = desired_output
-    
+
     # Take minimum of: desired, available, and model max
     safe_output = min(desired_with_overhead, available_for_output, max_output)
-    
+
     # Ensure at least some output tokens (minimum 100)
     safe_output = max(safe_output, 100)
-    
+
     # Log warning if we had to significantly reduce tokens
     if safe_output < desired_with_overhead * 0.5:
         logger.warning(
             f"Token budget tight: input~{input_estimate}, "
             f"wanted {desired_with_overhead} output, using {safe_output}"
         )
-    
+
     return safe_output, input_overflow
 
 # =============================================================================
@@ -671,12 +672,12 @@ def _calculate_cost(input_tokens: int, output_tokens: int, model: str, is_batch:
         "gpt-4o-mini": (0.15, 0.60),
         "gpt-4o": (2.50, 10.00),
     }
-    
+
     input_rate, output_rate = pricing.get(model, (0.15, 0.60))
     if is_batch:
         input_rate *= 0.5
         output_rate *= 0.5
-    
+
     return (input_tokens / 1_000_000 * input_rate) + (output_tokens / 1_000_000 * output_rate)
 
 
@@ -712,30 +713,30 @@ def _validate_output(task: TaskType, output: str | dict) -> tuple[bool, str]:
     config = TASK_CONFIGS.get(task)
     if not config:
         return True, ""
-    
+
     # For RATING, validate the reasoning field length
     if task == TaskType.RATING and isinstance(output, dict):
         reasoning = output.get("reasoning", "")
         if config.reasoning_max_chars > 0 and len(reasoning) > config.reasoning_max_chars:
             return False, f"reasoning too long: {len(reasoning)} chars, max is {config.reasoning_max_chars}"
         return True, ""
-    
+
     # For text outputs (BIO, SUMMARY)
     if isinstance(output, str):
         char_count = len(output)
-        
+
         # Check character limits
         if config.min_chars > 0 and char_count < config.min_chars:
             return False, f"too short: {char_count} chars, min is {config.min_chars}"
         if config.max_chars > 0 and char_count > config.max_chars:
             return False, f"too long: {char_count} chars, max is {config.max_chars}"
-        
+
         # Check emoji count for BIO
         if task == TaskType.BIO and config.max_emojis > 0:
             emoji_count = _count_emojis(output)
             if emoji_count > config.max_emojis:
                 return False, f"too many emojis: {emoji_count}, max is {config.max_emojis}"
-    
+
     return True, ""
 
 
@@ -744,7 +745,7 @@ async def _repair_output(
     output: str | dict,
     error: str,
     model: str,
-) -> Optional[str | dict]:
+) -> str | dict | None:
     """
     Attempt to repair output that failed validation.
     
@@ -753,24 +754,24 @@ async def _repair_output(
     config = TASK_CONFIGS.get(task)
     if not config:
         return None
-    
+
     client = await _get_client()
     if not client:
         return None
-    
+
     # Build repair prompt based on task
     if task == TaskType.BIO:
         repair_prompt = f"""Fix this stock bio to be exactly {config.min_chars}-{config.max_chars} characters.
 Keep the same meaning and tone. Use 1-2 emojis max. Output only the fixed text.
 
 Original ({len(output)} chars): {output}"""
-    
+
     elif task == TaskType.SUMMARY:
         repair_prompt = f"""Adjust this summary to be exactly {config.min_chars}-{config.max_chars} characters.
 Keep the same meaning. No extra facts. Output only the fixed text.
 
 Original ({len(output)} chars): {output}"""
-    
+
     elif task == TaskType.RATING and isinstance(output, dict):
         # Repair reasoning length
         repair_prompt = f"""Shorten this reasoning to under {config.reasoning_max_chars} characters.
@@ -780,7 +781,7 @@ Cite at least 2 facts. Output only the reasoning text, no JSON.
 Original ({len(output.get('reasoning', ''))} chars): {output.get('reasoning', '')}"""
     else:
         return None
-    
+
     try:
         params = {
             "model": model,
@@ -789,24 +790,24 @@ Original ({len(output.get('reasoning', ''))} chars): {output.get('reasoning', ''
             "max_output_tokens": 300,
             "store": False,
         }
-        
+
         if _is_gpt5(model):
             params["reasoning"] = {"effort": "low"}
-        
+
         response = await client.responses.create(**params)
-        
+
         if response.status != "completed" or not response.output_text:
             return None
-        
+
         repaired = response.output_text.strip().strip('"\'')
-        
+
         # For RATING, rebuild the dict with fixed reasoning
         if task == TaskType.RATING and isinstance(output, dict):
             output["reasoning"] = clean_ai_text(repaired)
             return output
-        
+
         return clean_ai_text(repaired)
-        
+
     except Exception as e:
         logger.warning(f"Repair failed: {e}")
         return None
@@ -820,10 +821,10 @@ async def generate(
     task: TaskType | str,
     context: dict[str, Any],
     *,
-    model: Optional[str] = None,
+    model: str | None = None,
     json_output: bool = False,
-    max_tokens: Optional[int] = None,
-) -> Optional[str | dict]:
+    max_tokens: int | None = None,
+) -> str | dict | None:
     """
     Generate AI content using the Responses API.
     
@@ -850,26 +851,26 @@ async def generate(
     client = await _get_client()
     if not client:
         return None
-    
+
     # Normalize task
     if isinstance(task, str):
         task = TaskType(task)
-    
+
     model = model or DEFAULT_MODEL
     instructions = INSTRUCTIONS.get(task, "")
     prompt = _build_prompt(task, context)
-    
+
     # Use per-task default if max_tokens not specified
     if max_tokens is None:
         config = TASK_CONFIGS.get(task)
         max_tokens = config.default_max_tokens if config else 300
-    
+
     # For RATING task, we use structured outputs (no need for "respond with JSON" hint)
     # For other json_output tasks, add hint for json_object format
     use_structured_output = task == TaskType.RATING and json_output
     if json_output and not use_structured_output:
         prompt += "\n\nRespond with valid JSON."
-    
+
     # Calculate safe output tokens dynamically based on input size
     safe_output_tokens, input_overflow = _calculate_safe_output_tokens(
         model=model,
@@ -878,12 +879,12 @@ async def generate(
         desired_output=max_tokens,
         task=task,
     )
-    
+
     # If input overflowed, fail fast - caller should handle
     if input_overflow:
         logger.error(f"Input too large for {task.value}, cannot proceed")
         return None
-    
+
     # Request parameters
     params: dict[str, Any] = {
         "model": model,
@@ -892,48 +893,48 @@ async def generate(
         "max_output_tokens": safe_output_tokens,
         "store": False,
     }
-    
+
     # For GPT-5 reasoning models, use minimal effort for simple tasks
     # This minimizes internal "thinking" tokens for straightforward generations
     if _is_gpt5(model):
         params["reasoning"] = {"effort": "minimal"}
-    
+
     # Build text config with verbosity and optional format
     # verbosity: "low" reduces token usage for short outputs
     text_config: dict[str, Any] = {"verbosity": "low"}
-    
+
     # Use Structured Outputs (JSON Schema) for RATING - guarantees exact schema
     # Use json_object for other JSON tasks - just ensures valid JSON
     if use_structured_output:
         text_config["format"] = RATING_SCHEMA
     elif json_output:
         text_config["format"] = {"type": "json_object"}
-    
+
     params["text"] = text_config
-    
+
     # Retry loop with exponential backoff + jitter
-    last_error: Optional[Exception] = None
-    start_time = datetime.now(timezone.utc)
+    last_error: Exception | None = None
+    start_time = datetime.now(UTC)
     incomplete_count = 0
     token_boost_applied = False
-    
+
     for attempt in range(MAX_RETRIES):
         try:
             response = await client.responses.create(**params)
-            
+
             # Check for unexpected status (not completed or incomplete)
             if response.status not in ("completed", "incomplete"):
                 logger.warning(f"Unexpected response status: {response.status}")
                 continue
-            
+
             # Get output text (may exist even for incomplete responses)
             output = response.output_text or ""
-            
+
             # If incomplete with max_output_tokens reason and no/empty output, retry with bigger cap
             if response.status == "incomplete":
                 reason = getattr(response.incomplete_details, 'reason', None) if response.incomplete_details else None
                 logger.warning(f"Response incomplete: reason={reason}, output_len={len(output)}")
-                
+
                 if reason == "max_output_tokens" and not output.strip():
                     # Retry with bigger token cap (only once)
                     if not token_boost_applied:
@@ -948,7 +949,7 @@ async def generate(
                         await asyncio.sleep(delay)
                     continue
                 # If we have output despite incomplete status, try to use it
-            
+
             # Handle empty output
             if not output.strip():
                 # Check if SDK returned parsed object directly
@@ -957,9 +958,9 @@ async def generate(
                 else:
                     logger.warning(f"Empty output, status={response.status}")
                     continue
-            
+
             # Record metrics
-            duration_ms = int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)
+            duration_ms = int((datetime.now(UTC) - start_time).total_seconds() * 1000)
             metrics = UsageMetrics(
                 input_tokens=response.usage.input_tokens,
                 output_tokens=response.usage.output_tokens,
@@ -969,9 +970,9 @@ async def generate(
                 duration_ms=duration_ms,
             )
             await _record_usage(task, model, metrics, success=True)
-            
+
             logger.info(f"{task.value} for {context.get('symbol', 'unknown')}: {metrics.total_tokens} tokens, ${metrics.cost_usd:.4f}")
-            
+
             # Parse output
             if json_output:
                 # Handle already-parsed dict or parse string
@@ -987,7 +988,7 @@ async def generate(
             else:
                 # Clean text output and remove quotes
                 result = clean_ai_text(output.strip().strip('"\''))
-            
+
             # Validate output against task constraints
             is_valid, validation_error = _validate_output(task, result)
             if not is_valid:
@@ -1003,27 +1004,27 @@ async def generate(
                     else:
                         logger.warning(f"Repair still invalid: {error2}, returning original")
                 # Return original if repair failed
-            
+
             return result
-            
+
         except RateLimitError as e:
             last_error = e
             delay = RETRY_DELAY * (2 ** attempt) + random.uniform(0, 1)
             logger.warning(f"Rate limited, waiting {delay:.1f}s...")
             await asyncio.sleep(delay)
-            
+
         except APITimeoutError as e:
             last_error = e
             delay = RETRY_DELAY * (2 ** attempt) + random.uniform(0, 0.5)
             logger.warning(f"Timeout on attempt {attempt + 1}, waiting {delay:.1f}s...")
             await asyncio.sleep(delay)
-            
+
         except APIConnectionError as e:
             last_error = e
             delay = RETRY_DELAY * (2 ** attempt) + random.uniform(0, 1)
             logger.warning(f"Connection error on attempt {attempt + 1}, waiting {delay:.1f}s...")
             await asyncio.sleep(delay)
-            
+
         except APIStatusError as e:
             last_error = e
             # Retry on 5xx errors
@@ -1035,21 +1036,21 @@ async def generate(
                 # Don't retry client errors (4xx)
                 logger.error(f"Client error {e.status_code}: {e}")
                 break
-            
+
         except json.JSONDecodeError as e:
             last_error = e
             logger.warning(f"Invalid JSON response: {e}")
             # Don't sleep for parse errors, just retry
-            
+
         except Exception as e:
             last_error = e
             logger.warning(f"Attempt {attempt + 1} failed: {e}")
             if attempt < MAX_RETRIES - 1:
                 delay = RETRY_DELAY * (2 ** attempt) + random.uniform(0, 0.5)
                 await asyncio.sleep(delay)
-    
+
     # All retries exhausted
-    duration_ms = int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)
+    duration_ms = int((datetime.now(UTC) - start_time).total_seconds() * 1000)
     await _record_usage(task, model, UsageMetrics(duration_ms=duration_ms), success=False)
     logger.error(f"All retries failed for {task.value}: {last_error}")
     return None
@@ -1061,11 +1062,11 @@ async def generate(
 
 async def generate_bio(
     symbol: str,
-    name: Optional[str] = None,
-    sector: Optional[str] = None,
-    summary: Optional[str] = None,
-    dip_pct: Optional[float] = None,
-) -> Optional[str]:
+    name: str | None = None,
+    sector: str | None = None,
+    summary: str | None = None,
+    dip_pct: float | None = None,
+) -> str | None:
     """Generate a dating-app style bio for a stock."""
     return await generate(
         task=TaskType.BIO,
@@ -1082,11 +1083,11 @@ async def generate_bio(
 
 async def rate_dip(
     symbol: str,
-    current_price: Optional[float] = None,
-    ref_high: Optional[float] = None,
-    dip_pct: Optional[float] = None,
+    current_price: float | None = None,
+    ref_high: float | None = None,
+    dip_pct: float | None = None,
     **extra_context,
-) -> Optional[dict]:
+) -> dict | None:
     """Rate a stock dip opportunity."""
     return await generate(
         task=TaskType.RATING,
@@ -1104,9 +1105,9 @@ async def rate_dip(
 
 async def summarize_company(
     symbol: str,
-    name: Optional[str] = None,
+    name: str | None = None,
     description: str = "",
-) -> Optional[str]:
+) -> str | None:
     """
     Summarize a company description to 300-400 characters.
     
@@ -1115,7 +1116,7 @@ async def summarize_company(
     """
     if not description or len(description) < 50:
         return description
-    
+
     result = await generate(
         task=TaskType.SUMMARY,
         context={
@@ -1125,11 +1126,11 @@ async def summarize_company(
         },
         max_tokens=250,  # Target: 300-400 chars (~75-100 tokens)
     )
-    
+
     # Apply truncation fallback if AI exceeded limit
     if result:
         result = truncate_summary(result, max_chars=500, target_chars=400)
-    
+
     return result
 
 
@@ -1141,8 +1142,8 @@ async def submit_batch(
     task: TaskType | str,
     items: list[dict[str, Any]],
     *,
-    model: Optional[str] = None,
-) -> Optional[str]:
+    model: str | None = None,
+) -> str | None:
     """
     Submit a batch job for bulk processing.
     
@@ -1166,18 +1167,18 @@ async def submit_batch(
     client = await _get_client()
     if not client or not items:
         return None
-    
+
     if isinstance(task, str):
         task = TaskType(task)
-    
+
     model = model or DEFAULT_MODEL
     instructions = INSTRUCTIONS.get(task, "")
     json_output = task == TaskType.RATING
     use_structured_output = task == TaskType.RATING
-    
+
     # Generate unique batch run ID to avoid custom_id collisions
     batch_run_id = uuid.uuid4().hex[:8]
-    
+
     # Build JSONL
     jsonl_lines = []
     for i, item in enumerate(items):
@@ -1192,12 +1193,12 @@ async def submit_batch(
             # Standard format: "batch_run_id:symbol:idx:task"
             custom_id = f"{batch_run_id}:{symbol}:{i}:{task.value}"
         prompt = _build_prompt(task, item)
-        
+
         # For RATING, we use structured outputs (no hint needed)
         # For other JSON tasks, add hint
         if json_output and not use_structured_output:
             prompt += "\n\nRespond with valid JSON."
-        
+
         # Calculate safe output tokens dynamically for this item
         safe_output_tokens, overflow = _calculate_safe_output_tokens(
             model=model,
@@ -1206,12 +1207,12 @@ async def submit_batch(
             desired_output=300,  # Default for batch items
             task=task,
         )
-        
+
         # Skip items with overflow
         if overflow:
             logger.warning(f"Skipping {symbol} in batch: input too large")
             continue
-        
+
         body: dict[str, Any] = {
             "model": model,
             "instructions": instructions,
@@ -1219,35 +1220,35 @@ async def submit_batch(
             "max_output_tokens": safe_output_tokens,
             "store": False,
         }
-        
+
         # For GPT-5 reasoning models, use low effort
         if _is_gpt5(model):
             body["reasoning"] = {"effort": "low"}
-        
+
         # Use Structured Outputs for RATING
         if use_structured_output:
             body["text"] = {"format": RATING_SCHEMA}
         elif json_output:
             body["text"] = {"format": {"type": "json_object"}}
-        
+
         jsonl_lines.append(json.dumps({
             "custom_id": custom_id,
             "method": "POST",
             "url": "/v1/responses",
             "body": body,
         }))
-    
+
     try:
         # Upload batch file
         with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
             f.write("\n".join(jsonl_lines))
             temp_path = f.name
-        
+
         with open(temp_path, "rb") as f:
             batch_file = await client.files.create(file=f, purpose="batch")
-        
+
         Path(temp_path).unlink(missing_ok=True)
-        
+
         # Create batch job
         batch = await client.batches.create(
             input_file_id=batch_file.id,
@@ -1259,27 +1260,27 @@ async def submit_batch(
                 "count": str(len(items)),
             },
         )
-        
+
         logger.info(f"Created batch {batch.id}: {len(items)} {task.value} items")
         return batch.id
-        
+
     except Exception as e:
         logger.error(f"Failed to create batch: {e}")
         return None
 
 
-async def check_batch(batch_id: str) -> Optional[dict]:
+async def check_batch(batch_id: str) -> dict | None:
     """Check status of a batch job."""
     client = await _get_client()
     if not client:
         return None
-    
+
     try:
         batch = await client.batches.retrieve(batch_id)
         completed = batch.request_counts.completed if batch.request_counts else 0
         failed = batch.request_counts.failed if batch.request_counts else 0
         total = batch.request_counts.total if batch.request_counts else 0
-        
+
         return {
             "id": batch.id,
             "status": batch.status,
@@ -1303,7 +1304,7 @@ async def check_batch(batch_id: str) -> Optional[dict]:
         return None
 
 
-async def collect_batch(batch_id: str) -> Optional[list[dict]]:
+async def collect_batch(batch_id: str) -> list[dict] | None:
     """
     Collect results from a completed batch job.
     
@@ -1319,29 +1320,29 @@ async def collect_batch(batch_id: str) -> Optional[list[dict]]:
     client = await _get_client()
     if not client:
         return None
-    
+
     try:
         batch = await client.batches.retrieve(batch_id)
-        
+
         if batch.status != "completed" or not batch.output_file_id:
             logger.warning(f"Batch {batch_id} not ready: {batch.status}")
             return None
-        
+
         # Determine task type from batch metadata (with fallback)
         task_type = batch.metadata.get("task", "") if batch.metadata else ""
-        
+
         output = await client.files.content(batch.output_file_id)
-        
+
         results = []
         failed_items = []  # Track items needing retry
-        
+
         for line in output.text.strip().split("\n"):
             if not line:
                 continue
-            
+
             data = json.loads(line)
             custom_id = data.get("custom_id", "")
-            
+
             # Extract symbol from custom_id format: "{task}_{index}_{symbol}_{batch_run_id}"
             # or legacy format: "{task}_{symbol}"
             parts = custom_id.split("_")
@@ -1353,11 +1354,11 @@ async def collect_batch(batch_id: str) -> Optional[list[dict]]:
                 symbol = parts[-1]
             else:
                 symbol = custom_id
-            
+
             # Fallback task detection from custom_id prefix
             inferred_task = parts[0] if parts else ""
             is_rating = task_type == "rating" or inferred_task == "rating"
-            
+
             # Check for API-level errors
             error_info = data.get("error")
             if error_info:
@@ -1370,11 +1371,11 @@ async def collect_batch(batch_id: str) -> Optional[list[dict]]:
                 })
                 failed_items.append({"custom_id": custom_id, "symbol": symbol, "reason": "api_error"})
                 continue
-            
+
             # Parse response body
             response_body = data.get("response", {}).get("body", {})
             output_text = ""
-            
+
             # Extract text from Responses API format
             for item in response_body.get("output", []):
                 if item.get("type") == "message":
@@ -1382,7 +1383,7 @@ async def collect_batch(batch_id: str) -> Optional[list[dict]]:
                         if content.get("type") == "output_text":
                             output_text = content.get("text", "")
                             break
-            
+
             # For rating tasks, parse JSON and validate
             if is_rating and output_text:
                 try:
@@ -1398,11 +1399,11 @@ async def collect_batch(batch_id: str) -> Optional[list[dict]]:
                     conf = parsed.get("confidence")
                     if not isinstance(conf, int) or not 1 <= conf <= 10:
                         raise ValueError(f"Invalid confidence: {conf}")
-                    
+
                     # Clean string values
                     if isinstance(parsed.get("reasoning"), str):
                         parsed["reasoning"] = clean_ai_text(parsed["reasoning"])
-                    
+
                     results.append({
                         "custom_id": custom_id,
                         "symbol": symbol,
@@ -1431,17 +1432,17 @@ async def collect_batch(batch_id: str) -> Optional[list[dict]]:
                 })
                 if not output_text:
                     failed_items.append({"custom_id": custom_id, "symbol": symbol, "reason": "empty_output"})
-        
+
         # Log summary
         success_count = sum(1 for r in results if not r.get("failed"))
         fail_count = len(failed_items)
         logger.info(f"Collected {len(results)} results from batch {batch_id}: {success_count} success, {fail_count} failed")
-        
+
         if failed_items:
             logger.warning(f"Failed items in batch {batch_id}: {[f['symbol'] for f in failed_items]}")
-        
+
         return results
-        
+
     except Exception as e:
         logger.error(f"Failed to collect batch {batch_id}: {e}")
         return None
@@ -1467,25 +1468,25 @@ async def retry_failed_batch_items(
     """
     if isinstance(task, str):
         task = TaskType(task)
-    
+
     retry_results = []
     json_output = task == TaskType.RATING
-    
+
     for item in failed_results:
         if not item.get("failed"):
             continue
-        
+
         symbol = item.get("symbol", "")
         context = original_contexts.get(symbol, {})
         if not context:
             logger.warning(f"No context for retry of {symbol}, skipping")
             retry_results.append(item)  # Keep original failed result
             continue
-        
+
         # Try up to max_retries times
         result = None
         last_error = None
-        
+
         for attempt in range(max_retries):
             try:
                 result = await generate(
@@ -1499,7 +1500,7 @@ async def retry_failed_batch_items(
             except Exception as e:
                 last_error = e
                 logger.warning(f"Retry {attempt + 1} failed for {symbol}: {e}")
-        
+
         if result is not None:
             retry_results.append({
                 "custom_id": item.get("custom_id", f"{task.value}_{symbol}"),
@@ -1518,10 +1519,10 @@ async def retry_failed_batch_items(
                 "error": f"All retries failed: {last_error}",
                 "failed": True,
             })
-    
+
     success_count = sum(1 for r in retry_results if not r.get("failed"))
     logger.info(f"Retry complete: {success_count}/{len(retry_results)} recovered")
-    
+
     return retry_results
 
 
@@ -1529,12 +1530,12 @@ async def retry_failed_batch_items(
 # Utilities
 # =============================================================================
 
-async def check_api_key() -> tuple[bool, Optional[str]]:
+async def check_api_key() -> tuple[bool, str | None]:
     """Verify API key is valid."""
     client = await _get_client()
     if not client:
         return False, "API key not configured"
-    
+
     try:
         await client.models.list()
         return True, None
@@ -1547,7 +1548,7 @@ async def get_available_models() -> list[str]:
     client = await _get_client()
     if not client:
         return []
-    
+
     try:
         models = await client.models.list()
         return sorted([
@@ -1572,7 +1573,7 @@ class _AI:
     retry_failed_batch_items = staticmethod(retry_failed_batch_items)
     check_api_key = staticmethod(check_api_key)
     get_available_models = staticmethod(get_available_models)
-    
+
     # Expose types
     TaskType = TaskType
 

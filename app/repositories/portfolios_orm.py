@@ -4,17 +4,17 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Any
 
-from sqlalchemy import select, delete, desc
+from sqlalchemy import delete, desc, select
 from sqlalchemy.dialects.postgresql import insert
 
 from app.database.connection import get_session
 from app.database.orm import (
     Portfolio,
+    PortfolioAnalytics,
     PortfolioHolding,
     PortfolioTransaction,
-    PortfolioAnalytics,
 )
 
 
@@ -42,7 +42,7 @@ async def create_portfolio(
     user_id: int,
     name: str,
     *,
-    description: Optional[str] = None,
+    description: str | None = None,
     base_currency: str = "USD",
     cash_balance: Decimal | float | int = 0,
 ) -> dict[str, Any]:
@@ -84,7 +84,7 @@ async def list_all_active_portfolios() -> list[dict[str, Any]]:
         return [_portfolio_to_dict(p) for p in result.scalars().all()]
 
 
-async def get_portfolio(portfolio_id: int, user_id: int) -> Optional[dict[str, Any]]:
+async def get_portfolio(portfolio_id: int, user_id: int) -> dict[str, Any] | None:
     """Get a portfolio by id."""
     async with get_session() as session:
         result = await session.execute(
@@ -102,12 +102,12 @@ async def update_portfolio(
     portfolio_id: int,
     user_id: int,
     *,
-    name: Optional[str] = None,
-    description: Optional[str] = None,
-    base_currency: Optional[str] = None,
-    cash_balance: Optional[Decimal | float | int] = None,
-    is_active: Optional[bool] = None,
-) -> Optional[dict[str, Any]]:
+    name: str | None = None,
+    description: str | None = None,
+    base_currency: str | None = None,
+    cash_balance: Decimal | float | int | None = None,
+    is_active: bool | None = None,
+) -> dict[str, Any] | None:
     """Update a portfolio."""
     async with get_session() as session:
         result = await session.execute(
@@ -191,8 +191,8 @@ async def upsert_holding(
     symbol: str,
     *,
     quantity: Decimal | float | int,
-    avg_cost: Optional[Decimal | float | int] = None,
-    target_weight: Optional[Decimal | float | int] = None,
+    avg_cost: Decimal | float | int | None = None,
+    target_weight: Decimal | float | int | None = None,
 ) -> dict[str, Any]:
     """Create or update a holding."""
     async with get_session() as session:
@@ -265,11 +265,11 @@ async def add_transaction(
     symbol: str,
     *,
     side: str,
-    quantity: Optional[Decimal | float | int],
-    price: Optional[Decimal | float | int],
-    fees: Optional[Decimal | float | int],
+    quantity: Decimal | float | int | None,
+    price: Decimal | float | int | None,
+    fees: Decimal | float | int | None,
     trade_date: date,
-    notes: Optional[str] = None,
+    notes: str | None = None,
 ) -> dict[str, Any]:
     """Add a portfolio transaction."""
     async with get_session() as session:
@@ -343,9 +343,9 @@ async def save_portfolio_analytics(
     tool: str,
     payload: dict[str, Any],
     status: str = "ok",
-    as_of_date: Optional[date] = None,
-    window: Optional[str] = None,
-    params: Optional[dict[str, Any]] = None,
+    as_of_date: date | None = None,
+    window: str | None = None,
+    params: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Store analytics output for a portfolio tool."""
     async with get_session() as session:
@@ -368,9 +368,9 @@ async def get_latest_analytics(
     portfolio_id: int,
     *,
     tool: str,
-    window: Optional[str] = None,
-    params: Optional[dict[str, Any]] = None,
-) -> Optional[dict[str, Any]]:
+    window: str | None = None,
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
     """Get latest analytics for a tool."""
     async with get_session() as session:
         query = (

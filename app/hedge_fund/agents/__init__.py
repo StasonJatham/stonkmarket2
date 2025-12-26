@@ -11,12 +11,12 @@ from app.hedge_fund.agents.fundamentals import (
     get_fundamentals_agent,
 )
 from app.hedge_fund.agents.investor_persona import (
+    PERSONAS,
     InvestorPersonaAgent,
     get_all_persona_agents,
     get_all_personas,
     get_persona,
     get_persona_agent,
-    PERSONAS,
 )
 from app.hedge_fund.agents.portfolio_manager import (
     PortfolioManager,
@@ -40,6 +40,7 @@ from app.hedge_fund.agents.valuation import (
     ValuationAgent,
     get_valuation_agent,
 )
+
 
 __all__ = [
     # Base classes

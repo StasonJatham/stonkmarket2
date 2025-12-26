@@ -2,32 +2,30 @@
 
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Literal
 
-from fastapi import APIRouter, Query, Request, Header
+from fastapi import APIRouter, Header, Query, Request
 
 from app.cache.cache import Cache
 from app.celery_app import celery_app
+from app.core.client_identity import (
+    check_vote_allowed,
+    get_vote_identifier,
+    record_vote,
+)
 from app.core.exceptions import NotFoundError, ValidationError
 from app.core.security import decode_access_token
-from app.core.client_identity import (
-    get_vote_identifier,
-    check_vote_allowed,
-    record_vote,
-    get_voted_symbols,
-    RiskLevel,
-)
-from app.repositories import user_api_keys_orm as user_api_keys
 from app.repositories import dip_votes_orm as dip_votes_repo
+from app.repositories import user_api_keys_orm as user_api_keys
 from app.schemas.swipe import (
     DipCard,
     DipCardList,
+    DipStats,
     DipVoteRequest,
     DipVoteResponse,
-    DipStats,
-    VoteCounts,
 )
 from app.services import swipe
+
 
 router = APIRouter()
 
@@ -129,8 +127,8 @@ async def vote_on_dip(
     request: Request,
     symbol: str,
     payload: DipVoteRequest,
-    x_api_key: Optional[str] = Header(default=None, alias="X-API-Key"),
-    authorization: Optional[str] = Header(default=None),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    authorization: str | None = Header(default=None),
 ) -> DipVoteResponse:
     """
     Vote on a stock dip.
@@ -144,7 +142,7 @@ async def vote_on_dip(
     API key holders get 10x vote weight. Use X-API-Key header for authenticated voting.
     """
     symbol = symbol.upper()
-    
+
     # Check if admin - bypass cooldown for admins
     is_admin = False
     if authorization and authorization.startswith("Bearer "):
@@ -155,15 +153,15 @@ async def vote_on_dip(
                 is_admin = True
         except Exception:
             pass
-    
+
     # === Check if vote is allowed (cooldown + risk assessment) ===
     check = None
     if not is_admin:
         check = await check_vote_allowed(request, symbol)
-        
+
         if not check.allowed:
             raise ValidationError(check.reason, details={"retry_after": 3600})
-    
+
     # Get voter identifier
     vote_id = get_vote_identifier(request, symbol)
 
@@ -176,7 +174,7 @@ async def vote_on_dip(
         if key_data:
             vote_weight = key_data.get("vote_weight", 10)
             api_key_id = key_data.get("id")
-    
+
     # Reduce vote weight for high-risk votes (soft penalty) - skip for admin
     if check and check.reduce_weight:
         vote_weight = max(1, vote_weight // 2)
@@ -192,7 +190,7 @@ async def vote_on_dip(
 
     if not success:
         raise ValidationError(error or "Failed to record vote")
-    
+
     # Record successful vote for tracking
     await record_vote(request, symbol)
 

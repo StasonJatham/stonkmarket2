@@ -42,25 +42,27 @@ import json
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
-from typing import Any, Optional, Literal
+from datetime import UTC, date, datetime, timedelta
+from typing import Any, Literal
 
 import pandas as pd
 import yfinance as yf
-
-from sqlalchemy import select, or_
+from sqlalchemy import or_, select
 from sqlalchemy.dialects.postgresql import insert
 
+from app.cache.cache import Cache
 from app.core.logging import get_logger
 from app.core.rate_limiter import get_yfinance_limiter
-from app.cache.cache import Cache
 from app.database.connection import get_session
 from app.database.orm import (
-    YfinanceInfoCache,
-    SymbolSearchResult,
     DataVersion as DataVersionORM,
-    Symbol,
 )
+from app.database.orm import (
+    Symbol,
+    SymbolSearchResult,
+    YfinanceInfoCache,
+)
+
 
 logger = get_logger("data_providers.yfinance")
 
@@ -88,7 +90,7 @@ class DataVersion:
     timestamp: datetime
     source: Literal["prices", "fundamentals", "calendar"]
     metadata: dict[str, Any] = field(default_factory=dict)
-    
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "hash": self.hash,
@@ -125,7 +127,7 @@ def _compute_hash(data: Any) -> str:
     return hashlib.sha256(content.encode()).hexdigest()[:16]
 
 
-def _safe_float(value: Any) -> Optional[float]:
+def _safe_float(value: Any) -> float | None:
     """Safely convert value to float."""
     if value is None:
         return None
@@ -138,7 +140,7 @@ def _safe_float(value: Any) -> Optional[float]:
         return None
 
 
-def _safe_int(value: Any) -> Optional[int]:
+def _safe_int(value: Any) -> int | None:
     """Safely convert value to int."""
     if value is None:
         return None
@@ -148,7 +150,7 @@ def _safe_int(value: Any) -> Optional[int]:
         return None
 
 
-def _is_etf_or_index(symbol: str, quote_type: Optional[str] = None) -> bool:
+def _is_etf_or_index(symbol: str, quote_type: str | None = None) -> bool:
     """Check if symbol is ETF, index, or fund."""
     if symbol.startswith("^"):
         return True
@@ -167,18 +169,18 @@ class YFinanceService:
     - Version tracking for change detection
     - Full search result persistence
     """
-    
+
     def __init__(self):
         self._info_cache = Cache(prefix="yf_info", default_ttl=VALKEY_INFO_TTL)
         self._price_cache = Cache(prefix="yf_price", default_ttl=VALKEY_PRICE_TTL)
         self._calendar_cache = Cache(prefix="yf_calendar", default_ttl=VALKEY_CALENDAR_TTL)
         self._limiter = get_yfinance_limiter()
-    
+
     # =========================================================================
     # Memory Cache Helpers (L1)
     # =========================================================================
-    
-    def _get_from_memory(self, key: str) -> Optional[Any]:
+
+    def _get_from_memory(self, key: str) -> Any | None:
         """Get from L1 memory cache if not expired."""
         if key in _MEMORY_CACHE:
             ts, data = _MEMORY_CACHE[key]
@@ -186,7 +188,7 @@ class YFinanceService:
                 return data
             del _MEMORY_CACHE[key]
         return None
-    
+
     def _set_in_memory(self, key: str, data: Any) -> None:
         """Set in L1 memory cache."""
         _MEMORY_CACHE[key] = (time.time(), data)
@@ -196,22 +198,22 @@ class YFinanceService:
             to_delete = [k for k, (ts, _) in _MEMORY_CACHE.items() if now - ts > MEMORY_CACHE_TTL]
             for k in to_delete:
                 del _MEMORY_CACHE[k]
-    
+
     # =========================================================================
     # Core yfinance API Calls (Sync, run in thread pool)
     # =========================================================================
-    
+
     def _fetch_ticker_info_with_status_sync(
         self,
         symbol: str,
-    ) -> tuple[Optional[dict[str, Any]], TickerInfoStatus]:
+    ) -> tuple[dict[str, Any] | None, TickerInfoStatus]:
         """Fetch complete ticker info from yfinance (blocking) with status."""
         if not self._limiter.acquire_sync():
             logger.warning(f"Rate limit timeout for {symbol}")
             return None, "rate_limited"
 
         try:
-            def _ts_to_date(value: Any) -> Optional[str]:
+            def _ts_to_date(value: Any) -> str | None:
                 """Convert timestamp to ISO date string for JSON serialization."""
                 if value is None:
                     return None
@@ -219,7 +221,7 @@ class YFinanceService:
                     ts = float(value)
                     if ts > 1e12:  # ms -> s
                         ts = ts / 1000.0
-                    return datetime.fromtimestamp(ts, tz=timezone.utc).date().isoformat()
+                    return datetime.fromtimestamp(ts, tz=UTC).date().isoformat()
                 except (ValueError, TypeError, OSError):
                     return None
 
@@ -236,7 +238,7 @@ class YFinanceService:
             ipo_year = None
             first_trade_ms = info.get("firstTradeDateMilliseconds")
             if first_trade_ms:
-                ipo_year = datetime.fromtimestamp(first_trade_ms / 1000, tz=timezone.utc).year
+                ipo_year = datetime.fromtimestamp(first_trade_ms / 1000, tz=UTC).year
 
             # Normalize dividend yield
             raw_div_yield = info.get("dividendYield")
@@ -340,28 +342,28 @@ class YFinanceService:
                 "held_percent_institutions": _safe_float(info.get("heldPercentInstitutions")),
 
                 # Metadata
-                "fetched_at": datetime.now(timezone.utc).isoformat(),
+                "fetched_at": datetime.now(UTC).isoformat(),
             }, "fetched"
         except Exception as e:
             logger.warning(f"yfinance ticker info failed for {symbol}: {e}")
             return None, "error"
 
-    def _fetch_ticker_info_sync(self, symbol: str) -> Optional[dict[str, Any]]:
+    def _fetch_ticker_info_sync(self, symbol: str) -> dict[str, Any] | None:
         """Fetch complete ticker info from yfinance (blocking)."""
         data, status = self._fetch_ticker_info_with_status_sync(symbol)
         return data if status == "fetched" else None
-    
+
     def _fetch_price_history_sync(
         self,
         symbol: str,
         period: str = "1y",
         interval: str = "1d",
-    ) -> Optional[pd.DataFrame]:
+    ) -> pd.DataFrame | None:
         """Fetch price history from yfinance (blocking)."""
         if not self._limiter.acquire_sync():
             logger.warning(f"Rate limit timeout for price history: {symbol}")
             return None
-        
+
         try:
             df = yf.download(
                 symbol,
@@ -371,10 +373,10 @@ class YFinanceService:
                 progress=False,
                 timeout=30,
             )
-            
+
             if df.empty:
                 return None
-            
+
             # Handle MultiIndex columns (newer yfinance)
             if isinstance(df.columns, pd.MultiIndex):
                 ticker_upper = symbol.upper()
@@ -385,12 +387,12 @@ class YFinanceService:
                         df.columns = df.columns.droplevel(1)
                 except Exception:
                     pass
-            
+
             return df
         except Exception as e:
             logger.warning(f"yfinance price history failed for {symbol}: {e}")
             return None
-    
+
     def _fetch_price_history_batch_sync(
         self,
         symbols: list[str],
@@ -399,9 +401,9 @@ class YFinanceService:
     ) -> dict[str, pd.DataFrame]:
         """Batch fetch price history (blocking)."""
         if not self._limiter.acquire_sync():
-            logger.warning(f"Rate limit timeout for batch price history")
+            logger.warning("Rate limit timeout for batch price history")
             return {}
-        
+
         try:
             if len(symbols) == 1:
                 df = yf.download(
@@ -421,7 +423,7 @@ class YFinanceService:
                     except Exception:
                         pass
                 return {symbols[0]: df}
-            
+
             df = yf.download(
                 " ".join(symbols),
                 start=start,
@@ -431,10 +433,10 @@ class YFinanceService:
                 progress=False,
                 timeout=30,
             )
-            
+
             if df.empty:
                 return {}
-            
+
             results = {}
             for symbol in symbols:
                 try:
@@ -447,23 +449,23 @@ class YFinanceService:
                             continue
                     else:
                         ticker_df = df
-                    
+
                     if not ticker_df.empty:
                         results[symbol] = ticker_df
                 except Exception as e:
                     logger.debug(f"Failed to extract {symbol} from batch: {e}")
-            
+
             return results
         except Exception as e:
             logger.warning(f"yfinance batch price history failed: {e}")
             return {}
-    
+
     def _search_tickers_sync(self, query: str, max_results: int = 10) -> list[dict[str, Any]]:
         """Search for tickers (blocking)."""
         if not self._limiter.acquire_sync():
             logger.warning(f"Rate limit timeout for search: {query}")
             return []
-        
+
         try:
             results: list[dict[str, Any]] = []
 
@@ -518,22 +520,22 @@ class YFinanceService:
         except Exception as e:
             logger.debug(f"yfinance search failed for {query}: {e}")
             return []
-    
-    def _fetch_calendar_sync(self, symbol: str) -> Optional[dict[str, Any]]:
+
+    def _fetch_calendar_sync(self, symbol: str) -> dict[str, Any] | None:
         """Fetch earnings/dividend calendar (blocking)."""
         if not self._limiter.acquire_sync():
             logger.warning(f"Rate limit timeout for calendar: {symbol}")
             return None
-        
+
         try:
             ticker = yf.Ticker(symbol)
             calendar = ticker.calendar
-            
+
             if calendar is None:
                 return None
-            
+
             result = {"symbol": symbol.upper()}
-            
+
             if isinstance(calendar, dict):
                 earnings_dates = calendar.get("Earnings Date", [])
                 if earnings_dates and len(earnings_dates) > 0:
@@ -547,14 +549,14 @@ class YFinanceService:
                 # DataFrame format
                 cal_dict = calendar.to_dict()
                 result.update(cal_dict)
-            
-            result["fetched_at"] = datetime.now(timezone.utc).isoformat()
+
+            result["fetched_at"] = datetime.now(UTC).isoformat()
             return result
         except Exception as e:
             logger.debug(f"yfinance calendar failed for {symbol}: {e}")
             return None
-    
-    def _fetch_financials_sync(self, symbol: str) -> Optional[dict[str, Any]]:
+
+    def _fetch_financials_sync(self, symbol: str) -> dict[str, Any] | None:
         """
         Fetch financial statements from yfinance (blocking).
         
@@ -568,19 +570,19 @@ class YFinanceService:
         if not self._limiter.acquire_sync():
             logger.warning(f"Rate limit timeout for financials: {symbol}")
             return None
-        
+
         try:
             ticker = yf.Ticker(symbol)
-            
+
             result = {
                 "symbol": symbol.upper(),
                 "quarterly": {},
                 "annual": {},
-                "fetched_at": datetime.now(timezone.utc).isoformat(),
+                "fetched_at": datetime.now(UTC).isoformat(),
             }
-            
+
             # Helper to extract most recent values from DataFrame
-            def extract_latest(df: pd.DataFrame) -> dict[str, Optional[float]]:
+            def extract_latest(df: pd.DataFrame) -> dict[str, float | None]:
                 if df is None or df.empty:
                     return {}
                 extracted = {}
@@ -592,45 +594,45 @@ class YFinanceService:
                     except (KeyError, IndexError, ValueError, TypeError):
                         pass
                 return extracted
-            
+
             # Quarterly statements
             try:
                 result["quarterly"]["income_statement"] = extract_latest(ticker.quarterly_income_stmt)
             except Exception as e:
                 logger.debug(f"quarterly_income_stmt failed for {symbol}: {e}")
                 result["quarterly"]["income_statement"] = {}
-            
+
             try:
                 result["quarterly"]["balance_sheet"] = extract_latest(ticker.quarterly_balance_sheet)
             except Exception as e:
                 logger.debug(f"quarterly_balance_sheet failed for {symbol}: {e}")
                 result["quarterly"]["balance_sheet"] = {}
-            
+
             try:
                 result["quarterly"]["cash_flow"] = extract_latest(ticker.quarterly_cashflow)
             except Exception as e:
                 logger.debug(f"quarterly_cashflow failed for {symbol}: {e}")
                 result["quarterly"]["cash_flow"] = {}
-            
+
             # Annual statements
             try:
                 result["annual"]["income_statement"] = extract_latest(ticker.income_stmt)
             except Exception as e:
                 logger.debug(f"income_stmt failed for {symbol}: {e}")
                 result["annual"]["income_statement"] = {}
-            
+
             try:
                 result["annual"]["balance_sheet"] = extract_latest(ticker.balance_sheet)
             except Exception as e:
                 logger.debug(f"balance_sheet failed for {symbol}: {e}")
                 result["annual"]["balance_sheet"] = {}
-            
+
             try:
                 result["annual"]["cash_flow"] = extract_latest(ticker.cashflow)
             except Exception as e:
                 logger.debug(f"cashflow failed for {symbol}: {e}")
                 result["annual"]["cash_flow"] = {}
-            
+
             # Log what we found for debugging
             q_income_count = len(result["quarterly"]["income_statement"])
             q_balance_count = len(result["quarterly"]["balance_sheet"])
@@ -639,21 +641,21 @@ class YFinanceService:
                 f"Financials for {symbol}: quarterly income={q_income_count}, "
                 f"balance={q_balance_count}, cash_flow={q_cash_count}"
             )
-            
+
             return result
         except Exception as e:
             logger.warning(f"yfinance financials failed for {symbol}: {e}")
             return None
-    
+
     # =========================================================================
     # Async Public API
     # =========================================================================
-    
+
     async def get_ticker_info(
         self,
         symbol: str,
         skip_cache: bool = False,
-    ) -> Optional[dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """
         Get ticker info with 3-tier caching.
         
@@ -664,31 +666,31 @@ class YFinanceService:
         """
         symbol = symbol.upper()
         cache_key = f"info:{symbol}"
-        
+
         if not skip_cache:
             # L1: Memory
             mem_data = self._get_from_memory(cache_key)
             if mem_data is not None:
                 logger.debug(f"Cache hit L1 (memory) for {symbol}")
                 return mem_data
-            
+
             # L2: Valkey
             valkey_data = await self._info_cache.get(cache_key)
             if valkey_data is not None:
                 logger.debug(f"Cache hit L2 (valkey) for {symbol}")
                 self._set_in_memory(cache_key, valkey_data)
                 return valkey_data
-            
+
             # L3: DB cache
             async with get_session() as session:
                 result = await session.execute(
                     select(YfinanceInfoCache.data).where(
                         YfinanceInfoCache.symbol == symbol,
-                        YfinanceInfoCache.expires_at > datetime.now(timezone.utc),
+                        YfinanceInfoCache.expires_at > datetime.now(UTC),
                     )
                 )
                 db_data = result.scalar_one_or_none()
-            
+
             if db_data:
                 logger.debug(f"Cache hit L3 (db) for {symbol}")
                 data = db_data
@@ -703,25 +705,25 @@ class YFinanceService:
                     self._set_in_memory(cache_key, data)
                     await self._info_cache.set(cache_key, data)
                     return data
-        
+
         # Cache miss - fetch from yfinance
         logger.debug(f"Cache miss for {symbol}, fetching from yfinance")
         loop = asyncio.get_event_loop()
         data = await loop.run_in_executor(_executor, self._fetch_ticker_info_sync, symbol)
-        
+
         if data:
             # Store in all cache levels
             self._set_in_memory(cache_key, data)
             await self._info_cache.set(cache_key, data)
-            
+
             # DB cache with 24h expiry
-            expires = datetime.now(timezone.utc) + timedelta(hours=24)
+            expires = datetime.now(UTC) + timedelta(hours=24)
             async with get_session() as session:
                 stmt = insert(YfinanceInfoCache).values(
                     symbol=symbol,
                     data=data,
                     expires_at=expires,
-                    fetched_at=datetime.now(timezone.utc),
+                    fetched_at=datetime.now(UTC),
                 )
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["symbol"],
@@ -733,14 +735,14 @@ class YFinanceService:
                 )
                 await session.execute(stmt)
                 await session.commit()
-        
+
         return data
 
     async def get_ticker_info_with_status(
         self,
         symbol: str,
         skip_cache: bool = False,
-    ) -> tuple[Optional[dict[str, Any]], TickerInfoStatus]:
+    ) -> tuple[dict[str, Any] | None, TickerInfoStatus]:
         """
         Get ticker info with cache-aware status.
 
@@ -767,7 +769,7 @@ class YFinanceService:
                 result = await session.execute(
                     select(YfinanceInfoCache.data).where(
                         YfinanceInfoCache.symbol == symbol,
-                        YfinanceInfoCache.expires_at > datetime.now(timezone.utc),
+                        YfinanceInfoCache.expires_at > datetime.now(UTC),
                     )
                 )
                 db_data = result.scalar_one_or_none()
@@ -796,13 +798,13 @@ class YFinanceService:
             self._set_in_memory(cache_key, data)
             await self._info_cache.set(cache_key, data)
 
-            expires = datetime.now(timezone.utc) + timedelta(hours=24)
+            expires = datetime.now(UTC) + timedelta(hours=24)
             async with get_session() as session:
                 stmt = insert(YfinanceInfoCache).values(
                     symbol=symbol,
                     data=data,
                     expires_at=expires,
-                    fetched_at=datetime.now(timezone.utc),
+                    fetched_at=datetime.now(UTC),
                 )
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["symbol"],
@@ -816,12 +818,12 @@ class YFinanceService:
                 await session.commit()
 
         return data, status
-    
+
     async def get_financials(
         self,
         symbol: str,
         skip_cache: bool = False,
-    ) -> Optional[dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """
         Get financial statements with caching.
         
@@ -838,38 +840,38 @@ class YFinanceService:
         """
         symbol = symbol.upper()
         cache_key = f"financials:{symbol}"
-        
+
         if not skip_cache:
             # L1: Memory
             mem_data = self._get_from_memory(cache_key)
             if mem_data is not None:
                 logger.debug(f"Financials cache hit L1 (memory) for {symbol}")
                 return mem_data
-            
+
             # L2: Valkey
             valkey_data = await self._info_cache.get(cache_key)
             if valkey_data is not None:
                 logger.debug(f"Financials cache hit L2 (valkey) for {symbol}")
                 self._set_in_memory(cache_key, valkey_data)
                 return valkey_data
-        
+
         # Cache miss - fetch from yfinance
         logger.debug(f"Financials cache miss for {symbol}, fetching from yfinance")
         loop = asyncio.get_event_loop()
         data = await loop.run_in_executor(_executor, self._fetch_financials_sync, symbol)
-        
+
         if data:
             # Store in cache
             self._set_in_memory(cache_key, data)
             await self._info_cache.set(cache_key, data)
-        
+
         return data
-    
+
     async def get_ticker_info_with_financials(
         self,
         symbol: str,
         skip_cache: bool = False,
-    ) -> Optional[dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """
         Get ticker info enriched with financial statement data.
         
@@ -879,26 +881,26 @@ class YFinanceService:
         # Fetch both in parallel
         info_task = asyncio.create_task(self.get_ticker_info(symbol, skip_cache=skip_cache))
         financials_task = asyncio.create_task(self.get_financials(symbol, skip_cache=skip_cache))
-        
+
         info, financials = await asyncio.gather(info_task, financials_task)
-        
+
         if info is None:
             return None
-        
+
         # Merge financials into info
         if financials:
             info["financials"] = financials
-        
+
         return info
-    
+
     async def get_price_history(
         self,
         symbol: str,
         period: str = "1y",
         interval: str = "1d",
-        start_date: Optional[date] = None,
-        end_date: Optional[date] = None,
-    ) -> tuple[Optional[pd.DataFrame], Optional[DataVersion]]:
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> tuple[pd.DataFrame | None, DataVersion | None]:
         """
         Get price history with version tracking.
         
@@ -906,9 +908,9 @@ class YFinanceService:
             Tuple of (DataFrame, DataVersion) for change detection
         """
         symbol = symbol.upper()
-        
+
         loop = asyncio.get_event_loop()
-        
+
         if start_date and end_date:
             # Specific date range - use batch method
             results = await loop.run_in_executor(
@@ -927,17 +929,17 @@ class YFinanceService:
                 period,
                 interval,
             )
-        
+
         if df is None or df.empty:
             return None, None
-        
+
         # Compute version hash
         last_date = df.index[-1] if len(df) > 0 else None
         last_close = float(df["Close"].iloc[-1]) if len(df) > 0 else None
-        
+
         version = DataVersion(
             hash=_compute_hash(df),
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             source="prices",
             metadata={
                 "last_date": str(last_date.date()) if last_date else None,
@@ -945,9 +947,9 @@ class YFinanceService:
                 "row_count": len(df),
             },
         )
-        
+
         return df, version
-    
+
     async def get_price_history_batch(
         self,
         symbols: list[str],
@@ -960,7 +962,7 @@ class YFinanceService:
         More efficient than individual calls due to single yfinance request.
         """
         symbols = [s.upper() for s in symbols]
-        
+
         loop = asyncio.get_event_loop()
         raw_results = await loop.run_in_executor(
             _executor,
@@ -969,16 +971,16 @@ class YFinanceService:
             start_date.isoformat(),
             end_date.isoformat(),
         )
-        
+
         results = {}
         for symbol, df in raw_results.items():
             if df is not None and not df.empty:
                 last_date = df.index[-1] if len(df) > 0 else None
                 last_close = float(df["Close"].iloc[-1]) if len(df) > 0 else None
-                
+
                 version = DataVersion(
                     hash=_compute_hash(df),
-                    timestamp=datetime.now(timezone.utc),
+                    timestamp=datetime.now(UTC),
                     source="prices",
                     metadata={
                         "last_date": str(last_date.date()) if last_date else None,
@@ -987,9 +989,9 @@ class YFinanceService:
                     },
                 )
                 results[symbol] = (df, version)
-        
+
         return results
-    
+
     async def search_tickers(
         self,
         query: str,
@@ -1003,7 +1005,7 @@ class YFinanceService:
         """
         if len(query.strip()) < 2:
             return []
-        
+
         loop = asyncio.get_event_loop()
         results = await loop.run_in_executor(
             _executor,
@@ -1011,10 +1013,10 @@ class YFinanceService:
             query,
             max_results * 2,  # Fetch more, filter later
         )
-        
+
         if save_to_db and results:
             # Save to symbol_search_results for future local search
-            expires_at = datetime.now(timezone.utc) + timedelta(days=30)
+            expires_at = datetime.now(UTC) + timedelta(days=30)
             async with get_session() as session:
                 for r in results:
                     try:
@@ -1050,46 +1052,46 @@ class YFinanceService:
                     except Exception as e:
                         logger.debug(f"Failed to cache search result {r.get('symbol')}: {e}")
                 await session.commit()
-        
+
         return results[:max_results]
-    
+
     async def get_calendar(
         self,
         symbol: str,
         skip_cache: bool = False,
-    ) -> tuple[Optional[dict[str, Any]], Optional[DataVersion]]:
+    ) -> tuple[dict[str, Any] | None, DataVersion | None]:
         """
         Get earnings/dividend calendar with caching and version tracking.
         """
         symbol = symbol.upper()
         cache_key = f"calendar:{symbol}"
-        
+
         if not skip_cache:
             cached = await self._calendar_cache.get(cache_key)
             if cached:
                 version = DataVersion(
                     hash=_compute_hash(cached),
-                    timestamp=datetime.now(timezone.utc),
+                    timestamp=datetime.now(UTC),
                     source="calendar",
                 )
                 return cached, version
-        
+
         loop = asyncio.get_event_loop()
         data = await loop.run_in_executor(_executor, self._fetch_calendar_sync, symbol)
-        
+
         if data:
             await self._calendar_cache.set(cache_key, data)
-        
+
         version = DataVersion(
             hash=_compute_hash(data),
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             source="calendar",
             metadata=data or {},
         ) if data else None
-        
+
         return data, version
-    
-    async def validate_symbol(self, symbol: str) -> Optional[dict[str, Any]]:
+
+    async def validate_symbol(self, symbol: str) -> dict[str, Any] | None:
         """
         Validate a symbol exists and return basic info.
         
@@ -1098,7 +1100,7 @@ class YFinanceService:
         info = await self.get_ticker_info(symbol)
         if not info:
             return None
-        
+
         return {
             "symbol": info["symbol"],
             "name": info.get("name"),
@@ -1107,16 +1109,16 @@ class YFinanceService:
             "summary": (info.get("summary") or "")[:500],
             "quote_type": info.get("quote_type"),
         }
-    
+
     # =========================================================================
     # Version Tracking & Change Detection
     # =========================================================================
-    
+
     async def get_data_version(
         self,
         symbol: str,
         source: Literal["prices", "fundamentals", "calendar"],
-    ) -> Optional[DataVersion]:
+    ) -> DataVersion | None:
         """Get current data version from database."""
         async with get_session() as session:
             result = await session.execute(
@@ -1130,17 +1132,17 @@ class YFinanceService:
                 )
             )
             row = result.one_or_none()
-        
+
         if not row:
             return None
-        
+
         return DataVersion(
             hash=row.version_hash,
             timestamp=row.updated_at,
             source=source,
             metadata=row.version_metadata or {},
         )
-    
+
     async def save_data_version(
         self,
         symbol: str,
@@ -1153,7 +1155,7 @@ class YFinanceService:
                 source=version.source,
                 version_hash=version.hash,
                 version_metadata=version.metadata,
-                updated_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(UTC),
             )
             stmt = stmt.on_conflict_do_update(
                 constraint="uq_data_version_symbol_source",
@@ -1165,7 +1167,7 @@ class YFinanceService:
             )
             await session.execute(stmt)
             await session.commit()
-    
+
     async def has_data_changed(
         self,
         symbol: str,
@@ -1177,14 +1179,14 @@ class YFinanceService:
         if not old_version:
             return True  # No previous version = changed
         return old_version.hash != current_hash
-    
+
     async def get_symbols_needing_refresh(
         self,
         source: Literal["prices", "fundamentals", "calendar"],
         max_age_hours: int = 24,
     ) -> list[str]:
         """Get symbols that need data refresh based on age."""
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
+        cutoff = datetime.now(UTC) - timedelta(hours=max_age_hours)
         async with get_session() as session:
             result = await session.execute(
                 select(Symbol.symbol)
@@ -1205,7 +1207,7 @@ class YFinanceService:
 
 
 # Singleton instance
-_instance: Optional[YFinanceService] = None
+_instance: YFinanceService | None = None
 
 
 def get_yfinance_service() -> YFinanceService:

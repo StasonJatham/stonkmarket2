@@ -15,18 +15,33 @@ Usage:
 
 from __future__ import annotations
 
-from datetime import datetime, date
+from datetime import date, datetime
 from decimal import Decimal
-from typing import Optional, List, Any
 
 from sqlalchemy import (
-    String, Integer, BigInteger, Boolean, Text, DateTime, Date,
-    Numeric, ForeignKey, Index, CheckConstraint, UniqueConstraint,
-    LargeBinary, func, text, MetaData,
+    BigInteger,
+    Boolean,
+    CheckConstraint,
+    Date,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    LargeBinary,
+    MetaData,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import (
-    DeclarativeBase, Mapped, mapped_column, relationship,
+    DeclarativeBase,
+    Mapped,
+    mapped_column,
+    relationship,
 )
 
 
@@ -58,17 +73,17 @@ class AuthUser(Base):
     username: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
-    mfa_secret: Mapped[Optional[str]] = mapped_column(String(64))
+    mfa_secret: Mapped[str | None] = mapped_column(String(64))
     mfa_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    mfa_backup_codes: Mapped[Optional[str]] = mapped_column(Text)  # JSON array of hashed codes
+    mfa_backup_codes: Mapped[str | None] = mapped_column(Text)  # JSON array of hashed codes
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     # Relationships
-    api_keys: Mapped[List["UserApiKey"]] = relationship(back_populates="user")
-    secure_keys: Mapped[List["SecureApiKey"]] = relationship(back_populates="created_by_user")
-    portfolios: Mapped[List["Portfolio"]] = relationship(back_populates="user")
-    portfolio_analytics_jobs: Mapped[List["PortfolioAnalyticsJob"]] = relationship(back_populates="user")
+    api_keys: Mapped[list[UserApiKey]] = relationship(back_populates="user")
+    secure_keys: Mapped[list[SecureApiKey]] = relationship(back_populates="created_by_user")
+    portfolios: Mapped[list[Portfolio]] = relationship(back_populates="user")
+    portfolio_analytics_jobs: Mapped[list[PortfolioAnalyticsJob]] = relationship(back_populates="user")
 
     __table_args__ = (
         Index("idx_auth_user_username", "username"),
@@ -82,13 +97,13 @@ class SecureApiKey(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     service_name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     encrypted_key: Mapped[str] = mapped_column(Text, nullable=False)
-    key_hint: Mapped[Optional[str]] = mapped_column(String(20))
-    created_by_id: Mapped[Optional[int]] = mapped_column("created_by", ForeignKey("auth_user.id"))
+    key_hint: Mapped[str | None] = mapped_column(String(20))
+    created_by_id: Mapped[int | None] = mapped_column("created_by", ForeignKey("auth_user.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     # Relationships
-    created_by_user: Mapped[Optional["AuthUser"]] = relationship(back_populates="secure_keys")
+    created_by_user: Mapped[AuthUser | None] = relationship(back_populates="secure_keys")
 
     __table_args__ = (
         Index("idx_secure_api_keys_service", "service_name"),
@@ -103,20 +118,20 @@ class UserApiKey(Base):
     key_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)  # SHA-256 hash
     key_prefix: Mapped[str] = mapped_column(String(16), nullable=False)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
-    description: Mapped[Optional[str]] = mapped_column(Text)
-    user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("auth_user.id"))
+    description: Mapped[str | None] = mapped_column(Text)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("auth_user.id"))
     vote_weight: Mapped[int] = mapped_column(Integer, default=10)
     rate_limit_bypass: Mapped[bool] = mapped_column(Boolean, default=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     usage_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     # Relationships
-    user: Mapped[Optional["AuthUser"]] = relationship(back_populates="api_keys")
-    dip_votes: Mapped[List["DipVote"]] = relationship(back_populates="api_key")
-    suggestion_votes: Mapped[List["SuggestionVote"]] = relationship(back_populates="api_key")
+    user: Mapped[AuthUser | None] = relationship(back_populates="api_keys")
+    dip_votes: Mapped[list[DipVote]] = relationship(back_populates="api_key")
+    suggestion_votes: Mapped[list[SuggestionVote]] = relationship(back_populates="api_key")
 
     __table_args__ = (
         Index("idx_user_api_keys_hash", "key_hash"),
@@ -135,29 +150,29 @@ class Symbol(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     symbol: Mapped[str] = mapped_column(String(20), unique=True, nullable=False)
-    name: Mapped[Optional[str]] = mapped_column(String(255))
-    sector: Mapped[Optional[str]] = mapped_column(String(100))
-    market_cap: Mapped[Optional[int]] = mapped_column(BigInteger)
-    summary_ai: Mapped[Optional[str]] = mapped_column(String(500))  # AI-generated summary (300-400 target, 500 max)
+    name: Mapped[str | None] = mapped_column(String(255))
+    sector: Mapped[str | None] = mapped_column(String(100))
+    market_cap: Mapped[int | None] = mapped_column(BigInteger)
+    summary_ai: Mapped[str | None] = mapped_column(String(500))  # AI-generated summary (300-400 target, 500 max)
     symbol_type: Mapped[str] = mapped_column(String(20), default="stock")  # stock, etf, index
     min_dip_pct: Mapped[Decimal] = mapped_column(Numeric(5, 4), default=Decimal("0.15"))
     min_days: Mapped[int] = mapped_column(Integer, default=5)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     # Logo caching
-    logo_light: Mapped[Optional[bytes]] = mapped_column(LargeBinary)
-    logo_dark: Mapped[Optional[bytes]] = mapped_column(LargeBinary)
-    logo_fetched_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    logo_source: Mapped[Optional[str]] = mapped_column(String(50))
+    logo_light: Mapped[bytes | None] = mapped_column(LargeBinary)
+    logo_dark: Mapped[bytes | None] = mapped_column(LargeBinary)
+    logo_fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    logo_source: Mapped[str | None] = mapped_column(String(50))
     # Fetch status
     fetch_status: Mapped[str] = mapped_column(String(20), default="pending")
-    fetch_error: Mapped[Optional[str]] = mapped_column(Text)
-    fetched_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    fetch_error: Mapped[str | None] = mapped_column(Text)
+    fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     # Relationships
-    dip_state: Mapped[Optional["DipState"]] = relationship(back_populates="symbol_ref", uselist=False)
-    dipfinder_config: Mapped[Optional["DipfinderConfig"]] = relationship(back_populates="symbol_ref", uselist=False)
+    dip_state: Mapped[DipState | None] = relationship(back_populates="symbol_ref", uselist=False)
+    dipfinder_config: Mapped[DipfinderConfig | None] = relationship(back_populates="symbol_ref", uselist=False)
 
     __table_args__ = (
         Index("idx_symbols_symbol", "symbol"),
@@ -173,20 +188,20 @@ class DipState(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     symbol: Mapped[str] = mapped_column(String(20), ForeignKey("symbols.symbol", ondelete="CASCADE"), unique=True, nullable=False)
-    current_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 4))
-    ath_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 4))
-    dip_percentage: Mapped[Optional[Decimal]] = mapped_column(Numeric(8, 4))
-    dip_start_date: Mapped[Optional[date]] = mapped_column(Date)
+    current_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+    ath_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+    dip_percentage: Mapped[Decimal | None] = mapped_column(Numeric(8, 4))
+    dip_start_date: Mapped[date | None] = mapped_column(Date)
     # Legacy columns
-    ref_high: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 4))
-    last_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 4))
+    ref_high: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+    last_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
     days_below: Mapped[int] = mapped_column(Integer, default=0)
     first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_updated: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     # Relationships
-    symbol_ref: Mapped["Symbol"] = relationship(back_populates="dip_state")
+    symbol_ref: Mapped[Symbol] = relationship(back_populates="dip_state")
 
     __table_args__ = (
         Index("idx_dip_state_symbol", "symbol"),
@@ -203,9 +218,9 @@ class DipHistory(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     symbol: Mapped[str] = mapped_column(String(20), nullable=False)
     action: Mapped[str] = mapped_column(String(10), nullable=False)  # added, removed, updated
-    current_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 4))
-    ath_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 4))
-    dip_percentage: Mapped[Optional[Decimal]] = mapped_column(Numeric(8, 4))
+    current_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+    ath_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+    dip_percentage: Mapped[Decimal | None] = mapped_column(Numeric(8, 4))
     recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (
@@ -227,26 +242,26 @@ class StockSuggestion(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     symbol: Mapped[str] = mapped_column(String(20), unique=True, nullable=False)
-    company_name: Mapped[Optional[str]] = mapped_column(String(255))
-    sector: Mapped[Optional[str]] = mapped_column(String(100))
-    summary: Mapped[Optional[str]] = mapped_column(Text)
-    website: Mapped[Optional[str]] = mapped_column(String(255))
-    ipo_year: Mapped[Optional[int]] = mapped_column(Integer)
-    reason: Mapped[Optional[str]] = mapped_column(Text)
+    company_name: Mapped[str | None] = mapped_column(String(255))
+    sector: Mapped[str | None] = mapped_column(String(100))
+    summary: Mapped[str | None] = mapped_column(Text)
+    website: Mapped[str | None] = mapped_column(String(255))
+    ipo_year: Mapped[int | None] = mapped_column(Integer)
+    reason: Mapped[str | None] = mapped_column(Text)
     fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="pending")  # pending, approved, rejected
     vote_score: Mapped[int] = mapped_column(Integer, default=0)
     fetch_status: Mapped[str] = mapped_column(String(20), default="pending")
-    fetch_error: Mapped[Optional[str]] = mapped_column(Text)
-    fetched_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    current_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 4))
-    ath_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 4))
-    approved_by_id: Mapped[Optional[int]] = mapped_column("approved_by", ForeignKey("auth_user.id"))
+    fetch_error: Mapped[str | None] = mapped_column(Text)
+    fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    current_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+    ath_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+    approved_by_id: Mapped[int | None] = mapped_column("approved_by", ForeignKey("auth_user.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     # Relationships
-    votes: Mapped[List["SuggestionVote"]] = relationship(back_populates="suggestion")
+    votes: Mapped[list[SuggestionVote]] = relationship(back_populates="suggestion")
 
     __table_args__ = (
         CheckConstraint("status IN ('pending', 'approved', 'rejected')", name="ck_suggestion_status"),
@@ -265,12 +280,12 @@ class SuggestionVote(Base):
     fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     vote_type: Mapped[str] = mapped_column(String(10), nullable=False)  # up, down
     vote_weight: Mapped[int] = mapped_column(Integer, default=1)
-    api_key_id: Mapped[Optional[int]] = mapped_column(ForeignKey("user_api_keys.id"))
+    api_key_id: Mapped[int | None] = mapped_column(ForeignKey("user_api_keys.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships
-    suggestion: Mapped["StockSuggestion"] = relationship(back_populates="votes")
-    api_key: Mapped[Optional["UserApiKey"]] = relationship(back_populates="suggestion_votes")
+    suggestion: Mapped[StockSuggestion] = relationship(back_populates="votes")
+    api_key: Mapped[UserApiKey | None] = relationship(back_populates="suggestion_votes")
 
     __table_args__ = (
         CheckConstraint("vote_type IN ('up', 'down')", name="ck_suggestion_vote_type"),
@@ -293,11 +308,11 @@ class DipVote(Base):
     fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     vote_type: Mapped[str] = mapped_column(String(10), nullable=False)  # buy, sell
     vote_weight: Mapped[int] = mapped_column(Integer, default=1)
-    api_key_id: Mapped[Optional[int]] = mapped_column(ForeignKey("user_api_keys.id"))
+    api_key_id: Mapped[int | None] = mapped_column(ForeignKey("user_api_keys.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships
-    api_key: Mapped[Optional["UserApiKey"]] = relationship(back_populates="dip_votes")
+    api_key: Mapped[UserApiKey | None] = relationship(back_populates="dip_votes")
 
     __table_args__ = (
         CheckConstraint("vote_type IN ('buy', 'sell')", name="ck_dip_vote_type"),
@@ -314,15 +329,15 @@ class DipAIAnalysis(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     symbol: Mapped[str] = mapped_column(String(20), unique=True, nullable=False)
-    swipe_bio: Mapped[Optional[str]] = mapped_column(Text)
-    ai_rating: Mapped[Optional[str]] = mapped_column(String(20))  # strong_buy, buy, hold, sell, strong_sell
-    rating_reasoning: Mapped[Optional[str]] = mapped_column(Text)
-    model_used: Mapped[Optional[str]] = mapped_column(String(50))
-    tokens_used: Mapped[Optional[int]] = mapped_column(Integer)
+    swipe_bio: Mapped[str | None] = mapped_column(Text)
+    ai_rating: Mapped[str | None] = mapped_column(String(20))  # strong_buy, buy, hold, sell, strong_sell
+    rating_reasoning: Mapped[str | None] = mapped_column(Text)
+    model_used: Mapped[str | None] = mapped_column(String(50))
+    tokens_used: Mapped[int | None] = mapped_column(Integer)
     is_batch_generated: Mapped[bool] = mapped_column(Boolean, default=False)
-    batch_job_id: Mapped[Optional[str]] = mapped_column(String(100))
+    batch_job_id: Mapped[str | None] = mapped_column(String(100))
     generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
         CheckConstraint(
@@ -346,13 +361,13 @@ class ApiUsage(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     service: Mapped[str] = mapped_column(String(50), nullable=False)  # openai, yfinance, etc.
-    endpoint: Mapped[Optional[str]] = mapped_column(String(100))
-    model: Mapped[Optional[str]] = mapped_column(String(50))
+    endpoint: Mapped[str | None] = mapped_column(String(100))
+    model: Mapped[str | None] = mapped_column(String(50))
     input_tokens: Mapped[int] = mapped_column(Integer, default=0)
     output_tokens: Mapped[int] = mapped_column(Integer, default=0)
-    cost_usd: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 6))
+    cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(10, 6))
     is_batch: Mapped[bool] = mapped_column(Boolean, default=False)
-    request_metadata: Mapped[Optional[dict]] = mapped_column(JSONB)
+    request_metadata: Mapped[dict | None] = mapped_column(JSONB)
     recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (
@@ -372,18 +387,18 @@ class BatchJob(Base):
     total_requests: Mapped[int] = mapped_column(Integer, default=0)
     completed_requests: Mapped[int] = mapped_column(Integer, default=0)
     failed_requests: Mapped[int] = mapped_column(Integer, default=0)
-    input_file_id: Mapped[Optional[str]] = mapped_column(String(100))
-    output_file_id: Mapped[Optional[str]] = mapped_column(String(100))
-    error_file_id: Mapped[Optional[str]] = mapped_column(String(100))
-    estimated_cost_usd: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 6))
-    actual_cost_usd: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 6))
+    input_file_id: Mapped[str | None] = mapped_column(String(100))
+    output_file_id: Mapped[str | None] = mapped_column(String(100))
+    error_file_id: Mapped[str | None] = mapped_column(String(100))
+    estimated_cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(10, 6))
+    actual_cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(10, 6))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    job_metadata: Mapped[Optional[dict]] = mapped_column("metadata", JSONB)  # Named 'metadata' in DB
-    task_custom_ids: Mapped[Optional[dict]] = mapped_column(JSONB)  # Map custom_id → task metadata
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    job_metadata: Mapped[dict | None] = mapped_column("metadata", JSONB)  # Named 'metadata' in DB
+    task_custom_ids: Mapped[dict | None] = mapped_column(JSONB)  # Map custom_id → task metadata
 
     # Relationship to errors
-    errors: Mapped[List["BatchTaskError"]] = relationship(back_populates="batch_job")
+    errors: Mapped[list[BatchTaskError]] = relationship(back_populates="batch_job")
 
     __table_args__ = (
         CheckConstraint(
@@ -405,19 +420,19 @@ class BatchTaskError(Base):
     custom_id: Mapped[str] = mapped_column(String(200), nullable=False)
     symbol: Mapped[str] = mapped_column(String(20), nullable=False)
     task_type: Mapped[str] = mapped_column(String(50), nullable=False)  # e.g., 'agent_analysis', 'rating', 'bio'
-    agent_id: Mapped[Optional[str]] = mapped_column(String(50))  # For agent batch tasks
+    agent_id: Mapped[str | None] = mapped_column(String(50))  # For agent batch tasks
     error_type: Mapped[str] = mapped_column(String(50), nullable=False)  # e.g., 'api_error', 'validation_error', 'timeout'
-    error_message: Mapped[Optional[str]] = mapped_column(Text)
-    original_request: Mapped[Optional[dict]] = mapped_column(JSONB)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    original_request: Mapped[dict | None] = mapped_column(JSONB)
     retry_count: Mapped[int] = mapped_column(Integer, default=0)
     max_retries: Mapped[int] = mapped_column(Integer, default=3)
     status: Mapped[str] = mapped_column(String(20), default="pending")  # pending, retrying, resolved, abandoned
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    last_retry_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    last_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     # Relationship
-    batch_job: Mapped["BatchJob"] = relationship(back_populates="errors")
+    batch_job: Mapped[BatchJob] = relationship(back_populates="errors")
 
     __table_args__ = (
         CheckConstraint(
@@ -443,16 +458,16 @@ class CronJob(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     cron: Mapped[str] = mapped_column(String(50), nullable=False)
-    description: Mapped[Optional[str]] = mapped_column(Text)
+    description: Mapped[str | None] = mapped_column(Text)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    last_run: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    next_run: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    last_status: Mapped[Optional[str]] = mapped_column(String(20))
-    last_duration_ms: Mapped[Optional[int]] = mapped_column(Integer)
+    last_run: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    next_run: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_status: Mapped[str | None] = mapped_column(String(20))
+    last_duration_ms: Mapped[int | None] = mapped_column(Integer)
     run_count: Mapped[int] = mapped_column(Integer, default=0)
     error_count: Mapped[int] = mapped_column(Integer, default=0)
-    last_error: Mapped[Optional[str]] = mapped_column(Text)
-    config: Mapped[Optional[dict]] = mapped_column(JSONB)
+    last_error: Mapped[str | None] = mapped_column(Text)
+    config: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -478,17 +493,17 @@ class SettingsChangeHistory(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     setting_type: Mapped[str] = mapped_column(String(50), nullable=False)  # 'runtime', 'cronjob', etc.
     setting_key: Mapped[str] = mapped_column(String(100), nullable=False)  # e.g., 'ai_enrichment_enabled' or cronjob name
-    old_value: Mapped[Optional[dict]] = mapped_column(JSONB)  # Previous value (JSON)
-    new_value: Mapped[Optional[dict]] = mapped_column(JSONB)  # New value (JSON)
+    old_value: Mapped[dict | None] = mapped_column(JSONB)  # Previous value (JSON)
+    new_value: Mapped[dict | None] = mapped_column(JSONB)  # New value (JSON)
     changed_by: Mapped[int] = mapped_column(ForeignKey("auth_user.id", ondelete="SET NULL"), nullable=True)
-    changed_by_username: Mapped[Optional[str]] = mapped_column(String(100))  # Denormalized for display
-    change_reason: Mapped[Optional[str]] = mapped_column(Text)  # Optional reason for change
+    changed_by_username: Mapped[str | None] = mapped_column(String(100))  # Denormalized for display
+    change_reason: Mapped[str | None] = mapped_column(Text)  # Optional reason for change
     reverted: Mapped[bool] = mapped_column(Boolean, default=False)  # Whether this change was reverted
-    reverted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    reverted_by: Mapped[Optional[int]] = mapped_column(Integer)
+    reverted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reverted_by: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    user: Mapped[Optional["AuthUser"]] = relationship(foreign_keys=[changed_by])
+    user: Mapped[AuthUser | None] = relationship(foreign_keys=[changed_by])
 
     __table_args__ = (
         Index("idx_settings_history_type", "setting_type"),
@@ -531,12 +546,12 @@ class PriceHistory(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     symbol: Mapped[str] = mapped_column(String(20), nullable=False)
     date: Mapped[date] = mapped_column(Date, nullable=False)
-    open: Mapped[Optional[Decimal]] = mapped_column(Numeric(16, 6))
-    high: Mapped[Optional[Decimal]] = mapped_column(Numeric(16, 6))
-    low: Mapped[Optional[Decimal]] = mapped_column(Numeric(16, 6))
+    open: Mapped[Decimal | None] = mapped_column(Numeric(16, 6))
+    high: Mapped[Decimal | None] = mapped_column(Numeric(16, 6))
+    low: Mapped[Decimal | None] = mapped_column(Numeric(16, 6))
     close: Mapped[Decimal] = mapped_column(Numeric(16, 6), nullable=False)
-    adj_close: Mapped[Optional[Decimal]] = mapped_column(Numeric(16, 6))
-    volume: Mapped[Optional[int]] = mapped_column(BigInteger)
+    adj_close: Mapped[Decimal | None] = mapped_column(Numeric(16, 6))
+    volume: Mapped[int | None] = mapped_column(BigInteger)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (
@@ -556,36 +571,36 @@ class DipfinderSignal(Base):
     benchmark: Mapped[str] = mapped_column(String(20), nullable=False)
     window_days: Mapped[int] = mapped_column(Integer, nullable=False)
     as_of_date: Mapped[date] = mapped_column(Date, nullable=False)
-    
+
     # Dip metrics
-    dip_stock: Mapped[Optional[Decimal]] = mapped_column(Numeric(8, 6))
-    peak_stock: Mapped[Optional[Decimal]] = mapped_column(Numeric(16, 6))
-    dip_pctl: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2))
-    dip_vs_typical: Mapped[Optional[Decimal]] = mapped_column(Numeric(8, 4))
-    persist_days: Mapped[Optional[int]] = mapped_column(Integer)
-    
+    dip_stock: Mapped[Decimal | None] = mapped_column(Numeric(8, 6))
+    peak_stock: Mapped[Decimal | None] = mapped_column(Numeric(16, 6))
+    dip_pctl: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    dip_vs_typical: Mapped[Decimal | None] = mapped_column(Numeric(8, 4))
+    persist_days: Mapped[int | None] = mapped_column(Integer)
+
     # Market context
-    dip_mkt: Mapped[Optional[Decimal]] = mapped_column(Numeric(8, 6))
-    excess_dip: Mapped[Optional[Decimal]] = mapped_column(Numeric(8, 6))
-    dip_class: Mapped[Optional[str]] = mapped_column(String(20))
-    
+    dip_mkt: Mapped[Decimal | None] = mapped_column(Numeric(8, 6))
+    excess_dip: Mapped[Decimal | None] = mapped_column(Numeric(8, 6))
+    dip_class: Mapped[str | None] = mapped_column(String(20))
+
     # Scores
-    quality_score: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2))
-    stability_score: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2))
-    dip_score: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2))
-    final_score: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2))
-    
+    quality_score: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    stability_score: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    dip_score: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    final_score: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+
     # Alert
-    alert_level: Mapped[Optional[str]] = mapped_column(String(20))
+    alert_level: Mapped[str | None] = mapped_column(String(20))
     should_alert: Mapped[bool] = mapped_column(Boolean, default=False)
-    reason: Mapped[Optional[str]] = mapped_column(Text)
-    
+    reason: Mapped[str | None] = mapped_column(Text)
+
     # Contributing factors
-    quality_factors: Mapped[Optional[dict]] = mapped_column(JSONB)
-    stability_factors: Mapped[Optional[dict]] = mapped_column(JSONB)
-    
+    quality_factors: Mapped[dict | None] = mapped_column(JSONB)
+    stability_factors: Mapped[dict | None] = mapped_column(JSONB)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
         UniqueConstraint("ticker", "benchmark", "window_days", "as_of_date", name="uq_dipfinder_signal"),
@@ -615,7 +630,7 @@ class DipfinderConfig(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     # Relationships
-    symbol_ref: Mapped[Optional["Symbol"]] = relationship(back_populates="dipfinder_config")
+    symbol_ref: Mapped[Symbol | None] = relationship(back_populates="dipfinder_config")
 
     __table_args__ = (
         Index("idx_dipfinder_config_symbol", "symbol"),
@@ -631,9 +646,9 @@ class DipfinderHistory(Base):
     ticker: Mapped[str] = mapped_column(String(20), nullable=False)
     event_type: Mapped[str] = mapped_column(String(20), nullable=False)  # entered_dip, exited_dip, deepened, recovered, alert_triggered
     window_days: Mapped[int] = mapped_column(Integer, nullable=False)
-    dip_pct: Mapped[Optional[Decimal]] = mapped_column(Numeric(8, 6))
-    final_score: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2))
-    dip_class: Mapped[Optional[str]] = mapped_column(String(20))
+    dip_pct: Mapped[Decimal | None] = mapped_column(Numeric(8, 6))
+    final_score: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    dip_class: Mapped[str | None] = mapped_column(String(20))
     recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (
@@ -677,9 +692,9 @@ class AiAgentAnalysis(Base):
     verdicts: Mapped[dict] = mapped_column(JSONB, nullable=False, default=list)
     overall_signal: Mapped[str] = mapped_column(String(20), nullable=False)  # bullish, bearish, neutral
     overall_confidence: Mapped[int] = mapped_column(Integer, nullable=False)
-    summary: Mapped[Optional[str]] = mapped_column(Text)
+    summary: Mapped[str | None] = mapped_column(Text)
     analyzed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -703,106 +718,106 @@ class StockFundamentals(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     symbol: Mapped[str] = mapped_column(String(20), unique=True, nullable=False)
-    
+
     # Valuation
-    pe_ratio: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 4))
-    forward_pe: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 4))
-    peg_ratio: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 4))
-    price_to_book: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 4))
-    price_to_sales: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 4))
-    enterprise_value: Mapped[Optional[int]] = mapped_column(BigInteger)
-    ev_to_ebitda: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 4))
-    ev_to_revenue: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 4))
-    
+    pe_ratio: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+    forward_pe: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+    peg_ratio: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+    price_to_book: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+    price_to_sales: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+    enterprise_value: Mapped[int | None] = mapped_column(BigInteger)
+    ev_to_ebitda: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+    ev_to_revenue: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+
     # Profitability
-    profit_margin: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 6))
-    operating_margin: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 6))
-    gross_margin: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 6))
-    ebitda_margin: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 6))
-    return_on_equity: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 6))
-    return_on_assets: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 6))
-    
+    profit_margin: Mapped[Decimal | None] = mapped_column(Numeric(10, 6))
+    operating_margin: Mapped[Decimal | None] = mapped_column(Numeric(10, 6))
+    gross_margin: Mapped[Decimal | None] = mapped_column(Numeric(10, 6))
+    ebitda_margin: Mapped[Decimal | None] = mapped_column(Numeric(10, 6))
+    return_on_equity: Mapped[Decimal | None] = mapped_column(Numeric(10, 6))
+    return_on_assets: Mapped[Decimal | None] = mapped_column(Numeric(10, 6))
+
     # Financial Health
-    debt_to_equity: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 4))
-    current_ratio: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 4))
-    quick_ratio: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 4))
-    total_cash: Mapped[Optional[int]] = mapped_column(BigInteger)
-    total_debt: Mapped[Optional[int]] = mapped_column(BigInteger)
-    free_cash_flow: Mapped[Optional[int]] = mapped_column(BigInteger)
-    operating_cash_flow: Mapped[Optional[int]] = mapped_column(BigInteger)
-    
+    debt_to_equity: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+    current_ratio: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    quick_ratio: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    total_cash: Mapped[int | None] = mapped_column(BigInteger)
+    total_debt: Mapped[int | None] = mapped_column(BigInteger)
+    free_cash_flow: Mapped[int | None] = mapped_column(BigInteger)
+    operating_cash_flow: Mapped[int | None] = mapped_column(BigInteger)
+
     # Per Share
-    book_value: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 4))
-    eps_trailing: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 4))
-    eps_forward: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 4))
-    revenue_per_share: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 4))
-    
+    book_value: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+    eps_trailing: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+    eps_forward: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+    revenue_per_share: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+
     # Growth
-    revenue_growth: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 6))
-    earnings_growth: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 6))
-    earnings_quarterly_growth: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 6))
-    
+    revenue_growth: Mapped[Decimal | None] = mapped_column(Numeric(10, 6))
+    earnings_growth: Mapped[Decimal | None] = mapped_column(Numeric(10, 6))
+    earnings_quarterly_growth: Mapped[Decimal | None] = mapped_column(Numeric(10, 6))
+
     # Shares & Ownership
-    shares_outstanding: Mapped[Optional[int]] = mapped_column(BigInteger)
-    float_shares: Mapped[Optional[int]] = mapped_column(BigInteger)
-    held_percent_insiders: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 6))
-    held_percent_institutions: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 6))
-    short_ratio: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 4))
-    short_percent_of_float: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 6))
-    
+    shares_outstanding: Mapped[int | None] = mapped_column(BigInteger)
+    float_shares: Mapped[int | None] = mapped_column(BigInteger)
+    held_percent_insiders: Mapped[Decimal | None] = mapped_column(Numeric(10, 6))
+    held_percent_institutions: Mapped[Decimal | None] = mapped_column(Numeric(10, 6))
+    short_ratio: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    short_percent_of_float: Mapped[Decimal | None] = mapped_column(Numeric(10, 6))
+
     # Risk
-    beta: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 4))
-    
+    beta: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+
     # Analyst Ratings
-    recommendation: Mapped[Optional[str]] = mapped_column(String(20))
-    recommendation_mean: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2))
-    num_analyst_opinions: Mapped[Optional[int]] = mapped_column(Integer)
-    target_high_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 4))
-    target_low_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 4))
-    target_mean_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 4))
-    target_median_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 4))
-    
+    recommendation: Mapped[str | None] = mapped_column(String(20))
+    recommendation_mean: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    num_analyst_opinions: Mapped[int | None] = mapped_column(Integer)
+    target_high_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+    target_low_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+    target_mean_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+    target_median_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+
     # Revenue & Earnings
-    revenue: Mapped[Optional[int]] = mapped_column(BigInteger)
-    ebitda: Mapped[Optional[int]] = mapped_column(BigInteger)
-    net_income: Mapped[Optional[int]] = mapped_column(BigInteger)
-    
+    revenue: Mapped[int | None] = mapped_column(BigInteger)
+    ebitda: Mapped[int | None] = mapped_column(BigInteger)
+    net_income: Mapped[int | None] = mapped_column(BigInteger)
+
     # Earnings Calendar
-    next_earnings_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    earnings_estimate_high: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 4))
-    earnings_estimate_low: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 4))
-    earnings_estimate_avg: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 4))
-    earnings_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))  # Last earnings date
-    
+    next_earnings_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    earnings_estimate_high: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+    earnings_estimate_low: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+    earnings_estimate_avg: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+    earnings_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # Last earnings date
+
     # Domain Classification
-    domain: Mapped[Optional[str]] = mapped_column(String(20))  # bank, reit, insurer, utility, biotech, etf, stock
-    
+    domain: Mapped[str | None] = mapped_column(String(20))  # bank, reit, insurer, utility, biotech, etf, stock
+
     # Financial Statements (JSONB - quarterly and annual income stmt, balance sheet, cash flow)
-    income_stmt_quarterly: Mapped[Optional[dict]] = mapped_column(JSONB)
-    income_stmt_annual: Mapped[Optional[dict]] = mapped_column(JSONB)
-    balance_sheet_quarterly: Mapped[Optional[dict]] = mapped_column(JSONB)
-    balance_sheet_annual: Mapped[Optional[dict]] = mapped_column(JSONB)
-    cash_flow_quarterly: Mapped[Optional[dict]] = mapped_column(JSONB)
-    cash_flow_annual: Mapped[Optional[dict]] = mapped_column(JSONB)
-    
+    income_stmt_quarterly: Mapped[dict | None] = mapped_column(JSONB)
+    income_stmt_annual: Mapped[dict | None] = mapped_column(JSONB)
+    balance_sheet_quarterly: Mapped[dict | None] = mapped_column(JSONB)
+    balance_sheet_annual: Mapped[dict | None] = mapped_column(JSONB)
+    cash_flow_quarterly: Mapped[dict | None] = mapped_column(JSONB)
+    cash_flow_annual: Mapped[dict | None] = mapped_column(JSONB)
+
     # Domain-Specific Metrics (pre-calculated from financial statements)
     # Banks
-    net_interest_income: Mapped[Optional[int]] = mapped_column(BigInteger)  # NII from income stmt
-    net_interest_margin: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 6))  # NIM = NII / Interest-earning assets
-    
+    net_interest_income: Mapped[int | None] = mapped_column(BigInteger)  # NII from income stmt
+    net_interest_margin: Mapped[Decimal | None] = mapped_column(Numeric(10, 6))  # NIM = NII / Interest-earning assets
+
     # REITs
-    ffo: Mapped[Optional[int]] = mapped_column(BigInteger)  # Funds From Operations = Net Income + D&A
-    ffo_per_share: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 4))
-    p_ffo: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 4))  # Price / FFO per share
-    
+    ffo: Mapped[int | None] = mapped_column(BigInteger)  # Funds From Operations = Net Income + D&A
+    ffo_per_share: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+    p_ffo: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))  # Price / FFO per share
+
     # Insurers
-    loss_ratio: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 6))  # Loss adj expense / Premiums
-    combined_ratio: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 6))  # Loss ratio + expense ratio
-    
+    loss_ratio: Mapped[Decimal | None] = mapped_column(Numeric(10, 6))  # Loss adj expense / Premiums
+    combined_ratio: Mapped[Decimal | None] = mapped_column(Numeric(10, 6))  # Loss ratio + expense ratio
+
     # Timestamps
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    financials_fetched_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))  # When statements were fetched
+    financials_fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # When statements were fetched
 
     __table_args__ = (
         Index("idx_stock_fundamentals_symbol", "symbol"),
@@ -823,18 +838,18 @@ class SymbolSearchResult(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     symbol: Mapped[str] = mapped_column(String(20), nullable=False)
-    name: Mapped[Optional[str]] = mapped_column(String(255))
-    exchange: Mapped[Optional[str]] = mapped_column(String(50))
-    quote_type: Mapped[Optional[str]] = mapped_column(String(20))
-    sector: Mapped[Optional[str]] = mapped_column(String(100))
-    industry: Mapped[Optional[str]] = mapped_column(String(100))
-    market_cap: Mapped[Optional[int]] = mapped_column(BigInteger)
-    search_query: Mapped[Optional[str]] = mapped_column(String(100))
-    relevance_score: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2))
-    confidence_score: Mapped[Optional[Decimal]] = mapped_column(
+    name: Mapped[str | None] = mapped_column(String(255))
+    exchange: Mapped[str | None] = mapped_column(String(50))
+    quote_type: Mapped[str | None] = mapped_column(String(20))
+    sector: Mapped[str | None] = mapped_column(String(100))
+    industry: Mapped[str | None] = mapped_column(String(100))
+    market_cap: Mapped[int | None] = mapped_column(BigInteger)
+    search_query: Mapped[str | None] = mapped_column(String(100))
+    relevance_score: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    confidence_score: Mapped[Decimal | None] = mapped_column(
         Numeric(4, 3), comment="Combined score (0-1) from relevance, recency, and data quality"
     )
-    last_seen_at: Mapped[Optional[datetime]] = mapped_column(
+    last_seen_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), comment="Last time this result was returned in a search"
     )
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -858,8 +873,8 @@ class SymbolSearchLog(Base):
     query_normalized: Mapped[str] = mapped_column(String(100), nullable=False)  # Uppercase, trimmed
     result_count: Mapped[int] = mapped_column(Integer, default=0)
     source: Mapped[str] = mapped_column(String(20), nullable=False)  # local, api, mixed
-    latency_ms: Mapped[Optional[int]] = mapped_column(Integer)
-    user_fingerprint: Mapped[Optional[str]] = mapped_column(String(64))
+    latency_ms: Mapped[int | None] = mapped_column(Integer)
+    user_fingerprint: Mapped[str | None] = mapped_column(String(64))
     searched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (
@@ -881,19 +896,19 @@ class Portfolio(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("auth_user.id", ondelete="CASCADE"), nullable=False)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
-    description: Mapped[Optional[str]] = mapped_column(Text)
+    description: Mapped[str | None] = mapped_column(Text)
     base_currency: Mapped[str] = mapped_column(String(10), default="USD")
-    cash_balance: Mapped[Optional[Decimal]] = mapped_column(Numeric(18, 4), default=Decimal("0.0"))
+    cash_balance: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), default=Decimal("0.0"))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     # Relationships
-    user: Mapped["AuthUser"] = relationship(back_populates="portfolios")
-    holdings: Mapped[List["PortfolioHolding"]] = relationship(back_populates="portfolio")
-    transactions: Mapped[List["PortfolioTransaction"]] = relationship(back_populates="portfolio")
-    analytics: Mapped[List["PortfolioAnalytics"]] = relationship(back_populates="portfolio")
-    analytics_jobs: Mapped[List["PortfolioAnalyticsJob"]] = relationship(back_populates="portfolio")
+    user: Mapped[AuthUser] = relationship(back_populates="portfolios")
+    holdings: Mapped[list[PortfolioHolding]] = relationship(back_populates="portfolio")
+    transactions: Mapped[list[PortfolioTransaction]] = relationship(back_populates="portfolio")
+    analytics: Mapped[list[PortfolioAnalytics]] = relationship(back_populates="portfolio")
+    analytics_jobs: Mapped[list[PortfolioAnalyticsJob]] = relationship(back_populates="portfolio")
 
     __table_args__ = (
         Index("idx_portfolios_user", "user_id"),
@@ -909,12 +924,12 @@ class PortfolioHolding(Base):
     portfolio_id: Mapped[int] = mapped_column(ForeignKey("portfolios.id", ondelete="CASCADE"), nullable=False)
     symbol: Mapped[str] = mapped_column(String(20), nullable=False)
     quantity: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
-    avg_cost: Mapped[Optional[Decimal]] = mapped_column(Numeric(18, 4))
-    target_weight: Mapped[Optional[Decimal]] = mapped_column(Numeric(6, 4))
+    avg_cost: Mapped[Decimal | None] = mapped_column(Numeric(18, 4))
+    target_weight: Mapped[Decimal | None] = mapped_column(Numeric(6, 4))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
-    portfolio: Mapped["Portfolio"] = relationship(back_populates="holdings")
+    portfolio: Mapped[Portfolio] = relationship(back_populates="holdings")
 
     __table_args__ = (
         UniqueConstraint("portfolio_id", "symbol", name="uq_portfolio_holdings_symbol"),
@@ -931,14 +946,14 @@ class PortfolioTransaction(Base):
     portfolio_id: Mapped[int] = mapped_column(ForeignKey("portfolios.id", ondelete="CASCADE"), nullable=False)
     symbol: Mapped[str] = mapped_column(String(20), nullable=False)
     side: Mapped[str] = mapped_column(String(20), nullable=False)  # buy, sell, dividend, split, deposit, withdrawal
-    quantity: Mapped[Optional[Decimal]] = mapped_column(Numeric(18, 6))
-    price: Mapped[Optional[Decimal]] = mapped_column(Numeric(18, 4))
-    fees: Mapped[Optional[Decimal]] = mapped_column(Numeric(18, 4))
+    quantity: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
+    price: Mapped[Decimal | None] = mapped_column(Numeric(18, 4))
+    fees: Mapped[Decimal | None] = mapped_column(Numeric(18, 4))
     trade_date: Mapped[date] = mapped_column(Date, nullable=False)
-    notes: Mapped[Optional[str]] = mapped_column(Text)
+    notes: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    portfolio: Mapped["Portfolio"] = relationship(back_populates="transactions")
+    portfolio: Mapped[Portfolio] = relationship(back_populates="transactions")
 
     __table_args__ = (
         CheckConstraint(
@@ -958,14 +973,14 @@ class PortfolioAnalytics(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     portfolio_id: Mapped[int] = mapped_column(ForeignKey("portfolios.id", ondelete="CASCADE"), nullable=False)
     tool: Mapped[str] = mapped_column(String(50), nullable=False)
-    as_of_date: Mapped[Optional[date]] = mapped_column(Date)
-    window: Mapped[Optional[str]] = mapped_column(String(50))
-    params: Mapped[Optional[dict]] = mapped_column(JSONB)
+    as_of_date: Mapped[date | None] = mapped_column(Date)
+    window: Mapped[str | None] = mapped_column(String(50))
+    params: Mapped[dict | None] = mapped_column(JSONB)
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="ok")  # ok, error, partial
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    portfolio: Mapped["Portfolio"] = relationship(back_populates="analytics")
+    portfolio: Mapped[Portfolio] = relationship(back_populates="analytics")
 
     __table_args__ = (
         CheckConstraint("status IN ('ok', 'error', 'partial')", name="ck_portfolio_analytics_status"),
@@ -985,20 +1000,20 @@ class PortfolioAnalyticsJob(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("auth_user.id", ondelete="CASCADE"), nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="pending")
     tools: Mapped[list] = mapped_column(JSONB, nullable=False)
-    params: Mapped[Optional[dict]] = mapped_column(JSONB)
-    window: Mapped[Optional[str]] = mapped_column(String(50))
-    start_date: Mapped[Optional[date]] = mapped_column(Date)
-    end_date: Mapped[Optional[date]] = mapped_column(Date)
-    benchmark: Mapped[Optional[str]] = mapped_column(String(20))
+    params: Mapped[dict | None] = mapped_column(JSONB)
+    window: Mapped[str | None] = mapped_column(String(50))
+    start_date: Mapped[date | None] = mapped_column(Date)
+    end_date: Mapped[date | None] = mapped_column(Date)
+    benchmark: Mapped[str | None] = mapped_column(String(20))
     force_refresh: Mapped[bool] = mapped_column(Boolean, default=False)
     results_count: Mapped[int] = mapped_column(Integer, default=0)
-    error_message: Mapped[Optional[str]] = mapped_column(Text)
+    error_message: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    portfolio: Mapped["Portfolio"] = relationship(back_populates="analytics_jobs")
-    user: Mapped["AuthUser"] = relationship(back_populates="portfolio_analytics_jobs")
+    portfolio: Mapped[Portfolio] = relationship(back_populates="analytics_jobs")
+    user: Mapped[AuthUser] = relationship(back_populates="portfolio_analytics_jobs")
 
     __table_args__ = (
         CheckConstraint(
@@ -1025,7 +1040,7 @@ class DataVersion(Base):
     symbol: Mapped[str] = mapped_column(String(20), nullable=False)
     source: Mapped[str] = mapped_column(String(20), nullable=False)  # prices, fundamentals, calendar
     version_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    version_metadata: Mapped[Optional[dict]] = mapped_column(JSONB)
+    version_metadata: Mapped[dict | None] = mapped_column(JSONB)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     __table_args__ = (
@@ -1046,8 +1061,8 @@ class AnalysisVersion(Base):
     analysis_type: Mapped[str] = mapped_column(String(50), nullable=False)  # bio, rating, agent_buffett, etc.
     input_version_hash: Mapped[str] = mapped_column(String(64), nullable=False)  # Combined hash of input data
     generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    batch_job_id: Mapped[Optional[str]] = mapped_column(String(100))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    batch_job_id: Mapped[str | None] = mapped_column(String(100))
 
     __table_args__ = (
         UniqueConstraint("symbol", "analysis_type", name="uq_analysis_version_symbol_type"),
@@ -1072,10 +1087,10 @@ class SymbolIngestQueue(Base):
     priority: Mapped[int] = mapped_column(Integer, default=0)  # Higher = more urgent
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     max_attempts: Mapped[int] = mapped_column(Integer, default=3)
-    last_error: Mapped[Optional[str]] = mapped_column(Text)
+    last_error: Mapped[str | None] = mapped_column(Text)
     queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    processing_started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    processing_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
         CheckConstraint("status IN ('pending', 'processing', 'completed', 'failed')", name="ck_ingest_queue_status"),

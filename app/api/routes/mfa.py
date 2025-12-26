@@ -4,32 +4,33 @@ from __future__ import annotations
 
 import json
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends
 
-from app.api.dependencies import require_user, require_admin
+from app.api.dependencies import require_admin, require_user
 from app.core.exceptions import AuthenticationError, ValidationError
 from app.core.mfa import (
+    generate_backup_codes,
     generate_mfa_secret,
     generate_provisioning_uri,
     generate_qr_code_base64,
-    generate_backup_codes,
     hash_backup_codes,
-    verify_totp,
     verify_backup_code,
+    verify_totp,
 )
 from app.core.security import TokenData
 from app.repositories import auth_user_orm as auth_repo
 from app.schemas.mfa import (
-    MFASetupResponse,
-    MFAVerifyRequest,
-    MFAVerifyResponse,
-    MFAStatusResponse,
     MFADisableRequest,
+    MFASetupResponse,
+    MFAStatusResponse,
     MFAValidateRequest,
     MFAValidateResponse,
+    MFAVerifyRequest,
+    MFAVerifyResponse,
 )
+
 
 router = APIRouter()
 
@@ -231,7 +232,7 @@ async def validate_mfa(
         await auth_repo.update_backup_codes(user.sub, updated_backup_codes)
 
     # Generate short-lived MFA token (5 minutes)
-    mfa_token = f"{user.sub}:{secrets.token_urlsafe(32)}:{int((datetime.now(timezone.utc) + timedelta(minutes=5)).timestamp())}"
+    mfa_token = f"{user.sub}:{secrets.token_urlsafe(32)}:{int((datetime.now(UTC) + timedelta(minutes=5)).timestamp())}"
 
     return MFAValidateResponse(valid=True, mfa_token=mfa_token)
 
@@ -257,7 +258,7 @@ def verify_mfa_token(token: str, username: str) -> bool:
             return False
 
         expiry = int(expiry_str)
-        if datetime.now(timezone.utc).timestamp() > expiry:
+        if datetime.now(UTC).timestamp() > expiry:
             return False
 
         return True

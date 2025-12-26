@@ -7,8 +7,8 @@ Uses the unified yfinance service for all API calls.
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
-from typing import Optional, Any
+from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import select
 
@@ -17,6 +17,7 @@ from app.core.logging import get_logger
 from app.database.connection import get_session
 from app.database.orm import DipState, Symbol, SymbolSearchResult
 from app.services.data_providers import get_yfinance_service
+
 
 logger = get_logger("services.suggestion_stock_info")
 
@@ -58,7 +59,7 @@ def validate_symbol_format(symbol: str) -> str:
     return normalized
 
 
-async def get_ipo_year(symbol: str) -> Optional[int]:
+async def get_ipo_year(symbol: str) -> int | None:
     """Get IPO/first trade year for a symbol from Yahoo Finance.
     
     Args:
@@ -83,14 +84,14 @@ async def get_stock_info_basic(symbol: str) -> dict:
     info = await _yf_service.get_ticker_info(symbol)
     if not info:
         return {"ipo_year": None, "website": None}
-    
+
     return {
         "ipo_year": info.get("ipo_year"),
         "website": info.get("website"),
     }
 
 
-async def _get_tracked_symbol_snapshot(symbol: str) -> Optional[dict[str, Any]]:
+async def _get_tracked_symbol_snapshot(symbol: str) -> dict[str, Any] | None:
     """Get symbol info from tracked symbols and dip_state."""
     async with get_session() as session:
         result = await session.execute(
@@ -120,9 +121,9 @@ async def _get_tracked_symbol_snapshot(symbol: str) -> Optional[dict[str, Any]]:
     }
 
 
-async def _get_cached_search_result(symbol: str) -> Optional[dict[str, Any]]:
+async def _get_cached_search_result(symbol: str) -> dict[str, Any] | None:
     """Get cached search result for a symbol if available and not expired."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     async with get_session() as session:
         result = await session.execute(
             select(SymbolSearchResult).where(

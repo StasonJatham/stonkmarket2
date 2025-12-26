@@ -2,33 +2,33 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Optional
 
 from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 
+from app.core.logging import get_logger
 from app.database.connection import get_session
 from app.database.orm import (
-    DipState,
-    DipAIAnalysis,
-    StockSuggestion,
     BatchJob,
-    Symbol,
-    StockFundamentals,
+    DipAIAnalysis,
     DipfinderSignal,
+    DipState,
+    StockFundamentals,
+    StockSuggestion,
+    Symbol,
 )
+from app.repositories import api_usage_orm as api_usage
 from app.services.openai_client import (
-    submit_batch,
+    TaskType,
     check_batch,
     collect_batch,
     generate_bio,
     rate_dip,
-    TaskType,
+    submit_batch,
 )
-from app.repositories import api_usage_orm as api_usage
-from app.core.logging import get_logger
+
 
 logger = get_logger("batch_scheduler")
 
@@ -113,11 +113,11 @@ async def get_dips_needing_analysis() -> list[dict]:
             .outerjoin(DipAIAnalysis, DipAIAnalysis.symbol == DipState.symbol)
             .where(
                 (DipAIAnalysis.symbol == None)
-                | (DipAIAnalysis.expires_at < datetime.now(timezone.utc))
-                | (DipAIAnalysis.generated_at < datetime.now(timezone.utc) - timedelta(days=7))
+                | (DipAIAnalysis.expires_at < datetime.now(UTC))
+                | (DipAIAnalysis.generated_at < datetime.now(UTC) - timedelta(days=7))
             )
         )
-        
+
         rows = result.all()
         return [
             {
@@ -153,7 +153,7 @@ async def get_dips_needing_analysis() -> list[dict]:
         ]
 
 
-async def schedule_batch_dip_analysis() -> Optional[str]:
+async def schedule_batch_dip_analysis() -> str | None:
     """
     Schedule a batch job to analyze all current dips.
 
@@ -174,19 +174,18 @@ async def schedule_batch_dip_analysis() -> Optional[str]:
         # Calculate days in dip
         days_below = 0
         if dip.get("first_seen"):
-            from datetime import timezone
             first_seen = dip["first_seen"]
             if hasattr(first_seen, 'tzinfo') and first_seen.tzinfo is None:
-                first_seen = first_seen.replace(tzinfo=timezone.utc)
-            days_below = (datetime.now(timezone.utc) - first_seen).days
-        
+                first_seen = first_seen.replace(tzinfo=UTC)
+            days_below = (datetime.now(UTC) - first_seen).days
+
         # Helper to format percentages
         def fmt_pct(val):
             return f"{val * 100:.1f}%" if val else None
-        
+
         def fmt_ratio(val):
             return f"{val:.2f}" if val else None
-        
+
         def fmt_large_num(val):
             if val is None:
                 return None
@@ -197,7 +196,7 @@ async def schedule_batch_dip_analysis() -> Optional[str]:
             if val >= 1e6:
                 return f"${val / 1e6:.1f}M"
             return f"${val:,.0f}"
-        
+
         items.append(
             {
                 "symbol": dip["symbol"],
@@ -259,7 +258,7 @@ async def schedule_batch_dip_analysis() -> Optional[str]:
     return batch_id
 
 
-async def schedule_batch_suggestion_bios() -> Optional[str]:
+async def schedule_batch_suggestion_bios() -> str | None:
     """
     Schedule a batch job to generate bios for pending suggestions.
 
@@ -366,7 +365,7 @@ async def process_completed_batch_jobs() -> int:
                         update(BatchJob)
                         .where(BatchJob.batch_id == batch_id)
                         .values(
-                            completed_at=datetime.now(timezone.utc),
+                            completed_at=datetime.now(UTC),
                             actual_cost_usd=Decimal(str(status_info.get("total_cost", 0))),
                         )
                     )
@@ -418,7 +417,7 @@ async def _store_dip_analysis(symbol: str, content: dict | str, batch_id: str) -
         rating = None
         reasoning = str(content)
 
-    expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+    expires_at = datetime.now(UTC) + timedelta(days=7)
 
     async with get_session() as session:
         stmt = insert(DipAIAnalysis).values(
@@ -428,7 +427,7 @@ async def _store_dip_analysis(symbol: str, content: dict | str, batch_id: str) -
             model_used="gpt-5-mini",
             is_batch_generated=True,
             batch_job_id=batch_id,
-            generated_at=datetime.now(timezone.utc),
+            generated_at=datetime.now(UTC),
             expires_at=expires_at,
         )
         stmt = stmt.on_conflict_do_update(
@@ -438,7 +437,7 @@ async def _store_dip_analysis(symbol: str, content: dict | str, batch_id: str) -
                 "rating_reasoning": stmt.excluded.rating_reasoning,
                 "is_batch_generated": True,
                 "batch_job_id": stmt.excluded.batch_job_id,
-                "generated_at": datetime.now(timezone.utc),
+                "generated_at": datetime.now(UTC),
                 "expires_at": stmt.excluded.expires_at,
             },
         )
@@ -454,7 +453,7 @@ async def _store_suggestion_bio(symbol: str, bio: str) -> None:
         await session.execute(
             update(StockSuggestion)
             .where(StockSuggestion.symbol == symbol.upper())
-            .values(ai_bio=bio, updated_at=datetime.now(timezone.utc))
+            .values(ai_bio=bio, updated_at=datetime.now(UTC))
         )
         await session.commit()
 
@@ -463,9 +462,9 @@ async def _store_suggestion_bio(symbol: str, bio: str) -> None:
 
 async def run_realtime_analysis_for_new_stock(
     symbol: str,
-    current_price: Optional[float] = None,
-    ath_price: Optional[float] = None,
-    dip_percentage: Optional[float] = None,
+    current_price: float | None = None,
+    ath_price: float | None = None,
+    dip_percentage: float | None = None,
 ) -> dict:
     """
     Run real-time AI analysis for a newly added stock.
@@ -473,7 +472,7 @@ async def run_realtime_analysis_for_new_stock(
     Called when a stock is approved from suggestions and added to dips.
     """
     from app.services import stock_info
-    
+
     logger.info(f"Running real-time AI analysis for new stock: {symbol}")
 
     try:
@@ -483,7 +482,7 @@ async def run_realtime_analysis_for_new_stock(
         sector = info.get("sector") if info else None
         summary = info.get("summary") if info else None
         pe_ratio = info.get("pe_ratio") if info else None
-        
+
         # Generate bio
         bio = await generate_bio(
             symbol=symbol,
@@ -507,7 +506,7 @@ async def run_realtime_analysis_for_new_stock(
         )
 
         # Store the analysis
-        expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+        expires_at = datetime.now(UTC) + timedelta(days=7)
 
         async with get_session() as session:
             stmt = insert(DipAIAnalysis).values(
@@ -517,7 +516,7 @@ async def run_realtime_analysis_for_new_stock(
                 rating_reasoning=rating_data.get("reasoning", "") if rating_data else "",
                 model_used="gpt-5-mini",
                 is_batch_generated=False,
-                generated_at=datetime.now(timezone.utc),
+                generated_at=datetime.now(UTC),
                 expires_at=expires_at,
             )
             stmt = stmt.on_conflict_do_update(
@@ -527,7 +526,7 @@ async def run_realtime_analysis_for_new_stock(
                     "ai_rating": stmt.excluded.ai_rating,
                     "rating_reasoning": stmt.excluded.rating_reasoning,
                     "is_batch_generated": False,
-                    "generated_at": datetime.now(timezone.utc),
+                    "generated_at": datetime.now(UTC),
                     "expires_at": stmt.excluded.expires_at,
                 },
             )
@@ -609,8 +608,9 @@ async def cron_cleanup_expired() -> dict:
 
     Runs daily at midnight.
     """
-    from app.repositories.dip_history_orm import cleanup_old_history
     from sqlalchemy import text
+
+    from app.repositories.dip_history_orm import cleanup_old_history
 
     logger.info("Running daily cleanup")
 

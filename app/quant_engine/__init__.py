@@ -40,46 +40,47 @@ Non-Negotiable Rules
 
 from __future__ import annotations
 
+
 __version__ = "1.0.0"
 
 # Core types
-from app.quant_engine.types import (
-    QuantConfig,
-    AlphaResult,
-    DipArtifacts,
-    RegimeState,
-    RiskModel,
-    OptimizationResult,
-    RecommendationRow,
-    EngineOutput,
-    HyperparameterLog,
-    WalkForwardFold,
-    WalkForwardResult,
-    ConstraintStatus,
-    SolverStatus,
-    RegimeTrend,
-    RegimeVolatility,
-    MomentumCondition,
-    ActionType,
-)
-
-# Services
-from app.quant_engine.service import QuantEngineService, get_default_config
-
 # Alpha models
 from app.quant_engine.alpha_models import AlphaModelEnsemble
-
-# Risk models
-from app.quant_engine.risk import fit_pca_risk_model
 
 # Optimizer
 from app.quant_engine.optimizer import optimize_portfolio
 
+# Risk models
+from app.quant_engine.risk import fit_pca_risk_model
+
+# Services
+from app.quant_engine.service import QuantEngineService, get_default_config
+
+# Tuner
+from app.quant_engine.tuner import HyperparameterGrid, HyperparameterTuner
+from app.quant_engine.types import (
+    ActionType,
+    AlphaResult,
+    ConstraintStatus,
+    DipArtifacts,
+    EngineOutput,
+    HyperparameterLog,
+    MomentumCondition,
+    OptimizationResult,
+    QuantConfig,
+    RecommendationRow,
+    RegimeState,
+    RegimeTrend,
+    RegimeVolatility,
+    RiskModel,
+    SolverStatus,
+    WalkForwardFold,
+    WalkForwardResult,
+)
+
 # Walk-forward
 from app.quant_engine.walk_forward import WalkForwardValidator
 
-# Tuner
-from app.quant_engine.tuner import HyperparameterTuner, HyperparameterGrid
 
 __all__ = [
     "__version__",

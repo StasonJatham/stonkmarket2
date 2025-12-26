@@ -1,41 +1,44 @@
 """API routes package."""
 
-from . import auth
-from . import symbols
-from . import dips
-from . import cronjobs
-from . import health
-from . import suggestions
-from . import mfa
-from . import api_keys
-from . import swipe
-from . import dip_changes
-from . import user_api_keys
-from . import dipfinder
-from . import admin_settings
-from . import metrics
-from . import seo
-from . import logos
-from . import portfolios
-from . import celery
+from . import (
+    admin_settings,
+    api_keys,
+    auth,
+    celery,
+    cronjobs,
+    dip_changes,
+    dipfinder,
+    dips,
+    health,
+    logos,
+    metrics,
+    mfa,
+    portfolios,
+    seo,
+    suggestions,
+    swipe,
+    symbols,
+    user_api_keys,
+)
+
 
 __all__ = [
-    "auth",
-    "symbols",
-    "dips",
-    "cronjobs",
-    "health",
-    "suggestions",
-    "mfa",
-    "api_keys",
-    "swipe",
-    "dip_changes",
-    "user_api_keys",
-    "dipfinder",
     "admin_settings",
-    "metrics",
-    "seo",
-    "logos",
-    "portfolios",
+    "api_keys",
+    "auth",
     "celery",
+    "cronjobs",
+    "dip_changes",
+    "dipfinder",
+    "dips",
+    "health",
+    "logos",
+    "metrics",
+    "mfa",
+    "portfolios",
+    "seo",
+    "suggestions",
+    "swipe",
+    "symbols",
+    "user_api_keys",
 ]

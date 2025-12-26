@@ -6,40 +6,40 @@ Endpoints for computing, retrieving, and managing dip signals.
 from __future__ import annotations
 
 from datetime import date
-from typing import Optional, Dict
 
-from fastapi import APIRouter, Depends, Query, Path
+from fastapi import APIRouter, Depends, Path, Query
 
-from app.api.dependencies import require_user, require_admin
-from app.core.exceptions import NotFoundError, BadRequestError
+from app.api.dependencies import require_admin, require_user
+from app.celery_app import celery_app
+from app.core.exceptions import BadRequestError, NotFoundError
 from app.core.logging import get_logger
 from app.core.security import TokenData
-from app.celery_app import celery_app
-from app.repositories import dip_state_orm as dip_state_repo
 from app.dipfinder.config import get_dipfinder_config
 from app.dipfinder.service import get_dipfinder_service
+from app.repositories import dip_state_orm as dip_state_repo
 from app.schemas.dipfinder import (
-    DipSignalResponse,
-    DipSignalListResponse,
+    DipFinderConfigResponse,
     DipFinderRunRequest,
     DipFinderRunResponse,
-    DipHistoryResponse,
     DipHistoryEntry,
-    DipFinderConfigResponse,
+    DipHistoryResponse,
+    DipSignalListResponse,
+    DipSignalResponse,
     QualityFactorsResponse,
     StabilityFactorsResponse,
 )
+
 
 logger = get_logger("api.dipfinder")
 
 router = APIRouter()
 
 
-async def _get_dip_state_map(tickers: list[str]) -> Dict[str, dict]:
+async def _get_dip_state_map(tickers: list[str]) -> dict[str, dict]:
     """Get dip_state data for multiple tickers (ATH-based source of truth)."""
     if not tickers:
         return {}
-    
+
     states = await dip_state_repo.get_dip_states_for_symbols(tickers)
     return {
         symbol: {
@@ -68,7 +68,7 @@ def _signal_to_response(signal, include_factors: bool = False, dip_state: dict =
     persist_days = signal.dip_metrics.persist_days
     dip_score = signal.dip_score
     final_score = signal.final_score
-    
+
     # Override with ATH-based values from dip_state (source of truth)
     if dip_state:
         if dip_state.get("dip_percentage"):
@@ -83,7 +83,7 @@ def _signal_to_response(signal, include_factors: bool = False, dip_state: dict =
         # Recalculate scores based on ATH dip
         dip_score = min(100.0, dip_pct * 100 * 5)
         final_score = (signal.quality_metrics.score + signal.stability_metrics.score + dip_score) / 3
-    
+
     response = DipSignalResponse(
         ticker=signal.ticker,
         window=signal.window,
@@ -130,11 +130,11 @@ async def get_signals(
         description="Comma-separated list of ticker symbols",
         examples=["NVDA,AAPL,MSFT"],
     ),
-    benchmark: Optional[str] = Query(
+    benchmark: str | None = Query(
         default=None,
         description="Benchmark ticker (default: SPY)",
     ),
-    window: Optional[int] = Query(
+    window: int | None = Query(
         default=30,
         ge=7,
         le=365,
@@ -177,7 +177,7 @@ async def get_signals(
         benchmark=benchmark,
         window=window,
     )
-    
+
     # Get dip_state data for ATH-based dip percentages
     dip_state_map = await _get_dip_state_map(ticker_list)
 
@@ -201,8 +201,8 @@ async def get_signals(
 )
 async def get_ticker_signal(
     ticker: str = Path(..., min_length=1, max_length=10, description="Ticker symbol"),
-    benchmark: Optional[str] = Query(default=None),
-    window: Optional[int] = Query(default=30, ge=7, le=365),
+    benchmark: str | None = Query(default=None),
+    window: int | None = Query(default=30, ge=7, le=365),
     force_refresh: bool = Query(default=False, description="Force recomputation"),
 ) -> DipSignalResponse:
     """Get dip signal for a single ticker with full details."""
@@ -288,7 +288,7 @@ async def run_dipfinder(
                     if signal:
                         signals.append(signal)
                 except Exception as e:
-                    errors.append(f"{ticker}: {str(e)}")
+                    errors.append(f"{ticker}: {e!s}")
 
         alerts = [s for s in signals if s.should_alert]
 
@@ -327,7 +327,7 @@ async def run_dipfinder(
 )
 async def get_latest_signals(
     limit: int = Query(default=50, ge=1, le=100, description="Maximum results"),
-    min_score: Optional[float] = Query(
+    min_score: float | None = Query(
         default=None, ge=0, le=100, description="Minimum final score"
     ),
     only_alerts: bool = Query(default=False, description="Only return alerts"),
@@ -462,7 +462,7 @@ async def get_config() -> DipFinderConfigResponse:
     description="Force refresh signals for all tracked symbols.",
 )
 async def admin_refresh_all(
-    benchmark: Optional[str] = Query(default=None),
+    benchmark: str | None = Query(default=None),
     admin: TokenData = Depends(require_admin),
 ) -> DipFinderRunResponse:
     """Admin endpoint to refresh all tracked symbols."""

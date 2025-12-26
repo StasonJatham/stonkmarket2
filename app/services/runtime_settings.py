@@ -7,7 +7,7 @@ Settings are loaded on startup and cached in memory.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, Optional
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
@@ -15,6 +15,7 @@ from sqlalchemy.dialects.postgresql import insert
 from app.core.logging import get_logger
 from app.database.connection import get_session
 from app.database.orm import RuntimeSetting
+
 
 logger = get_logger("runtime_settings")
 
@@ -29,7 +30,7 @@ CACHE_AFFECTING_SETTINGS = {
 # Default settings (used if database is empty or unavailable)
 # NOTE: auto_approve_votes comes from settings.auto_approve_votes (default 50)
 # to keep a single source of truth in app/core/config.py
-DEFAULT_SETTINGS: Dict[str, Any] = {
+DEFAULT_SETTINGS: dict[str, Any] = {
     "signal_threshold_strong_buy": 80.0,
     "signal_threshold_buy": 60.0,
     "signal_threshold_hold": 40.0,
@@ -61,7 +62,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
 }
 
 # In-memory cache of settings
-_settings_cache: Dict[str, Any] = {}
+_settings_cache: dict[str, Any] = {}
 _cache_initialized: bool = False
 
 
@@ -81,7 +82,7 @@ def _parse_jsonb_value(value: Any) -> Any:
     return value
 
 
-async def _load_settings_from_db() -> Dict[str, Any]:
+async def _load_settings_from_db() -> dict[str, Any]:
     """Load all settings from the database."""
     settings = DEFAULT_SETTINGS.copy()
     try:
@@ -163,7 +164,7 @@ async def save_runtime_setting(key: str, value: Any) -> None:
     await _save_setting_to_db(key, value)
 
 
-async def update_runtime_settings(updates: Dict[str, Any]) -> Dict[str, Any]:
+async def update_runtime_settings(updates: dict[str, Any]) -> dict[str, Any]:
     """Update multiple runtime settings and persist to database.
     
     Also invalidates affected caches when settings change.
@@ -175,18 +176,18 @@ async def update_runtime_settings(updates: Dict[str, Any]) -> Dict[str, Any]:
         The updated settings dictionary
     """
     from app.cache.cache import Cache
-    
+
     # Collect caches to invalidate
     caches_to_invalidate: set[str] = set()
-    
+
     for key, value in updates.items():
         _settings_cache[key] = value
         await _save_setting_to_db(key, value)
-        
+
         # Check if this setting affects any caches
         if key in CACHE_AFFECTING_SETTINGS:
             caches_to_invalidate.update(CACHE_AFFECTING_SETTINGS[key])
-    
+
     # Invalidate affected caches
     for cache_prefix in caches_to_invalidate:
         try:
@@ -195,12 +196,12 @@ async def update_runtime_settings(updates: Dict[str, Any]) -> Dict[str, Any]:
             logger.info(f"Invalidated {deleted} keys in cache '{cache_prefix}' due to settings change")
         except Exception as e:
             logger.warning(f"Failed to invalidate cache '{cache_prefix}': {e}")
-    
+
     logger.info(f"Updated {len(updates)} runtime settings")
     return _settings_cache.copy()
 
 
-def get_all_runtime_settings() -> Dict[str, Any]:
+def get_all_runtime_settings() -> dict[str, Any]:
     """Get all runtime settings.
     
     Returns:
@@ -228,12 +229,13 @@ def get_cache_ttl(cache_type: str) -> int:
 async def check_openai_configured() -> bool:
     """Check if OpenAI API key is configured (env or database)."""
     import os
+
     from app.repositories import api_keys_orm as api_keys_repo
-    
+
     # Check environment variable first
     if os.environ.get("OPENAI_API_KEY"):
         return True
-    
+
     # Check database
     try:
         key = await api_keys_repo.get_key(api_keys_repo.OPENAI_API_KEY)
@@ -246,11 +248,11 @@ async def check_logo_dev_configured() -> bool:
     """Check if Logo.dev API key is configured (env or database)."""
     from app.core.config import settings
     from app.repositories import api_keys_orm as api_keys_repo
-    
+
     # Check environment variable first
     if settings.logo_dev_public_key:
         return True
-    
+
     # Check database
     try:
         key = await api_keys_repo.get_key(api_keys_repo.LOGO_DEV_PUBLIC_KEY)

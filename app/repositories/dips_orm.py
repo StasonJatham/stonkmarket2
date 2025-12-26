@@ -11,13 +11,12 @@ Usage:
 
 from __future__ import annotations
 
-from typing import Optional, Sequence
-
 from sqlalchemy import select
 
+from app.core.logging import get_logger
 from app.database.connection import get_session
 from app.database.orm import DipState, Symbol
-from app.core.logging import get_logger
+
 
 logger = get_logger("repositories.dips_orm")
 
@@ -48,7 +47,7 @@ async def get_ranking_data() -> list[dict]:
             .order_by(DipState.dip_percentage.desc())
         )
         rows = result.all()
-        
+
         return [
             {
                 "symbol": row.symbol,
@@ -80,7 +79,7 @@ async def get_all_dip_states() -> list[dict]:
             .order_by(DipState.symbol)
         )
         states = result.scalars().all()
-        
+
         return [
             {
                 "symbol": s.symbol,
@@ -94,7 +93,7 @@ async def get_all_dip_states() -> list[dict]:
         ]
 
 
-async def get_dip_state(symbol: str) -> Optional[dict]:
+async def get_dip_state(symbol: str) -> dict | None:
     """Get dip state for a specific symbol.
     
     Args:
@@ -109,10 +108,10 @@ async def get_dip_state(symbol: str) -> Optional[dict]:
             .where(DipState.symbol == symbol.upper())
         )
         state = result.scalar_one_or_none()
-        
+
         if not state:
             return None
-        
+
         return {
             "symbol": state.symbol,
             # Map new columns to expected legacy names for API compatibility
@@ -141,7 +140,7 @@ async def get_symbol_min_dip_pct(symbol: str) -> float:
         return float(val) if val else 0.10
 
 
-async def get_symbol_summary_ai(symbol: str) -> Optional[str]:
+async def get_symbol_summary_ai(symbol: str) -> str | None:
     """Get AI summary for a symbol.
     
     Args:

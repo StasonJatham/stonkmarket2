@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import List, Optional
-
 from pydantic import BaseModel, Field
 
 
@@ -39,7 +37,7 @@ class MFAVerifyResponse(BaseModel):
     """Response after successfully enabling MFA."""
 
     enabled: bool
-    backup_codes: List[str] = Field(
+    backup_codes: list[str] = Field(
         ..., description="One-time backup codes (show once, user must save)"
     )
 
@@ -58,7 +56,7 @@ class MFAStatusResponse(BaseModel):
 
     enabled: bool
     has_backup_codes: bool
-    backup_codes_remaining: Optional[int] = None
+    backup_codes_remaining: int | None = None
 
 
 class MFADisableRequest(BaseModel):
@@ -77,6 +75,6 @@ class MFAValidateResponse(BaseModel):
     """Response after MFA validation."""
 
     valid: bool
-    mfa_token: Optional[str] = Field(
+    mfa_token: str | None = Field(
         None, description="Short-lived token for subsequent MFA-protected operations"
     )

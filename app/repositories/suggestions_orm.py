@@ -11,17 +11,16 @@ Usage:
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from collections.abc import Sequence
+from datetime import datetime
 from decimal import Decimal
-from typing import Optional, Sequence, Tuple
 
-from sqlalchemy import select, func, delete, distinct, and_, or_, text
-from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import and_, delete, distinct, func, or_, select
 
+from app.core.logging import get_logger
 from app.database.connection import get_session
 from app.database.orm import StockSuggestion, SuggestionVote, Symbol
-from app.core.logging import get_logger
+
 
 logger = get_logger("repositories.suggestions_orm")
 
@@ -31,7 +30,7 @@ logger = get_logger("repositories.suggestions_orm")
 # =============================================================================
 
 
-async def get_suggestion_by_id(suggestion_id: int) -> Optional[StockSuggestion]:
+async def get_suggestion_by_id(suggestion_id: int) -> StockSuggestion | None:
     """Get a suggestion by ID."""
     async with get_session() as session:
         result = await session.execute(
@@ -40,7 +39,7 @@ async def get_suggestion_by_id(suggestion_id: int) -> Optional[StockSuggestion]:
         return result.scalar_one_or_none()
 
 
-async def get_suggestion_by_symbol(symbol: str) -> Optional[StockSuggestion]:
+async def get_suggestion_by_symbol(symbol: str) -> StockSuggestion | None:
     """Get a suggestion by symbol."""
     async with get_session() as session:
         result = await session.execute(
@@ -82,7 +81,7 @@ async def auto_approve_suggestion(suggestion_id: int) -> bool:
             )
         )
         suggestion = result.scalar_one_or_none()
-        
+
         if suggestion:
             suggestion.status = "approved"
             suggestion.approved_by_id = None
@@ -100,7 +99,7 @@ async def auto_approve_suggestion(suggestion_id: int) -> bool:
 async def get_existing_vote(
     suggestion_id: int,
     fingerprint: str,
-) -> Optional[SuggestionVote]:
+) -> SuggestionVote | None:
     """Get existing vote by a user on a suggestion."""
     async with get_session() as session:
         result = await session.execute(
@@ -119,8 +118,8 @@ async def upsert_vote(
     fingerprint: str,
     vote_type: str,
     vote_weight: int = 1,
-    api_key_id: Optional[int] = None,
-) -> Tuple[int, bool]:
+    api_key_id: int | None = None,
+) -> tuple[int, bool]:
     """Create or update a vote on a suggestion.
     
     Returns:
@@ -139,7 +138,7 @@ async def upsert_vote(
             )
         )
         existing_vote = existing.scalar_one_or_none()
-        
+
         if existing_vote:
             if existing_vote.vote_type == vote_type:
                 # Same vote exists, get current score
@@ -150,12 +149,12 @@ async def upsert_vote(
                 )
                 current_score = score_result.scalar() or 0
                 return (current_score, False)
-            
+
             # Change vote - update existing
             old_weight = existing_vote.vote_weight if existing_vote.vote_type == "up" else -existing_vote.vote_weight
             new_weight = vote_weight if vote_type == "up" else -vote_weight
             score_delta = new_weight - old_weight
-            
+
             existing_vote.vote_type = vote_type
             existing_vote.vote_weight = vote_weight
             existing_vote.api_key_id = api_key_id
@@ -170,19 +169,19 @@ async def upsert_vote(
             )
             session.add(new_vote)
             score_delta = vote_weight if vote_type == "up" else -vote_weight
-        
+
         # Update suggestion score
         suggestion_result = await session.execute(
             select(StockSuggestion).where(StockSuggestion.id == suggestion_id)
         )
         suggestion = suggestion_result.scalar_one_or_none()
-        
+
         if suggestion:
             suggestion.vote_score = (suggestion.vote_score or 0) + score_delta
             new_score = suggestion.vote_score
         else:
             new_score = 0
-        
+
         await session.commit()
         return (new_score, True)
 
@@ -204,7 +203,7 @@ async def delete_vote(suggestion_id: int, fingerprint: str) -> int:
             )
         )
         vote = existing.scalar_one_or_none()
-        
+
         if not vote:
             # No vote to delete
             score_result = await session.execute(
@@ -213,25 +212,25 @@ async def delete_vote(suggestion_id: int, fingerprint: str) -> int:
                 )
             )
             return score_result.scalar() or 0
-        
+
         # Calculate score change
         score_delta = -vote.vote_weight if vote.vote_type == "up" else vote.vote_weight
-        
+
         # Delete vote
         await session.delete(vote)
-        
+
         # Update suggestion score
         suggestion_result = await session.execute(
             select(StockSuggestion).where(StockSuggestion.id == suggestion_id)
         )
         suggestion = suggestion_result.scalar_one_or_none()
-        
+
         if suggestion:
             suggestion.vote_score = (suggestion.vote_score or 0) + score_delta
             new_score = suggestion.vote_score
         else:
             new_score = 0
-        
+
         await session.commit()
         return new_score
 
@@ -256,7 +255,7 @@ async def approve_suggestion(
             )
         )
         suggestion = result.scalar_one_or_none()
-        
+
         if suggestion:
             suggestion.status = "approved"
             suggestion.approved_by_id = admin_id
@@ -281,7 +280,7 @@ async def reject_suggestion(
             )
         )
         suggestion = result.scalar_one_or_none()
-        
+
         if suggestion:
             suggestion.status = "rejected"
             suggestion.approved_by_id = admin_id
@@ -333,10 +332,10 @@ async def count_pending_suggestions() -> int:
 
 
 async def list_all_suggestions(
-    status: Optional[str] = None,
+    status: str | None = None,
     limit: int = 50,
     offset: int = 0,
-) -> Tuple[Sequence[StockSuggestion], int]:
+) -> tuple[Sequence[StockSuggestion], int]:
     """List suggestions with optional status filter.
     
     Returns:
@@ -346,15 +345,15 @@ async def list_all_suggestions(
         # Base query
         query = select(StockSuggestion)
         count_query = select(func.count()).select_from(StockSuggestion)
-        
+
         if status:
             query = query.where(StockSuggestion.status == status)
             count_query = count_query.where(StockSuggestion.status == status)
-        
+
         # Get count
         count_result = await session.execute(count_query)
         total = count_result.scalar() or 0
-        
+
         # Get suggestions
         result = await session.execute(
             query
@@ -363,7 +362,7 @@ async def list_all_suggestions(
             .offset(offset)
         )
         suggestions = result.scalars().all()
-        
+
         return (suggestions, total)
 
 
@@ -385,16 +384,16 @@ async def get_user_voted_suggestions(fingerprint: str) -> Sequence[int]:
 async def create_suggestion(
     symbol: str,
     fingerprint: str,
-    company_name: Optional[str] = None,
-    sector: Optional[str] = None,
-    summary: Optional[str] = None,
-    website: Optional[str] = None,
-    ipo_year: Optional[int] = None,
-    reason: Optional[str] = None,
-    current_price: Optional[float] = None,
-    ath_price: Optional[float] = None,
-    fetch_status: Optional[str] = None,
-    fetch_error: Optional[str] = None,
+    company_name: str | None = None,
+    sector: str | None = None,
+    summary: str | None = None,
+    website: str | None = None,
+    ipo_year: int | None = None,
+    reason: str | None = None,
+    current_price: float | None = None,
+    ath_price: float | None = None,
+    fetch_status: str | None = None,
+    fetch_error: str | None = None,
 ) -> StockSuggestion:
     """Create a new stock suggestion."""
     async with get_session() as session:
@@ -459,7 +458,7 @@ async def search_pending_suggestions(
     """
     async with get_session() as session:
         search_pattern = f"%{query.upper()}%"
-        
+
         result = await session.execute(
             select(
                 StockSuggestion.symbol,
@@ -479,7 +478,7 @@ async def search_pending_suggestions(
             .order_by(StockSuggestion.vote_score.desc())
             .limit(limit)
         )
-        
+
         return [
             {
                 "symbol": row[0],
@@ -501,7 +500,7 @@ async def search_tracked_symbols(
     """
     async with get_session() as session:
         search_pattern = f"%{query.upper()}%"
-        
+
         result = await session.execute(
             select(
                 Symbol.symbol,
@@ -517,7 +516,7 @@ async def search_tracked_symbols(
             .order_by(Symbol.symbol)
             .limit(limit)
         )
-        
+
         return [
             {
                 "symbol": row[0],
@@ -536,14 +535,14 @@ async def search_tracked_symbols(
 async def update_suggestion_fetch_status(
     suggestion_id: int,
     fetch_status: str,
-    fetch_error: Optional[str] = None,
-    current_price: Optional[float] = None,
-    ath_price: Optional[float] = None,
-    company_name: Optional[str] = None,
-    sector: Optional[str] = None,
-    summary: Optional[str] = None,
-    website: Optional[str] = None,
-    ipo_year: Optional[int] = None,
+    fetch_error: str | None = None,
+    current_price: float | None = None,
+    ath_price: float | None = None,
+    company_name: str | None = None,
+    sector: str | None = None,
+    summary: str | None = None,
+    website: str | None = None,
+    ipo_year: int | None = None,
 ) -> bool:
     """Update suggestion fetch status and optional stock info."""
     async with get_session() as session:
@@ -551,14 +550,14 @@ async def update_suggestion_fetch_status(
             select(StockSuggestion).where(StockSuggestion.id == suggestion_id)
         )
         suggestion = result.scalar_one_or_none()
-        
+
         if not suggestion:
             return False
-        
+
         suggestion.fetch_status = fetch_status
         suggestion.fetch_error = fetch_error
         suggestion.fetched_at = datetime.utcnow()
-        
+
         if current_price is not None:
             suggestion.current_price = Decimal(str(current_price))
         if ath_price is not None:
@@ -573,15 +572,15 @@ async def update_suggestion_fetch_status(
             suggestion.website = website
         if ipo_year is not None:
             suggestion.ipo_year = ipo_year
-        
+
         await session.commit()
         return True
 
 
 async def add_symbol_from_suggestion(
     symbol: str,
-    name: Optional[str] = None,
-    sector: Optional[str] = None,
+    name: str | None = None,
+    sector: str | None = None,
     min_dip_pct: float = 0.15,
     min_days: int = 5,
 ) -> bool:
@@ -593,7 +592,7 @@ async def add_symbol_from_suggestion(
         )
         if existing.scalar_one_or_none():
             return True  # Already exists, consider it success
-        
+
         new_symbol = Symbol(
             symbol=symbol.upper(),
             name=name,
@@ -617,10 +616,10 @@ async def update_suggestion_symbol(
             select(StockSuggestion).where(StockSuggestion.id == suggestion_id)
         )
         suggestion = result.scalar_one_or_none()
-        
+
         if not suggestion:
             return False
-        
+
         suggestion.symbol = new_symbol.upper()
         await session.commit()
         return True
@@ -645,15 +644,15 @@ async def check_symbol_exists_in_other_suggestion(
 
 async def update_suggestion_stock_info(
     symbol: str,
-    company_name: Optional[str] = None,
-    sector: Optional[str] = None,
-    summary: Optional[str] = None,
-    website: Optional[str] = None,
-    ipo_year: Optional[int] = None,
-    current_price: Optional[float] = None,
-    ath_price: Optional[float] = None,
-    fetch_status: Optional[str] = None,
-    fetch_error: Optional[str] = None,
+    company_name: str | None = None,
+    sector: str | None = None,
+    summary: str | None = None,
+    website: str | None = None,
+    ipo_year: int | None = None,
+    current_price: float | None = None,
+    ath_price: float | None = None,
+    fetch_status: str | None = None,
+    fetch_error: str | None = None,
 ) -> bool:
     """Update suggestion stock info by symbol."""
     async with get_session() as session:
@@ -661,10 +660,10 @@ async def update_suggestion_stock_info(
             select(StockSuggestion).where(StockSuggestion.symbol == symbol.upper())
         )
         suggestion = result.scalar_one_or_none()
-        
+
         if not suggestion:
             return False
-        
+
         if company_name is not None:
             suggestion.company_name = company_name
         if sector is not None:
@@ -684,7 +683,7 @@ async def update_suggestion_stock_info(
             suggestion.fetched_at = datetime.utcnow()
         if fetch_error is not None:
             suggestion.fetch_error = fetch_error
-        
+
         await session.commit()
         return True
 
@@ -696,10 +695,10 @@ async def set_suggestion_fetching(symbol: str) -> bool:
             select(StockSuggestion).where(StockSuggestion.symbol == symbol.upper())
         )
         suggestion = result.scalar_one_or_none()
-        
+
         if not suggestion:
             return False
-        
+
         suggestion.fetch_status = "fetching"
         suggestion.fetch_error = None
         await session.commit()
@@ -713,10 +712,10 @@ async def set_suggestion_fetched(symbol: str) -> bool:
             select(StockSuggestion).where(StockSuggestion.symbol == symbol.upper())
         )
         suggestion = result.scalar_one_or_none()
-        
+
         if not suggestion:
             return False
-        
+
         suggestion.fetch_status = "fetched"
         suggestion.fetched_at = datetime.utcnow()
         await session.commit()
@@ -730,10 +729,10 @@ async def set_suggestion_error(symbol: str, error: str) -> bool:
             select(StockSuggestion).where(StockSuggestion.symbol == symbol.upper())
         )
         suggestion = result.scalar_one_or_none()
-        
+
         if not suggestion:
             return False
-        
+
         suggestion.fetch_status = "error"
         suggestion.fetch_error = error[:500] if error else None
         await session.commit()
@@ -742,8 +741,8 @@ async def set_suggestion_error(symbol: str, error: str) -> bool:
 
 async def reject_suggestion_with_reason(
     suggestion_id: int,
-    admin_id: Optional[int],
-    reason: Optional[str] = None,
+    admin_id: int | None,
+    reason: str | None = None,
 ) -> bool:
     """Reject a suggestion with reason."""
     async with get_session() as session:
@@ -751,10 +750,10 @@ async def reject_suggestion_with_reason(
             select(StockSuggestion).where(StockSuggestion.id == suggestion_id)
         )
         suggestion = result.scalar_one_or_none()
-        
+
         if not suggestion:
             return False
-        
+
         suggestion.status = "rejected"
         suggestion.approved_by_id = admin_id
         suggestion.reviewed_at = datetime.utcnow()

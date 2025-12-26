@@ -10,7 +10,7 @@ Computes stability metrics from price data and yfinance info:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any
 
 import numpy as np
 
@@ -27,10 +27,10 @@ class StabilityMetrics:
     score: float  # 0-100
 
     # Contributing factors
-    beta: Optional[float] = None
-    volatility_252d: Optional[float] = None  # Annualized volatility
-    max_drawdown_5y: Optional[float] = None  # Maximum drawdown
-    typical_dip_365: Optional[float] = None  # Median 365-day dip
+    beta: float | None = None
+    volatility_252d: float | None = None  # Annualized volatility
+    max_drawdown_5y: float | None = None  # Maximum drawdown
+    typical_dip_365: float | None = None  # Median 365-day dip
 
     # Sub-scores
     beta_score: float = 50.0
@@ -88,7 +88,7 @@ def compute_volatility(
     close_prices: np.ndarray,
     days: int = 252,
     annualize: bool = True,
-) -> Optional[float]:
+) -> float | None:
     """
     Compute realized volatility.
 
@@ -114,7 +114,7 @@ def compute_volatility(
     return daily_vol
 
 
-def compute_max_drawdown(close_prices: np.ndarray) -> Optional[float]:
+def compute_max_drawdown(close_prices: np.ndarray) -> float | None:
     """
     Compute maximum drawdown from peak to trough.
 
@@ -139,7 +139,7 @@ def compute_max_drawdown(close_prices: np.ndarray) -> Optional[float]:
     return max_dd
 
 
-def _score_beta(beta: Optional[float]) -> float:
+def _score_beta(beta: float | None) -> float:
     """Score beta (lower is more stable, 1.0 is market average)."""
     if beta is None:
         return 50.0  # Neutral
@@ -165,7 +165,7 @@ def _score_beta(beta: Optional[float]) -> float:
         return max(10.0, 30.0 - (beta - 2.0) * 10)
 
 
-def _score_volatility(volatility: Optional[float]) -> float:
+def _score_volatility(volatility: float | None) -> float:
     """Score annualized volatility (lower is more stable)."""
     if volatility is None:
         return 50.0
@@ -188,7 +188,7 @@ def _score_volatility(volatility: Optional[float]) -> float:
         return max(10.0, 25.0 - (volatility - 0.60) * 50)
 
 
-def _score_max_drawdown(max_dd: Optional[float]) -> float:
+def _score_max_drawdown(max_dd: float | None) -> float:
     """Score max drawdown (lower is better)."""
     if max_dd is None:
         return 50.0
@@ -211,7 +211,7 @@ def _score_max_drawdown(max_dd: Optional[float]) -> float:
         return max(10.0, 25.0 - (max_dd - 0.70) * 50)
 
 
-def _score_typical_dip(typical_dip: Optional[float]) -> float:
+def _score_typical_dip(typical_dip: float | None) -> float:
     """Score typical dip size (lower is more stable)."""
     if typical_dip is None:
         return 50.0
@@ -234,7 +234,7 @@ def _score_typical_dip(typical_dip: Optional[float]) -> float:
         return max(10.0, 25.0 - (typical_dip - 0.25) * 100)
 
 
-def _compute_fundamental_stability_score(info: Dict[str, Any]) -> float:
+def _compute_fundamental_stability_score(info: dict[str, Any]) -> float:
     """
     Compute fundamental stability from yfinance info or stored fundamentals.
     
@@ -349,7 +349,7 @@ def _compute_fundamental_stability_score(info: Dict[str, Any]) -> float:
         else:
             scores.append(25.0)
         weights.append(0.10)
-    
+
     # 8. Institutional Ownership (smart money confidence) - weight 0.10
     inst_pct = info.get("heldPercentInstitutions") or info.get("held_percent_institutions")
     if inst_pct is not None:
@@ -382,19 +382,19 @@ def _compute_fundamental_stability_score(info: Dict[str, Any]) -> float:
 
     if not scores:
         return 50.0  # No data available
-    
+
     # Weighted average
     total_weight = sum(weights)
     weighted_score = sum(s * w for s, w in zip(scores, weights)) / total_weight
-    
+
     return weighted_score
 
 
 def compute_stability_score(
     ticker: str,
     close_prices: np.ndarray,
-    info: Optional[Dict[str, Any]] = None,
-    config: Optional[DipFinderConfig] = None,
+    info: dict[str, Any] | None = None,
+    config: DipFinderConfig | None = None,
 ) -> StabilityMetrics:
     """
     Compute stability score for a stock.

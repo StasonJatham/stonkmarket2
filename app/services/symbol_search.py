@@ -34,17 +34,18 @@ from __future__ import annotations
 
 import base64
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Any
 
-from sqlalchemy import select, update, or_, func, literal
+from sqlalchemy import func, literal, or_, select, update
 from sqlalchemy.exc import ProgrammingError
 
 from app.core.logging import get_logger
 from app.database.connection import get_session
-from app.database.orm import Symbol, SymbolSearchResult, StockFundamentals
+from app.database.orm import StockFundamentals, Symbol, SymbolSearchResult
 from app.services.data_providers import get_yfinance_service
+
 
 logger = get_logger("services.symbol_search")
 
@@ -66,14 +67,14 @@ class SearchCursor:
     """Cursor for pagination - encoded as base64 string."""
     score: Decimal
     id: int
-    
+
     def encode(self) -> str:
         """Encode cursor to URL-safe string."""
         raw = f"{self.score}:{self.id}"
         return base64.urlsafe_b64encode(raw.encode()).decode()
-    
+
     @classmethod
-    def decode(cls, cursor_str: str) -> Optional["SearchCursor"]:
+    def decode(cls, cursor_str: str) -> SearchCursor | None:
         """Decode cursor from string, returns None if invalid."""
         try:
             raw = base64.urlsafe_b64decode(cursor_str.encode()).decode()
@@ -89,11 +90,11 @@ def _normalize_query(query: str) -> str:
 
 
 async def _search_local_db(
-    query: str, 
+    query: str,
     limit: int = 10,
-    cursor: Optional[SearchCursor] = None,
+    cursor: SearchCursor | None = None,
     use_trigram: bool = True,
-) -> tuple[list[dict[str, Any]], Optional[SearchCursor]]:
+) -> tuple[list[dict[str, Any]], SearchCursor | None]:
     """
     Search local database for symbols with cursor pagination.
     
@@ -112,7 +113,7 @@ async def _search_local_db(
     normalized = _normalize_query(query)
     fetch_limit = limit * 5
 
-    def _base_score(symbol: str, name: Optional[str]) -> float:
+    def _base_score(symbol: str, name: str | None) -> float:
         symbol_upper = (symbol or "").upper()
         name_upper = (name or "").upper()
         if symbol_upper == normalized:
@@ -177,7 +178,7 @@ async def _search_local_db(
 
         return (
             select(*columns)
-            .where(SymbolSearchResult.expires_at > datetime.now(timezone.utc))
+            .where(SymbolSearchResult.expires_at > datetime.now(UTC))
             .where(~SymbolSearchResult.symbol.in_(active_symbols))
             .where(or_(*conditions))
             .limit(fetch_limit)
@@ -270,14 +271,13 @@ async def _update_last_seen(symbols: list[str]) -> None:
     """Update last_seen_at for search results that were returned."""
     if not symbols:
         return
-    
+
     try:
-        from datetime import timezone
         async with get_session() as session:
             await session.execute(
                 update(SymbolSearchResult)
                 .where(SymbolSearchResult.symbol.in_(symbols))
-                .values(last_seen_at=datetime.now(timezone.utc))
+                .values(last_seen_at=datetime.now(UTC))
             )
             await session.commit()
     except Exception as e:
@@ -288,7 +288,7 @@ async def search_symbols(
     query: str,
     max_results: int = DEFAULT_PAGE_SIZE,
     force_api: bool = False,
-    cursor: Optional[str] = None,
+    cursor: str | None = None,
 ) -> dict[str, Any]:
     """
     Search for symbols matching query.
@@ -329,15 +329,15 @@ async def search_symbols(
             "search_type": "local",
             "next_cursor": None,
         }
-    
+
     # If force_api, query yfinance directly (no pagination for API search)
     if force_api:
         api_results = await _yf_service.search_tickers(
-            query, 
+            query,
             max_results=max_results * 2,  # Fetch more to filter
             save_to_db=True,  # IMPORTANT: Save all results for future local search
         )
-        
+
         return {
             "results": api_results[:max_results],
             "count": len(api_results),
@@ -345,29 +345,29 @@ async def search_symbols(
             "search_type": "api",
             "next_cursor": None,
         }
-    
+
     # Parse cursor if provided
     parsed_cursor = SearchCursor.decode(cursor) if cursor else None
-    
+
     # Local-first search with pagination
     local_results, next_cursor = await _search_local_db(
-        query, 
+        query,
         limit=max_results,
         cursor=parsed_cursor,
     )
-    
+
     # Update last_seen_at for returned results (async, fire-and-forget)
     cached_symbols = [r["symbol"] for r in local_results if r["source"] == "cached"]
     if cached_symbols:
         await _update_last_seen(cached_symbols)
-    
+
     # Determine if we should suggest fresh search
     # Only suggest on first page when results are sparse
     suggest_fresh = (
-        parsed_cursor is None 
+        parsed_cursor is None
         and len(local_results) < MIN_LOCAL_RESULTS_THRESHOLD
     )
-    
+
     return {
         "results": local_results,
         "count": len(local_results),
@@ -377,7 +377,7 @@ async def search_symbols(
     }
 
 
-async def lookup_symbol(symbol: str) -> Optional[dict[str, Any]]:
+async def lookup_symbol(symbol: str) -> dict[str, Any] | None:
     """
     Lookup a specific symbol to validate and get info.
     
@@ -390,7 +390,7 @@ async def lookup_symbol(symbol: str) -> Optional[dict[str, Any]]:
         Symbol info dict or None if invalid/not found
     """
     symbol = symbol.strip().upper()
-    
+
     # Check local symbols with fundamentals using JOIN
     async with get_session() as session:
         result = await session.execute(
@@ -409,7 +409,7 @@ async def lookup_symbol(symbol: str) -> Optional[dict[str, Any]]:
             .where(Symbol.symbol == symbol, Symbol.is_active == True)
         )
         row = result.one_or_none()
-    
+
     if row:
         return {
             "symbol": row.symbol,
@@ -424,17 +424,17 @@ async def lookup_symbol(symbol: str) -> Optional[dict[str, Any]]:
             "source": "local",
             "valid": True,
         }
-    
+
     # Check cached search results
     async with get_session() as session:
         result = await session.execute(
             select(SymbolSearchResult).where(
                 SymbolSearchResult.symbol == symbol,
-                SymbolSearchResult.expires_at > datetime.now(timezone.utc),
+                SymbolSearchResult.expires_at > datetime.now(UTC),
             )
         )
         cached_row = result.scalar_one_or_none()
-    
+
     if cached_row:
         return {
             "symbol": cached_row.symbol,
@@ -445,7 +445,7 @@ async def lookup_symbol(symbol: str) -> Optional[dict[str, Any]]:
             "source": "cached",
             "valid": True,
         }
-    
+
     # Fall back to yfinance validation
     return await _yf_service.validate_symbol(symbol)
 
@@ -468,7 +468,7 @@ async def get_symbol_suggestions(
     """
     if len(partial.strip()) < 1:
         return []
-    
+
     # _search_local_db returns (results, next_cursor) tuple
     results, _ = await _search_local_db(partial, limit=limit)
     return [{"symbol": r["symbol"], "name": r["name"]} for r in results]

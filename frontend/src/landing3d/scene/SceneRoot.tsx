@@ -1,8 +1,7 @@
-import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
 import { Color, Fog, Vector3 } from 'three';
 import { ScrollControls, Scroll } from '@react-three/drei';
-import { LANDING3D_CONFIG } from '../config';
-import type { AssetPoint, Series } from '../lib/data/types';
+import type { AssetPoint, DataProvider, Series } from '../lib/data/types';
 import type { QualitySettings } from '../lib/perf/quality';
 import { CameraRig } from './CameraRig';
 import { Galaxy } from './Galaxy';
@@ -12,9 +11,12 @@ import { Overlay } from '../ui/Overlay';
 
 interface SceneRootProps {
   quality: QualitySettings;
+  provider: DataProvider;
+  chartSymbol: string;
+  overlayProps: ComponentProps<typeof Overlay>;
 }
 
-export function SceneRoot({ quality }: SceneRootProps) {
+export function SceneRoot({ quality, provider, chartSymbol, overlayProps }: SceneRootProps) {
   const [assets, setAssets] = useState<AssetPoint[]>([]);
   const [snapshot, setSnapshot] = useState<Record<string, { ret1d: number; vol: number; price: number }>>({});
   const [series, setSeries] = useState<Series | null>(null);
@@ -31,23 +33,28 @@ export function SceneRoot({ quality }: SceneRootProps) {
 
   useEffect(() => {
     let isMounted = true;
-    const provider = LANDING3D_CONFIG.dataProvider;
+
+    setAssets([]);
+    setSnapshot({});
+    setSeries(null);
 
     Promise.all([
       provider.getUniverse(),
       provider.getLatestSnapshot(),
-      provider.getCandles(LANDING3D_CONFIG.chartSymbol),
-    ]).then(([universe, latest, candles]) => {
-      if (!isMounted) return;
-      setAssets(universe);
-      setSnapshot(latest);
-      setSeries(candles);
-    });
+      provider.getCandles(chartSymbol),
+    ])
+      .then(([universe, latest, candles]) => {
+        if (!isMounted) return;
+        setAssets(universe);
+        setSnapshot(latest);
+        setSeries(candles);
+      })
+      .catch(() => {});
 
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [provider, chartSymbol]);
 
   const fog = useMemo(() => new Fog(new Color('#05070f'), 18, 60), []);
   const sectionPositions = useMemo(
@@ -102,7 +109,6 @@ export function SceneRoot({ quality }: SceneRootProps) {
               series={series}
               candleCount={quality.candleCount}
               visibilityRef={visibilityRef}
-              quality={quality}
             />
           </group>
 
@@ -118,7 +124,7 @@ export function SceneRoot({ quality }: SceneRootProps) {
           </group>
         </Scroll>
         <Scroll html>
-          <Overlay />
+          <Overlay {...overlayProps} />
         </Scroll>
       </ScrollControls>
     </Suspense>

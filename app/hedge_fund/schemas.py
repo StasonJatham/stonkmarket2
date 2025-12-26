@@ -4,10 +4,9 @@ Pydantic schemas for the hedge fund analysis module.
 All data structures used across agents, orchestrator, and LLM gateway.
 """
 
-from datetime import date, datetime, timezone
-from decimal import Decimal
+from datetime import UTC, date, datetime
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -56,10 +55,10 @@ class TickerInput(BaseModel):
     """Input for analysis - single ticker with optional date range."""
 
     symbol: str = Field(..., description="Stock ticker symbol (e.g., 'AAPL')")
-    start_date: Optional[date] = Field(
+    start_date: date | None = Field(
         None, description="Start date for historical data"
     )
-    end_date: Optional[date] = Field(None, description="End date for historical data")
+    end_date: date | None = Field(None, description="End date for historical data")
 
     @field_validator("symbol", mode="before")
     @classmethod
@@ -71,16 +70,16 @@ class AnalysisRequest(BaseModel):
     """Full analysis request with multiple tickers."""
 
     tickers: list[TickerInput] = Field(..., min_length=1)
-    run_id: Optional[str] = Field(
+    run_id: str | None = Field(
         None, description="Optional run ID for batch tracking"
     )
     mode: LLMMode = Field(
         LLMMode.REALTIME, description="LLM execution mode"
     )
-    agents: Optional[list[str]] = Field(
+    agents: list[str] | None = Field(
         None, description="Specific agents to run (None = all)"
     )
-    personas: Optional[list[str]] = Field(
+    personas: list[str] | None = Field(
         None, description="Specific investor personas to use"
     )
 
@@ -99,7 +98,7 @@ class PricePoint(BaseModel):
     low: float
     close: float
     volume: int
-    adj_close: Optional[float] = None
+    adj_close: float | None = None
 
 
 class PriceSeries(BaseModel):
@@ -110,7 +109,7 @@ class PriceSeries(BaseModel):
     currency: str = "USD"
 
     @property
-    def latest(self) -> Optional[PricePoint]:
+    def latest(self) -> PricePoint | None:
         return self.prices[-1] if self.prices else None
 
     @property
@@ -129,87 +128,87 @@ class Fundamentals(BaseModel):
 
     symbol: str
     name: str
-    sector: Optional[str] = None
-    industry: Optional[str] = None
-    market_cap: Optional[float] = None
-    enterprise_value: Optional[float] = None
+    sector: str | None = None
+    industry: str | None = None
+    market_cap: float | None = None
+    enterprise_value: float | None = None
 
     # Valuation ratios
-    pe_ratio: Optional[float] = None
-    forward_pe: Optional[float] = None
-    peg_ratio: Optional[float] = None
-    price_to_book: Optional[float] = None
-    price_to_sales: Optional[float] = None
-    ev_to_ebitda: Optional[float] = None
-    ev_to_revenue: Optional[float] = None
+    pe_ratio: float | None = None
+    forward_pe: float | None = None
+    peg_ratio: float | None = None
+    price_to_book: float | None = None
+    price_to_sales: float | None = None
+    ev_to_ebitda: float | None = None
+    ev_to_revenue: float | None = None
 
     # Profitability
-    profit_margin: Optional[float] = None
-    operating_margin: Optional[float] = None
-    gross_margin: Optional[float] = None
-    roe: Optional[float] = None
-    roa: Optional[float] = None
-    roic: Optional[float] = None
+    profit_margin: float | None = None
+    operating_margin: float | None = None
+    gross_margin: float | None = None
+    roe: float | None = None
+    roa: float | None = None
+    roic: float | None = None
 
     # Growth
-    revenue_growth: Optional[float] = None
-    earnings_growth: Optional[float] = None
-    revenue_growth_yoy: Optional[float] = None
-    earnings_growth_yoy: Optional[float] = None
+    revenue_growth: float | None = None
+    earnings_growth: float | None = None
+    revenue_growth_yoy: float | None = None
+    earnings_growth_yoy: float | None = None
 
     # Financial health
-    current_ratio: Optional[float] = None
-    quick_ratio: Optional[float] = None
-    debt_to_equity: Optional[float] = None
-    debt_to_assets: Optional[float] = None
-    interest_coverage: Optional[float] = None
-    free_cash_flow: Optional[float] = None
+    current_ratio: float | None = None
+    quick_ratio: float | None = None
+    debt_to_equity: float | None = None
+    debt_to_assets: float | None = None
+    interest_coverage: float | None = None
+    free_cash_flow: float | None = None
 
     # Dividends
-    dividend_yield: Optional[float] = None
-    payout_ratio: Optional[float] = None
+    dividend_yield: float | None = None
+    payout_ratio: float | None = None
 
     # Per-share data
-    eps: Optional[float] = None
-    eps_forward: Optional[float] = None
-    book_value_per_share: Optional[float] = None
-    revenue_per_share: Optional[float] = None
+    eps: float | None = None
+    eps_forward: float | None = None
+    book_value_per_share: float | None = None
+    revenue_per_share: float | None = None
 
     # Additional
-    beta: Optional[float] = None
-    shares_outstanding: Optional[float] = None
-    float_shares: Optional[float] = None
-    short_ratio: Optional[float] = None
-    short_percent_of_float: Optional[float] = None
+    beta: float | None = None
+    shares_outstanding: float | None = None
+    float_shares: float | None = None
+    short_ratio: float | None = None
+    short_percent_of_float: float | None = None
 
     # Domain classification (for domain-specific analysis)
-    domain: Optional[str] = Field(None, description="Domain type: bank, reit, insurer, etf, etc.")
-    
+    domain: str | None = Field(None, description="Domain type: bank, reit, insurer, etf, etc.")
+
     # Financial statement data (domain-specific metrics)
-    financials: Optional[dict[str, Any]] = Field(
-        None, 
+    financials: dict[str, Any] | None = Field(
+        None,
         description="Financial statement data for domain-specific analysis"
     )
-    
+
     # Domain-specific computed metrics
-    net_interest_income: Optional[float] = Field(None, description="For banks: Net Interest Income")
-    net_interest_margin: Optional[float] = Field(None, description="For banks: NIM ratio")
-    ffo: Optional[float] = Field(None, description="For REITs: Funds From Operations")
-    ffo_per_share: Optional[float] = Field(None, description="For REITs: FFO per share")
-    p_ffo: Optional[float] = Field(None, description="For REITs: Price to FFO ratio")
-    loss_ratio: Optional[float] = Field(None, description="For insurers: Loss ratio")
+    net_interest_income: float | None = Field(None, description="For banks: Net Interest Income")
+    net_interest_margin: float | None = Field(None, description="For banks: NIM ratio")
+    ffo: float | None = Field(None, description="For REITs: Funds From Operations")
+    ffo_per_share: float | None = Field(None, description="For REITs: FFO per share")
+    p_ffo: float | None = Field(None, description="For REITs: Price to FFO ratio")
+    loss_ratio: float | None = Field(None, description="For insurers: Loss ratio")
 
     # Raw info for any extra fields
-    raw_info: Optional[dict[str, Any]] = None
+    raw_info: dict[str, Any] | None = None
 
 
 class CalendarEvents(BaseModel):
     """Upcoming calendar events for a company."""
 
     symbol: str
-    next_earnings_date: Optional[date] = None
-    ex_dividend_date: Optional[date] = None
-    dividend_date: Optional[date] = None
+    next_earnings_date: date | None = None
+    ex_dividend_date: date | None = None
+    dividend_date: date | None = None
 
 
 class MarketData(BaseModel):
@@ -218,8 +217,8 @@ class MarketData(BaseModel):
     symbol: str
     prices: PriceSeries
     fundamentals: Fundamentals
-    calendar: Optional[CalendarEvents] = None
-    fetched_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    calendar: CalendarEvents | None = None
+    fetched_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 # =============================================================================
@@ -240,10 +239,10 @@ class AgentSignal(BaseModel):
     key_factors: list[str] = Field(
         default_factory=list, description="Key factors driving the signal"
     )
-    metrics: Optional[dict[str, Any]] = Field(
+    metrics: dict[str, Any] | None = Field(
         None, description="Relevant metrics/calculations"
     )
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     @field_validator("confidence", mode="before")
     @classmethod
@@ -265,8 +264,8 @@ class PerTickerReport(BaseModel):
     bullish_count: int = 0
     bearish_count: int = 0
     neutral_count: int = 0
-    summary: Optional[str] = None
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    summary: str | None = None
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     @property
     def agent_agreement(self) -> float:
@@ -285,13 +284,13 @@ class PortfolioDecision(BaseModel):
     allocation_pct: float = Field(
         ..., ge=0.0, le=1.0, description="Suggested allocation as % of portfolio"
     )
-    position_size: Optional[float] = Field(
+    position_size: float | None = Field(
         None, description="Dollar amount if portfolio size known"
     )
-    stop_loss_pct: Optional[float] = Field(
+    stop_loss_pct: float | None = Field(
         None, description="Suggested stop loss percentage"
     )
-    take_profit_pct: Optional[float] = Field(
+    take_profit_pct: float | None = Field(
         None, description="Suggested take profit percentage"
     )
     reasoning: str
@@ -310,7 +309,7 @@ class AnalysisBundle(BaseModel):
     successful_agents: int
     failed_agents: int
     execution_time_seconds: float
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     errors: list[str] = Field(default_factory=list)
 
 
@@ -330,7 +329,7 @@ class LLMTask(BaseModel):
     max_tokens: int = 1000
     temperature: float = 0.7
     require_json: bool = False
-    json_schema: Optional[dict[str, Any]] = None
+    json_schema: dict[str, Any] | None = None
 
 
 class LLMResult(BaseModel):
@@ -340,10 +339,10 @@ class LLMResult(BaseModel):
     agent_id: str
     symbol: str
     content: str
-    parsed_json: Optional[dict[str, Any]] = None
+    parsed_json: dict[str, Any] | None = None
     tokens_used: int = 0
     latency_ms: float = 0.0
-    error: Optional[str] = None
+    error: str | None = None
     failed: bool = False
 
 
@@ -356,8 +355,8 @@ class BatchStatus(BaseModel):
     completed_count: int
     failed_count: int
     created_at: datetime
-    completed_at: Optional[datetime] = None
-    output_file_id: Optional[str] = None
+    completed_at: datetime | None = None
+    output_file_id: str | None = None
 
 
 # =============================================================================
@@ -392,56 +391,56 @@ class TechnicalIndicators(BaseModel):
     symbol: str
 
     # Moving averages
-    sma_20: Optional[float] = None
-    sma_50: Optional[float] = None
-    sma_200: Optional[float] = None
-    ema_12: Optional[float] = None
-    ema_26: Optional[float] = None
+    sma_20: float | None = None
+    sma_50: float | None = None
+    sma_200: float | None = None
+    ema_12: float | None = None
+    ema_26: float | None = None
 
     # MACD
-    macd: Optional[float] = None
-    macd_signal: Optional[float] = None
-    macd_histogram: Optional[float] = None
+    macd: float | None = None
+    macd_signal: float | None = None
+    macd_histogram: float | None = None
 
     # RSI
-    rsi_14: Optional[float] = None
+    rsi_14: float | None = None
 
     # Bollinger Bands
-    bb_upper: Optional[float] = None
-    bb_middle: Optional[float] = None
-    bb_lower: Optional[float] = None
-    bb_width: Optional[float] = None
+    bb_upper: float | None = None
+    bb_middle: float | None = None
+    bb_lower: float | None = None
+    bb_width: float | None = None
 
     # Momentum
-    momentum_10: Optional[float] = None
-    roc_10: Optional[float] = None
+    momentum_10: float | None = None
+    roc_10: float | None = None
 
     # Volatility
-    atr_14: Optional[float] = None
-    volatility_20: Optional[float] = None
+    atr_14: float | None = None
+    volatility_20: float | None = None
 
     # Volume
-    volume_sma_20: Optional[float] = None
-    volume_ratio: Optional[float] = None
-    obv: Optional[float] = None
+    volume_sma_20: float | None = None
+    volume_ratio: float | None = None
+    obv: float | None = None
 
     # Trend
-    adx: Optional[float] = None
-    plus_di: Optional[float] = None
-    minus_di: Optional[float] = None
+    adx: float | None = None
+    plus_di: float | None = None
+    minus_di: float | None = None
 
     # Support/Resistance
-    pivot_point: Optional[float] = None
-    support_1: Optional[float] = None
-    support_2: Optional[float] = None
-    resistance_1: Optional[float] = None
-    resistance_2: Optional[float] = None
+    pivot_point: float | None = None
+    support_1: float | None = None
+    support_2: float | None = None
+    resistance_1: float | None = None
+    resistance_2: float | None = None
 
     # Current price context
-    current_price: Optional[float] = None
-    price_vs_sma_20: Optional[float] = None  # % above/below
-    price_vs_sma_50: Optional[float] = None
-    price_vs_sma_200: Optional[float] = None
+    current_price: float | None = None
+    price_vs_sma_20: float | None = None  # % above/below
+    price_vs_sma_50: float | None = None
+    price_vs_sma_200: float | None = None
 
 
 class ValuationMetrics(BaseModel):
@@ -450,28 +449,28 @@ class ValuationMetrics(BaseModel):
     symbol: str
 
     # DCF components
-    dcf_value: Optional[float] = None
-    current_price: Optional[float] = None
-    intrinsic_value: Optional[float] = None
-    margin_of_safety: Optional[float] = None
+    dcf_value: float | None = None
+    current_price: float | None = None
+    intrinsic_value: float | None = None
+    margin_of_safety: float | None = None
 
     # Relative valuation
-    pe_vs_sector: Optional[float] = None
-    pb_vs_sector: Optional[float] = None
-    ev_ebitda_vs_sector: Optional[float] = None
+    pe_vs_sector: float | None = None
+    pb_vs_sector: float | None = None
+    ev_ebitda_vs_sector: float | None = None
 
     # Growth-adjusted
-    peg_assessment: Optional[str] = None
-    growth_rate_used: Optional[float] = None
+    peg_assessment: str | None = None
+    growth_rate_used: float | None = None
 
     # Owner earnings (Buffett method)
-    owner_earnings: Optional[float] = None
-    owner_earnings_yield: Optional[float] = None
+    owner_earnings: float | None = None
+    owner_earnings_yield: float | None = None
 
     # Summary
-    valuation_grade: Optional[str] = None  # A, B, C, D, F
-    is_undervalued: Optional[bool] = None
-    upside_potential: Optional[float] = None
+    valuation_grade: str | None = None  # A, B, C, D, F
+    is_undervalued: bool | None = None
+    upside_potential: float | None = None
 
 
 class RiskMetrics(BaseModel):
@@ -480,21 +479,21 @@ class RiskMetrics(BaseModel):
     symbol: str
 
     # Volatility measures
-    volatility_30d: Optional[float] = None
-    volatility_90d: Optional[float] = None
-    beta: Optional[float] = None
+    volatility_30d: float | None = None
+    volatility_90d: float | None = None
+    beta: float | None = None
 
     # Drawdown
-    max_drawdown_1y: Optional[float] = None
-    current_drawdown: Optional[float] = None
+    max_drawdown_1y: float | None = None
+    current_drawdown: float | None = None
 
     # Financial risk
-    debt_risk_score: Optional[float] = None
-    liquidity_risk_score: Optional[float] = None
+    debt_risk_score: float | None = None
+    liquidity_risk_score: float | None = None
 
     # Market risk
-    correlation_to_spy: Optional[float] = None
-    sector_concentration_risk: Optional[float] = None
+    correlation_to_spy: float | None = None
+    sector_concentration_risk: float | None = None
 
     # Aggregate
     overall_risk_score: float = Field(..., ge=0.0, le=1.0)
@@ -508,25 +507,25 @@ class SentimentMetrics(BaseModel):
     symbol: str
 
     # Analyst sentiment
-    analyst_rating: Optional[str] = None  # Buy, Hold, Sell
-    analyst_count: Optional[int] = None
-    target_price_mean: Optional[float] = None
-    target_price_high: Optional[float] = None
-    target_price_low: Optional[float] = None
-    target_upside: Optional[float] = None
+    analyst_rating: str | None = None  # Buy, Hold, Sell
+    analyst_count: int | None = None
+    target_price_mean: float | None = None
+    target_price_high: float | None = None
+    target_price_low: float | None = None
+    target_upside: float | None = None
 
     # Institutional
-    institutional_ownership: Optional[float] = None
-    institutional_change_qoq: Optional[float] = None
+    institutional_ownership: float | None = None
+    institutional_change_qoq: float | None = None
 
     # Short interest
-    short_interest_ratio: Optional[float] = None
-    short_percent_float: Optional[float] = None
-    days_to_cover: Optional[float] = None
+    short_interest_ratio: float | None = None
+    short_percent_float: float | None = None
+    days_to_cover: float | None = None
 
     # Insider activity
-    insider_net_shares_90d: Optional[float] = None
-    insider_sentiment: Optional[str] = None  # Bullish, Neutral, Bearish
+    insider_net_shares_90d: float | None = None
+    insider_sentiment: str | None = None  # Bullish, Neutral, Bearish
 
     # Aggregate
     overall_sentiment: str  # Very Bullish, Bullish, Neutral, Bearish, Very Bearish

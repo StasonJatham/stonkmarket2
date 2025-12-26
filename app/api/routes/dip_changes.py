@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 from hashlib import sha256
 
-from fastapi import APIRouter, HTTPException, Query, Request, Header
+from fastapi import APIRouter, Header, HTTPException, Query, Request
 from pydantic import BaseModel
 
-from app.repositories import dip_history_orm as dip_history
-from app.repositories import user_api_keys_orm as user_api_keys
 from app.cache.cache import cache_manager
 from app.core.logging import get_logger
+from app.repositories import dip_history_orm as dip_history
+from app.repositories import user_api_keys_orm as user_api_keys
+
 
 logger = get_logger("dip_changes_api")
 router = APIRouter(prefix="/dips", tags=["dip-changes"])
@@ -28,10 +28,10 @@ class DipChange(BaseModel):
 
     symbol: str
     action: str  # 'added', 'removed', 'updated'
-    current_price: Optional[float] = None
-    ath_price: Optional[float] = None
-    dip_percentage: Optional[float] = None
-    recorded_at: Optional[str] = None
+    current_price: float | None = None
+    ath_price: float | None = None
+    dip_percentage: float | None = None
+    recorded_at: str | None = None
 
 
 class DipChangesResponse(BaseModel):
@@ -76,7 +76,7 @@ def get_client_identifier(request: Request) -> str:
 
 async def check_rate_limit(
     request: Request,
-    api_key: Optional[str] = None,
+    api_key: str | None = None,
 ) -> dict:
     """
     Check rate limit for the request.
@@ -106,7 +106,7 @@ async def check_rate_limit(
 
         if last_request:
             last_time = datetime.fromisoformat(last_request)
-            elapsed = (datetime.now(timezone.utc) - last_time.replace(tzinfo=timezone.utc)).total_seconds()
+            elapsed = (datetime.now(UTC) - last_time.replace(tzinfo=UTC)).total_seconds()
             remaining = FREE_RATE_LIMIT_SECONDS - elapsed
 
             if remaining > 0:
@@ -121,13 +121,13 @@ async def check_rate_limit(
 
         # Set rate limit
         await cache_manager.set(
-            rate_key, datetime.now(timezone.utc).isoformat(), ttl=FREE_RATE_LIMIT_SECONDS
+            rate_key, datetime.now(UTC).isoformat(), ttl=FREE_RATE_LIMIT_SECONDS
         )
 
         return {
             "allowed": True,
             "remaining": 0,
-            "reset_at": (datetime.now(timezone.utc).timestamp() + FREE_RATE_LIMIT_SECONDS),
+            "reset_at": (datetime.now(UTC).timestamp() + FREE_RATE_LIMIT_SECONDS),
             "is_premium": False,
         }
 
@@ -148,9 +148,9 @@ async def get_dip_changes(
     hours: int = Query(
         default=24, ge=1, le=168, description="Hours to look back (max 168 = 1 week)"
     ),
-    action: Optional[str] = Query(default=None, pattern="^(added|removed|updated)$"),
+    action: str | None = Query(default=None, pattern="^(added|removed|updated)$"),
     limit: int = Query(default=100, ge=1, le=500),
-    x_api_key: Optional[str] = Header(default=None, alias="X-API-Key"),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ):
     """
     Get dip changes in the last X hours.
@@ -200,7 +200,7 @@ async def get_dip_changes(
 async def get_changes_summary(
     request: Request,
     hours: int = Query(default=24, ge=1, le=168),
-    x_api_key: Optional[str] = Header(default=None, alias="X-API-Key"),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ):
     """
     Get a summary of dip changes without the full list.
@@ -234,7 +234,7 @@ async def get_symbol_change_history(
     symbol: str,
     request: Request,
     days: int = Query(default=30, ge=1, le=90),
-    x_api_key: Optional[str] = Header(default=None, alias="X-API-Key"),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ):
     """
     Get the change history for a specific symbol.

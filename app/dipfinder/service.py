@@ -10,25 +10,24 @@ Orchestrates the full signal computation pipeline with:
 
 from __future__ import annotations
 
-import asyncio
 import json
-import time
-from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Protocol
+from datetime import UTC, date, datetime, timedelta
+from typing import Any, Protocol
 
 import pandas as pd
 
 from app.cache.cache import Cache
 from app.core.logging import get_logger
-from app.repositories import price_history_orm as price_history_repo
 from app.repositories import dipfinder_orm as dipfinder_repo
+from app.repositories import price_history_orm as price_history_repo
 from app.services.data_providers import get_yfinance_service
 
 from .config import DipFinderConfig, get_dipfinder_config
 from .dip import DipMetrics
-from .fundamentals import compute_quality_score, fetch_stock_info, QualityMetrics
-from .stability import compute_stability_score, StabilityMetrics
-from .signal import compute_signal, DipSignal
+from .fundamentals import QualityMetrics, compute_quality_score, fetch_stock_info
+from .signal import DipSignal, compute_signal
+from .stability import StabilityMetrics, compute_stability_score
+
 
 logger = get_logger("dipfinder.service")
 
@@ -41,16 +40,16 @@ class PriceProvider(Protocol):
         ticker: str,
         start_date: date,
         end_date: date,
-    ) -> Optional[pd.DataFrame]:
+    ) -> pd.DataFrame | None:
         """Get price data for a ticker."""
         ...
 
     async def get_prices_batch(
         self,
-        tickers: List[str],
+        tickers: list[str],
         start_date: date,
         end_date: date,
-    ) -> Dict[str, pd.DataFrame]:
+    ) -> dict[str, pd.DataFrame]:
         """Get price data for multiple tickers."""
         ...
 
@@ -58,7 +57,7 @@ class PriceProvider(Protocol):
 class YFinancePriceProvider:
     """Price provider using unified YFinanceService with caching."""
 
-    def __init__(self, config: Optional[DipFinderConfig] = None):
+    def __init__(self, config: DipFinderConfig | None = None):
         """Initialize provider with optional config."""
         self.config = config or get_dipfinder_config()
         self._cache = Cache(prefix="prices", default_ttl=self.config.price_cache_ttl)
@@ -69,20 +68,20 @@ class YFinancePriceProvider:
         ticker: str,
         start_date: date,
         end_date: date,
-    ) -> Optional[pd.DataFrame]:
+    ) -> pd.DataFrame | None:
         """Get price data for a single ticker."""
         result = await self.get_prices_batch([ticker], start_date, end_date)
         return result.get(ticker)
 
     async def get_prices_batch(
         self,
-        tickers: List[str],
+        tickers: list[str],
         start_date: date,
         end_date: date,
-    ) -> Dict[str, pd.DataFrame]:
+    ) -> dict[str, pd.DataFrame]:
         """Get price data for multiple tickers with batching."""
-        results: Dict[str, pd.DataFrame] = {}
-        tickers_to_fetch: List[str] = []
+        results: dict[str, pd.DataFrame] = {}
+        tickers_to_fetch: list[str] = []
 
         # Check local cache first
         for ticker in tickers:
@@ -135,7 +134,7 @@ class DatabasePriceProvider:
     Falls back to yfinance if not in database.
     """
 
-    def __init__(self, config: Optional[DipFinderConfig] = None):
+    def __init__(self, config: DipFinderConfig | None = None):
         """Initialize with optional config."""
         self.config = config or get_dipfinder_config()
         self._yf_provider = YFinancePriceProvider(config)
@@ -145,7 +144,7 @@ class DatabasePriceProvider:
         ticker: str,
         start_date: date,
         end_date: date,
-    ) -> Optional[pd.DataFrame]:
+    ) -> pd.DataFrame | None:
         """Get price data from database or yfinance."""
         # Try database first
         df = await price_history_repo.get_prices_as_dataframe(
@@ -193,12 +192,12 @@ class DatabasePriceProvider:
 
     async def get_prices_batch(
         self,
-        tickers: List[str],
+        tickers: list[str],
         start_date: date,
         end_date: date,
-    ) -> Dict[str, pd.DataFrame]:
+    ) -> dict[str, pd.DataFrame]:
         """Get prices for multiple tickers."""
-        results: Dict[str, pd.DataFrame] = {}
+        results: dict[str, pd.DataFrame] = {}
 
         for ticker in tickers:
             df = await self.get_prices(ticker, start_date, end_date)
@@ -221,8 +220,8 @@ class DipFinderService:
 
     def __init__(
         self,
-        config: Optional[DipFinderConfig] = None,
-        price_provider: Optional[PriceProvider] = None,
+        config: DipFinderConfig | None = None,
+        price_provider: PriceProvider | None = None,
     ):
         """Initialize service with optional config and price provider."""
         self.config = config or get_dipfinder_config()
@@ -234,10 +233,10 @@ class DipFinderService:
     async def get_signal(
         self,
         ticker: str,
-        benchmark: Optional[str] = None,
-        window: Optional[int] = None,
+        benchmark: str | None = None,
+        window: int | None = None,
         force_refresh: bool = False,
-    ) -> Optional[DipSignal]:
+    ) -> DipSignal | None:
         """
         Get dip signal for a single ticker.
 
@@ -277,11 +276,11 @@ class DipFinderService:
 
     async def get_signals(
         self,
-        tickers: List[str],
-        benchmark: Optional[str] = None,
-        window: Optional[int] = None,
+        tickers: list[str],
+        benchmark: str | None = None,
+        window: int | None = None,
         force_refresh: bool = False,
-    ) -> List[DipSignal]:
+    ) -> list[DipSignal]:
         """
         Get dip signals for multiple tickers.
 
@@ -309,9 +308,9 @@ class DipFinderService:
     async def get_latest_signals(
         self,
         limit: int = 50,
-        min_final_score: Optional[float] = None,
+        min_final_score: float | None = None,
         only_alerts: bool = False,
-    ) -> List[DipSignal]:
+    ) -> list[DipSignal]:
         """
         Get latest computed signals from database.
 
@@ -335,7 +334,7 @@ class DipFinderService:
         self,
         ticker: str,
         days: int = 90,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Get dip history for a ticker.
 
@@ -361,7 +360,7 @@ class DipFinderService:
             for r in rows
         ]
 
-    def _orm_to_dict(self, obj) -> Dict[str, Any]:
+    def _orm_to_dict(self, obj) -> dict[str, Any]:
         """Convert ORM object to dict for signal deserialization."""
         return {
             "ticker": obj.ticker,
@@ -394,7 +393,7 @@ class DipFinderService:
         benchmark: str,
         window: int,
         as_of_date: date,
-    ) -> Optional[DipSignal]:
+    ) -> DipSignal | None:
         """Compute signal for a ticker."""
         # Calculate date range
         history_days = self.config.history_years * 365
@@ -455,8 +454,8 @@ class DipFinderService:
     async def _save_signal_to_db(self, signal: DipSignal) -> None:
         """Save signal to database."""
         try:
-            expires_at = datetime.now(timezone.utc) + timedelta(days=7)
-            
+            expires_at = datetime.now(UTC) + timedelta(days=7)
+
             # Convert as_of_date string to date object if needed
             as_of_date = signal.as_of_date
             if isinstance(as_of_date, str):
@@ -520,7 +519,7 @@ class DipFinderService:
             as_of_date = signal.as_of_date
             if isinstance(as_of_date, str):
                 as_of_date = date.fromisoformat(as_of_date)
-            
+
             # Get previous signal for this ticker/window
             prev = await dipfinder_repo.get_previous_signal(
                 signal.ticker,
@@ -570,10 +569,10 @@ class DipFinderService:
         except Exception as e:
             logger.debug(f"Could not log dip history: {e}")
 
-    def _deserialize_signal(self, data: Dict[str, Any]) -> Optional[DipSignal]:
+    def _deserialize_signal(self, data: dict[str, Any]) -> DipSignal | None:
         """Deserialize signal from cache/db format."""
         try:
-            from .signal import DipClass, AlertLevel, MarketContext
+            from .signal import AlertLevel, DipClass, MarketContext
 
             # Reconstruct nested objects
             dip_metrics = DipMetrics(
@@ -645,7 +644,7 @@ class DipFinderService:
             logger.warning(f"Failed to deserialize signal: {e}")
             return None
 
-    def _row_to_signal(self, row: Dict[str, Any]) -> Optional[DipSignal]:
+    def _row_to_signal(self, row: dict[str, Any]) -> DipSignal | None:
         """Convert database row to DipSignal."""
         return self._deserialize_signal(
             {
@@ -681,7 +680,7 @@ class DipFinderService:
 
 
 # Singleton service instance
-_service: Optional[DipFinderService] = None
+_service: DipFinderService | None = None
 
 
 def get_dipfinder_service() -> DipFinderService:

@@ -14,26 +14,27 @@ from app.core.logging import get_logger, request_id_var
 from app.schemas.common import ErrorResponse
 
 from .routes import (
+    admin_settings,
+    api_keys,
     auth,
+    celery,
     cronjobs,
+    dip_changes,
+    dipfinder,
     dips,
     health,
-    symbols,
-    suggestions,
-    mfa,
-    api_keys,
-    swipe,
-    dip_changes,
-    user_api_keys,
-    dipfinder,
-    admin_settings,
-    metrics,
-    seo,
     logos,
+    metrics,
+    mfa,
     portfolios,
-    celery,
     quant_engine,
+    seo,
+    suggestions,
+    swipe,
+    symbols,
+    user_api_keys,
 )
+
 
 logger = get_logger("api")
 
@@ -41,18 +42,18 @@ logger = get_logger("api")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application lifecycle - initialize and cleanup resources."""
-    from app.database.connection import init_pg_pool, close_pg_pool
-    from app.cache.client import init_valkey_pool, close_valkey_client
-    
+    from app.cache.client import close_valkey_client, init_valkey_pool
+    from app.database.connection import close_pg_pool, init_pg_pool
+
     # Initialize resources on startup
     try:
         await init_pg_pool()
         await init_valkey_pool()
     except Exception as e:
         logger.warning(f"Resource initialization failed (may be ok in tests): {e}")
-    
+
     yield
-    
+
     # Cleanup resources on shutdown
     try:
         await close_pg_pool()

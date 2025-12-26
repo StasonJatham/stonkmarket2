@@ -598,10 +598,11 @@ async def get_global_recommendations(
     # Add dip state info (legacy compatibility)
     dip_states = await dips_repo.get_all_dip_states()
     for ds in dip_states:
-        if ds.symbol in symbol_info:
-            symbol_info[ds.symbol]["dip_pct"] = ds.dip_pct
-            symbol_info[ds.symbol]["days_in_dip"] = ds.days_in_dip
-            symbol_info[ds.symbol]["domain_score"] = ds.domain_score
+        symbol = ds["symbol"]
+        if symbol in symbol_info:
+            symbol_info[symbol]["dip_pct"] = ds.get("dip_pct")
+            symbol_info[symbol]["days_in_dip"] = ds.get("days_in_dip")
+            symbol_info[symbol]["domain_score"] = ds.get("domain_score")
 
     # Create quant engine
     config = get_default_config()

@@ -7,7 +7,6 @@ import hashlib
 import io
 import json
 import secrets
-from typing import Optional
 
 import pyotp
 import qrcode
@@ -115,7 +114,7 @@ def generate_backup_codes(count: int = 10) -> tuple[list[str], list[str]]:
 
 def verify_backup_code(
     code: str, stored_hashes_json: str
-) -> tuple[bool, Optional[str]]:
+) -> tuple[bool, str | None]:
     """
     Verify a backup code and return updated hashes (with used code removed).
 

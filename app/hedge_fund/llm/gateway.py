@@ -7,7 +7,7 @@ Wraps the existing openai_client.py to provide a clean interface for agents.
 import asyncio
 import json
 import logging
-from typing import Any, Optional, Protocol
+from typing import Protocol
 
 from app.hedge_fund.schemas import (
     BatchStatus,
@@ -15,6 +15,7 @@ from app.hedge_fund.schemas import (
     LLMResult,
     LLMTask,
 )
+
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +123,7 @@ class OpenAIGateway:
     async def run_realtime(self, task: LLMTask) -> LLMResult:
         """Execute a single task using the OpenAI Responses API directly."""
         import time
+
         from app.services.openai_client import _get_client
 
         try:
@@ -138,21 +140,21 @@ class OpenAIGateway:
 
             # Build messages
             system_prompt = task.context.get("system_prompt", "You are an expert investment analyst.")
-            
+
             messages = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": task.prompt},
             ]
-            
+
             start = time.monotonic()
-            
+
             # Build request params
             params: dict = {
                 "model": self.model,
                 "messages": messages,
                 "max_tokens": task.max_tokens or self.default_max_tokens,
             }
-            
+
             # Add structured output for JSON responses
             if task.require_json:
                 params["response_format"] = {
@@ -186,12 +188,12 @@ class OpenAIGateway:
                         },
                     },
                 }
-            
+
             # Make the API call
             response = await client.chat.completions.create(**params)
-            
+
             latency = (time.monotonic() - start) * 1000
-            
+
             if not response.choices:
                 return LLMResult(
                     custom_id=task.custom_id,
@@ -202,10 +204,10 @@ class OpenAIGateway:
                     failed=True,
                     latency_ms=latency,
                 )
-            
+
             content = response.choices[0].message.content or ""
             tokens_used = response.usage.total_tokens if response.usage else 0
-            
+
             # Parse JSON if required
             parsed_json = None
             if task.require_json and content:
@@ -213,7 +215,7 @@ class OpenAIGateway:
                     parsed_json = json.loads(content)
                 except json.JSONDecodeError as e:
                     logger.warning(f"Failed to parse JSON response: {e}")
-            
+
             return LLMResult(
                 custom_id=task.custom_id,
                 agent_id=task.agent_id,
@@ -264,8 +266,9 @@ class OpenAIGateway:
 
     async def check_batch_status(self, batch_id: str) -> BatchStatus:
         """Check status of a batch job."""
-        from app.services import openai_client
         from datetime import datetime
+
+        from app.services import openai_client
 
         status = await openai_client.check_batch(batch_id)
         if not status:
@@ -330,7 +333,7 @@ class OpenAIGateway:
                 *[self.run_realtime(task) for task in tasks],
                 return_exceptions=True,
             )
-            
+
             # Convert exceptions to error results
             final_results = []
             for i, result in enumerate(results):
@@ -345,26 +348,26 @@ class OpenAIGateway:
                     ))
                 else:
                     final_results.append(result)
-            
+
             return final_results
 
         else:
             # Batch mode
             batch_id = await self.run_batch(tasks)
-            
+
             # Poll for completion
             elapsed = 0.0
             while elapsed < self.batch_max_wait:
                 status = await self.check_batch_status(batch_id)
-                
+
                 if status.status == "completed":
                     return await self.collect_batch_results(batch_id)
                 elif status.status in ("failed", "cancelled", "expired"):
                     raise RuntimeError(f"Batch {batch_id} {status.status}")
-                
+
                 await asyncio.sleep(self.batch_poll_interval)
                 elapsed += self.batch_poll_interval
-            
+
             raise TimeoutError(f"Batch {batch_id} did not complete within {self.batch_max_wait}s")
 
 
@@ -378,7 +381,7 @@ async def get_investment_analysis(
     data_context: str,
     agent_name: str,
     system_prompt: str,
-    gateway: Optional[OpenAIGateway] = None,
+    gateway: OpenAIGateway | None = None,
 ) -> LLMResult:
     """
     Convenience function to get investment analysis for a single symbol.
@@ -386,7 +389,7 @@ async def get_investment_analysis(
     Uses realtime mode by default.
     """
     gw = gateway or OpenAIGateway()
-    
+
     task = LLMTask(
         custom_id=f"realtime:{symbol}:{agent_name}:analysis",
         agent_id=agent_name,
@@ -398,12 +401,12 @@ async def get_investment_analysis(
         },
         require_json=True,
     )
-    
+
     return await gw.run_realtime(task)
 
 
 # Singleton gateway instance
-_gateway: Optional[OpenAIGateway] = None
+_gateway: OpenAIGateway | None = None
 
 
 def get_gateway() -> OpenAIGateway:

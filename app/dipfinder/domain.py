@@ -12,12 +12,12 @@ Domains determine which scoring adapter to use and which metrics are relevant.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
-import re
 
 from app.core.logging import get_logger
+
 
 logger = get_logger("dipfinder.domain")
 
@@ -30,48 +30,48 @@ class Domain(str, Enum):
     - Scoring weights (e.g., ignore D/E for banks)
     - Quality gates (e.g., higher yield threshold for utilities)
     """
-    
+
     # Financials
     BANK = "bank"
     INSURER = "insurer"
     ASSET_MANAGER = "asset_manager"
-    
+
     # Real Estate
     REIT = "reit"
-    
+
     # Funds & Indices
     ETF = "etf"
     MUTUAL_FUND = "mutual_fund"
     INDEX = "index"
-    
+
     # Regulated Utilities
     UTILITY = "utility"
     TELECOM = "telecom"
-    
+
     # Commodities & Energy
     ENERGY = "energy"
     MINING = "mining"
-    
+
     # Growth / R&D Heavy
     BIOTECH = "biotech"
     PHARMA = "pharma"
     SAAS = "saas"
-    
+
     # Capital Intensive
     AIRLINE = "airline"
     SHIPPING = "shipping"
-    
+
     # Consumer / Cyclical
     RETAIL = "retail"
-    
+
     # Hardware / Cyclical
     SEMICONDUCTOR = "semiconductor"
-    
+
     # Complex Structures
     CONGLOMERATE = "conglomerate"
     FOREIGN_ADR = "foreign_adr"
     SPAC = "spac"
-    
+
     # Default
     OPERATING_COMPANY = "operating_company"
 
@@ -79,12 +79,12 @@ class Domain(str, Enum):
 @dataclass(frozen=True)
 class DomainClassification:
     """Result of domain classification."""
-    
+
     domain: Domain
     confidence: float  # 0.0-1.0
     reason: str
-    fallback_domain: Optional[Domain] = None
-    
+    fallback_domain: Domain | None = None
+
     def __str__(self) -> str:
         return f"{self.domain.value} ({self.confidence:.0%}): {self.reason}"
 
@@ -243,11 +243,11 @@ def _matches_patterns(text: str, patterns: list[str]) -> bool:
 
 def classify_domain(
     *,
-    quote_type: Optional[str] = None,
-    sector: Optional[str] = None,
-    industry: Optional[str] = None,
-    name: Optional[str] = None,
-    symbol: Optional[str] = None,
+    quote_type: str | None = None,
+    sector: str | None = None,
+    industry: str | None = None,
+    name: str | None = None,
+    symbol: str | None = None,
 ) -> DomainClassification:
     """
     Classify a security into its analysis domain.
@@ -269,7 +269,7 @@ def classify_domain(
     Returns:
         DomainClassification with domain, confidence, and reason
     """
-    
+
     # 1. Check quote_type first (highest priority for non-equity)
     if quote_type:
         qt = quote_type.upper()
@@ -291,7 +291,7 @@ def classify_domain(
                 confidence=1.0,
                 reason=f"quoteType={quote_type}",
             )
-    
+
     # 2. Check industry patterns (most specific)
     if industry:
         industry_lower = industry.lower()
@@ -303,7 +303,7 @@ def classify_domain(
                     confidence=0.95,
                     reason=f"industry={industry}",
                 )
-    
+
     # 3. Check name patterns (fallback when industry missing)
     if name:
         for domain, patterns in _NAME_PATTERNS.items():
@@ -314,7 +314,7 @@ def classify_domain(
                     reason=f"name pattern match: {name}",
                     fallback_domain=Domain.OPERATING_COMPANY,
                 )
-    
+
     # 4. Check sector (broad fallback)
     if sector:
         sector_lower = sector.lower()
@@ -325,7 +325,7 @@ def classify_domain(
                 reason=f"sector={sector}",
                 fallback_domain=Domain.OPERATING_COMPANY,
             )
-    
+
     # 5. Check for ADR (ends in .DE, .L, .PA, etc. or has "ADR" in name)
     if symbol:
         if "." in symbol and len(symbol.split(".")[-1]) <= 3:
@@ -344,7 +344,7 @@ def classify_domain(
             reason="ADR in name",
             fallback_domain=Domain.OPERATING_COMPANY,
         )
-    
+
     # Default: operating company
     return DomainClassification(
         domain=Domain.OPERATING_COMPANY,
@@ -379,7 +379,7 @@ def get_domain_from_info(info: dict) -> DomainClassification:
 @dataclass(frozen=True)
 class DomainMetadata:
     """Metadata about a domain for UI/documentation."""
-    
+
     domain: Domain
     display_name: str
     description: str

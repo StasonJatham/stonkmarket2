@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -30,17 +29,17 @@ class AlertLevelEnum(str, Enum):
 class DipFinderSignalRequest(BaseModel):
     """Request for computing dip signals."""
 
-    tickers: List[str] = Field(
+    tickers: list[str] = Field(
         ...,
         min_length=1,
         max_length=50,
         description="List of ticker symbols to analyze",
     )
-    benchmark: Optional[str] = Field(
+    benchmark: str | None = Field(
         default=None,
         description="Benchmark ticker (default: SPY)",
     )
-    window: Optional[int] = Field(
+    window: int | None = Field(
         default=None,
         ge=7,
         le=365,
@@ -55,16 +54,16 @@ class DipFinderSignalRequest(BaseModel):
 class DipFinderRunRequest(BaseModel):
     """Request to run DipFinder computation."""
 
-    tickers: Optional[List[str]] = Field(
+    tickers: list[str] | None = Field(
         default=None,
         max_length=100,
         description="Specific tickers to analyze (uses user's universe if None)",
     )
-    benchmark: Optional[str] = Field(
+    benchmark: str | None = Field(
         default=None,
         description="Benchmark ticker (default: SPY)",
     )
-    windows: Optional[List[int]] = Field(
+    windows: list[int] | None = Field(
         default=None,
         description="Windows to compute (default: [7, 30, 100, 365])",
     )
@@ -78,16 +77,16 @@ class QualityFactorsResponse(BaseModel):
 
     ticker: str
     score: float = Field(..., ge=0, le=100)
-    profit_margin: Optional[float] = None
-    operating_margin: Optional[float] = None
-    debt_to_equity: Optional[float] = None
-    current_ratio: Optional[float] = None
-    free_cash_flow: Optional[float] = None
-    fcf_to_market_cap: Optional[float] = None
-    revenue_growth: Optional[float] = None
-    earnings_growth: Optional[float] = None
-    market_cap: Optional[float] = None
-    avg_volume: Optional[float] = None
+    profit_margin: float | None = None
+    operating_margin: float | None = None
+    debt_to_equity: float | None = None
+    current_ratio: float | None = None
+    free_cash_flow: float | None = None
+    fcf_to_market_cap: float | None = None
+    revenue_growth: float | None = None
+    earnings_growth: float | None = None
+    market_cap: float | None = None
+    avg_volume: float | None = None
     profitability_score: float = 50.0
     balance_sheet_score: float = 50.0
     cash_generation_score: float = 50.0
@@ -102,10 +101,10 @@ class StabilityFactorsResponse(BaseModel):
 
     ticker: str
     score: float = Field(..., ge=0, le=100)
-    beta: Optional[float] = None
-    volatility_252d: Optional[float] = None
-    max_drawdown_5y: Optional[float] = None
-    typical_dip_365: Optional[float] = None
+    beta: float | None = None
+    volatility_252d: float | None = None
+    max_drawdown_5y: float | None = None
+    typical_dip_365: float | None = None
     beta_score: float = 50.0
     volatility_score: float = 50.0
     drawdown_score: float = 50.0
@@ -126,7 +125,7 @@ class DipSignalResponse(BaseModel):
     # Dip metrics
     dip_stock: float = Field(..., description="Stock dip fraction")
     peak_stock: float = Field(..., description="Peak price in window")
-    current_price: Optional[float] = Field(None, description="Current price")
+    current_price: float | None = Field(None, description="Current price")
     dip_pctl: float = Field(..., description="Dip percentile (0-100)")
     dip_vs_typical: float = Field(..., description="Ratio vs typical dip")
     persist_days: int = Field(..., description="Days dip has persisted")
@@ -148,11 +147,11 @@ class DipSignalResponse(BaseModel):
     reason: str = Field(..., description="Human-readable explanation")
 
     # Detailed factors (optional, included on request)
-    quality_factors: Optional[QualityFactorsResponse] = Field(
+    quality_factors: QualityFactorsResponse | None = Field(
         None,
         description="Quality score factors",
     )
-    stability_factors: Optional[StabilityFactorsResponse] = Field(
+    stability_factors: StabilityFactorsResponse | None = Field(
         None,
         description="Stability score factors",
     )
@@ -165,7 +164,7 @@ class DipSignalResponse(BaseModel):
 class DipSignalListResponse(BaseModel):
     """Response containing multiple dip signals."""
 
-    signals: List[DipSignalResponse] = Field(..., description="List of signals")
+    signals: list[DipSignalResponse] = Field(..., description="List of signals")
     count: int = Field(..., description="Number of signals")
     benchmark: str = Field(..., description="Benchmark used")
     window: int = Field(..., description="Window used")
@@ -181,9 +180,9 @@ class DipHistoryEntry(BaseModel):
         ..., description="entered_dip, exited_dip, deepened, recovered, alert_triggered"
     )
     window_days: int
-    dip_pct: Optional[float] = None
-    final_score: Optional[float] = None
-    dip_class: Optional[str] = None
+    dip_pct: float | None = None
+    final_score: float | None = None
+    dip_class: str | None = None
     recorded_at: str = Field(..., description="Timestamp (ISO format)")
 
 
@@ -191,7 +190,7 @@ class DipHistoryResponse(BaseModel):
     """Response containing dip history for a ticker."""
 
     ticker: str
-    history: List[DipHistoryEntry]
+    history: list[DipHistoryEntry]
     count: int
 
 
@@ -200,17 +199,17 @@ class DipFinderRunResponse(BaseModel):
 
     status: str = Field(..., description="Status: started, completed, failed")
     message: str
-    task_id: Optional[str] = Field(None, description="Celery task id")
+    task_id: str | None = Field(None, description="Celery task id")
     tickers_processed: int = 0
     signals_generated: int = 0
     alerts_triggered: int = 0
-    errors: List[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
 
 
 class DipFinderConfigResponse(BaseModel):
     """Current DipFinder configuration."""
 
-    windows: List[int]
+    windows: list[int]
     min_dip_abs: float
     min_persist_days: int
     dip_percentile_threshold: float

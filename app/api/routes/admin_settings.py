@@ -2,38 +2,38 @@
 
 from __future__ import annotations
 
-import os
-from typing import Dict, Any, List
-
 from fastapi import APIRouter, Depends
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 
 from app.api.dependencies import require_admin
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.core.security import TokenData
 from app.database.connection import get_session
-from app.database.orm import CronJob, Symbol, StockSuggestion, BatchJob
+from app.database.orm import BatchJob, CronJob, StockSuggestion, Symbol
+from app.repositories import settings_history_orm as settings_history_repo
 from app.schemas.admin_settings import (
     AppSettingsResponse,
-    RuntimeSettingsResponse,
-    RuntimeSettingsUpdate,
-    CronJobSummary,
-    SystemStatusResponse,
-    BatchJobResponse,
     BatchJobListResponse,
-    SettingsChangeHistoryItem,
-    SettingsChangeHistoryResponse,
+    BatchJobResponse,
+    CronJobSummary,
     RevertChangeRequest,
     RevertChangeResponse,
+    RuntimeSettingsResponse,
+    RuntimeSettingsUpdate,
+    SettingsChangeHistoryItem,
+    SettingsChangeHistoryResponse,
+    SystemStatusResponse,
 )
 from app.services.runtime_settings import (
-    get_all_runtime_settings,
-    update_runtime_settings as update_settings_async,
-    check_openai_configured,
     check_logo_dev_configured,
+    check_openai_configured,
+    get_all_runtime_settings,
 )
-from app.repositories import settings_history_orm as settings_history_repo
+from app.services.runtime_settings import (
+    update_runtime_settings as update_settings_async,
+)
+
 
 logger = get_logger("api.admin_settings")
 
@@ -52,7 +52,7 @@ async def get_app_settings(
     """Get application settings (read-only from config)."""
     # Check if Logo.dev is configured (env or database)
     logo_dev_configured = await check_logo_dev_configured()
-    
+
     return AppSettingsResponse(
         app_name=settings.app_name,
         app_version=settings.app_version,
@@ -104,7 +104,7 @@ async def update_runtime_settings(
 ) -> RuntimeSettingsResponse:
     """Update runtime settings."""
     update_dict = updates.model_dump(exclude_none=True)
-    
+
     # If trying to enable AI, check if OpenAI is configured
     if update_dict.get("ai_enrichment_enabled") is True:
         if not await check_openai_configured():
@@ -113,10 +113,10 @@ async def update_runtime_settings(
                 "Cannot enable AI enrichment: OpenAI API key is not configured. "
                 "Set OPENAI_API_KEY environment variable or add via API Keys settings."
             )
-    
+
     # Get current values for change logging
     current_settings = get_all_runtime_settings()
-    
+
     # Log each changed setting
     for key, new_value in update_dict.items():
         old_value = current_settings.get(key)
@@ -129,7 +129,7 @@ async def update_runtime_settings(
                 changed_by=int(user.sub) if user.sub else None,
                 changed_by_username=user.username,
             )
-    
+
     updated = await update_settings_async(update_dict)
     logger.info(f"Runtime settings updated by {user.sub}: {update_dict}")
     return RuntimeSettingsResponse(**updated)
@@ -226,7 +226,7 @@ async def get_suspicious_votes(
 ) -> dict:
     """Get suspicious vote log for admin review."""
     from app.core.client_identity import get_suspicious_log
-    
+
     entries = await get_suspicious_log(limit)
     return {
         "entries": entries,
@@ -261,10 +261,10 @@ async def get_batch_jobs(
                 .order_by(BatchJob.created_at.desc())
                 .limit(limit)
             )
-        
+
         result = await session.execute(stmt)
         rows = result.scalars().all()
-        
+
         jobs = []
         for row in rows:
             jobs.append(
@@ -278,11 +278,11 @@ async def get_batch_jobs(
                     failed_requests=row.failed_requests or 0,
                     estimated_cost_usd=float(row.estimated_cost_usd) if row.estimated_cost_usd else None,
                     actual_cost_usd=float(row.actual_cost_usd) if row.actual_cost_usd else None,
-                    created_at=row.created_at,
-                    completed_at=row.completed_at,
+                    created_at=row.created_at.isoformat() if row.created_at else None,
+                    completed_at=row.completed_at.isoformat() if row.completed_at else None,
                 )
             )
-        
+
         # Count active jobs
         active_result = await session.execute(
             select(func.count()).select_from(BatchJob).where(
@@ -290,7 +290,7 @@ async def get_batch_jobs(
             )
         )
         active_count = active_result.scalar() or 0
-        
+
         return BatchJobListResponse(
             jobs=jobs,
             total=len(jobs),
@@ -321,7 +321,7 @@ async def get_settings_history(
         limit=limit,
         offset=offset,
     )
-    
+
     return SettingsChangeHistoryResponse(
         changes=[SettingsChangeHistoryItem(**c) for c in changes],
         total=total,
@@ -343,31 +343,31 @@ async def revert_settings_change(
 ) -> RevertChangeResponse:
     """Revert a settings change by restoring the old value."""
     from app.core.exceptions import NotFoundError, ValidationError
-    
+
     # Get the change record
     change = await settings_history_repo.get_change(change_id)
     if not change:
         raise NotFoundError(f"Settings change {change_id} not found")
-    
+
     if change["reverted"]:
         raise ValidationError(f"Settings change {change_id} has already been reverted")
-    
+
     setting_type = change["setting_type"]
     setting_key = change["setting_key"]
     old_value = change["old_value"]
-    
+
     # Extract the actual value from the wrapper if it exists
     if isinstance(old_value, dict) and "value" in old_value and len(old_value) == 1:
         restored_value = old_value["value"]
     else:
         restored_value = old_value
-    
+
     # Apply the revert based on setting type
     if setting_type == "runtime":
         # Revert runtime setting
         from app.services.runtime_settings import save_runtime_setting
         await save_runtime_setting(setting_key, restored_value)
-        
+
         # Log the revert as a new change
         await settings_history_repo.log_change(
             setting_type="runtime",
@@ -378,12 +378,12 @@ async def revert_settings_change(
             changed_by_username=user.username,
             change_reason=f"Reverted change #{change_id}: {request.reason if request else 'No reason provided'}",
         )
-        
+
     elif setting_type == "cronjob":
         # Revert cronjob schedule
         from app.repositories.cronjobs_orm import upsert_cronjob
         await upsert_cronjob(setting_key, restored_value)
-        
+
         # Log the revert as a new change
         await settings_history_repo.log_change(
             setting_type="cronjob",
@@ -396,12 +396,12 @@ async def revert_settings_change(
         )
     else:
         raise ValidationError(f"Cannot revert settings of type: {setting_type}")
-    
+
     # Mark the original change as reverted
     await settings_history_repo.mark_as_reverted(change_id, int(user.sub) if user.sub else None)
-    
+
     logger.info(f"Settings change {change_id} reverted by {user.username}")
-    
+
     return RevertChangeResponse(
         success=True,
         message=f"Successfully reverted {setting_type}/{setting_key} to previous value",

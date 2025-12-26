@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Iterable, Tuple
+from collections.abc import Iterable
 
 from sqlalchemy.dialects.postgresql import insert
 
 from app.database.connection import get_session
 from app.database.orm import CronJob
 
-DEFAULT_SCHEDULES: dict[str, Tuple[str, str]] = {
+
+DEFAULT_SCHEDULES: dict[str, tuple[str, str]] = {
     "initial_data_ingest": ("*/15 * * * *", "Process queued symbols every 15 min"),
     "data_grab": ("0 23 * * 1-5", "Fetch stock data Mon-Fri 11pm"),
     "cache_warmup": ("*/30 * * * *", "Pre-cache chart data every 30 min"),

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Literal
 
 from fastapi import APIRouter
@@ -31,7 +31,7 @@ class WebVitalsPayload(BaseModel):
     metrics: list[WebVitalMetric] = Field(default_factory=list)
     url: str
     userAgent: str = ""
-    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    timestamp: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
 # In-memory storage for development (use Redis/DB in production)

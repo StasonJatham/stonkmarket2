@@ -11,32 +11,33 @@ This module provides:
 
 from .config import DipFinderConfig, get_dipfinder_config
 from .dip import (
-    compute_dip_series_windowed,
-    compute_dip_percentile,
-    compute_persistence,
     DipMetrics,
+    compute_dip_percentile,
+    compute_dip_series_windowed,
+    compute_persistence,
 )
-from .fundamentals import compute_quality_score, QualityMetrics
-from .stability import compute_stability_score, StabilityMetrics
-from .signal import compute_signal, DipSignal, DipClass, AlertLevel, MarketContext
+from .fundamentals import QualityMetrics, compute_quality_score
 from .service import DipFinderService, get_dipfinder_service
+from .signal import AlertLevel, DipClass, DipSignal, MarketContext, compute_signal
+from .stability import StabilityMetrics, compute_stability_score
+
 
 __all__ = [
-    "DipFinderConfig",
-    "get_dipfinder_config",
-    "compute_dip_series_windowed",
-    "compute_dip_percentile",
-    "compute_persistence",
-    "DipMetrics",
-    "compute_quality_score",
-    "QualityMetrics",
-    "compute_stability_score",
-    "StabilityMetrics",
-    "compute_signal",
-    "DipSignal",
-    "DipClass",
     "AlertLevel",
-    "MarketContext",
+    "DipClass",
+    "DipFinderConfig",
     "DipFinderService",
+    "DipMetrics",
+    "DipSignal",
+    "MarketContext",
+    "QualityMetrics",
+    "StabilityMetrics",
+    "compute_dip_percentile",
+    "compute_dip_series_windowed",
+    "compute_persistence",
+    "compute_quality_score",
+    "compute_signal",
+    "compute_stability_score",
+    "get_dipfinder_config",
     "get_dipfinder_service",
 ]

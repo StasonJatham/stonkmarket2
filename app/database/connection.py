@@ -25,8 +25,9 @@ Usage (Raw asyncpg - legacy):
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import AsyncIterator, Optional, Any
+from typing import Any
 
 import asyncpg
 
@@ -49,16 +50,17 @@ def get_async_database_url(url: str) -> str:
     elif url.startswith("postgres://"):
         return url.replace("postgres://", "postgresql+asyncpg://", 1)
     return url
-from asyncpg import Pool, Connection, Record
+from asyncpg import Connection, Pool, Record
 from sqlalchemy.ext.asyncio import (
-    AsyncSession,
     AsyncEngine,
-    create_async_engine,
+    AsyncSession,
     async_sessionmaker,
+    create_async_engine,
 )
 
 from app.core.config import settings
 from app.core.logging import get_logger
+
 
 logger = get_logger("database")
 
@@ -67,7 +69,7 @@ logger = get_logger("database")
 # =============================================================================
 
 # Global connection pool (PostgreSQL)
-_pool: Optional[Pool] = None
+_pool: Pool | None = None
 
 
 async def init_pg_pool() -> Pool:
@@ -111,7 +113,7 @@ async def init_pg_pool() -> Pool:
         raise
 
 
-async def get_pg_pool() -> Optional[Pool]:
+async def get_pg_pool() -> Pool | None:
     """Get PostgreSQL connection pool, initializing if necessary."""
     global _pool
     if _pool is None:
@@ -139,7 +141,7 @@ async def close_pg_pool() -> None:
 
 
 # Async query helpers for PostgreSQL
-async def fetch_one(query: str, *args) -> Optional[Record]:
+async def fetch_one(query: str, *args) -> Record | None:
     """Execute a query and fetch one result."""
     async with get_pg_connection() as conn:
         return await conn.fetchrow(query, *args)
@@ -186,9 +188,8 @@ async def transaction() -> AsyncIterator[Connection]:
     pool = await get_pg_pool()
     if pool is None:
         raise RuntimeError("PostgreSQL pool not available")
-    async with pool.acquire() as conn:
-        async with conn.transaction():
-            yield conn
+    async with pool.acquire() as conn, conn.transaction():
+        yield conn
 
 
 # =============================================================================
@@ -196,8 +197,8 @@ async def transaction() -> AsyncIterator[Connection]:
 # =============================================================================
 
 # Global SQLAlchemy engine
-_engine: Optional[AsyncEngine] = None
-_session_factory: Optional[async_sessionmaker[AsyncSession]] = None
+_engine: AsyncEngine | None = None
+_session_factory: async_sessionmaker[AsyncSession] | None = None
 
 
 def _get_sqlalchemy_url() -> str:
@@ -208,10 +209,10 @@ def _get_sqlalchemy_url() -> str:
 async def init_sqlalchemy_engine() -> AsyncEngine:
     """Initialize SQLAlchemy async engine."""
     global _engine, _session_factory
-    
+
     if _engine is not None:
         return _engine
-    
+
     try:
         _engine = create_async_engine(
             _get_sqlalchemy_url(),
@@ -221,14 +222,14 @@ async def init_sqlalchemy_engine() -> AsyncEngine:
             pool_recycle=3600,  # Recycle connections after 1 hour (prevents stale connections)
             echo=False,  # Set True for SQL logging during debug
         )
-        
+
         _session_factory = async_sessionmaker(
             bind=_engine,
             class_=AsyncSession,
             expire_on_commit=False,  # Don't expire objects after commit
             autoflush=False,  # Manual flush control
         )
-        
+
         logger.info("SQLAlchemy async engine initialized")
         return _engine
     except Exception as e:
@@ -254,10 +255,10 @@ async def get_session() -> AsyncIterator[AsyncSession]:
             symbols = result.scalars().all()
     """
     global _session_factory
-    
+
     if _session_factory is None:
         await init_sqlalchemy_engine()
-    
+
     async with _session_factory() as session:
         try:
             yield session
@@ -269,7 +270,7 @@ async def get_session() -> AsyncIterator[AsyncSession]:
 async def close_sqlalchemy_engine() -> None:
     """Close SQLAlchemy async engine."""
     global _engine, _session_factory
-    
+
     if _engine is not None:
         await _engine.dispose()
         _engine = None

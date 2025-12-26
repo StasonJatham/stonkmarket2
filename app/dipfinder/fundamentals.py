@@ -7,11 +7,9 @@ cash generation, and growth metrics.
 
 from __future__ import annotations
 
-import json
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional
+from typing import Any
 
 from app.core.logging import get_logger
 from app.repositories import yfinance_cache_orm as yfinance_cache_repo
@@ -19,13 +17,14 @@ from app.services.data_providers import get_yfinance_service
 
 from .config import DipFinderConfig, get_dipfinder_config
 
+
 logger = get_logger("dipfinder.fundamentals")
 
 # In-memory cache for yfinance info (kept for backward compat, but unified service has its own cache)
-_info_cache: Dict[str, tuple[float, Dict[str, Any]]] = {}
+_info_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
 
-def normalize_debt_to_equity(de: Optional[float]) -> Optional[float]:
+def normalize_debt_to_equity(de: float | None) -> float | None:
     """
     Normalize debt-to-equity to ratio form (0.5 = 50% debt).
     
@@ -50,28 +49,28 @@ class QualityMetrics:
     score: float  # 0-100
 
     # Contributing factors
-    profit_margin: Optional[float] = None
-    operating_margin: Optional[float] = None
-    debt_to_equity: Optional[float] = None
-    current_ratio: Optional[float] = None
-    free_cash_flow: Optional[float] = None
-    fcf_to_market_cap: Optional[float] = None
-    revenue_growth: Optional[float] = None
-    earnings_growth: Optional[float] = None
-    market_cap: Optional[float] = None
-    avg_volume: Optional[float] = None
-    
+    profit_margin: float | None = None
+    operating_margin: float | None = None
+    debt_to_equity: float | None = None
+    current_ratio: float | None = None
+    free_cash_flow: float | None = None
+    fcf_to_market_cap: float | None = None
+    revenue_growth: float | None = None
+    earnings_growth: float | None = None
+    market_cap: float | None = None
+    avg_volume: float | None = None
+
     # New factors from stored fundamentals
-    pe_ratio: Optional[float] = None
-    forward_pe: Optional[float] = None
-    peg_ratio: Optional[float] = None
-    ev_to_ebitda: Optional[float] = None  # NEW: Better valuation metric for mature companies
-    return_on_equity: Optional[float] = None
-    return_on_assets: Optional[float] = None  # NEW: Less distorted than ROE
-    recommendation: Optional[str] = None
-    target_upside: Optional[float] = None  # (target - current) / current
-    short_percent_of_float: Optional[float] = None  # NEW: Short interest risk indicator
-    institutional_ownership: Optional[float] = None  # NEW: Smart money confidence
+    pe_ratio: float | None = None
+    forward_pe: float | None = None
+    peg_ratio: float | None = None
+    ev_to_ebitda: float | None = None  # NEW: Better valuation metric for mature companies
+    return_on_equity: float | None = None
+    return_on_assets: float | None = None  # NEW: Less distorted than ROE
+    recommendation: str | None = None
+    target_upside: float | None = None  # (target - current) / current
+    short_percent_of_float: float | None = None  # NEW: Short interest risk indicator
+    institutional_ownership: float | None = None  # NEW: Smart money confidence
 
     # Sub-scores (0-100)
     profitability_score: float = 50.0
@@ -125,7 +124,7 @@ class QualityMetrics:
         }
 
 
-def _safe_float(value: Any, default: Optional[float] = None) -> Optional[float]:
+def _safe_float(value: Any, default: float | None = None) -> float | None:
     """Safely convert value to float, handling None and invalid values."""
     if value is None:
         return default
@@ -139,10 +138,10 @@ def _safe_float(value: Any, default: Optional[float] = None) -> Optional[float]:
 
 
 def _normalize_score(
-    value: Optional[float],
+    value: float | None,
     optimal: float,
     good_range: tuple[float, float],
-    bad_threshold: Optional[float] = None,
+    bad_threshold: float | None = None,
     inverse: bool = False,
 ) -> float:
     """
@@ -197,7 +196,7 @@ def _normalize_score(
     return 40.0
 
 
-def _compute_profitability_score(info: Dict[str, Any]) -> tuple[float, Dict[str, Any]]:
+def _compute_profitability_score(info: dict[str, Any]) -> tuple[float, dict[str, Any]]:
     """Compute profitability sub-score."""
     profit_margin = _safe_float(info.get("profitMargins"))
     operating_margin = _safe_float(info.get("operatingMargins"))
@@ -236,7 +235,7 @@ def _compute_profitability_score(info: Dict[str, Any]) -> tuple[float, Dict[str,
     return score, factors
 
 
-def _compute_balance_sheet_score(info: Dict[str, Any]) -> tuple[float, Dict[str, Any]]:
+def _compute_balance_sheet_score(info: dict[str, Any]) -> tuple[float, dict[str, Any]]:
     """Compute balance sheet sub-score."""
     raw_de = _safe_float(info.get("debtToEquity"))
     debt_to_equity = normalize_debt_to_equity(raw_de)
@@ -292,8 +291,8 @@ def _compute_balance_sheet_score(info: Dict[str, Any]) -> tuple[float, Dict[str,
 
 
 def _compute_cash_generation_score(
-    info: Dict[str, Any],
-) -> tuple[float, Dict[str, Any]]:
+    info: dict[str, Any],
+) -> tuple[float, dict[str, Any]]:
     """Compute cash generation sub-score."""
     free_cash_flow = _safe_float(info.get("freeCashflow"))
     market_cap = _safe_float(info.get("marketCap"))
@@ -327,7 +326,7 @@ def _compute_cash_generation_score(
     return 60.0, factors
 
 
-def _compute_growth_score(info: Dict[str, Any]) -> tuple[float, Dict[str, Any]]:
+def _compute_growth_score(info: dict[str, Any]) -> tuple[float, dict[str, Any]]:
     """Compute growth sub-score."""
     revenue_growth = _safe_float(info.get("revenueGrowth"))
     earnings_growth = _safe_float(info.get("earningsGrowth"))
@@ -374,7 +373,7 @@ def _compute_growth_score(info: Dict[str, Any]) -> tuple[float, Dict[str, Any]]:
     return score, factors
 
 
-def _compute_liquidity_score(info: Dict[str, Any]) -> tuple[float, Dict[str, Any]]:
+def _compute_liquidity_score(info: dict[str, Any]) -> tuple[float, dict[str, Any]]:
     """Compute liquidity/size sub-score."""
     market_cap = _safe_float(info.get("marketCap"))
     avg_volume = _safe_float(info.get("averageVolume")) or _safe_float(
@@ -419,7 +418,7 @@ def _compute_liquidity_score(info: Dict[str, Any]) -> tuple[float, Dict[str, Any
     return score, factors
 
 
-def _compute_valuation_score(info: Dict[str, Any]) -> tuple[float, Dict[str, Any]]:
+def _compute_valuation_score(info: dict[str, Any]) -> tuple[float, dict[str, Any]]:
     """
     Compute valuation sub-score using P/E, Forward P/E, and PEG ratios.
     
@@ -429,18 +428,18 @@ def _compute_valuation_score(info: Dict[str, Any]) -> tuple[float, Dict[str, Any
     pe_ratio = _safe_float(info.get("trailingPE") or info.get("pe_ratio"))
     forward_pe = _safe_float(info.get("forwardPE") or info.get("forward_pe"))
     peg_ratio = _safe_float(info.get("trailingPegRatio") or info.get("peg_ratio"))
-    
+
     ev_ebitda = _safe_float(info.get("enterpriseToEbitda") or info.get("ev_to_ebitda"))
-    
+
     factors = {
         "pe_ratio": pe_ratio,
         "forward_pe": forward_pe,
         "peg_ratio": peg_ratio,
         "ev_to_ebitda": ev_ebitda,
     }
-    
+
     scores = []
-    
+
     # P/E Score (10-20 is ideal, <5 might be troubled, >40 is expensive)
     if pe_ratio is not None and pe_ratio > 0:
         if pe_ratio < 5:
@@ -456,7 +455,7 @@ def _compute_valuation_score(info: Dict[str, Any]) -> tuple[float, Dict[str, Any
         else:
             pe_score = max(20.0, 40.0 - (pe_ratio - 50) * 0.5)
         scores.append(pe_score)
-    
+
     # Forward P/E Score (lower is better, indicates expected growth)
     if forward_pe is not None and forward_pe > 0:
         if forward_pe < pe_ratio if pe_ratio else True:
@@ -471,7 +470,7 @@ def _compute_valuation_score(info: Dict[str, Any]) -> tuple[float, Dict[str, Any
             # Forward P/E higher = expected slowdown
             fpe_score = 45.0
         scores.append(fpe_score)
-    
+
     # PEG Score (1.0 = fair value, <1 = undervalued, >2 = overvalued)
     if peg_ratio is not None and peg_ratio > 0:
         if peg_ratio < 0.5:
@@ -485,7 +484,7 @@ def _compute_valuation_score(info: Dict[str, Any]) -> tuple[float, Dict[str, Any
         else:
             peg_score = max(20.0, 40.0 - (peg_ratio - 2.5) * 10)
         scores.append(peg_score)
-    
+
     # EV/EBITDA Score (8-15 is reasonable, <8 = cheap, >25 = expensive)
     # Better metric for mature companies than P/E (includes debt, ignores accounting)
     if ev_ebitda is not None and ev_ebitda > 0:
@@ -502,13 +501,13 @@ def _compute_valuation_score(info: Dict[str, Any]) -> tuple[float, Dict[str, Any
         else:
             ev_score = max(20.0, 45.0 - (ev_ebitda - 30) * 0.5)
         scores.append(ev_score)
-    
+
     score = sum(scores) / len(scores) if scores else 50.0
-    
+
     return score, factors
 
 
-def _compute_analyst_score(info: Dict[str, Any]) -> tuple[float, Dict[str, Any]]:
+def _compute_analyst_score(info: dict[str, Any]) -> tuple[float, dict[str, Any]]:
     """
     Compute analyst sentiment sub-score from recommendations and target prices.
     
@@ -518,20 +517,20 @@ def _compute_analyst_score(info: Dict[str, Any]) -> tuple[float, Dict[str, Any]]
     target_price = _safe_float(info.get("targetMeanPrice") or info.get("target_mean_price"))
     current_price = _safe_float(info.get("regularMarketPrice") or info.get("currentPrice") or info.get("current_price"))
     num_analysts = _safe_float(info.get("numberOfAnalystOpinions") or info.get("num_analyst_opinions"))
-    
+
     target_upside = None
     if target_price and current_price and current_price > 0:
         target_upside = (target_price - current_price) / current_price
-    
+
     factors = {
         "recommendation": recommendation,
         "target_upside": target_upside,
         "num_analysts": num_analysts,
     }
-    
+
     scores = []
     weights = []
-    
+
     # Recommendation score (weight more heavily)
     if recommendation:
         rec_lower = recommendation.lower()
@@ -549,7 +548,7 @@ def _compute_analyst_score(info: Dict[str, Any]) -> tuple[float, Dict[str, Any]]
             rec_score = 50.0
         scores.append(rec_score)
         weights.append(0.50)
-    
+
     # Target upside score
     if target_upside is not None:
         if target_upside > 0.50:  # >50% upside
@@ -566,7 +565,7 @@ def _compute_analyst_score(info: Dict[str, Any]) -> tuple[float, Dict[str, Any]]
             upside_score = 25.0
         scores.append(upside_score)
         weights.append(0.35)
-    
+
     # Analyst coverage score (more analysts = more reliable)
     if num_analysts is not None:
         if num_analysts >= 20:
@@ -581,18 +580,18 @@ def _compute_analyst_score(info: Dict[str, Any]) -> tuple[float, Dict[str, Any]]
             coverage_score = 30.0
         scores.append(coverage_score)
         weights.append(0.15)
-    
+
     if not scores:
         return 50.0, factors
-    
+
     # Weighted average
     total_weight = sum(weights)
     score = sum(s * w for s, w in zip(scores, weights)) / total_weight
-    
+
     return score, factors
 
 
-def _compute_risk_score(info: Dict[str, Any]) -> tuple[float, Dict[str, Any]]:
+def _compute_risk_score(info: dict[str, Any]) -> tuple[float, dict[str, Any]]:
     """
     Compute risk sub-score from short interest and institutional ownership.
     
@@ -601,15 +600,15 @@ def _compute_risk_score(info: Dict[str, Any]) -> tuple[float, Dict[str, Any]]:
     """
     short_pct = _safe_float(info.get("shortPercentOfFloat") or info.get("short_percent_of_float"))
     inst_pct = _safe_float(info.get("heldPercentInstitutions") or info.get("held_percent_institutions"))
-    
+
     factors = {
         "short_percent_of_float": short_pct,
         "institutional_ownership": inst_pct,
     }
-    
+
     scores = []
     weights = []
-    
+
     # Short interest score (lower is better - inverse scoring)
     # High short interest can mean: bearish sentiment, potential squeeze, or troubled company
     if short_pct is not None:
@@ -627,7 +626,7 @@ def _compute_risk_score(info: Dict[str, Any]) -> tuple[float, Dict[str, Any]]:
             short_score = 25.0
         scores.append(short_score)
         weights.append(0.40)
-    
+
     # Institutional ownership score (higher is better)
     # High institutional ownership = smart money confidence
     if inst_pct is not None:
@@ -643,25 +642,25 @@ def _compute_risk_score(info: Dict[str, Any]) -> tuple[float, Dict[str, Any]]:
             inst_score = 35.0
         scores.append(inst_score)
         weights.append(0.60)
-    
+
     if not scores:
         return 50.0, factors
-    
+
     # Weighted average
     total_weight = sum(weights)
     score = sum(s * w for s, w in zip(scores, weights)) / total_weight
-    
+
     return score, factors
 
 
-async def _fetch_info_async(ticker: str) -> Dict[str, Any]:
+async def _fetch_info_async(ticker: str) -> dict[str, Any]:
     """Fetch yfinance info via unified service."""
     service = get_yfinance_service()
     info = await service.get_ticker_info(ticker)
     return info or {}
 
 
-async def _get_cached_info_from_db(ticker: str) -> Optional[Dict[str, Any]]:
+async def _get_cached_info_from_db(ticker: str) -> dict[str, Any] | None:
     """Get cached info from database if not expired."""
     try:
         return await yfinance_cache_repo.get_cached_info(ticker)
@@ -670,7 +669,7 @@ async def _get_cached_info_from_db(ticker: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-async def _save_info_to_db(ticker: str, info: Dict[str, Any], ttl_seconds: int) -> None:
+async def _save_info_to_db(ticker: str, info: dict[str, Any], ttl_seconds: int) -> None:
     """Save info to database cache."""
     try:
         await yfinance_cache_repo.save_info(ticker, info, ttl_seconds)
@@ -680,8 +679,8 @@ async def _save_info_to_db(ticker: str, info: Dict[str, Any], ttl_seconds: int) 
 
 async def fetch_stock_info(
     ticker: str,
-    config: Optional[DipFinderConfig] = None,
-) -> Dict[str, Any]:
+    config: DipFinderConfig | None = None,
+) -> dict[str, Any]:
     """
     Fetch stock info with caching and rate limiting.
 
@@ -715,9 +714,9 @@ async def fetch_stock_info(
 
 async def compute_quality_score(
     ticker: str,
-    info: Optional[Dict[str, Any]] = None,
-    config: Optional[DipFinderConfig] = None,
-    fundamentals: Optional[Dict[str, Any]] = None,
+    info: dict[str, Any] | None = None,
+    config: DipFinderConfig | None = None,
+    fundamentals: dict[str, Any] | None = None,
 ) -> QualityMetrics:
     """
     Compute quality score for a stock.
@@ -736,13 +735,13 @@ async def compute_quality_score(
     """
     if config is None:
         config = get_dipfinder_config()
-        
+
     if info is None:
         info = await fetch_stock_info(ticker, config)
 
     if not info:
         info = {}
-    
+
     # Merge stored fundamentals into info for scoring (stored fundamentals take precedence)
     if fundamentals:
         merged_info = {**info, **fundamentals}
@@ -766,7 +765,7 @@ async def compute_quality_score(
 
 async def _compute_generic_quality_score(
     ticker: str,
-    merged_info: Dict[str, Any],
+    merged_info: dict[str, Any],
 ) -> QualityMetrics:
     """Compute quality score using legacy generic scoring (all securities same weights)."""
     # Compute sub-scores
@@ -805,7 +804,7 @@ async def _compute_generic_quality_score(
         **risk_factors,
     }
     fields_available = sum(1 for v in all_factors.values() if v is not None)
-    
+
     # Calculate target upside for the return object
     target_upside = analyst_factors.get("target_upside")
 
@@ -847,29 +846,29 @@ async def _compute_generic_quality_score(
 
 async def _compute_domain_quality_score(
     ticker: str,
-    merged_info: Dict[str, Any],
+    merged_info: dict[str, Any],
     config: DipFinderConfig,
 ) -> QualityMetrics:
     """Compute quality score using domain-specific scoring adapters."""
-    from app.dipfinder.domain import classify_domain, get_domain_from_info
+    from app.dipfinder.domain import get_domain_from_info
     from app.dipfinder.domain_scoring import compute_domain_score
-    
+
     # Classify the security's domain
     classification = get_domain_from_info(merged_info)
-    
+
     if config.domain_scoring_log_enabled:
         logger.info(f"Domain classification for {ticker}: {classification}")
-    
+
     # Compute domain-specific score
     domain_result = compute_domain_score(classification, merged_info)
-    
+
     if config.domain_scoring_log_enabled:
         logger.info(
             f"Domain score for {ticker}: {domain_result.final_score:.1f} "
             f"(domain={domain_result.domain.value}, confidence={domain_result.domain_confidence:.0%}, "
             f"data_completeness={domain_result.data_completeness:.0%})"
         )
-    
+
     # Map domain result to QualityMetrics
     # We still extract the standard factors for compatibility with existing code
     prof_score, prof_factors = _compute_profitability_score(merged_info)
@@ -880,7 +879,7 @@ async def _compute_domain_quality_score(
     val_score, val_factors = _compute_valuation_score(merged_info)
     analyst_score_val, analyst_factors = _compute_analyst_score(merged_info)
     risk_score_val, risk_factors = _compute_risk_score(merged_info)
-    
+
     # Count available fields
     all_factors = {
         **prof_factors,
@@ -894,7 +893,7 @@ async def _compute_domain_quality_score(
     }
     fields_available = sum(1 for v in all_factors.values() if v is not None)
     target_upside = analyst_factors.get("target_upside")
-    
+
     # Use domain-specific final score but keep legacy sub-scores for backward compat
     return QualityMetrics(
         ticker=ticker,
@@ -935,8 +934,8 @@ async def _compute_domain_quality_score(
 
 async def batch_fetch_info(
     tickers: list[str],
-    config: Optional[DipFinderConfig] = None,
-) -> Dict[str, Dict[str, Any]]:
+    config: DipFinderConfig | None = None,
+) -> dict[str, dict[str, Any]]:
     """
     Fetch info for multiple tickers with rate limiting.
 
@@ -950,7 +949,7 @@ async def batch_fetch_info(
     if config is None:
         config = get_dipfinder_config()
 
-    results: Dict[str, Dict[str, Any]] = {}
+    results: dict[str, dict[str, Any]] = {}
 
     for ticker in tickers:
         info = await fetch_stock_info(ticker, config)

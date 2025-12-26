@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -12,19 +12,19 @@ class PortfolioCreateRequest(BaseModel):
     """Create portfolio request."""
 
     name: str = Field(..., min_length=1, max_length=120)
-    description: Optional[str] = Field(default=None, max_length=2000)
+    description: str | None = Field(default=None, max_length=2000)
     base_currency: str = Field(default="USD", max_length=10)
-    cash_balance: Optional[float] = Field(default=0.0, ge=0.0)
+    cash_balance: float | None = Field(default=0.0, ge=0.0)
 
 
 class PortfolioUpdateRequest(BaseModel):
     """Update portfolio request."""
 
-    name: Optional[str] = Field(default=None, min_length=1, max_length=120)
-    description: Optional[str] = Field(default=None, max_length=2000)
-    base_currency: Optional[str] = Field(default=None, max_length=10)
-    cash_balance: Optional[float] = Field(default=None, ge=0.0)
-    is_active: Optional[bool] = None
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    description: str | None = Field(default=None, max_length=2000)
+    base_currency: str | None = Field(default=None, max_length=10)
+    cash_balance: float | None = Field(default=None, ge=0.0)
+    is_active: bool | None = None
 
 
 class PortfolioResponse(BaseModel):
@@ -33,12 +33,12 @@ class PortfolioResponse(BaseModel):
     id: int
     user_id: int
     name: str
-    description: Optional[str] = None
+    description: str | None = None
     base_currency: str
-    cash_balance: Optional[float] = None
+    cash_balance: float | None = None
     is_active: bool
     created_at: datetime
-    updated_at: Optional[datetime] = None
+    updated_at: datetime | None = None
 
 
 class HoldingInput(BaseModel):
@@ -46,8 +46,8 @@ class HoldingInput(BaseModel):
 
     symbol: str = Field(..., min_length=1, max_length=20)
     quantity: float = Field(..., gt=0)
-    avg_cost: Optional[float] = Field(default=None, ge=0)
-    target_weight: Optional[float] = Field(default=None, ge=0, le=1)
+    avg_cost: float | None = Field(default=None, ge=0)
+    target_weight: float | None = Field(default=None, ge=0, le=1)
 
     @field_validator("symbol", mode="before")
     @classmethod
@@ -62,10 +62,10 @@ class HoldingResponse(BaseModel):
     portfolio_id: int
     symbol: str
     quantity: float
-    avg_cost: Optional[float] = None
-    target_weight: Optional[float] = None
+    avg_cost: float | None = None
+    target_weight: float | None = None
     created_at: datetime
-    updated_at: Optional[datetime] = None
+    updated_at: datetime | None = None
 
 
 class TransactionInput(BaseModel):
@@ -73,11 +73,11 @@ class TransactionInput(BaseModel):
 
     symbol: str = Field(..., min_length=1, max_length=20)
     side: str = Field(..., description="buy, sell, dividend, split, deposit, withdrawal")
-    quantity: Optional[float] = Field(default=None, ge=0)
-    price: Optional[float] = Field(default=None, ge=0)
-    fees: Optional[float] = Field(default=None, ge=0)
+    quantity: float | None = Field(default=None, ge=0)
+    price: float | None = Field(default=None, ge=0)
+    fees: float | None = Field(default=None, ge=0)
     trade_date: date
-    notes: Optional[str] = Field(default=None, max_length=2000)
+    notes: str | None = Field(default=None, max_length=2000)
 
     @field_validator("symbol", mode="before")
     @classmethod
@@ -92,11 +92,11 @@ class TransactionResponse(BaseModel):
     portfolio_id: int
     symbol: str
     side: str
-    quantity: Optional[float] = None
-    price: Optional[float] = None
-    fees: Optional[float] = None
+    quantity: float | None = None
+    price: float | None = None
+    fees: float | None = None
     trade_date: date
-    notes: Optional[str] = None
+    notes: str | None = None
     created_at: datetime
 
 
@@ -111,11 +111,11 @@ class PortfolioAnalyticsRequest(BaseModel):
     """Analytics request."""
 
     tools: list[str] = Field(default_factory=list, description="Tool names to run")
-    window: Optional[str] = Field(default=None, description="Return window like 1y, 3y, 90d")
-    start_date: Optional[date] = None
-    end_date: Optional[date] = None
-    benchmark: Optional[str] = None
-    params: Optional[dict[str, Any]] = None
+    window: str | None = Field(default=None, description="Return window like 1y, 3y, 90d")
+    start_date: date | None = None
+    end_date: date | None = None
+    benchmark: str | None = None
+    params: dict[str, Any] | None = None
     force_refresh: bool = False
 
 
@@ -126,8 +126,8 @@ class ToolResult(BaseModel):
     status: str
     data: dict[str, Any]
     warnings: list[str] = Field(default_factory=list)
-    source: Optional[str] = Field(default=None, description="computed, cache, or db")
-    generated_at: Optional[datetime] = None
+    source: str | None = Field(default=None, description="computed, cache, or db")
+    generated_at: datetime | None = None
 
 
 class PortfolioAnalyticsJobResponse(BaseModel):
@@ -138,10 +138,10 @@ class PortfolioAnalyticsJobResponse(BaseModel):
     status: str
     tools: list[str]
     results_count: int
-    error_message: Optional[str] = None
+    error_message: str | None = None
     created_at: datetime
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
 
 
 class PortfolioAnalyticsResponse(BaseModel):
@@ -150,6 +150,6 @@ class PortfolioAnalyticsResponse(BaseModel):
     portfolio_id: int
     as_of_date: date
     results: list[ToolResult]
-    job_id: Optional[str] = None
-    job_status: Optional[str] = None
+    job_id: str | None = None
+    job_status: str | None = None
     scheduled_tools: list[str] = Field(default_factory=list)

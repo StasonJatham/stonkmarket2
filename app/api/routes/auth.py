@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request, Response
 
-from app.api.dependencies import get_client_ip, require_user, require_admin
+from app.api.dependencies import get_client_ip, require_admin, require_user
 from app.cache.rate_limit import check_rate_limit
 from app.core.config import settings
 from app.core.exceptions import AuthenticationError
-from app.core.mfa import verify_totp, verify_backup_code
+from app.core.mfa import verify_backup_code, verify_totp
 from app.core.security import (
     TokenData,
     create_access_token,
@@ -22,6 +22,7 @@ from app.schemas.auth import (
     PasswordChangeRequest,
     UserResponse,
 )
+
 
 router = APIRouter()
 

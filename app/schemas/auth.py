@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -24,7 +23,7 @@ class LoginRequest(BaseModel):
         max_length=128,
         description="Password",
     )
-    mfa_code: Optional[str] = Field(
+    mfa_code: str | None = Field(
         default=None,
         min_length=6,
         max_length=6,
@@ -70,7 +69,7 @@ class PasswordChangeRequest(BaseModel):
         max_length=128,
         description="Current password",
     )
-    new_username: Optional[str] = Field(
+    new_username: str | None = Field(
         default=None,
         min_length=3,
         max_length=50,
@@ -85,7 +84,7 @@ class PasswordChangeRequest(BaseModel):
 
     @field_validator("new_username")
     @classmethod
-    def validate_new_username(cls, v: Optional[str]) -> Optional[str]:
+    def validate_new_username(cls, v: str | None) -> str | None:
         """Validate and sanitize new username."""
         if v is None:
             return v

@@ -15,10 +15,11 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Optional, Any
+from typing import Any
 
 from app.core.logging import get_logger
 from app.dipfinder.domain import Domain, DomainClassification
+
 
 logger = get_logger("dipfinder.domain_scoring")
 
@@ -26,23 +27,23 @@ logger = get_logger("dipfinder.domain_scoring")
 @dataclass
 class SubScore:
     """A component score with its weight and explanation."""
-    
+
     name: str
     score: float  # 0-100
     weight: float  # 0.0-1.0
     reason: str
     available: bool = True  # False if data was missing
-    
+
     @property
     def weighted_score(self) -> float:
         """Return score * weight."""
         return self.score * self.weight if self.available else 0.0
 
 
-@dataclass 
+@dataclass
 class DomainScoreResult:
     """Result from domain-specific scoring."""
-    
+
     domain: Domain
     domain_confidence: float
     final_score: float  # 0-100
@@ -50,7 +51,7 @@ class DomainScoreResult:
     data_completeness: float  # 0.0-1.0, fraction of expected data available
     fallback_used: bool
     notes: str = ""
-    
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dict for API responses."""
         return {
@@ -100,7 +101,7 @@ def _normalize_score(value: float, optimal: float, bad: float, higher_better: bo
         return ((bad - value) / (bad - optimal)) * 100.0
 
 
-def _safe_float(value: Any) -> Optional[float]:
+def _safe_float(value: Any) -> float | None:
     """Safely convert to float."""
     if value is None:
         return None
@@ -139,7 +140,7 @@ _KEY_ALIASES: dict[str, list[str]] = {
 }
 
 
-def _get_metric(info: dict, key: str) -> Optional[float]:
+def _get_metric(info: dict, key: str) -> float | None:
     """
     Get a metric from info dict, trying multiple possible key names.
     
@@ -163,7 +164,7 @@ def _get_financial_metric(
     statement: str,
     metric: str,
     period: str = "quarterly",
-) -> Optional[float]:
+) -> float | None:
     """
     Get a metric from financial statements embedded in info.
     
@@ -179,17 +180,17 @@ def _get_financial_metric(
     financials = info.get("financials")
     if not financials:
         return None
-    
+
     period_data = financials.get(period, {})
     statement_data = period_data.get(statement, {})
-    
+
     value = statement_data.get(metric)
     if value is not None:
         return _safe_float(value)
     return None
 
 
-def _get_ffo(info: dict, period: str = "quarterly") -> Optional[float]:
+def _get_ffo(info: dict, period: str = "quarterly") -> float | None:
     """
     Calculate Funds From Operations (FFO) for REITs.
     
@@ -198,22 +199,22 @@ def _get_ffo(info: dict, period: str = "quarterly") -> Optional[float]:
     """
     net_income = _get_financial_metric(info, "income_statement", "Net Income", period)
     depreciation = _get_financial_metric(info, "cash_flow", "Depreciation Amortization Depletion", period)
-    
+
     # Try alternate depreciation keys
     if depreciation is None:
         depreciation = _get_financial_metric(info, "cash_flow", "Depreciation And Amortization", period)
-    
+
     if net_income is not None and depreciation is not None:
         return net_income + depreciation
     return None
 
 
-def _get_net_interest_income(info: dict, period: str = "quarterly") -> Optional[float]:
+def _get_net_interest_income(info: dict, period: str = "quarterly") -> float | None:
     """Get Net Interest Income from income statement (for banks)."""
     return _get_financial_metric(info, "income_statement", "Net Interest Income", period)
 
 
-def _get_provision_for_credit_losses(info: dict, period: str = "quarterly") -> Optional[float]:
+def _get_provision_for_credit_losses(info: dict, period: str = "quarterly") -> float | None:
     """Get Provision for Credit Losses from income statement (for banks)."""
     # Try different possible names
     for metric_name in [
@@ -227,7 +228,7 @@ def _get_provision_for_credit_losses(info: dict, period: str = "quarterly") -> O
     return None
 
 
-def _get_loss_adjustment_expense(info: dict, period: str = "quarterly") -> Optional[float]:
+def _get_loss_adjustment_expense(info: dict, period: str = "quarterly") -> float | None:
     """Get Loss Adjustment Expense from income statement (for insurers)."""
     for metric_name in [
         "Loss Adjustment Expense",
@@ -240,7 +241,7 @@ def _get_loss_adjustment_expense(info: dict, period: str = "quarterly") -> Optio
     return None
 
 
-def _get_total_revenue(info: dict, period: str = "quarterly") -> Optional[float]:
+def _get_total_revenue(info: dict, period: str = "quarterly") -> float | None:
     """Get Total Revenue from income statement."""
     for metric_name in ["Total Revenue", "Operating Revenue", "Revenue"]:
         val = _get_financial_metric(info, "income_statement", metric_name, period)
@@ -249,12 +250,12 @@ def _get_total_revenue(info: dict, period: str = "quarterly") -> Optional[float]
     return None
 
 
-def _get_total_assets(info: dict, period: str = "quarterly") -> Optional[float]:
+def _get_total_assets(info: dict, period: str = "quarterly") -> float | None:
     """Get Total Assets from balance sheet."""
     return _get_financial_metric(info, "balance_sheet", "Total Assets", period)
 
 
-def _calculate_nim(info: dict, period: str = "quarterly") -> Optional[float]:
+def _calculate_nim(info: dict, period: str = "quarterly") -> float | None:
     """
     Calculate Net Interest Margin proxy for banks.
     
@@ -263,7 +264,7 @@ def _calculate_nim(info: dict, period: str = "quarterly") -> Optional[float]:
     """
     nii = _get_net_interest_income(info, period)
     total_assets = _get_total_assets(info, period)
-    
+
     if nii is not None and total_assets is not None and total_assets > 0:
         # Annualize quarterly NII
         annual_nii = nii * 4 if period == "quarterly" else nii
@@ -277,14 +278,14 @@ def _calculate_nim(info: dict, period: str = "quarterly") -> Optional[float]:
 
 class DomainScoringAdapter(ABC):
     """Base class for domain-specific scoring."""
-    
+
     domain: Domain
-    
+
     @abstractmethod
     def compute_quality_score(
         self,
         info: dict,
-        fundamentals: Optional[dict] = None,
+        fundamentals: dict | None = None,
     ) -> DomainScoreResult:
         """
         Compute quality score for this domain.
@@ -297,7 +298,7 @@ class DomainScoringAdapter(ABC):
             DomainScoreResult with score and breakdown
         """
         pass
-    
+
     def _count_available(self, info: dict, keys: list[str]) -> tuple[int, int]:
         """Count how many of the expected keys have non-None values using key aliases."""
         available = sum(1 for k in keys if _get_metric(info, k) is not None)
@@ -310,23 +311,23 @@ class DomainScoringAdapter(ABC):
 
 class OperatingCompanyAdapter(DomainScoringAdapter):
     """Default adapter for standard operating companies."""
-    
+
     domain = Domain.OPERATING_COMPANY
-    
+
     def compute_quality_score(
         self,
         info: dict,
-        fundamentals: Optional[dict] = None,
+        fundamentals: dict | None = None,
     ) -> DomainScoreResult:
         sub_scores = []
         expected_keys = []
-        
+
         # 1. Profitability (20%)
         profit_margin = _get_metric(info, "profit_margin")
         operating_margin = _get_metric(info, "operating_margin")
-        
+
         expected_keys.extend(["profit_margin", "operating_margin"])
-        
+
         if profit_margin is not None or operating_margin is not None:
             pm_score = _normalize_score(profit_margin or 0, 0.20, 0.0) if profit_margin else 50
             om_score = _normalize_score(operating_margin or 0, 0.25, 0.0) if operating_margin else 50
@@ -345,13 +346,13 @@ class OperatingCompanyAdapter(DomainScoringAdapter):
                 reason="no margin data",
                 available=False,
             ))
-        
+
         # 2. Balance Sheet (15%)
         debt_to_equity = _get_metric(info, "debt_to_equity")
         current_ratio = _get_metric(info, "current_ratio")
-        
+
         expected_keys.extend(["debt_to_equity", "current_ratio"])
-        
+
         if debt_to_equity is not None or current_ratio is not None:
             # D/E: lower is better (in percentage form from yfinance)
             de_score = _normalize_score(debt_to_equity or 100, 0, 200, higher_better=False) if debt_to_equity is not None else 50
@@ -372,14 +373,14 @@ class OperatingCompanyAdapter(DomainScoringAdapter):
                 reason="no balance sheet data",
                 available=False,
             ))
-        
+
         # 3. Cash Generation (20%)
         free_cash_flow = _get_metric(info, "free_cash_flow")
         operating_cash_flow = _get_metric(info, "operating_cash_flow")
         market_cap = _get_metric(info, "market_cap")
-        
+
         expected_keys.extend(["free_cash_flow", "operating_cash_flow", "market_cap"])
-        
+
         if free_cash_flow is not None and market_cap and market_cap > 0:
             fcf_yield = free_cash_flow / market_cap
             score = _normalize_score(fcf_yield, 0.10, -0.05)
@@ -397,20 +398,20 @@ class OperatingCompanyAdapter(DomainScoringAdapter):
                 reason="no FCF data",
                 available=False,
             ))
-        
+
         # 4. Valuation (20%)
         pe_ratio = _get_metric(info, "pe_ratio")
         forward_pe = _get_metric(info, "forward_pe")
         peg_ratio = _get_metric(info, "peg_ratio")
-        
+
         expected_keys.extend(["pe_ratio", "forward_pe", "peg_ratio"])
-        
+
         val_scores = []
         if pe_ratio is not None and 0 < pe_ratio < 100:
             val_scores.append(_normalize_score(pe_ratio, 10, 40, higher_better=False))
         if peg_ratio is not None and 0 < peg_ratio < 5:
             val_scores.append(_normalize_score(peg_ratio, 0.5, 2.5, higher_better=False))
-        
+
         if val_scores:
             score = sum(val_scores) / len(val_scores)
             sub_scores.append(SubScore(
@@ -427,13 +428,13 @@ class OperatingCompanyAdapter(DomainScoringAdapter):
                 reason="no valuation data",
                 available=False,
             ))
-        
+
         # 5. Growth (15%)
         revenue_growth = _get_metric(info, "revenue_growth")
         earnings_growth = _get_metric(info, "earnings_growth")
-        
+
         expected_keys.extend(["revenue_growth", "earnings_growth"])
-        
+
         if revenue_growth is not None or earnings_growth is not None:
             rg_score = _normalize_score(revenue_growth or 0, 0.25, -0.10) if revenue_growth is not None else 50
             eg_score = _normalize_score(earnings_growth or 0, 0.30, -0.20) if earnings_growth is not None else 50
@@ -452,14 +453,14 @@ class OperatingCompanyAdapter(DomainScoringAdapter):
                 reason="no growth data",
                 available=False,
             ))
-        
+
         # 6. Analyst (10%)
         recommendation_mean = _get_metric(info, "recommendation_mean")
         target_mean_price = _get_metric(info, "target_mean_price")
         current_price = _get_metric(info, "current_price")
-        
+
         expected_keys.extend(["recommendation_mean", "target_mean_price"])
-        
+
         if recommendation_mean is not None:
             # 1=strong buy, 5=strong sell
             score = _normalize_score(recommendation_mean, 1.0, 4.0, higher_better=False)
@@ -481,18 +482,18 @@ class OperatingCompanyAdapter(DomainScoringAdapter):
                 reason="no analyst data",
                 available=False,
             ))
-        
+
         # Calculate final score
         total_weight = sum(s.weight for s in sub_scores if s.available)
         if total_weight > 0:
             final_score = sum(s.weighted_score for s in sub_scores) / total_weight
         else:
             final_score = 50.0  # No data at all
-        
+
         # Data completeness
         available, total = self._count_available(info, expected_keys)
         data_completeness = available / total if total > 0 else 0.0
-        
+
         return DomainScoreResult(
             domain=self.domain,
             domain_confidence=1.0,
@@ -518,24 +519,24 @@ class BankAdapter(DomainScoringAdapter):
     - Dividend yield is often important
     - Net Interest Margin (NIM) from financial statements is key
     """
-    
+
     domain = Domain.BANK
-    
+
     def compute_quality_score(
         self,
         info: dict,
-        fundamentals: Optional[dict] = None,
+        fundamentals: dict | None = None,
     ) -> DomainScoreResult:
         sub_scores = []
         expected_keys = []
         has_financials = info.get("financials") is not None
-        
+
         # 1. Returns (30%) - ROE and ROA are the key metrics for banks
         roe = _get_metric(info, "return_on_equity")
         roa = _get_metric(info, "return_on_assets")
-        
+
         expected_keys.extend(["return_on_equity", "return_on_assets"])
-        
+
         if roe is not None or roa is not None:
             # ROE: 12%+ is good, 8% is ok, <5% is poor
             roe_score = _normalize_score(roe or 0, 0.15, 0.03) if roe is not None else 50
@@ -556,11 +557,11 @@ class BankAdapter(DomainScoringAdapter):
                 reason="no ROE/ROA data",
                 available=False,
             ))
-        
+
         # 2. Net Interest Margin (15%) - From financial statements
         nim = _calculate_nim(info)
         nii = _get_net_interest_income(info)
-        
+
         if nim is not None:
             # NIM: 2.5%+ is good, 2% is ok, <1.5% is poor
             score = _normalize_score(nim, 0.035, 0.015)
@@ -589,13 +590,13 @@ class BankAdapter(DomainScoringAdapter):
                 reason="no NII data from financial statements",
                 available=False,
             ))
-        
+
         # 3. Book Value (20%) - Price to book matters for banks
         price_to_book = _get_metric(info, "price_to_book")
         book_value = _get_metric(info, "book_value")
-        
+
         expected_keys.extend(["price_to_book", "book_value"])
-        
+
         if price_to_book is not None:
             # P/B: <1.0 is cheap, 1.0-1.5 is fair, >2.0 is expensive
             score = _normalize_score(price_to_book, 0.8, 2.5, higher_better=False)
@@ -613,12 +614,12 @@ class BankAdapter(DomainScoringAdapter):
                 reason="no P/B data",
                 available=False,
             ))
-        
+
         # 4. Dividend (20%) - Income is important for bank investors
         dividend_yield = _get_metric(info, "dividend_yield")
-        
+
         expected_keys.append("dividend_yield")
-        
+
         if dividend_yield is not None:
             # 3%+ is good, 1-3% is ok, <1% or >8% is concerning
             if dividend_yield > 0.08:  # Suspiciously high
@@ -639,12 +640,12 @@ class BankAdapter(DomainScoringAdapter):
                 reason="no dividend data",
                 available=False,
             ))
-        
+
         # 5. Analyst (15%)
         recommendation_mean = _get_metric(info, "recommendation_mean")
-        
+
         expected_keys.append("recommendation_mean")
-        
+
         if recommendation_mean is not None:
             score = _normalize_score(recommendation_mean, 1.0, 4.0, higher_better=False)
             sub_scores.append(SubScore(
@@ -661,21 +662,21 @@ class BankAdapter(DomainScoringAdapter):
                 reason="no analyst data",
                 available=False,
             ))
-        
+
         # Calculate final score
         total_weight = sum(s.weight for s in sub_scores if s.available)
         if total_weight > 0:
             final_score = sum(s.weighted_score for s in sub_scores) / total_weight
         else:
             final_score = 50.0
-        
+
         available, total = self._count_available(info, expected_keys)
         data_completeness = available / total if total > 0 else 0.0
-        
+
         notes = "Bank scoring: D/E and FCF ignored; ROE, ROA, P/B, dividend weighted"
         if has_financials:
             notes += "; using financial statements for NIM"
-        
+
         return DomainScoreResult(
             domain=self.domain,
             domain_confidence=1.0,
@@ -701,23 +702,23 @@ class InsuranceAdapter(DomainScoringAdapter):
     - Investment income is a major component
     - D/E is less meaningful (reserves are liabilities)
     """
-    
+
     domain = Domain.INSURER
-    
+
     def compute_quality_score(
         self,
         info: dict,
-        fundamentals: Optional[dict] = None,
+        fundamentals: dict | None = None,
     ) -> DomainScoreResult:
         sub_scores = []
         expected_keys = []
         has_financials = info.get("financials") is not None
-        
+
         # 1. Loss Ratio / Underwriting Quality (20%)
         # Try to get loss adjustment expense from financial statements
         loss_expense = _get_loss_adjustment_expense(info)
         total_revenue = _get_total_revenue(info)
-        
+
         if loss_expense is not None and total_revenue is not None and total_revenue > 0:
             # Loss ratio = Losses / Premiums (approximated by revenue)
             loss_ratio = loss_expense / total_revenue
@@ -737,13 +738,13 @@ class InsuranceAdapter(DomainScoringAdapter):
                 reason="no loss data from financial statements",
                 available=False,
             ))
-        
+
         # 2. Returns (30%) - ROE is critical for insurers
         roe = _get_metric(info, "return_on_equity")
         roa = _get_metric(info, "return_on_assets")
-        
+
         expected_keys.extend(["return_on_equity", "return_on_assets"])
-        
+
         if roe is not None or roa is not None:
             # ROE: 12%+ is excellent for insurers, 8-12% is good
             roe_score = _normalize_score(roe or 0, 0.15, 0.05) if roe is not None else 50
@@ -763,13 +764,13 @@ class InsuranceAdapter(DomainScoringAdapter):
                 reason="no ROE/ROA data",
                 available=False,
             ))
-        
+
         # 3. Book Value (20%) - Important for insurers
         price_to_book = _get_metric(info, "price_to_book")
         book_value = _get_metric(info, "book_value")
-        
+
         expected_keys.extend(["price_to_book", "book_value"])
-        
+
         if price_to_book is not None:
             # P/B: 1.0-1.5 is fair, <1.0 is cheap, >2.5 is expensive
             score = _normalize_score(price_to_book, 0.9, 2.5, higher_better=False)
@@ -787,12 +788,12 @@ class InsuranceAdapter(DomainScoringAdapter):
                 reason="no P/B data",
                 available=False,
             ))
-        
+
         # 4. Dividend (15%) - Many insurers pay dividends
         dividend_yield = _get_metric(info, "dividend_yield")
-        
+
         expected_keys.append("dividend_yield")
-        
+
         if dividend_yield is not None:
             if dividend_yield > 0.08:  # Suspiciously high
                 score = 40.0
@@ -812,12 +813,12 @@ class InsuranceAdapter(DomainScoringAdapter):
                 reason="no dividend data",
                 available=False,
             ))
-        
+
         # 5. Analyst (15%)
         recommendation_mean = _get_metric(info, "recommendation_mean")
-        
+
         expected_keys.append("recommendation_mean")
-        
+
         if recommendation_mean is not None:
             score = _normalize_score(recommendation_mean, 1.0, 4.0, higher_better=False)
             sub_scores.append(SubScore(
@@ -834,21 +835,21 @@ class InsuranceAdapter(DomainScoringAdapter):
                 reason="no analyst data",
                 available=False,
             ))
-        
+
         # Calculate final score
         total_weight = sum(s.weight for s in sub_scores if s.available)
         if total_weight > 0:
             final_score = sum(s.weighted_score for s in sub_scores) / total_weight
         else:
             final_score = 50.0
-        
+
         available, total = self._count_available(info, expected_keys)
         data_completeness = available / total if total > 0 else 0.0
-        
+
         notes = "Insurance scoring: D/E ignored; ROE, P/B, loss ratio weighted"
         if has_financials:
             notes += "; using financial statements for loss ratio"
-        
+
         return DomainScoreResult(
             domain=self.domain,
             domain_confidence=1.0,
@@ -874,29 +875,29 @@ class REITAdapter(DomainScoringAdapter):
     - Dividend yield is critical
     - Some debt is normal and expected
     """
-    
+
     domain = Domain.REIT
-    
+
     def compute_quality_score(
         self,
         info: dict,
-        fundamentals: Optional[dict] = None,
+        fundamentals: dict | None = None,
     ) -> DomainScoreResult:
         sub_scores = []
         expected_keys = []
         has_financials = info.get("financials") is not None
-        
+
         # 1. FFO / P/FFO (25%) - The real earnings metric for REITs
         ffo = _get_ffo(info)
         shares_outstanding = info.get("shares_outstanding") or info.get("sharesOutstanding")
         current_price = _get_metric(info, "current_price")
-        
+
         if ffo is not None and shares_outstanding and current_price:
             # Annualize quarterly FFO
             annual_ffo = ffo * 4
             ffo_per_share = annual_ffo / shares_outstanding
             p_ffo = current_price / ffo_per_share if ffo_per_share > 0 else None
-            
+
             if p_ffo is not None:
                 # P/FFO: 12-16x is fair, <10x is cheap, >20x is expensive
                 score = _normalize_score(p_ffo, 10, 22, higher_better=False)
@@ -922,12 +923,12 @@ class REITAdapter(DomainScoringAdapter):
                 reason="no FFO data from financial statements",
                 available=False,
             ))
-        
+
         # 2. Dividend (30%) - This is the main reason to own REITs
         dividend_yield = _get_metric(info, "dividend_yield")
-        
+
         expected_keys.append("dividend_yield")
-        
+
         if dividend_yield is not None:
             # 4-7% is healthy, <3% is low, >10% may be distressed
             if dividend_yield > 0.12:
@@ -950,12 +951,12 @@ class REITAdapter(DomainScoringAdapter):
                 reason="no dividend data (unusual for REIT)",
                 available=False,
             ))
-        
+
         # 3. Price to Book (20%) - NAV proxy
         price_to_book = _get_metric(info, "price_to_book")
-        
+
         expected_keys.append("price_to_book")
-        
+
         if price_to_book is not None:
             # P/B near 1.0 is fair value, <0.9 is discount to NAV
             score = _normalize_score(price_to_book, 0.8, 2.0, higher_better=False)
@@ -973,12 +974,12 @@ class REITAdapter(DomainScoringAdapter):
                 reason="no P/B data",
                 available=False,
             ))
-        
+
         # 4. Leverage (10%) - Some debt is normal, but not too much
         debt_to_equity = _get_metric(info, "debt_to_equity")
-        
+
         expected_keys.append("debt_to_equity")
-        
+
         if debt_to_equity is not None:
             # D/E 50-100% is normal for REITs, >200% is concerning
             score = _normalize_score(debt_to_equity, 50, 250, higher_better=False)
@@ -996,12 +997,12 @@ class REITAdapter(DomainScoringAdapter):
                 reason="no D/E data",
                 available=False,
             ))
-        
+
         # 5. Analyst (15%)
         recommendation_mean = _get_metric(info, "recommendation_mean")
-        
+
         expected_keys.append("recommendation_mean")
-        
+
         if recommendation_mean is not None:
             score = _normalize_score(recommendation_mean, 1.0, 4.0, higher_better=False)
             sub_scores.append(SubScore(
@@ -1018,21 +1019,21 @@ class REITAdapter(DomainScoringAdapter):
                 reason="no analyst data",
                 available=False,
             ))
-        
+
         # Calculate final score
         total_weight = sum(s.weight for s in sub_scores if s.available)
         if total_weight > 0:
             final_score = sum(s.weighted_score for s in sub_scores) / total_weight
         else:
             final_score = 50.0
-        
+
         available, total = self._count_available(info, expected_keys)
         data_completeness = available / total if total > 0 else 0.0
-        
+
         notes = "REIT scoring: P/E and FCF ignored; dividend yield and P/B weighted heavily"
         if has_financials:
             notes += "; using financial statements for FFO"
-        
+
         return DomainScoreResult(
             domain=self.domain,
             domain_confidence=1.0,
@@ -1056,13 +1057,13 @@ class ETFAdapter(DomainScoringAdapter):
     - Quality score should be minimal/neutral
     - Focus is purely on dip magnitude and stability
     """
-    
+
     domain = Domain.ETF
-    
+
     def compute_quality_score(
         self,
         info: dict,
-        fundamentals: Optional[dict] = None,
+        fundamentals: dict | None = None,
     ) -> DomainScoreResult:
         # ETFs get a neutral quality score - quality doesn't really apply
         return DomainScoreResult(
@@ -1096,22 +1097,22 @@ class UtilityAdapter(DomainScoringAdapter):
     - Higher debt is normal due to capital intensity
     - Growth is low but predictable
     """
-    
+
     domain = Domain.UTILITY
-    
+
     def compute_quality_score(
         self,
         info: dict,
-        fundamentals: Optional[dict] = None,
+        fundamentals: dict | None = None,
     ) -> DomainScoreResult:
         sub_scores = []
         expected_keys = []
-        
+
         # 1. Dividend (35%) - Income is primary
         dividend_yield = _get_metric(info, "dividend_yield")
-        
+
         expected_keys.append("dividend_yield")
-        
+
         if dividend_yield is not None:
             # 3-5% is standard for utilities
             score = _normalize_score(dividend_yield, 0.045, 0.015)
@@ -1129,12 +1130,12 @@ class UtilityAdapter(DomainScoringAdapter):
                 reason="no dividend data",
                 available=False,
             ))
-        
+
         # 2. Operating Margin (25%) - Efficiency matters
         operating_margin = _get_metric(info, "operating_margin")
-        
+
         expected_keys.append("operating_margin")
-        
+
         if operating_margin is not None:
             # 15-25% is typical for utilities
             score = _normalize_score(operating_margin, 0.25, 0.10)
@@ -1152,12 +1153,12 @@ class UtilityAdapter(DomainScoringAdapter):
                 reason="no operating margin data",
                 available=False,
             ))
-        
+
         # 3. Debt Coverage (20%) - Important but high debt is normal
         debt_to_equity = _get_metric(info, "debt_to_equity")
-        
+
         expected_keys.append("debt_to_equity")
-        
+
         if debt_to_equity is not None:
             # Utilities often have D/E 100-150%, >200% is concerning
             score = _normalize_score(debt_to_equity, 80, 250, higher_better=False)
@@ -1175,12 +1176,12 @@ class UtilityAdapter(DomainScoringAdapter):
                 reason="no D/E data",
                 available=False,
             ))
-        
+
         # 4. Analyst (20%)
         recommendation_mean = _get_metric(info, "recommendation_mean")
-        
+
         expected_keys.append("recommendation_mean")
-        
+
         if recommendation_mean is not None:
             score = _normalize_score(recommendation_mean, 1.0, 4.0, higher_better=False)
             sub_scores.append(SubScore(
@@ -1197,17 +1198,17 @@ class UtilityAdapter(DomainScoringAdapter):
                 reason="no analyst data",
                 available=False,
             ))
-        
+
         # Calculate final score
         total_weight = sum(s.weight for s in sub_scores if s.available)
         if total_weight > 0:
             final_score = sum(s.weighted_score for s in sub_scores) / total_weight
         else:
             final_score = 50.0
-        
+
         available, total = self._count_available(info, expected_keys)
         data_completeness = available / total if total > 0 else 0.0
-        
+
         return DomainScoreResult(
             domain=self.domain,
             domain_confidence=1.0,
@@ -1232,23 +1233,23 @@ class BiotechAdapter(DomainScoringAdapter):
     - Pipeline value isn't in fundamentals
     - High beta is expected
     """
-    
+
     domain = Domain.BIOTECH
-    
+
     def compute_quality_score(
         self,
         info: dict,
-        fundamentals: Optional[dict] = None,
+        fundamentals: dict | None = None,
     ) -> DomainScoreResult:
         sub_scores = []
         expected_keys = []
-        
+
         # 1. Cash Position (40%) - Cash runway is critical
         total_cash = _get_metric(info, "total_cash")
         market_cap = _get_metric(info, "market_cap")
-        
+
         expected_keys.extend(["total_cash", "market_cap"])
-        
+
         if total_cash is not None and market_cap and market_cap > 0:
             cash_ratio = total_cash / market_cap
             # Cash = 30%+ of market cap is strong, <10% is concerning
@@ -1267,13 +1268,13 @@ class BiotechAdapter(DomainScoringAdapter):
                 reason="no cash data",
                 available=False,
             ))
-        
+
         # 2. Analyst (35%) - Analyst coverage is important for biotech
         recommendation_mean = _get_metric(info, "recommendation_mean")
         num_analysts = _get_metric(info, "num_analyst_opinions")
-        
+
         expected_keys.extend(["recommendation_mean", "num_analyst_opinions"])
-        
+
         if recommendation_mean is not None:
             score = _normalize_score(recommendation_mean, 1.0, 4.0, higher_better=False)
             # Bonus for more analyst coverage
@@ -1293,13 +1294,13 @@ class BiotechAdapter(DomainScoringAdapter):
                 reason="no analyst data",
                 available=False,
             ))
-        
+
         # 3. Risk Profile (25%) - Beta and short interest
         beta = _get_metric(info, "beta")
         short_percent = _get_metric(info, "short_percent_of_float")
-        
+
         expected_keys.extend(["beta", "short_percent_of_float"])
-        
+
         risk_scores = []
         if beta is not None:
             # Beta: 1.0-2.0 is normal for biotech, >3.0 is very high
@@ -1309,7 +1310,7 @@ class BiotechAdapter(DomainScoringAdapter):
             # Short interest: <10% is ok, >30% is high risk
             short_score = _normalize_score(short_percent, 0.05, 0.40, higher_better=False)
             risk_scores.append(short_score)
-        
+
         if risk_scores:
             score = sum(risk_scores) / len(risk_scores)
             sub_scores.append(SubScore(
@@ -1326,17 +1327,17 @@ class BiotechAdapter(DomainScoringAdapter):
                 reason="no risk data",
                 available=False,
             ))
-        
+
         # Calculate final score
         total_weight = sum(s.weight for s in sub_scores if s.available)
         if total_weight > 0:
             final_score = sum(s.weighted_score for s in sub_scores) / total_weight
         else:
             final_score = 50.0
-        
+
         available, total = self._count_available(info, expected_keys)
         data_completeness = available / total if total > 0 else 0.0
-        
+
         return DomainScoreResult(
             domain=self.domain,
             domain_confidence=1.0,
@@ -1361,23 +1362,23 @@ class EnergyAdapter(DomainScoringAdapter):
     - Debt levels vary by sub-sector (midstream higher)
     - Free cash flow matters after capex
     """
-    
+
     domain = Domain.ENERGY
-    
+
     def compute_quality_score(
         self,
         info: dict,
-        fundamentals: Optional[dict] = None,
+        fundamentals: dict | None = None,
     ) -> DomainScoreResult:
         sub_scores = []
         expected_keys = []
-        
+
         # 1. Profitability (25%) - Margins matter in commodity business
         operating_margin = _get_metric(info, "operating_margin")
         profit_margin = _get_metric(info, "profit_margin")
-        
+
         expected_keys.extend(["operating_margin", "profit_margin"])
-        
+
         if operating_margin is not None or profit_margin is not None:
             # Energy can have wide margin swings
             om_score = _normalize_score(operating_margin or 0, 0.20, 0.0) if operating_margin else 50
@@ -1397,13 +1398,13 @@ class EnergyAdapter(DomainScoringAdapter):
                 reason="no margin data",
                 available=False,
             ))
-        
+
         # 2. Cash Flow (25%) - FCF yield after capex
         free_cash_flow = _get_metric(info, "free_cash_flow")
         market_cap = _get_metric(info, "market_cap")
-        
+
         expected_keys.extend(["free_cash_flow", "market_cap"])
-        
+
         if free_cash_flow is not None and market_cap and market_cap > 0:
             fcf_yield = free_cash_flow / market_cap
             # Energy often has negative FCF in growth periods
@@ -1422,12 +1423,12 @@ class EnergyAdapter(DomainScoringAdapter):
                 reason="no FCF data",
                 available=False,
             ))
-        
+
         # 3. Leverage (20%) - Debt matters especially for midstream
         debt_to_equity = _get_metric(info, "debt_to_equity")
-        
+
         expected_keys.append("debt_to_equity")
-        
+
         if debt_to_equity is not None:
             # Energy can handle more debt than most, but not too much
             score = _normalize_score(debt_to_equity, 50, 200, higher_better=False)
@@ -1445,12 +1446,12 @@ class EnergyAdapter(DomainScoringAdapter):
                 reason="no D/E data",
                 available=False,
             ))
-        
+
         # 4. Dividend (15%) - Many energy names are income plays
         dividend_yield = _get_metric(info, "dividend_yield")
-        
+
         expected_keys.append("dividend_yield")
-        
+
         if dividend_yield is not None:
             score = _normalize_score(dividend_yield, 0.05, 0.0)
             sub_scores.append(SubScore(
@@ -1467,12 +1468,12 @@ class EnergyAdapter(DomainScoringAdapter):
                 reason="no dividend data",
                 available=False,
             ))
-        
+
         # 5. Analyst (15%)
         recommendation_mean = _get_metric(info, "recommendation_mean")
-        
+
         expected_keys.append("recommendation_mean")
-        
+
         if recommendation_mean is not None:
             score = _normalize_score(recommendation_mean, 1.0, 4.0, higher_better=False)
             sub_scores.append(SubScore(
@@ -1489,17 +1490,17 @@ class EnergyAdapter(DomainScoringAdapter):
                 reason="no analyst data",
                 available=False,
             ))
-        
+
         # Calculate final score
         total_weight = sum(s.weight for s in sub_scores if s.available)
         if total_weight > 0:
             final_score = sum(s.weighted_score for s in sub_scores) / total_weight
         else:
             final_score = 50.0
-        
+
         available, total = self._count_available(info, expected_keys)
         data_completeness = available / total if total > 0 else 0.0
-        
+
         return DomainScoreResult(
             domain=self.domain,
             domain_confidence=1.0,
@@ -1524,23 +1525,23 @@ class RetailAdapter(DomainScoringAdapter):
     - Consumer discretionary vs staples dynamics
     - Growth expectations vary widely
     """
-    
+
     domain = Domain.RETAIL
-    
+
     def compute_quality_score(
         self,
         info: dict,
-        fundamentals: Optional[dict] = None,
+        fundamentals: dict | None = None,
     ) -> DomainScoreResult:
         sub_scores = []
         expected_keys = []
-        
+
         # 1. Margins (25%) - Thin margins are acceptable
         profit_margin = _get_metric(info, "profit_margin")
         operating_margin = _get_metric(info, "operating_margin")
-        
+
         expected_keys.extend(["profit_margin", "operating_margin"])
-        
+
         if profit_margin is not None or operating_margin is not None:
             # Retail margins: 2-5% net is good, >10% is exceptional
             pm_score = _normalize_score(profit_margin or 0, 0.08, 0.0) if profit_margin else 50
@@ -1560,13 +1561,13 @@ class RetailAdapter(DomainScoringAdapter):
                 reason="no margin data",
                 available=False,
             ))
-        
+
         # 2. Growth (25%) - Growth is key for retail
         revenue_growth = _get_metric(info, "revenue_growth")
         earnings_growth = _get_metric(info, "earnings_growth")
-        
+
         expected_keys.extend(["revenue_growth", "earnings_growth"])
-        
+
         if revenue_growth is not None or earnings_growth is not None:
             rg_score = _normalize_score(revenue_growth or 0, 0.15, -0.05) if revenue_growth is not None else 50
             eg_score = _normalize_score(earnings_growth or 0, 0.20, -0.10) if earnings_growth is not None else 50
@@ -1585,19 +1586,19 @@ class RetailAdapter(DomainScoringAdapter):
                 reason="no growth data",
                 available=False,
             ))
-        
+
         # 3. Valuation (20%)
         pe_ratio = _get_metric(info, "pe_ratio")
         peg_ratio = _get_metric(info, "peg_ratio")
-        
+
         expected_keys.extend(["pe_ratio", "peg_ratio"])
-        
+
         val_scores = []
         if pe_ratio is not None and 0 < pe_ratio < 100:
             val_scores.append(_normalize_score(pe_ratio, 12, 35, higher_better=False))
         if peg_ratio is not None and 0 < peg_ratio < 5:
             val_scores.append(_normalize_score(peg_ratio, 0.8, 2.5, higher_better=False))
-        
+
         if val_scores:
             score = sum(val_scores) / len(val_scores)
             sub_scores.append(SubScore(
@@ -1614,13 +1615,13 @@ class RetailAdapter(DomainScoringAdapter):
                 reason="no valuation data",
                 available=False,
             ))
-        
+
         # 4. Balance Sheet (15%)
         debt_to_equity = _get_metric(info, "debt_to_equity")
         current_ratio = _get_metric(info, "current_ratio")
-        
+
         expected_keys.extend(["debt_to_equity", "current_ratio"])
-        
+
         if debt_to_equity is not None or current_ratio is not None:
             de_score = _normalize_score(debt_to_equity or 100, 0, 150, higher_better=False) if debt_to_equity is not None else 50
             cr_score = _normalize_score(current_ratio or 1, 1.5, 0.8) if current_ratio is not None else 50
@@ -1639,12 +1640,12 @@ class RetailAdapter(DomainScoringAdapter):
                 reason="no balance sheet data",
                 available=False,
             ))
-        
+
         # 5. Analyst (15%)
         recommendation_mean = _get_metric(info, "recommendation_mean")
-        
+
         expected_keys.append("recommendation_mean")
-        
+
         if recommendation_mean is not None:
             score = _normalize_score(recommendation_mean, 1.0, 4.0, higher_better=False)
             sub_scores.append(SubScore(
@@ -1661,17 +1662,17 @@ class RetailAdapter(DomainScoringAdapter):
                 reason="no analyst data",
                 available=False,
             ))
-        
+
         # Calculate final score
         total_weight = sum(s.weight for s in sub_scores if s.available)
         if total_weight > 0:
             final_score = sum(s.weighted_score for s in sub_scores) / total_weight
         else:
             final_score = 50.0
-        
+
         available, total = self._count_available(info, expected_keys)
         data_completeness = available / total if total > 0 else 0.0
-        
+
         return DomainScoreResult(
             domain=self.domain,
             domain_confidence=1.0,
@@ -1696,23 +1697,23 @@ class SemiconductorAdapter(DomainScoringAdapter):
     - Inventory cycles matter (not in yfinance)
     - Strong margins when times are good
     """
-    
+
     domain = Domain.SEMICONDUCTOR
-    
+
     def compute_quality_score(
         self,
         info: dict,
-        fundamentals: Optional[dict] = None,
+        fundamentals: dict | None = None,
     ) -> DomainScoreResult:
         sub_scores = []
         expected_keys = []
-        
+
         # 1. Margins (30%) - High margins are key for semis
         operating_margin = _get_metric(info, "operating_margin")
         profit_margin = _get_metric(info, "profit_margin")
-        
+
         expected_keys.extend(["operating_margin", "profit_margin"])
-        
+
         if operating_margin is not None or profit_margin is not None:
             # Semis can have very high margins: 30%+ is great
             om_score = _normalize_score(operating_margin or 0, 0.35, 0.05) if operating_margin else 50
@@ -1732,13 +1733,13 @@ class SemiconductorAdapter(DomainScoringAdapter):
                 reason="no margin data",
                 available=False,
             ))
-        
+
         # 2. Growth (25%) - Semis need to grow
         revenue_growth = _get_metric(info, "revenue_growth")
         earnings_growth = _get_metric(info, "earnings_growth")
-        
+
         expected_keys.extend(["revenue_growth", "earnings_growth"])
-        
+
         if revenue_growth is not None or earnings_growth is not None:
             rg_score = _normalize_score(revenue_growth or 0, 0.20, -0.15) if revenue_growth is not None else 50
             eg_score = _normalize_score(earnings_growth or 0, 0.25, -0.20) if earnings_growth is not None else 50
@@ -1757,21 +1758,21 @@ class SemiconductorAdapter(DomainScoringAdapter):
                 reason="no growth data",
                 available=False,
             ))
-        
+
         # 3. Balance Sheet (15%) - Low debt is good, cash is king
         debt_to_equity = _get_metric(info, "debt_to_equity")
         total_cash = _get_metric(info, "total_cash")
         market_cap = _get_metric(info, "market_cap")
-        
+
         expected_keys.extend(["debt_to_equity", "total_cash", "market_cap"])
-        
+
         balance_scores = []
         if debt_to_equity is not None:
             balance_scores.append(_normalize_score(debt_to_equity, 0, 100, higher_better=False))
         if total_cash is not None and market_cap and market_cap > 0:
             cash_ratio = total_cash / market_cap
             balance_scores.append(_normalize_score(cash_ratio, 0.20, 0.02))
-        
+
         if balance_scores:
             score = sum(balance_scores) / len(balance_scores)
             sub_scores.append(SubScore(
@@ -1788,13 +1789,13 @@ class SemiconductorAdapter(DomainScoringAdapter):
                 reason="no balance sheet data",
                 available=False,
             ))
-        
+
         # 4. Valuation (15%) - Can trade at high multiples
         pe_ratio = _get_metric(info, "pe_ratio")
         forward_pe = _get_metric(info, "forward_pe")
-        
+
         expected_keys.extend(["pe_ratio", "forward_pe"])
-        
+
         if pe_ratio is not None and 0 < pe_ratio < 100:
             # Semis can trade at higher multiples
             score = _normalize_score(pe_ratio, 15, 50, higher_better=False)
@@ -1812,12 +1813,12 @@ class SemiconductorAdapter(DomainScoringAdapter):
                 reason="no P/E data",
                 available=False,
             ))
-        
+
         # 5. Analyst (15%)
         recommendation_mean = _get_metric(info, "recommendation_mean")
-        
+
         expected_keys.append("recommendation_mean")
-        
+
         if recommendation_mean is not None:
             score = _normalize_score(recommendation_mean, 1.0, 4.0, higher_better=False)
             sub_scores.append(SubScore(
@@ -1834,17 +1835,17 @@ class SemiconductorAdapter(DomainScoringAdapter):
                 reason="no analyst data",
                 available=False,
             ))
-        
+
         # Calculate final score
         total_weight = sum(s.weight for s in sub_scores if s.available)
         if total_weight > 0:
             final_score = sum(s.weighted_score for s in sub_scores) / total_weight
         else:
             final_score = 50.0
-        
+
         available, total = self._count_available(info, expected_keys)
         data_completeness = available / total if total > 0 else 0.0
-        
+
         return DomainScoreResult(
             domain=self.domain,
             domain_confidence=1.0,
@@ -1869,23 +1870,23 @@ class CapitalIntensiveAdapter(DomainScoringAdapter):
     - Fuel/commodity exposure
     - Often thin margins, high debt
     """
-    
+
     domain = Domain.AIRLINE
-    
+
     def compute_quality_score(
         self,
         info: dict,
-        fundamentals: Optional[dict] = None,
+        fundamentals: dict | None = None,
     ) -> DomainScoreResult:
         sub_scores = []
         expected_keys = []
-        
+
         # 1. Margins (30%) - Thin margins are normal
         operating_margin = _get_metric(info, "operating_margin")
         profit_margin = _get_metric(info, "profit_margin")
-        
+
         expected_keys.extend(["operating_margin", "profit_margin"])
-        
+
         if operating_margin is not None or profit_margin is not None:
             # Airlines: 5-10% operating margin is decent
             om_score = _normalize_score(operating_margin or 0, 0.12, -0.05) if operating_margin else 50
@@ -1905,12 +1906,12 @@ class CapitalIntensiveAdapter(DomainScoringAdapter):
                 reason="no margin data",
                 available=False,
             ))
-        
+
         # 2. Leverage (25%) - High debt is common but risky
         debt_to_equity = _get_metric(info, "debt_to_equity")
-        
+
         expected_keys.append("debt_to_equity")
-        
+
         if debt_to_equity is not None:
             # Airlines often have high D/E, but >300% is dangerous
             score = _normalize_score(debt_to_equity, 50, 350, higher_better=False)
@@ -1928,13 +1929,13 @@ class CapitalIntensiveAdapter(DomainScoringAdapter):
                 reason="no D/E data",
                 available=False,
             ))
-        
+
         # 3. Cash Flow (20%) - FCF matters for capex coverage
         free_cash_flow = _get_metric(info, "free_cash_flow")
         market_cap = _get_metric(info, "market_cap")
-        
+
         expected_keys.extend(["free_cash_flow", "market_cap"])
-        
+
         if free_cash_flow is not None and market_cap and market_cap > 0:
             fcf_yield = free_cash_flow / market_cap
             score = _normalize_score(fcf_yield, 0.08, -0.08)
@@ -1952,12 +1953,12 @@ class CapitalIntensiveAdapter(DomainScoringAdapter):
                 reason="no FCF data",
                 available=False,
             ))
-        
+
         # 4. Analyst (25%) - Analyst view matters for cyclicals
         recommendation_mean = _get_metric(info, "recommendation_mean")
-        
+
         expected_keys.append("recommendation_mean")
-        
+
         if recommendation_mean is not None:
             score = _normalize_score(recommendation_mean, 1.0, 4.0, higher_better=False)
             sub_scores.append(SubScore(
@@ -1974,17 +1975,17 @@ class CapitalIntensiveAdapter(DomainScoringAdapter):
                 reason="no analyst data",
                 available=False,
             ))
-        
+
         # Calculate final score
         total_weight = sum(s.weight for s in sub_scores if s.available)
         if total_weight > 0:
             final_score = sum(s.weighted_score for s in sub_scores) / total_weight
         else:
             final_score = 50.0
-        
+
         available, total = self._count_available(info, expected_keys)
         data_completeness = available / total if total > 0 else 0.0
-        
+
         return DomainScoreResult(
             domain=self.domain,
             domain_confidence=1.0,
@@ -2031,7 +2032,7 @@ def get_adapter(domain: Domain) -> DomainScoringAdapter:
 def compute_domain_score(
     classification: DomainClassification,
     info: dict,
-    fundamentals: Optional[dict] = None,
+    fundamentals: dict | None = None,
 ) -> DomainScoreResult:
     """
     Compute quality score using the appropriate domain adapter.
@@ -2049,7 +2050,7 @@ def compute_domain_score(
     """
     adapter = get_adapter(classification.domain)
     result = adapter.compute_quality_score(info, fundamentals)
-    
+
     # Update result with classification confidence
     result = DomainScoreResult(
         domain=result.domain,
@@ -2060,18 +2061,18 @@ def compute_domain_score(
         fallback_used=result.fallback_used,
         notes=result.notes,
     )
-    
+
     # If low confidence and we have a fallback, blend scores
     if classification.confidence < 0.70 and classification.fallback_domain:
         fallback_adapter = get_adapter(classification.fallback_domain)
         fallback_result = fallback_adapter.compute_quality_score(info, fundamentals)
-        
+
         # Blend: use classification confidence as weight
         blended_score = (
             result.final_score * classification.confidence +
             fallback_result.final_score * (1 - classification.confidence)
         )
-        
+
         result = DomainScoreResult(
             domain=result.domain,
             domain_confidence=classification.confidence,
@@ -2081,5 +2082,5 @@ def compute_domain_score(
             fallback_used=True,
             notes=f"Blended with {classification.fallback_domain.value} fallback ({1-classification.confidence:.0%} weight)",
         )
-    
+
     return result

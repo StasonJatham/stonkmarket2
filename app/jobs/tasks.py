@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any, Awaitable, Iterable
+from collections.abc import Awaitable, Iterable
+from datetime import UTC
+from typing import Any
 
 import app.jobs.definitions  # noqa: F401 - register jobs
-
 from app.celery_app import celery_app
 from app.core.logging import get_logger
 from app.jobs.executor import execute_job
 from app.repositories import cronjobs_orm as cron_repo
+
 
 logger = get_logger("jobs.celery_tasks")
 
@@ -176,10 +178,11 @@ def fundamentals_refresh_task() -> str:
 @celery_app.task(name="jobs.refresh_fundamentals_symbol")
 def refresh_fundamentals_symbol_task(symbol: str) -> str:
     """Refresh fundamentals for a single symbol with minimal scope."""
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timedelta
+
     from app.services.fundamentals import (
-        refresh_fundamentals,
         get_fundamentals_with_status,
+        refresh_fundamentals,
     )
 
     async def _run() -> str:
@@ -190,18 +193,18 @@ def refresh_fundamentals_symbol_task(symbol: str) -> str:
             financials_fetched_at = data.get("financials_fetched_at")
             if financials_fetched_at:
                 fin_at_utc = (
-                    financials_fetched_at.replace(tzinfo=timezone.utc)
+                    financials_fetched_at.replace(tzinfo=UTC)
                     if financials_fetched_at.tzinfo is None
                     else financials_fetched_at
                 )
-                include_financials = (datetime.now(timezone.utc) - fin_at_utc).days > 90
+                include_financials = (datetime.now(UTC) - fin_at_utc).days > 90
 
                 earnings_date = data.get("earnings_date")
                 if earnings_date:
                     earnings_dt = (
                         earnings_date
                         if isinstance(earnings_date, datetime)
-                        else datetime.combine(earnings_date, datetime.min.time(), tzinfo=timezone.utc)
+                        else datetime.combine(earnings_date, datetime.min.time(), tzinfo=UTC)
                     )
                     if earnings_dt > fin_at_utc:
                         include_financials = True
@@ -211,9 +214,9 @@ def refresh_fundamentals_symbol_task(symbol: str) -> str:
                     next_dt = (
                         next_earnings
                         if isinstance(next_earnings, datetime)
-                        else datetime.combine(next_earnings, datetime.min.time(), tzinfo=timezone.utc)
+                        else datetime.combine(next_earnings, datetime.min.time(), tzinfo=UTC)
                     )
-                    if datetime.now(timezone.utc) <= next_dt <= datetime.now(timezone.utc) + timedelta(days=7):
+                    if datetime.now(UTC) <= next_dt <= datetime.now(UTC) + timedelta(days=7):
                         if fin_at_utc < (next_dt - timedelta(days=7)):
                             include_financials = True
 
@@ -277,11 +280,11 @@ def regenerate_symbol_summary_task(symbol: str) -> str:
     """Regenerate AI summary for a symbol in the background."""
 
     async def _run() -> str:
+        from app.cache.cache import Cache
         from app.repositories import symbols_orm as symbols_repo
-        from app.services.stock_info import get_stock_info_async
         from app.services.openai_client import summarize_company
         from app.services.runtime_settings import get_runtime_setting
-        from app.cache.cache import Cache
+        from app.services.stock_info import get_stock_info_async
 
         normalized = symbol.upper()
 

@@ -5,16 +5,16 @@ Handles public API access keys for external integrations.
 
 from __future__ import annotations
 
-import secrets
 import hashlib
-from datetime import datetime, timedelta, timezone
-from typing import Optional
+import secrets
+from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select, func, delete
+from sqlalchemy import delete, func, select
 
+from app.core.logging import get_logger
 from app.database.connection import get_session
 from app.database.orm import UserApiKey
-from app.core.logging import get_logger
+
 
 logger = get_logger("repositories.user_api_keys")
 
@@ -48,11 +48,11 @@ def hash_api_key(key: str) -> str:
 
 async def create_user_api_key(
     name: str,
-    description: Optional[str] = None,
-    user_id: Optional[int] = None,
+    description: str | None = None,
+    user_id: int | None = None,
     vote_weight: int = 10,
     rate_limit_bypass: bool = True,
-    expires_days: Optional[int] = None,
+    expires_days: int | None = None,
 ) -> tuple[str, dict]:
     """
     Create a new user API key.
@@ -62,7 +62,7 @@ async def create_user_api_key(
         The full_key is only returned once and should be given to the user.
     """
     full_key, key_hash, key_prefix = generate_api_key()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     expires_at = None
     if expires_days:
         expires_at = now + timedelta(days=expires_days)
@@ -83,7 +83,7 @@ async def create_user_api_key(
         session.add(api_key)
         await session.commit()
         await session.refresh(api_key)
-        
+
         key_record = {
             "id": api_key.id,
             "key_prefix": api_key.key_prefix,
@@ -100,7 +100,7 @@ async def create_user_api_key(
     return full_key, key_record
 
 
-async def validate_api_key(key: str) -> Optional[dict]:
+async def validate_api_key(key: str) -> dict | None:
     """
     Validate an API key and return its details if valid.
 
@@ -108,7 +108,7 @@ async def validate_api_key(key: str) -> Optional[dict]:
         Key details dict if valid, None if invalid/expired/inactive.
     """
     key_hash = hash_api_key(key)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     async with get_session() as session:
         result = await session.execute(
@@ -125,7 +125,7 @@ async def validate_api_key(key: str) -> Optional[dict]:
             # Check expiration
             if api_key.expires_at and api_key.expires_at <= now:
                 return None
-            
+
             # Update last used and usage count atomically
             api_key.last_used_at = now
             api_key.usage_count = (api_key.usage_count or 0) + 1
@@ -147,7 +147,7 @@ async def validate_api_key(key: str) -> Optional[dict]:
     return None
 
 
-async def get_api_key_by_id(key_id: int) -> Optional[dict]:
+async def get_api_key_by_id(key_id: int) -> dict | None:
     """Get API key details by ID."""
     async with get_session() as session:
         result = await session.execute(
@@ -181,12 +181,12 @@ async def list_user_api_keys(
     """List all user API keys."""
     async with get_session() as session:
         stmt = select(UserApiKey)
-        
+
         if active_only:
             stmt = stmt.where(UserApiKey.is_active == True)
-        
+
         stmt = stmt.order_by(UserApiKey.created_at.desc()).limit(limit).offset(offset)
-        
+
         result = await session.execute(stmt)
         keys = result.scalars().all()
 
@@ -248,7 +248,7 @@ async def delete_api_key(key_id: int) -> bool:
             delete(UserApiKey).where(UserApiKey.id == key_id)
         )
         await session.commit()
-        
+
         if result.rowcount > 0:
             logger.info(f"Deleted user API key ID: {key_id}")
             return True
@@ -257,12 +257,12 @@ async def delete_api_key(key_id: int) -> bool:
 
 async def update_api_key(
     key_id: int,
-    name: Optional[str] = None,
-    description: Optional[str] = None,
-    vote_weight: Optional[int] = None,
-    rate_limit_bypass: Optional[bool] = None,
-    expires_at: Optional[datetime] = None,
-) -> Optional[dict]:
+    name: str | None = None,
+    description: str | None = None,
+    vote_weight: int | None = None,
+    rate_limit_bypass: bool | None = None,
+    expires_at: datetime | None = None,
+) -> dict | None:
     """Update an API key's settings."""
     async with get_session() as session:
         result = await session.execute(
@@ -304,8 +304,8 @@ async def update_api_key(
 async def get_key_stats() -> dict:
     """Get statistics about user API keys."""
     async with get_session() as session:
-        now = datetime.now(timezone.utc)
-        
+        now = datetime.now(UTC)
+
         result = await session.execute(
             select(
                 func.count().label("total_keys"),

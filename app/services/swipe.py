@@ -2,24 +2,24 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 
 from app.core.logging import get_logger
 from app.database.connection import get_session
-from app.database.orm import DipState, Symbol, DipAIAnalysis
+from app.database.orm import DipAIAnalysis, DipState, Symbol
 from app.repositories import dip_votes_orm as dip_votes_repo
 from app.schemas.swipe import DipCard, DipStats, VoteCounts
-from app.services.openai_client import generate_bio, rate_dip
 from app.services import stock_info
 from app.services.fundamentals import get_fundamentals_for_analysis
+from app.services.openai_client import generate_bio, rate_dip
+
 
 logger = get_logger("swipe")
 
 
-async def get_dip_card(symbol: str) -> Optional[DipCard]:
+async def get_dip_card(symbol: str) -> DipCard | None:
     """
     Get a complete dip card with AI analysis for a symbol.
 
@@ -38,7 +38,7 @@ async def get_dip_card(symbol: str) -> Optional[DipCard]:
 
     if not row:
         return None
-    
+
     dip_state, sym = row
 
     # Get cached AI analysis
@@ -53,8 +53,8 @@ async def get_dip_card(symbol: str) -> Optional[DipCard]:
     if dip_state.first_seen:
         first_seen = dip_state.first_seen
         if hasattr(first_seen, 'tzinfo') and first_seen.tzinfo is None:
-            first_seen = first_seen.replace(tzinfo=timezone.utc)
-        days_below = (datetime.now(timezone.utc) - first_seen).days
+            first_seen = first_seen.replace(tzinfo=UTC)
+        days_below = (datetime.now(UTC) - first_seen).days
 
     # Build card with Pydantic model
     card = DipCard(
@@ -75,7 +75,7 @@ async def get_dip_card(symbol: str) -> Optional[DipCard]:
     return card
 
 
-async def get_dip_card_with_fresh_ai(symbol: str, force_refresh: bool = False) -> Optional[DipCard]:
+async def get_dip_card_with_fresh_ai(symbol: str, force_refresh: bool = False) -> DipCard | None:
     """
     Get dip card with fresh AI analysis (generates if needed or forced).
 
@@ -143,7 +143,7 @@ async def get_dip_card_with_fresh_ai(symbol: str, force_refresh: bool = False) -
             "website": info.get("website"),
             "ipo_year": info.get("ipo_year"),
         })
-    
+
     card = card.model_copy(update={
         "swipe_bio": bio,
         "ai_rating": rating_result.get("rating") if rating_result else None,
@@ -157,7 +157,7 @@ async def get_dip_card_with_fresh_ai(symbol: str, force_refresh: bool = False) -
 async def regenerate_ai_field(
     symbol: str,
     field: str,
-) -> Optional[DipCard]:
+) -> DipCard | None:
     """
     Regenerate a swipe-specific AI field for a dip card.
 
@@ -199,7 +199,7 @@ async def regenerate_ai_field(
     elif field == "rating":
         # Get fundamentals for richer AI analysis
         fundamentals = await get_fundamentals_for_analysis(symbol)
-        
+
         # Regenerate AI rating
         rating_result = await rate_dip(
             symbol=symbol,
@@ -265,14 +265,14 @@ async def get_all_dip_cards(include_ai: bool = False) -> list[DipCard]:
     async with get_session() as session:
         result = await session.execute(
             select(DipAIAnalysis).where(
-                (DipAIAnalysis.expires_at == None) | (DipAIAnalysis.expires_at > datetime.now(timezone.utc))
+                (DipAIAnalysis.expires_at == None) | (DipAIAnalysis.expires_at > datetime.now(UTC))
             )
         )
         ai_rows = result.scalars().all()
     ai_by_symbol = {r.symbol: r for r in ai_rows}
 
     cards: list[DipCard] = []
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     for dip_state, sym in dip_rows:
         symbol = dip_state.symbol
 
@@ -281,7 +281,7 @@ async def get_all_dip_cards(include_ai: bool = False) -> list[DipCard]:
         if dip_state.first_seen:
             first_seen = dip_state.first_seen
             if hasattr(first_seen, 'tzinfo') and first_seen.tzinfo is None:
-                first_seen = first_seen.replace(tzinfo=timezone.utc)
+                first_seen = first_seen.replace(tzinfo=UTC)
             days_below = (now - first_seen).days
 
         # Get vote counts for this symbol
@@ -319,9 +319,9 @@ async def vote_on_dip(
     voter_identifier: str,
     vote_type: str,
     vote_weight: int = 1,
-    api_key_id: Optional[int] = None,
+    api_key_id: int | None = None,
     skip_cooldown: bool = False,
-) -> tuple[bool, Optional[str]]:
+) -> tuple[bool, str | None]:
     """
     Record a vote on a dip.
 

@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from enum import Enum
-from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -77,15 +76,15 @@ class SuggestionResponse(BaseModel):
     symbol: str
     status: SuggestionStatus
     vote_count: int = 0
-    name: Optional[str] = None
-    sector: Optional[str] = None
-    summary: Optional[str] = None
-    last_price: Optional[float] = None
-    price_change_90d: Optional[float] = None  # Percentage change over 90 days
+    name: str | None = None
+    sector: str | None = None
+    summary: str | None = None
+    last_price: float | None = None
+    price_change_90d: float | None = None  # Percentage change over 90 days
     created_at: datetime
-    updated_at: Optional[datetime] = None
-    fetched_at: Optional[datetime] = None
-    rejection_reason: Optional[str] = None
+    updated_at: datetime | None = None
+    fetched_at: datetime | None = None
+    rejection_reason: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -102,7 +101,7 @@ class SuggestionListResponse(BaseModel):
 class SuggestionAdminAction(BaseModel):
     """Admin action on a suggestion (for approve/reject)."""
 
-    reason: Optional[str] = Field(
+    reason: str | None = Field(
         None, max_length=500, description="Reason for rejection (required for reject)"
     )
 
@@ -125,9 +124,9 @@ class TopSuggestion(BaseModel):
     """A suggestion ranked by votes."""
 
     symbol: str
-    name: Optional[str] = None
-    sector: Optional[str] = None
+    name: str | None = None
+    sector: str | None = None
     vote_count: int
     status: SuggestionStatus
-    last_price: Optional[float] = None
-    summary: Optional[str] = None
+    last_price: float | None = None
+    summary: str | None = None

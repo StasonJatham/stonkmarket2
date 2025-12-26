@@ -2,41 +2,39 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 from fastapi import Cookie, Depends, Header, Request
 
-from app.core.config import settings
-from app.core.exceptions import AuthenticationError, AuthorizationError
-from app.core.security import TokenData, decode_access_token, validate_token_not_revoked
+from app.cache.rate_limit import check_rate_limit
 from app.core.client_identity import (
     get_client_ip,
     get_request_fingerprint,
-    get_vote_identifier,
     get_suggestion_identifier,
+    get_vote_identifier,
 )
-from app.cache.rate_limit import check_rate_limit
+from app.core.config import settings
+from app.core.exceptions import AuthenticationError, AuthorizationError
+from app.core.security import TokenData, decode_access_token, validate_token_not_revoked
 
 
 # Re-export identity functions
 __all__ = [
     "get_client_ip",
-    "get_request_fingerprint",
-    "get_vote_identifier",
-    "get_suggestion_identifier",
     "get_current_user",
-    "require_user",
-    "require_admin",
-    "rate_limit_auth",
-    "rate_limit_api",
     "get_db",
+    "get_request_fingerprint",
+    "get_suggestion_identifier",
+    "get_vote_identifier",
+    "rate_limit_api",
+    "rate_limit_auth",
+    "require_admin",
+    "require_user",
 ]
 
 
 def _extract_token(
-    authorization: Optional[str] = Header(default=None),
-    session: Optional[str] = Cookie(default=None),
-) -> Optional[str]:
+    authorization: str | None = Header(default=None),
+    session: str | None = Cookie(default=None),
+) -> str | None:
     """Extract JWT token from Authorization header or session cookie."""
     # Prefer Authorization header (for API clients)
     if authorization:
@@ -53,9 +51,9 @@ def _extract_token(
 
 async def get_current_user(
     request: Request,
-    authorization: Optional[str] = Header(default=None),
-    session: Optional[str] = Cookie(default=None),
-) -> Optional[TokenData]:
+    authorization: str | None = Header(default=None),
+    session: str | None = Cookie(default=None),
+) -> TokenData | None:
     """
     Get current authenticated user (optional).
 
@@ -86,8 +84,8 @@ async def get_current_user(
 
 async def require_user(
     request: Request,
-    authorization: Optional[str] = Header(default=None),
-    session: Optional[str] = Cookie(default=None),
+    authorization: str | None = Header(default=None),
+    session: str | None = Cookie(default=None),
 ) -> TokenData:
     """
     Require authenticated user.
@@ -155,7 +153,7 @@ async def rate_limit_auth(
 
 async def rate_limit_api(
     request: Request,
-    user: Optional[TokenData] = Depends(get_current_user),
+    user: TokenData | None = Depends(get_current_user),
 ) -> None:
     """Apply rate limiting for API endpoints.
 
@@ -186,7 +184,8 @@ async def rate_limit_api(
 # DATABASE SESSION DEPENDENCY
 # =============================================================================
 
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -202,6 +201,6 @@ async def get_db() -> AsyncIterator[AsyncSession]:
     The session is automatically committed on success and rolled back on error.
     """
     from app.database.connection import get_session
-    
+
     async with get_session() as session:
         yield session

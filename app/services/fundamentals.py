@@ -26,9 +26,9 @@ Usage:
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, date, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Any
 
 from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
@@ -39,6 +39,7 @@ from app.database.connection import get_session
 from app.database.orm import StockFundamentals, Symbol
 from app.services.data_providers import get_yfinance_service
 
+
 logger = get_logger("services.fundamentals")
 
 # Cache for live (untracked) fundamentals lookups
@@ -46,7 +47,7 @@ LIVE_FUNDAMENTALS_CACHE_TTL = 900  # 15 minutes
 _live_fundamentals_cache = Cache(prefix="fundamentals_live", default_ttl=LIVE_FUNDAMENTALS_CACHE_TTL)
 
 
-def _is_etf_or_index(symbol: str, quote_type: Optional[str] = None) -> bool:
+def _is_etf_or_index(symbol: str, quote_type: str | None = None) -> bool:
     """Check if symbol is an ETF or index (no fundamentals available)."""
     if symbol.startswith("^"):
         return True
@@ -56,7 +57,7 @@ def _is_etf_or_index(symbol: str, quote_type: Optional[str] = None) -> bool:
     return False
 
 
-def _safe_float(value: Any) -> Optional[float]:
+def _safe_float(value: Any) -> float | None:
     """Safely convert value to float, returning None for invalid values."""
     if value is None:
         return None
@@ -69,7 +70,7 @@ def _safe_float(value: Any) -> Optional[float]:
         return None
 
 
-def _safe_int(value: Any) -> Optional[int]:
+def _safe_int(value: Any) -> int | None:
     """Safely convert value to int, returning None for invalid values."""
     if value is None:
         return None
@@ -79,7 +80,7 @@ def _safe_int(value: Any) -> Optional[int]:
         return None
 
 
-def _safe_date(value: Any) -> Optional[date]:
+def _safe_date(value: Any) -> date | None:
     """Safely convert value to date, returning None for invalid values.
     
     Handles:
@@ -106,7 +107,7 @@ def _safe_date(value: Any) -> Optional[date]:
             ts = float(value)
             if ts > 1e12:
                 ts = ts / 1000.0
-            return datetime.fromtimestamp(ts, tz=timezone.utc).date()
+            return datetime.fromtimestamp(ts, tz=UTC).date()
         # String in ISO format
         if isinstance(value, str):
             # Handle 'YYYY-MM-DD' format
@@ -131,11 +132,11 @@ def _detect_domain(info: dict[str, Any]) -> str:
     sector = (info.get("sector") or "").lower()
     industry = (info.get("industry") or "").lower()
     name = (info.get("name") or info.get("shortName") or "").lower()
-    
+
     # ETFs and funds
     if quote_type in ("ETF", "MUTUALFUND", "INDEX"):
         return "etf"
-    
+
     # Banks
     bank_keywords = ["bank", "bancorp", "bancshares", "banking"]
     if sector == "financial services":
@@ -143,7 +144,7 @@ def _detect_domain(info: dict[str, Any]) -> str:
             return "bank"
         if any(kw in name for kw in bank_keywords):
             return "bank"
-    
+
     # REITs
     if "reit" in industry or "real estate investment" in industry:
         return "reit"
@@ -151,30 +152,30 @@ def _detect_domain(info: dict[str, Any]) -> str:
         return "reit"
     if "reit" in name:
         return "reit"
-    
+
     # Insurers
     insurer_keywords = ["insurance", "insurer", "assurance", "reinsurance"]
     if any(kw in industry for kw in insurer_keywords):
         return "insurer"
     if any(kw in name for kw in insurer_keywords):
         return "insurer"
-    
+
     # Utilities
     if sector == "utilities":
         return "utility"
-    
+
     # Biotech
     if "biotech" in industry or "pharmaceutical" in industry:
         return "biotech"
     if sector == "healthcare" and "drug" in industry:
         return "biotech"
-    
+
     return "stock"
 
 
 def _calculate_domain_metrics(
     info: dict[str, Any],
-    financials: Optional[dict[str, Any]],
+    financials: dict[str, Any] | None,
     domain: str,
 ) -> dict[str, Any]:
     """
@@ -186,65 +187,65 @@ def _calculate_domain_metrics(
     - Insurers: loss_ratio, combined_ratio
     """
     result = {}
-    
+
     if not financials:
         return result
-    
+
     # Get quarterly income statement for most recent data
     quarterly = financials.get("quarterly", {})
     income_stmt = quarterly.get("income_statement", {})
     balance_sheet = quarterly.get("balance_sheet", {})
-    
+
     if domain == "bank":
         # Net Interest Income
         nii = income_stmt.get("Net Interest Income")
         if nii:
             result["net_interest_income"] = int(nii)
-        
+
         # Net Interest Margin (NII / Interest-earning assets)
         total_assets = balance_sheet.get("Total Assets")
         if nii and total_assets and total_assets > 0:
             # Rough approximation - real NIM uses interest-earning assets
             result["net_interest_margin"] = (nii * 4) / total_assets  # Annualized
-    
+
     elif domain == "reit":
         # FFO = Net Income + Depreciation & Amortization
         net_income = income_stmt.get("Net Income") or info.get("net_income")
         depreciation = income_stmt.get("Depreciation And Amortization In Income Statement")
         if not depreciation:
             depreciation = income_stmt.get("Depreciation Amortization Depletion")
-        
+
         if net_income:
             ffo = int(net_income)
             if depreciation:
                 ffo += int(depreciation)
             result["ffo"] = ffo
-            
+
             # FFO per share
             shares = info.get("shares_outstanding") or info.get("sharesOutstanding")
             if shares and shares > 0:
                 ffo_per_share = ffo / shares
                 result["ffo_per_share"] = round(ffo_per_share, 4)
-                
+
                 # P/FFO
                 price = info.get("current_price") or info.get("currentPrice") or info.get("regularMarketPrice")
                 if price and ffo_per_share > 0:
                     result["p_ffo"] = round(price / ffo_per_share, 4)
-    
+
     elif domain == "insurer":
         # Loss ratio = Loss Adjustment Expense / Premiums Earned
         loss_expense = income_stmt.get("Net Policyholder Benefits And Claims")
         if not loss_expense:
             loss_expense = income_stmt.get("Policyholder Benefits And Claims")
-        
+
         premiums = income_stmt.get("Total Revenue") or info.get("revenue")
-        
+
         if loss_expense and premiums and premiums > 0:
             result["loss_ratio"] = abs(loss_expense) / premiums
-        
+
         # Combined ratio (would need expense ratio too, but often not available)
         # Just use loss ratio for now
-    
+
     return result
 
 
@@ -252,7 +253,7 @@ async def _fetch_fundamentals_from_service(
     symbol: str,
     include_financials: bool = True,
     include_calendar: bool = True,
-) -> Optional[dict[str, Any]]:
+) -> dict[str, Any] | None:
     """
     Fetch fundamentals via unified YFinanceService.
     
@@ -265,9 +266,9 @@ async def _fetch_fundamentals_from_service(
     if symbol.startswith("^"):
         logger.debug(f"Skipping fundamentals for index: {symbol}")
         return None
-    
+
     service = get_yfinance_service()
-    
+
     # Fetch ticker info and financials concurrently
     info_task = service.get_ticker_info(symbol)
     financials_task = (
@@ -280,16 +281,16 @@ async def _fetch_fundamentals_from_service(
         if include_calendar
         else asyncio.sleep(0, result=(None, None))
     )
-    
+
     info, financials, (calendar, _) = await asyncio.gather(
         info_task,
         financials_task,
         calendar_task,
     )
-    
+
     if not info:
         return None
-    
+
     # Defensive: parse JSON if info came back as string (DB cache issue)
     if isinstance(info, str):
         import json
@@ -298,19 +299,19 @@ async def _fetch_fundamentals_from_service(
         except (json.JSONDecodeError, TypeError):
             logger.warning(f"Failed to parse info for {symbol}: not valid JSON")
             return None
-    
+
     # Check if ETF/fund
     quote_type = info.get("quote_type")
     if _is_etf_or_index(symbol, quote_type):
         logger.debug(f"Skipping fundamentals for {quote_type}: {symbol}")
         return None
-    
+
     # Detect domain
     domain = _detect_domain(info)
-    
+
     # Calculate domain-specific metrics
     domain_metrics = _calculate_domain_metrics(info, financials, domain)
-    
+
     # Parse earnings dates
     earnings_date = _safe_date(info.get("earnings_date")) or _safe_date(
         info.get("most_recent_quarter")
@@ -319,13 +320,13 @@ async def _fetch_fundamentals_from_service(
     earnings_estimate_high = None
     earnings_estimate_low = None
     earnings_estimate_avg = None
-    
+
     if calendar:
         next_earnings_date = _safe_date(calendar.get("next_earnings_date"))
         earnings_estimate_high = calendar.get("earnings_estimate_high")
         earnings_estimate_low = calendar.get("earnings_estimate_low")
         earnings_estimate_avg = calendar.get("earnings_estimate_avg")
-    
+
     # Build result with all data
     result = {
         "symbol": symbol.upper(),
@@ -407,9 +408,9 @@ async def _fetch_fundamentals_from_service(
         "loss_ratio": domain_metrics.get("loss_ratio"),
         "combined_ratio": domain_metrics.get("combined_ratio"),
         # Timestamp for financials
-        "financials_fetched_at": datetime.now(timezone.utc) if financials else None,
+        "financials_fetched_at": datetime.now(UTC) if financials else None,
     }
-    
+
     return result
 
 
@@ -420,10 +421,10 @@ async def _store_fundamentals(
 ) -> None:
     """Store fundamentals in database including financial statements and domain metrics."""
     symbol = data["symbol"]
-    expires_at = datetime.now(timezone.utc) + timedelta(days=30)
-    now = datetime.now(timezone.utc)
+    expires_at = datetime.now(UTC) + timedelta(days=30)
+    now = datetime.now(UTC)
     has_financials = data.get("financials_fetched_at") is not None
-    
+
     # Build values dict for upsert
     values = {
         "symbol": symbol,
@@ -495,7 +496,7 @@ async def _store_fundamentals(
         "expires_at": expires_at,
         "financials_fetched_at": data.get("financials_fetched_at"),
     }
-    
+
     # Build update dict (exclude symbol as it's the conflict key)
     update_values = {}
     for key, value in values.items():
@@ -534,7 +535,7 @@ async def _store_fundamentals(
                 update_values[key] = value
             continue
         update_values[key] = value
-    
+
     async with get_session() as session:
         stmt = insert(StockFundamentals).values(**values)
         stmt = stmt.on_conflict_do_update(
@@ -543,14 +544,14 @@ async def _store_fundamentals(
         )
         await session.execute(stmt)
         await session.commit()
-    
+
     logger.debug(f"Stored fundamentals for {symbol} (domain={data.get('domain')})")
 
 
 async def fetch_fundamentals_live(
     symbol: str,
     use_cache: bool = True,
-) -> Optional[dict[str, Any]]:
+) -> dict[str, Any] | None:
     """
     Fetch fundamentals from Yahoo Finance without storing to database.
     
@@ -564,10 +565,10 @@ async def fetch_fundamentals_live(
         Dict with formatted fundamental metrics, or None if not available
     """
     symbol = symbol.upper()
-    
+
     if symbol.startswith("^"):
         return None
-    
+
     cache_key = f"live:{symbol}"
     if use_cache:
         cached = await _live_fundamentals_cache.get(cache_key)
@@ -579,22 +580,22 @@ async def fetch_fundamentals_live(
         include_financials=False,
         include_calendar=True,
     )
-    
+
     if not data:
         return None
-    
+
     # Format the data the same way as get_fundamentals_for_analysis
-    def fmt_pct(val: Optional[float]) -> Optional[str]:
+    def fmt_pct(val: float | None) -> str | None:
         if val is None:
             return None
         return f"{val * 100:.1f}%"
-    
-    def fmt_ratio(val: Optional[float]) -> Optional[str]:
+
+    def fmt_ratio(val: float | None) -> str | None:
         if val is None:
             return None
         return f"{val:.2f}"
-    
-    def fmt_large_num(val: Optional[int]) -> Optional[str]:
+
+    def fmt_large_num(val: int | None) -> str | None:
         if val is None:
             return None
         if val >= 1e12:
@@ -604,7 +605,7 @@ async def fetch_fundamentals_live(
         if val >= 1e6:
             return f"${val / 1e6:.1f}M"
         return f"${val:,.0f}"
-    
+
     formatted = {
         # Valuation
         "pe_ratio": data.get("pe_ratio"),
@@ -720,7 +721,7 @@ def _fundamentals_to_dict(f: StockFundamentals) -> dict[str, Any]:
     }
 
 
-async def get_fundamentals_from_db(symbol: str) -> Optional[dict[str, Any]]:
+async def get_fundamentals_from_db(symbol: str) -> dict[str, Any] | None:
     """
     Get fundamentals from database cache only (no fetching).
     
@@ -728,15 +729,15 @@ async def get_fundamentals_from_db(symbol: str) -> Optional[dict[str, Any]]:
     a yfinance fetch. Useful for untracked symbols.
     """
     symbol = symbol.upper()
-    
+
     if symbol.startswith("^"):
         return None
-    
+
     async with get_session() as session:
         result = await session.execute(
             select(StockFundamentals).where(
                 StockFundamentals.symbol == symbol,
-                StockFundamentals.expires_at > datetime.now(timezone.utc),
+                StockFundamentals.expires_at > datetime.now(UTC),
             )
         )
         row = result.scalar_one_or_none()
@@ -746,7 +747,7 @@ async def get_fundamentals_from_db(symbol: str) -> Optional[dict[str, Any]]:
 async def get_fundamentals_with_status(
     symbol: str,
     allow_stale: bool = True,
-) -> tuple[Optional[dict[str, Any]], bool]:
+) -> tuple[dict[str, Any] | None, bool]:
     """
     Get fundamentals from database with stale status.
 
@@ -768,7 +769,7 @@ async def get_fundamentals_with_status(
 
     data = _fundamentals_to_dict(row)
     is_stale = bool(
-        data.get("expires_at") and data["expires_at"] <= datetime.now(timezone.utc)
+        data.get("expires_at") and data["expires_at"] <= datetime.now(UTC)
     )
     if is_stale and not allow_stale:
         return None, True
@@ -781,7 +782,7 @@ async def get_fundamentals(
     include_financials: bool = True,
     include_calendar: bool = True,
     allow_stale: bool = False,
-) -> Optional[dict[str, Any]]:
+) -> dict[str, Any] | None:
     """
     Get fundamentals for a symbol, fetching from Yahoo Finance if expired.
     
@@ -793,17 +794,17 @@ async def get_fundamentals(
         Dict with fundamental metrics, or None for ETFs/indexes
     """
     symbol = symbol.upper()
-    
+
     if symbol.startswith("^"):
         return None
-    
+
     # Check database cache
     if not force_refresh:
         async with get_session() as session:
             result = await session.execute(
                 select(StockFundamentals).where(
                     StockFundamentals.symbol == symbol,
-                    StockFundamentals.expires_at > datetime.now(timezone.utc),
+                    StockFundamentals.expires_at > datetime.now(UTC),
                 )
             )
             row = result.scalar_one_or_none()
@@ -816,14 +817,14 @@ async def get_fundamentals(
                 row = result.scalar_one_or_none()
                 if row:
                     return _fundamentals_to_dict(row)
-    
+
     # Fetch via unified service
     data = await _fetch_fundamentals_from_service(
         symbol,
         include_financials=include_financials,
         include_calendar=include_calendar,
     )
-    
+
     if data:
         await _store_fundamentals(
             data,
@@ -831,7 +832,7 @@ async def get_fundamentals(
             update_calendar=include_calendar,
         )
         return data
-    
+
     return None
 
 
@@ -839,7 +840,7 @@ async def refresh_fundamentals(
     symbol: str,
     include_financials: bool = True,
     include_calendar: bool = True,
-) -> Optional[dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Force refresh fundamentals for a symbol."""
     return await get_fundamentals(
         symbol,
@@ -850,7 +851,7 @@ async def refresh_fundamentals(
 
 
 async def refresh_all_fundamentals(
-    symbols: list[str] | None = None, 
+    symbols: list[str] | None = None,
     batch_size: int = 10,
     include_financials_for: set[str] | None = None,
     include_calendar_for: set[str] | None = None,
@@ -877,24 +878,24 @@ async def refresh_all_fundamentals(
                     Symbol.is_active == True,
                     or_(
                         StockFundamentals.symbol == None,
-                        StockFundamentals.expires_at < datetime.now(timezone.utc),
+                        StockFundamentals.expires_at < datetime.now(UTC),
                     ),
                 )
                 .order_by(StockFundamentals.expires_at.asc().nulls_first())
                 .limit(100)
             )
             symbols = [r[0] for r in result.all()]
-    
+
     logger.info(f"Refreshing fundamentals for {len(symbols)} symbols")
-    
+
     refreshed = 0
     failed = 0
     skipped = 0
-    
+
     # Process in batches to avoid overwhelming yfinance
     for i in range(0, len(symbols), batch_size):
         batch = symbols[i:i + batch_size]
-        
+
         # Process batch concurrently
         tasks = []
         for symbol in batch:
@@ -913,7 +914,7 @@ async def refresh_all_fundamentals(
                 )
             )
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        
+
         for symbol, result in zip(batch, results):
             if isinstance(result, Exception):
                 logger.error(f"Failed to refresh {symbol}: {result}")
@@ -922,11 +923,11 @@ async def refresh_all_fundamentals(
                 skipped += 1
             else:
                 refreshed += 1
-        
+
         # Small delay between batches
         if i + batch_size < len(symbols):
             await asyncio.sleep(1)
-    
+
     logger.info(f"Fundamentals refresh complete: {refreshed} refreshed, {failed} failed, {skipped} skipped")
     return {"refreshed": refreshed, "failed": failed, "skipped": skipped}
 
@@ -959,7 +960,7 @@ async def update_price_based_metrics(symbol: str, current_price: float) -> bool:
         updates["forward_pe"] = price / row.eps_forward
     if row.book_value and row.book_value > 0:
         updates["price_to_book"] = price / row.book_value
-    market_cap: Optional[Decimal] = None
+    market_cap: Decimal | None = None
     if row.shares_outstanding and row.shares_outstanding > 0:
         market_cap = price * Decimal(row.shares_outstanding)
         total_debt = Decimal(row.total_debt or 0)
@@ -1001,23 +1002,23 @@ async def get_fundamentals_for_analysis(symbol: str) -> dict[str, Any]:
     including human-readable labels and formatted numbers.
     """
     data = await get_fundamentals(symbol)
-    
+
     if not data:
         return {}
-    
-    def fmt_pct(val: Optional[float]) -> Optional[str]:
+
+    def fmt_pct(val: float | None) -> str | None:
         """Format decimal as percentage."""
         if val is None:
             return None
         return f"{val * 100:.1f}%"
-    
-    def fmt_ratio(val: Optional[float]) -> Optional[str]:
+
+    def fmt_ratio(val: float | None) -> str | None:
         """Format ratio."""
         if val is None:
             return None
         return f"{val:.2f}"
-    
-    def fmt_large_num(val: Optional[int]) -> Optional[str]:
+
+    def fmt_large_num(val: int | None) -> str | None:
         """Format large number (billions/millions)."""
         if val is None:
             return None
@@ -1028,7 +1029,7 @@ async def get_fundamentals_for_analysis(symbol: str) -> dict[str, Any]:
         if val >= 1e6:
             return f"${val / 1e6:.1f}M"
         return f"${val:,.0f}"
-    
+
     return {
         # Valuation
         "pe_ratio": data.get("pe_ratio"),
@@ -1036,34 +1037,34 @@ async def get_fundamentals_for_analysis(symbol: str) -> dict[str, Any]:
         "peg_ratio": fmt_ratio(data.get("peg_ratio")),
         "price_to_book": fmt_ratio(data.get("price_to_book")),
         "ev_to_ebitda": fmt_ratio(data.get("ev_to_ebitda")),
-        
+
         # Profitability
         "profit_margin": fmt_pct(data.get("profit_margin")),
         "operating_margin": fmt_pct(data.get("operating_margin")),
         "gross_margin": fmt_pct(data.get("gross_margin")),
         "return_on_equity": fmt_pct(data.get("return_on_equity")),
         "return_on_assets": fmt_pct(data.get("return_on_assets")),
-        
+
         # Financial Health
         "debt_to_equity": fmt_ratio(data.get("debt_to_equity")),
         "current_ratio": fmt_ratio(data.get("current_ratio")),
         "free_cash_flow": fmt_large_num(data.get("free_cash_flow")),
         "total_debt": fmt_large_num(data.get("total_debt")),
         "total_cash": fmt_large_num(data.get("total_cash")),
-        
+
         # Growth
         "revenue_growth": fmt_pct(data.get("revenue_growth")),
         "earnings_growth": fmt_pct(data.get("earnings_growth")),
-        
+
         # Analyst
         "recommendation": data.get("recommendation"),
         "num_analyst_opinions": data.get("num_analyst_opinions"),
         "target_mean_price": data.get("target_mean_price"),
-        
+
         # Risk
         "beta": fmt_ratio(data.get("beta")),
         "short_percent_of_float": fmt_pct(data.get("short_percent_of_float")),
-        
+
         # Earnings
         "next_earnings_date": str(data.get("next_earnings_date")) if data.get("next_earnings_date") else None,
         "eps_trailing": data.get("eps_trailing"),
@@ -1071,7 +1072,7 @@ async def get_fundamentals_for_analysis(symbol: str) -> dict[str, Any]:
     }
 
 
-async def get_pe_ratio(symbol: str) -> Optional[float]:
+async def get_pe_ratio(symbol: str) -> float | None:
     """Quick helper to get just the P/E ratio."""
     # First check symbols table (fast)
     async with get_session() as session:
@@ -1081,7 +1082,7 @@ async def get_pe_ratio(symbol: str) -> Optional[float]:
         row = result.scalar_one_or_none()
         if row:
             return float(row)
-    
+
     # Fall back to fundamentals
     data = await get_fundamentals(symbol)
     return data.get("pe_ratio") if data else None
@@ -1089,7 +1090,7 @@ async def get_pe_ratio(symbol: str) -> Optional[float]:
 
 # Backward compatibility - export for tests that import _fetch_fundamentals_sync
 # Tests should be updated to use the async version instead
-async def _fetch_fundamentals_sync_compat(symbol: str) -> Optional[dict[str, Any]]:
+async def _fetch_fundamentals_sync_compat(symbol: str) -> dict[str, Any] | None:
     """Backward compatible sync-style function (actually async)."""
     return await _fetch_fundamentals_from_service(symbol)
 

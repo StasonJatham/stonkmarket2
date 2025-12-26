@@ -18,14 +18,14 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from enum import Enum
-from typing import Optional, Any
 
 from fastapi import Request
 
 from app.cache.client import get_valkey_client
 from app.core.logging import get_logger
+
 
 logger = get_logger("core.client_identity")
 
@@ -72,19 +72,19 @@ def get_client_ip(request: Request) -> str:
     # Cloudflare
     if cf_ip := request.headers.get("CF-Connecting-IP"):
         return cf_ip.strip()
-    
+
     # X-Forwarded-For (take first = original client)
     if forwarded := request.headers.get("X-Forwarded-For"):
         return forwarded.split(",")[0].strip()
-    
+
     # Nginx
     if real_ip := request.headers.get("X-Real-IP"):
         return real_ip.strip()
-    
+
     # Direct connection
     if request.client:
         return request.client.host
-    
+
     return "unknown"
 
 
@@ -116,7 +116,7 @@ def get_server_fingerprint(request: Request) -> str:
     return _hash("|".join(parts), 32)
 
 
-def get_client_fingerprint(request: Request) -> Optional[str]:
+def get_client_fingerprint(request: Request) -> str | None:
     """Get client-provided fingerprint from header (untrusted)."""
     return request.headers.get("X-Client-Fingerprint")
 
@@ -145,16 +145,16 @@ def get_request_fingerprint(
     Returns a hash for privacy.
     """
     parts = []
-    
+
     if include_ip:
         parts.append(f"ip:{get_client_ip(request)}")
-    
+
     if include_headers:
         parts.append(f"browser:{get_server_fingerprint(request)}")
-    
+
     if not parts:
         parts.append(f"ip:{get_client_ip(request)}")
-    
+
     return _hash("|".join(parts), 40)
 
 
@@ -181,7 +181,7 @@ class VoteCheck:
     risk_level: RiskLevel
     flags: list[str] = field(default_factory=list)
     reduce_weight: bool = False
-    
+
     def to_dict(self) -> dict:
         return {
             "allowed": self.allowed,
@@ -208,27 +208,27 @@ async def check_vote_allowed(
     """
     client = await get_valkey_client()
     symbol = symbol.upper()
-    
+
     ip = get_client_ip(request)
     ip_hash = _hash(ip)
     server_fp = get_server_fingerprint(request)
     client_fp = get_client_fingerprint(request)
-    
+
     flags = []
     risk_score = 0
-    
+
     # === Cooldown Check ===
     vote_id = get_vote_identifier(request, symbol)
     cooldown_key = f"{CACHE_PREFIX}:vote:{vote_id}"
-    
+
     existing_vote = await client.get(cooldown_key)
     if existing_vote:
         try:
             vote_data = json.loads(existing_vote)
             vote_time = datetime.fromisoformat(vote_data["voted_at"])
             cooldown_end = vote_time + timedelta(days=_get_vote_cooldown_days())
-            if datetime.now(timezone.utc) < cooldown_end.replace(tzinfo=timezone.utc):
-                days_left = (cooldown_end.replace(tzinfo=timezone.utc) - datetime.now(timezone.utc)).days + 1
+            if datetime.now(UTC) < cooldown_end.replace(tzinfo=UTC):
+                days_left = (cooldown_end.replace(tzinfo=UTC) - datetime.now(UTC)).days + 1
                 return VoteCheck(
                     allowed=False,
                     reason=f"Already voted. Try again in {days_left} days.",
@@ -237,7 +237,7 @@ async def check_vote_allowed(
                 )
         except (json.JSONDecodeError, KeyError):
             pass
-    
+
     # === IP-based Cooldown (backup check) ===
     ip_vote_key = f"{CACHE_PREFIX}:ip_vote:{ip_hash}:{symbol}"
     ip_voted = await client.get(ip_vote_key)
@@ -246,8 +246,8 @@ async def check_vote_allowed(
             vote_data = json.loads(ip_voted)
             vote_time = datetime.fromisoformat(vote_data["voted_at"])
             cooldown_end = vote_time + timedelta(days=_get_vote_cooldown_days())
-            if datetime.now(timezone.utc) < cooldown_end.replace(tzinfo=timezone.utc):
-                days_left = (cooldown_end.replace(tzinfo=timezone.utc) - datetime.now(timezone.utc)).days + 1
+            if datetime.now(UTC) < cooldown_end.replace(tzinfo=UTC):
+                days_left = (cooldown_end.replace(tzinfo=UTC) - datetime.now(UTC)).days + 1
                 return VoteCheck(
                     allowed=False,
                     reason=f"Vote recorded from your network. Try again in {days_left} days.",
@@ -256,32 +256,32 @@ async def check_vote_allowed(
                 )
         except (json.JSONDecodeError, KeyError):
             pass
-    
+
     # === Velocity Check ===
     velocity_key = f"{CACHE_PREFIX}:velocity:{ip_hash}"
     velocity = await client.get(velocity_key)
     vote_velocity = int(velocity) if velocity else 0
-    
+
     if vote_velocity >= MAX_VOTES_PER_HOUR:
         risk_score += 30
         flags.append(f"velocity_exceeded:{vote_velocity}")
     elif vote_velocity >= MAX_VOTES_PER_HOUR // 2:
         risk_score += 15
         flags.append(f"high_velocity:{vote_velocity}")
-    
+
     # === Coordinated Voting Detection ===
     # Check how many votes for this stock from similar IPs
     stock_ip_key = f"{CACHE_PREFIX}:stock_ip:{symbol}:{ip_hash[:8]}"
     stock_votes = await client.get(stock_ip_key)
     stock_votes_count = int(stock_votes) if stock_votes else 0
-    
+
     if stock_votes_count >= SUSPICIOUS_STOCK_VOTES_THRESHOLD:
         risk_score += 35
         flags.append(f"coordinated_voting:{stock_votes_count}")
     elif stock_votes_count >= 5:
         risk_score += 15
         flags.append(f"ip_cluster_voting:{stock_votes_count}")
-    
+
     # === Client Fingerprint Checks ===
     if client_fp:
         # Check if this fingerprint has been used from many IPs
@@ -294,20 +294,20 @@ async def check_vote_allowed(
         # No client fingerprint (may be blocking scripts)
         risk_score += 5
         flags.append("no_client_fingerprint")
-    
+
     # === Browser Signal Checks ===
     if not request.headers.get("Accept-Language"):
         risk_score += 10
         flags.append("missing_accept_language")
-    
+
     user_agent = request.headers.get("User-Agent", "")
     if not user_agent or len(user_agent) < 20:
         risk_score += 5
         flags.append("suspicious_user_agent")
-    
+
     # === Determine Risk Level ===
     risk_score = min(risk_score, 100)
-    
+
     if risk_score >= 76:
         risk_level = RiskLevel.CRITICAL
     elif risk_score >= 51:
@@ -316,7 +316,7 @@ async def check_vote_allowed(
         risk_level = RiskLevel.MEDIUM
     else:
         risk_level = RiskLevel.LOW
-    
+
     # === Decision ===
     if risk_level == RiskLevel.CRITICAL:
         # Log and block
@@ -328,12 +328,12 @@ async def check_vote_allowed(
             risk_level=risk_level,
             flags=flags,
         )
-    
+
     # Allow but maybe with reduced weight
     reduce_weight = risk_level == RiskLevel.HIGH
     if reduce_weight:
         await _log_suspicious(request, symbol, risk_score, flags, "reduced_weight")
-    
+
     return VoteCheck(
         allowed=True,
         reason="OK",
@@ -359,40 +359,40 @@ async def record_vote(
     """
     client = await get_valkey_client()
     symbol = symbol.upper()
-    
+
     ip = get_client_ip(request)
     ip_hash = _hash(ip)
     client_fp = get_client_fingerprint(request)
-    
-    now = datetime.now(timezone.utc).isoformat()
+
+    now = datetime.now(UTC).isoformat()
     vote_data = json.dumps({"voted_at": now, "symbol": symbol})
     cooldown_seconds = _get_vote_cooldown_days() * 86400
-    
+
     # Record vote by composite identifier
     vote_id = get_vote_identifier(request, symbol)
     cooldown_key = f"{CACHE_PREFIX}:vote:{vote_id}"
     await client.set(cooldown_key, vote_data, ex=cooldown_seconds)
-    
+
     # Record vote by IP (backup)
     ip_vote_key = f"{CACHE_PREFIX}:ip_vote:{ip_hash}:{symbol}"
     await client.set(ip_vote_key, vote_data, ex=cooldown_seconds)
-    
+
     # Increment velocity counter (1 hour TTL)
     velocity_key = f"{CACHE_PREFIX}:velocity:{ip_hash}"
     await client.incr(velocity_key)
     await client.expire(velocity_key, 3600)
-    
+
     # Track stock-IP correlation (24 hour TTL)
     stock_ip_key = f"{CACHE_PREFIX}:stock_ip:{symbol}:{ip_hash[:8]}"
     await client.incr(stock_ip_key)
     await client.expire(stock_ip_key, 86400)
-    
+
     # Track IPs per client fingerprint
     if client_fp:
         fp_ips_key = f"{CACHE_PREFIX}:fp_ips:{_hash(client_fp)}"
         await client.sadd(fp_ips_key, ip_hash)
         await client.expire(fp_ips_key, _get_session_ttl_seconds())
-    
+
     logger.debug(f"Recorded vote: {symbol} from IP {ip_hash[:8]}...")
 
 
@@ -408,14 +408,14 @@ async def check_can_suggest(request: Request) -> tuple[bool, str]:
     """
     client = await get_valkey_client()
     ip_hash = _hash(get_client_ip(request))
-    
+
     suggest_key = f"{CACHE_PREFIX}:suggest_count:{ip_hash}"
     count = await client.get(suggest_key)
     current = int(count) if count else 0
-    
+
     if current >= 3:
         return False, "You can only suggest 3 stocks per day. Try again tomorrow."
-    
+
     return True, "OK"
 
 
@@ -423,7 +423,7 @@ async def record_suggestion(request: Request) -> None:
     """Record that a suggestion was made."""
     client = await get_valkey_client()
     ip_hash = _hash(get_client_ip(request))
-    
+
     suggest_key = f"{CACHE_PREFIX}:suggest_count:{ip_hash}"
     await client.incr(suggest_key)
     await client.expire(suggest_key, 86400)
@@ -442,12 +442,12 @@ async def _log_suspicious(
 ) -> None:
     """Log suspicious vote attempt."""
     client = await get_valkey_client()
-    
+
     ip_hash = _hash(get_client_ip(request))
     server_fp = get_server_fingerprint(request)
-    
+
     entry = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "symbol": symbol,
         "ip_hash": ip_hash,
         "server_fp": server_fp[:16],
@@ -455,11 +455,11 @@ async def _log_suspicious(
         "flags": flags,
         "action": action,
     }
-    
+
     log_key = f"{CACHE_PREFIX}:suspicious_log"
     await client.lpush(log_key, json.dumps(entry))
     await client.ltrim(log_key, 0, 999)
-    
+
     logger.warning(
         f"Suspicious vote: score={score} symbol={symbol} "
         f"ip={ip_hash[:8]}... action={action} flags={flags}"
@@ -482,15 +482,15 @@ async def get_voted_symbols(request: Request) -> set[str]:
     """Get all symbols this user has voted on recently."""
     client = await get_valkey_client()
     ip_hash = _hash(get_client_ip(request))
-    
+
     # Scan for IP-based vote keys
     pattern = f"{CACHE_PREFIX}:ip_vote:{ip_hash}:*"
     voted = set()
-    
+
     async for key in client.scan_iter(match=pattern):
         # Extract symbol from key
         parts = key.split(":")
         if len(parts) >= 5:
             voted.add(parts[-1])
-    
+
     return voted

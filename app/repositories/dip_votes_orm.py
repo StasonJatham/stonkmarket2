@@ -18,17 +18,17 @@ Usage (advanced - manual session control):
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-from typing import Optional, Sequence
+from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select, func, and_, or_
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.connection import get_session
-from app.database.orm import DipVote, DipAIAnalysis, Symbol
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.database.connection import get_session
+from app.database.orm import DipAIAnalysis, DipVote, Symbol
+
 
 logger = get_logger("repositories.dip_votes_orm")
 
@@ -41,7 +41,7 @@ async def get_vote_cooldown_remaining_with_session(
     session: AsyncSession,
     symbol: str,
     fingerprint: str,
-) -> Optional[int]:
+) -> int | None:
     """
     Check if user is on cooldown for voting on this symbol.
 
@@ -49,7 +49,7 @@ async def get_vote_cooldown_remaining_with_session(
         Seconds remaining on cooldown, or None if can vote
     """
     cooldown_days = settings.vote_cooldown_days
-    cutoff = datetime.now(timezone.utc) - timedelta(days=cooldown_days)
+    cutoff = datetime.now(UTC) - timedelta(days=cooldown_days)
 
     result = await session.execute(
         select(DipVote.created_at)
@@ -69,7 +69,7 @@ async def get_vote_cooldown_remaining_with_session(
         return None
 
     cooldown_end = row + timedelta(days=cooldown_days)
-    remaining = (cooldown_end - datetime.now(timezone.utc)).total_seconds()
+    remaining = (cooldown_end - datetime.now(UTC)).total_seconds()
 
     return int(remaining) if remaining > 0 else None
 
@@ -80,9 +80,9 @@ async def add_vote_with_session(
     fingerprint: str,
     vote_type: str,
     vote_weight: int = 1,
-    api_key_id: Optional[int] = None,
+    api_key_id: int | None = None,
     skip_cooldown: bool = False,
-) -> tuple[bool, Optional[str]]:
+) -> tuple[bool, str | None]:
     """
     Add a vote for a dip.
 
@@ -115,7 +115,7 @@ async def add_vote_with_session(
         vote_type=vote_type,
         vote_weight=vote_weight,
         api_key_id=api_key_id,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     stmt = stmt.on_conflict_do_update(
         constraint="uq_dip_vote",
@@ -225,10 +225,10 @@ async def get_user_vote_for_symbol_with_session(
     session: AsyncSession,
     symbol: str,
     fingerprint: str,
-) -> Optional[dict]:
+) -> dict | None:
     """Get user's existing vote for a symbol within cooldown period."""
     cooldown_days = settings.vote_cooldown_days
-    cutoff = datetime.now(timezone.utc) - timedelta(days=cooldown_days)
+    cutoff = datetime.now(UTC) - timedelta(days=cooldown_days)
 
     result = await session.execute(
         select(DipVote)
@@ -256,9 +256,9 @@ async def get_user_vote_for_symbol_with_session(
 
 
 async def get_ai_analysis_with_session(
-    session: AsyncSession, 
+    session: AsyncSession,
     symbol: str
-) -> Optional[dict]:
+) -> dict | None:
     """Get cached AI analysis for a symbol."""
     result = await session.execute(
         select(DipAIAnalysis)
@@ -267,7 +267,7 @@ async def get_ai_analysis_with_session(
                 DipAIAnalysis.symbol == symbol.upper(),
                 or_(
                     DipAIAnalysis.expires_at.is_(None),
-                    DipAIAnalysis.expires_at > datetime.now(timezone.utc),
+                    DipAIAnalysis.expires_at > datetime.now(UTC),
                 ),
             )
         )
@@ -290,16 +290,16 @@ async def get_ai_analysis_with_session(
 async def upsert_ai_analysis_with_session(
     session: AsyncSession,
     symbol: str,
-    swipe_bio: Optional[str] = None,
-    ai_rating: Optional[str] = None,
-    ai_reasoning: Optional[str] = None,
+    swipe_bio: str | None = None,
+    ai_rating: str | None = None,
+    ai_reasoning: str | None = None,
     model_used: str = "gpt-5-mini",
     is_batch: bool = False,
     expires_hours: int = 168,  # 7 days
 ) -> dict:
     """Create or update AI analysis for a symbol."""
-    expires_at = datetime.now(timezone.utc) + timedelta(hours=expires_hours)
-    now = datetime.now(timezone.utc)
+    expires_at = datetime.now(UTC) + timedelta(hours=expires_hours)
+    now = datetime.now(UTC)
 
     stmt = insert(DipAIAnalysis).values(
         symbol=symbol.upper(),
@@ -341,7 +341,7 @@ async def upsert_ai_analysis_with_session(
 # PUBLIC API - AUTO-MANAGED SESSIONS (drop-in replacement for legacy module)
 # =============================================================================
 
-async def get_vote_cooldown_remaining(symbol: str, fingerprint: str) -> Optional[int]:
+async def get_vote_cooldown_remaining(symbol: str, fingerprint: str) -> int | None:
     """Check cooldown for voting on this symbol."""
     async with get_session() as session:
         return await get_vote_cooldown_remaining_with_session(session, symbol, fingerprint)
@@ -352,9 +352,9 @@ async def add_vote(
     fingerprint: str,
     vote_type: str,
     vote_weight: int = 1,
-    api_key_id: Optional[int] = None,
+    api_key_id: int | None = None,
     skip_cooldown: bool = False,
-) -> tuple[bool, Optional[str]]:
+) -> tuple[bool, str | None]:
     """Add a vote for a dip."""
     async with get_session() as session:
         result = await add_vote_with_session(
@@ -382,13 +382,13 @@ async def get_user_votes(fingerprint: str, limit: int = 50) -> list[dict]:
         return await get_user_votes_with_session(session, fingerprint, limit)
 
 
-async def get_user_vote_for_symbol(symbol: str, fingerprint: str) -> Optional[dict]:
+async def get_user_vote_for_symbol(symbol: str, fingerprint: str) -> dict | None:
     """Get user's existing vote for a symbol within cooldown period."""
     async with get_session() as session:
         return await get_user_vote_for_symbol_with_session(session, symbol, fingerprint)
 
 
-async def get_ai_analysis(symbol: str) -> Optional[dict]:
+async def get_ai_analysis(symbol: str) -> dict | None:
     """Get cached AI analysis for a symbol."""
     async with get_session() as session:
         return await get_ai_analysis_with_session(session, symbol)
@@ -396,9 +396,9 @@ async def get_ai_analysis(symbol: str) -> Optional[dict]:
 
 async def upsert_ai_analysis(
     symbol: str,
-    swipe_bio: Optional[str] = None,
-    ai_rating: Optional[str] = None,
-    ai_reasoning: Optional[str] = None,
+    swipe_bio: str | None = None,
+    ai_rating: str | None = None,
+    ai_reasoning: str | None = None,
     model_used: str = "gpt-5-mini",
     is_batch: bool = False,
     expires_hours: int = 168,

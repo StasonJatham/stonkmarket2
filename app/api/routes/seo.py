@@ -5,12 +5,13 @@ Provides dynamic sitemap.xml generation for the SPA,
 including all indexed routes and stock-specific pages.
 """
 
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, Response
 from fastapi.responses import PlainTextResponse
 
 from app.core.logging import get_logger
+
 
 logger = get_logger("api.routes.seo")
 
@@ -30,10 +31,10 @@ STATIC_ROUTES = [
 ]
 
 
-def format_date(dt: Optional[datetime]) -> str:
+def format_date(dt: datetime | None) -> str:
     """Format datetime as W3C date for sitemap."""
     if dt is None:
-        dt = datetime.now(timezone.utc)
+        dt = datetime.now(UTC)
     return dt.strftime("%Y-%m-%d")
 
 
@@ -52,14 +53,14 @@ async def get_sitemap() -> Response:
     - All static SPA routes (dashboard, swipe, privacy, etc.)
     - Dynamic stock pages if we add /stocks/:symbol routes in future
     """
-    now = format_date(datetime.now(timezone.utc))
-    
+    now = format_date(datetime.now(UTC))
+
     # Start XML
     xml_parts = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
     ]
-    
+
     # Add static routes
     for route in STATIC_ROUTES:
         xml_parts.append(f"""  <url>
@@ -68,7 +69,7 @@ async def get_sitemap() -> Response:
     <changefreq>{route['changefreq']}</changefreq>
     <priority>{route['priority']}</priority>
   </url>""")
-    
+
     # In future, add dynamic stock pages here when we create /stocks/:symbol routes
     # Example:
     # try:
@@ -82,11 +83,11 @@ async def get_sitemap() -> Response:
     #   </url>""")
     # except Exception as e:
     #     logger.warning(f"Failed to fetch symbols for sitemap: {e}")
-    
+
     xml_parts.append("</urlset>")
-    
+
     xml_content = "\n".join(xml_parts)
-    
+
     return Response(
         content=xml_content,
         media_type="application/xml",
@@ -128,7 +129,7 @@ Allow: /api/sitemap.xml
 # Crawl-delay (be nice to the server)
 Crawl-delay: 1
 """
-    
+
     return Response(
         content=robots_content,
         media_type="text/plain",

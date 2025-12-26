@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import inspect
 import time
-from typing import Optional
 
 from app.core.exceptions import JobError
 from app.core.logging import get_logger
 
 from .registry import get_job
+
 
 logger = get_logger("jobs.executor")
 
@@ -48,7 +48,7 @@ async def execute_job(name: str) -> str:
         duration = time.monotonic() - start_time
         logger.exception(f"Job {name} failed after {duration:.2f}s")
         raise JobError(
-            message=f"Job execution failed: {str(e)}",
+            message=f"Job execution failed: {e!s}",
             error_code="JOB_EXECUTION_FAILED",
             details={"job_name": name, "duration_seconds": duration},
         ) from e
@@ -75,7 +75,7 @@ async def execute_job_with_retry(
     Raises:
         JobError: If all retries exhausted
     """
-    last_error: Optional[Exception] = None
+    last_error: Exception | None = None
 
     for attempt in range(max_retries + 1):
         try:

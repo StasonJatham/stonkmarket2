@@ -36,13 +36,14 @@ export function computeQualitySettings(): QualitySettings {
   }[tier];
 
   const motionScale = prefersReducedMotion ? 0.35 : 1;
+  const densityScale = prefersReducedMotion ? 0.7 : 1;
 
   return {
     tier,
     dpr: Math.min(base.dpr, dprBase),
-    galaxyCount: base.galaxy,
-    tickerCount: base.ticker,
-    candleCount: base.candles,
+    galaxyCount: Math.round(base.galaxy * densityScale),
+    tickerCount: Math.round(base.ticker * densityScale),
+    candleCount: Math.round(base.candles * densityScale),
     enableMotion: !prefersReducedMotion,
     motionScale,
     reducedMotion: prefersReducedMotion,

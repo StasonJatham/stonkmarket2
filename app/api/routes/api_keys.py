@@ -7,18 +7,19 @@ from fastapi import APIRouter, Depends
 from app.api.dependencies import require_admin
 from app.core.encryption import decrypt_api_key
 from app.core.exceptions import AuthenticationError, NotFoundError, ValidationError
-from app.core.mfa import verify_totp, verify_backup_code
+from app.core.mfa import verify_backup_code, verify_totp
 from app.core.security import TokenData
-from app.repositories import auth_user_orm as auth_repo
 from app.repositories import api_keys_orm as api_keys_repo
+from app.repositories import auth_user_orm as auth_repo
 from app.schemas.api_keys import (
     ApiKeyCreate,
-    ApiKeyResponse,
-    ApiKeyList,
     ApiKeyDelete,
+    ApiKeyList,
+    ApiKeyResponse,
     ApiKeyReveal,
     ApiKeyRevealResponse,
 )
+
 
 router = APIRouter()
 
@@ -108,7 +109,7 @@ async def check_mfa_session(
     db_user = await auth_repo.get_user(user.sub)
     if not db_user:
         return {"has_session": False}
-    
+
     has_session = await _get_mfa_session(db_user.id)
     return {"has_session": has_session}
 

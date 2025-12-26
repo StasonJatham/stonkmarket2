@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Callable, Dict, List, Optional
+from collections.abc import Callable
 
 from app.core.logging import get_logger
+
 
 logger = get_logger("jobs.registry")
 
 # Global job registry
-_registry: Dict[str, Callable] = {}
+_registry: dict[str, Callable] = {}
 
 
 def register_job(name: str) -> Callable:
@@ -31,17 +32,17 @@ def register_job(name: str) -> Callable:
     return decorator
 
 
-def get_job(name: str) -> Optional[Callable]:
+def get_job(name: str) -> Callable | None:
     """Get a registered job function by name."""
     return _registry.get(name)
 
 
-def get_all_jobs() -> Dict[str, Callable]:
+def get_all_jobs() -> dict[str, Callable]:
     """Get all registered jobs."""
     return _registry.copy()
 
 
-def list_job_names() -> List[str]:
+def list_job_names() -> list[str]:
     """List all registered job names."""
     return list(_registry.keys())
 
@@ -50,21 +51,21 @@ class JobRegistry:
     """Class-based job registry for more complex scenarios."""
 
     def __init__(self):
-        self._jobs: Dict[str, Callable] = {}
+        self._jobs: dict[str, Callable] = {}
 
     def register(self, name: str, func: Callable) -> None:
         """Register a job function."""
         self._jobs[name] = func
         logger.debug(f"Registered job: {name}")
 
-    def get(self, name: str) -> Optional[Callable]:
+    def get(self, name: str) -> Callable | None:
         """Get a job function by name."""
         return self._jobs.get(name)
 
-    def all(self) -> Dict[str, Callable]:
+    def all(self) -> dict[str, Callable]:
         """Get all registered jobs."""
         return self._jobs.copy()
 
-    def names(self) -> List[str]:
+    def names(self) -> list[str]:
         """List all job names."""
         return list(self._jobs.keys())

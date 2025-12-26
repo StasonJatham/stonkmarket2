@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime, timezone
-from typing import Any, Optional
+from datetime import UTC, date, datetime
+from typing import Any
 
 from sqlalchemy import and_, select, update
-from sqlalchemy.dialects.postgresql import insert
 
 from app.database.connection import get_session
 from app.database.orm import PortfolioAnalyticsJob
@@ -45,11 +44,11 @@ async def create_job(
     user_id: int,
     *,
     tools: list[str],
-    window: Optional[str] = None,
-    start_date: Optional[date] = None,
-    end_date: Optional[date] = None,
-    benchmark: Optional[str] = None,
-    params: Optional[dict[str, Any]] = None,
+    window: str | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    benchmark: str | None = None,
+    params: dict[str, Any] | None = None,
     force_refresh: bool = False,
 ) -> dict[str, Any]:
     """Create or reuse a pending analytics job."""
@@ -100,8 +99,8 @@ async def create_job(
 async def list_jobs(
     user_id: int,
     *,
-    portfolio_id: Optional[int] = None,
-    status: Optional[str] = None,
+    portfolio_id: int | None = None,
+    status: str | None = None,
     limit: int = 50,
 ) -> list[dict[str, Any]]:
     """List portfolio analytics jobs for a user."""
@@ -122,7 +121,7 @@ async def list_jobs(
         return [_job_to_dict(job) for job in jobs]
 
 
-async def get_job(job_id: str, user_id: int) -> Optional[dict[str, Any]]:
+async def get_job(job_id: str, user_id: int) -> dict[str, Any] | None:
     """Fetch a single analytics job."""
     async with get_session() as session:
         stmt = select(PortfolioAnalyticsJob).where(
@@ -136,7 +135,7 @@ async def get_job(job_id: str, user_id: int) -> Optional[dict[str, Any]]:
         return _job_to_dict(job) if job else None
 
 
-async def claim_next_job() -> Optional[dict[str, Any]]:
+async def claim_next_job() -> dict[str, Any] | None:
     """Claim the next pending analytics job for processing.
     
     Uses FOR UPDATE SKIP LOCKED for safe concurrent access.
@@ -159,7 +158,7 @@ async def claim_next_job() -> Optional[dict[str, Any]]:
 
         # Update status to running
         job.status = "running"
-        job.started_at = datetime.now(timezone.utc)
+        job.started_at = datetime.now(UTC)
         job.error_message = None
 
         await session.commit()
@@ -175,7 +174,7 @@ async def mark_job_completed(job_id: str, results_count: int) -> None:
             .where(PortfolioAnalyticsJob.job_id == job_id)
             .values(
                 status="completed",
-                completed_at=datetime.now(timezone.utc),
+                completed_at=datetime.now(UTC),
                 results_count=results_count,
             )
         )
@@ -191,7 +190,7 @@ async def mark_job_failed(job_id: str, error_message: str) -> None:
             .where(PortfolioAnalyticsJob.job_id == job_id)
             .values(
                 status="failed",
-                completed_at=datetime.now(timezone.utc),
+                completed_at=datetime.now(UTC),
                 error_message=error_message[:1000],
             )
         )

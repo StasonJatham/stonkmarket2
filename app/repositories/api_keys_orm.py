@@ -10,28 +10,29 @@ Usage:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Optional, Any
+from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
-from app.core.encryption import encrypt_api_key, decrypt_api_key, get_key_hint
+from app.core.encryption import decrypt_api_key, encrypt_api_key, get_key_hint
+from app.core.logging import get_logger
 from app.database.connection import get_session
 from app.database.orm import SecureApiKey
-from app.core.logging import get_logger
+
 
 logger = get_logger("repositories.api_keys_orm")
 
 
-async def get_key(service_name: str) -> Optional[dict[str, Any]]:
+async def get_key(service_name: str) -> dict[str, Any] | None:
     """Get an API key by service name."""
     async with get_session() as session:
         result = await session.execute(
             select(SecureApiKey).where(SecureApiKey.service_name == service_name)
         )
         key = result.scalar_one_or_none()
-        
+
         if key:
             return {
                 "id": key.id,
@@ -45,7 +46,7 @@ async def get_key(service_name: str) -> Optional[dict[str, Any]]:
         return None
 
 
-async def get_decrypted_key(service_name: str) -> Optional[str]:
+async def get_decrypted_key(service_name: str) -> str | None:
     """Get and decrypt an API key by service name."""
     key_record = await get_key(service_name)
     if key_record and key_record.get("encrypted_key"):
@@ -64,7 +65,7 @@ async def list_keys() -> list[dict[str, Any]]:
             select(SecureApiKey).order_by(SecureApiKey.service_name)
         )
         keys = result.scalars().all()
-        
+
         return [
             {
                 "id": key.id,
@@ -81,12 +82,12 @@ async def list_keys() -> list[dict[str, Any]]:
 async def upsert_key(
     service_name: str,
     api_key: str,
-    created_by_id: Optional[int] = None,
+    created_by_id: int | None = None,
 ) -> dict[str, Any]:
     """Create or update an API key."""
     encrypted = encrypt_api_key(api_key)
     hint = get_key_hint(api_key)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     async with get_session() as session:
         stmt = insert(SecureApiKey).values(
@@ -106,7 +107,7 @@ async def upsert_key(
         )
         await session.execute(stmt)
         await session.commit()
-    
+
     return await get_key(service_name)  # type: ignore
 
 
@@ -117,7 +118,7 @@ async def delete_key(service_name: str) -> bool:
             select(SecureApiKey).where(SecureApiKey.service_name == service_name)
         )
         key = result.scalar_one_or_none()
-        
+
         if key:
             await session.delete(key)
             await session.commit()
@@ -139,7 +140,7 @@ async def seed_api_keys_from_env() -> None:
     This allows env vars to provide initial values that are then managed via UI.
     """
     from app.core.config import settings
-    
+
     # Seed OpenAI API key if set in env and not in db
     if settings.openai_api_key:
         existing = await get_key(OPENAI_API_KEY)
@@ -153,7 +154,7 @@ async def seed_api_keys_from_env() -> None:
         if not existing:
             await upsert_key(LOGO_DEV_PUBLIC_KEY, settings.logo_dev_public_key)
             logger.info("Seeded Logo.dev public key from environment")
-    
+
     # Seed Logo.dev secret key if set in env and not in db
     if settings.logo_dev_secret_key:
         existing = await get_key(LOGO_DEV_SECRET_KEY)

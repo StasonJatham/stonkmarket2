@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Optional, Tuple
 
 from app.core.config import settings
 from app.core.exceptions import RateLimitError
 from app.core.logging import get_logger
 
 from .client import get_valkey_client
+
 
 logger = get_logger("cache.rate_limit")
 
@@ -120,7 +120,7 @@ class RateLimiter:
         return result.allowed
 
 
-def parse_rate_limit(rate_string: str) -> Tuple[int, int]:
+def parse_rate_limit(rate_string: str) -> tuple[int, int]:
     """
     Parse rate limit string like "100/minute" or "10/second".
 
@@ -176,7 +176,7 @@ def get_api_rate_limiter(authenticated: bool = False) -> RateLimiter:
 
 async def check_rate_limit(
     identifier: str,
-    limiter: Optional[RateLimiter] = None,
+    limiter: RateLimiter | None = None,
     key_prefix: str = "api",
 ) -> RateLimitResult:
     """

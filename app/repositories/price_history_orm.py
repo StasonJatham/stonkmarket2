@@ -11,17 +11,18 @@ Usage:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import date
 from decimal import Decimal
-from typing import Optional, Sequence
 
 import pandas as pd
-from sqlalchemy import select, and_, func
+from sqlalchemy import and_, func, select
 from sqlalchemy.dialects.postgresql import insert
 
+from app.core.logging import get_logger
 from app.database.connection import get_session
 from app.database.orm import PriceHistory
-from app.core.logging import get_logger
+
 
 logger = get_logger("repositories.price_history_orm")
 
@@ -56,7 +57,7 @@ async def get_prices(
         return result.scalars().all()
 
 
-async def get_latest_price_date(symbol: str) -> Optional[date]:
+async def get_latest_price_date(symbol: str) -> date | None:
     """Get the most recent price date for a symbol."""
     async with get_session() as session:
         result = await session.execute(
@@ -86,7 +87,7 @@ async def get_prices_as_dataframe(
     symbol: str,
     start_date: date,
     end_date: date,
-) -> Optional[pd.DataFrame]:
+) -> pd.DataFrame | None:
     """Get price history as a pandas DataFrame.
     
     Args:
@@ -98,10 +99,10 @@ async def get_prices_as_dataframe(
         DataFrame with OHLCV data indexed by date, or None if no data
     """
     prices = await get_prices(symbol, start_date, end_date)
-    
+
     if not prices:
         return None
-    
+
     data = []
     for p in prices:
         data.append({
@@ -113,9 +114,11 @@ async def get_prices_as_dataframe(
             "Adj Close": float(p.adj_close) if p.adj_close else None,
             "Volume": int(p.volume) if p.volume else None,
         })
-    
+
     df = pd.DataFrame(data)
     df.set_index("date", inplace=True)
+    # Convert date index to DatetimeIndex for compatibility with datetime comparisons
+    df.index = pd.to_datetime(df.index)
     return df
 
 
@@ -131,12 +134,12 @@ async def save_prices(symbol: str, df: pd.DataFrame) -> int:
     """
     if df.empty:
         return 0
-    
+
     async with get_session() as session:
         count = 0
         for idx, row in df.iterrows():
             dt = idx.date() if hasattr(idx, "date") else idx
-            
+
             stmt = insert(PriceHistory).values(
                 symbol=symbol.upper(),
                 date=dt,
@@ -157,10 +160,10 @@ async def save_prices(symbol: str, df: pd.DataFrame) -> int:
                     "volume": int(row.get("Volume", 0)) if pd.notna(row.get("Volume")) else None,
                 }
             )
-            
+
             await session.execute(stmt)
             count += 1
-        
+
         await session.commit()
         logger.debug(f"Saved {count} price records for {symbol}")
         return count

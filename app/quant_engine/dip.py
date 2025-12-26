@@ -13,8 +13,6 @@ It may ONLY influence μ_hat or uncertainty, NEVER direct order generation.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
-from datetime import date
 from typing import Any
 
 import numpy as np
@@ -22,6 +20,7 @@ import pandas as pd
 import statsmodels.api as sm
 
 from app.quant_engine.types import DipArtifacts, MomentumCondition
+
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +60,7 @@ def compute_dip_score(
     """
     # Align data
     r, f = asset_returns.align(factor_returns, join="inner", axis=0)
-    
+
     if len(r) < min_obs:
         logger.warning(f"Insufficient data for DipScore: {len(r)} < {min_obs}")
         return DipArtifacts(
@@ -70,25 +69,25 @@ def compute_dip_score(
             resid_sigma=pd.DataFrame(index=r.index, columns=r.columns, dtype=float),
             factor_betas={},
         )
-    
+
     # Add constant to factors
     X = sm.add_constant(f.values, has_constant="add")
-    
+
     # Initialize output arrays
     resid = pd.DataFrame(index=r.index, columns=r.columns, dtype=float)
     factor_betas: dict[str, pd.Series] = {}
-    
+
     # Compute residuals using expanding window regression (no lookahead)
     for tkr in r.columns:
         y = r[tkr].values
         e = np.full_like(y, np.nan, dtype=float)
         betas_last = None
-        
+
         for t in range(min_obs, len(y)):
             try:
                 # Regression on data up to t-1 (exclusive of t)
                 mdl = sm.OLS(y[:t], X[:t]).fit()
-                
+
                 # Predict for time t
                 yhat = float(mdl.predict(X[t:t+1])[0])
                 e[t] = y[t] - yhat
@@ -96,9 +95,9 @@ def compute_dip_score(
             except Exception:
                 # Skip on regression failure
                 e[t] = np.nan
-        
+
         resid[tkr] = e
-        
+
         # Store latest betas
         if betas_last is not None:
             factor_betas[tkr] = pd.Series(
@@ -106,15 +105,15 @@ def compute_dip_score(
                 index=f.columns,
                 name=tkr,
             )
-    
+
     # Compute rolling residual volatility
     sigma = resid.rolling(resid_vol_window, min_periods=resid_vol_window // 2).std()
-    
+
     # Compute DipScore
     dip_score = (resid / sigma).replace([np.inf, -np.inf], np.nan)
-    
+
     logger.info(f"Computed DipScore for {len(r.columns)} assets, {len(r)} dates")
-    
+
     return DipArtifacts(
         dip_score=dip_score,
         resid=resid,
@@ -172,9 +171,9 @@ def get_momentum_condition(
     """
     if len(returns) < window:
         return MomentumCondition.NEUTRAL
-    
+
     cumret = (1 + returns.iloc[-window:]).prod() - 1
-    
+
     if cumret > 0.05:  # > 5% over period
         return MomentumCondition.POSITIVE
     elif cumret < -0.05:  # < -5% over period
@@ -211,36 +210,36 @@ def verify_dip_effectiveness(
         Verification results with bucket returns, regime splits, etc.
     """
     dip_score = dip_artifacts.dip_score
-    
+
     # Stack to long format
     dip_stack = dip_score.stack()
     dip_stack.name = "dip_score"
-    
+
     fwd_stack = forward_returns.stack()
     fwd_stack.name = "fwd_ret"
-    
+
     # Combine
     df = pd.concat([dip_stack, fwd_stack], axis=1, join="inner").dropna()
-    
+
     if len(df) < 100:
         logger.warning("Insufficient data for dip verification")
         return {"valid": False, "reason": "insufficient_data", "n": len(df)}
-    
+
     # Add buckets
     df["bucket"] = df["dip_score"].apply(get_dip_bucket)
-    
+
     # Bucket analysis
     bucket_stats = df.groupby("bucket")["fwd_ret"].agg(["mean", "std", "count"])
     bucket_stats["t_stat"] = bucket_stats["mean"] / (
         bucket_stats["std"] / np.sqrt(bucket_stats["count"])
     )
-    
+
     result = {
         "valid": True,
         "n": len(df),
         "bucket_stats": bucket_stats.to_dict(),
     }
-    
+
     # Check if extreme negative dip has higher returns (mean reversion)
     if "<=-2" in bucket_stats.index:
         extreme_dip_ret = bucket_stats.loc["<=-2", "mean"]
@@ -249,31 +248,31 @@ def verify_dip_effectiveness(
         result["extreme_dip_significant"] = (
             abs(bucket_stats.loc["<=-2", "t_stat"]) > 1.96
         )
-    
+
     # Regime dependence (if available)
     if regime_labels is not None:
         df_regime = df.copy()
         df_regime["regime"] = regime_labels.reindex(
             df.index.get_level_values(0)
         ).values
-        
+
         regime_bucket = df_regime.groupby(["regime", "bucket"])["fwd_ret"].mean()
         result["regime_bucket_returns"] = regime_bucket.to_dict()
-    
+
     # Momentum interaction (if available)
     if momentum_labels is not None:
         mom_stack = momentum_labels.stack()
         mom_stack.name = "momentum"
-        
+
         df_mom = df.join(mom_stack, how="left")
         df_mom = df_mom.dropna(subset=["momentum"])
-        
+
         if len(df_mom) > 50:
             mom_bucket = df_mom.groupby(["momentum", "bucket"])["fwd_ret"].mean()
             result["momentum_bucket_returns"] = mom_bucket.to_dict()
-    
+
     logger.info(f"Dip verification complete: {len(df)} samples")
-    
+
     return result
 
 
@@ -303,44 +302,44 @@ def compute_dip_adjustment_k(
         Best k and scores for all candidates.
     """
     dip_score = dip_artifacts.dip_score
-    
+
     # Align
     dip_stack = dip_score.stack()
     fwd_stack = forward_returns.stack()
-    
+
     df = pd.concat([dip_stack, fwd_stack], axis=1, join="inner")
     df.columns = ["dip", "fwd"]
     df = df.dropna()
-    
+
     if len(df) < 50:
         logger.warning("Insufficient data for dip k tuning, using k=0")
         return 0.0, {"0.0": np.nan}
-    
+
     scores = {}
-    
+
     for k in k_grid:
         # Dip contribution to mu_hat
         dip_contrib = k * np.maximum(0, -df["dip"])
-        
+
         # Simple evaluation: correlation of dip_contrib with fwd returns
         # Higher correlation = k is adding signal
         if k > 0 and dip_contrib.std() > 1e-12:
             corr = dip_contrib.corr(df["fwd"])
         else:
             corr = 0.0
-        
+
         scores[str(k)] = float(corr) if np.isfinite(corr) else 0.0
-    
+
     # Select k with highest correlation (but penalize for overfitting)
     # If no k improves, use k=0
     best_k = 0.0
     best_score = scores.get("0.0", 0.0)
-    
+
     for k in k_grid:
         if k > 0 and scores[str(k)] > best_score + 0.01:  # Require improvement
             best_k = k
             best_score = scores[str(k)]
-    
+
     logger.info(f"Selected dip_k={best_k}, scores={scores}")
-    
+
     return best_k, scores

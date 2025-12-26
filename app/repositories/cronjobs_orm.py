@@ -8,15 +8,15 @@ Usage:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import List, Optional
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
+from app.core.logging import get_logger
 from app.database.connection import get_session
 from app.database.orm import CronJob as CronJobORM
-from app.core.logging import get_logger
+
 
 logger = get_logger("repositories.cronjobs_orm")
 
@@ -30,7 +30,7 @@ class CronJobConfig:
         self.description = description
 
     @classmethod
-    def from_orm(cls, job: CronJobORM) -> "CronJobConfig":
+    def from_orm(cls, job: CronJobORM) -> CronJobConfig:
         return cls(
             name=job.name,
             cron=job.cron,
@@ -62,7 +62,7 @@ class CronJobWithStats(CronJobConfig):
         self.last_error = last_error
 
     @classmethod
-    def from_orm(cls, job: CronJobORM) -> "CronJobWithStats":
+    def from_orm(cls, job: CronJobORM) -> CronJobWithStats:
         return cls(
             name=job.name,
             cron=job.cron,
@@ -76,7 +76,7 @@ class CronJobWithStats(CronJobConfig):
         )
 
 
-async def list_cronjobs() -> List[CronJobConfig]:
+async def list_cronjobs() -> list[CronJobConfig]:
     """List all active cron jobs."""
     async with get_session() as session:
         result = await session.execute(
@@ -88,7 +88,7 @@ async def list_cronjobs() -> List[CronJobConfig]:
         return [CronJobConfig.from_orm(job) for job in jobs]
 
 
-async def list_cronjobs_with_stats() -> List[CronJobWithStats]:
+async def list_cronjobs_with_stats() -> list[CronJobWithStats]:
     """List all active cron jobs with execution statistics."""
     async with get_session() as session:
         result = await session.execute(
@@ -100,7 +100,7 @@ async def list_cronjobs_with_stats() -> List[CronJobWithStats]:
         return [CronJobWithStats.from_orm(job) for job in jobs]
 
 
-async def get_cronjob(name: str) -> Optional[CronJobConfig]:
+async def get_cronjob(name: str) -> CronJobConfig | None:
     """Get a cron job by name."""
     async with get_session() as session:
         result = await session.execute(
@@ -114,9 +114,9 @@ async def upsert_cronjob(
     name: str, cron_expr: str, description: str | None = None
 ) -> CronJobConfig:
     """Create or update a cron job."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     config = {"description": description} if description else None
-    
+
     async with get_session() as session:
         stmt = insert(CronJobORM).values(
             name=name,
@@ -133,7 +133,7 @@ async def upsert_cronjob(
         )
         await session.execute(stmt)
         await session.commit()
-    
+
     return await get_cronjob(name)  # type: ignore
 
 
@@ -141,25 +141,25 @@ async def update_job_stats(
     name: str, status: str, duration_ms: int, error: str | None = None
 ) -> None:
     """Update job execution statistics after a run."""
-    now = datetime.now(timezone.utc)
-    
+    now = datetime.now(UTC)
+
     async with get_session() as session:
         result = await session.execute(
             select(CronJobORM).where(CronJobORM.name == name)
         )
         job = result.scalar_one_or_none()
-        
+
         if job:
             job.last_run = now
             job.last_status = status
             job.last_duration_ms = duration_ms
             job.run_count = (job.run_count or 0) + 1
             job.updated_at = now
-            
+
             if status == "ok":
                 job.last_error = None
             else:
                 job.error_count = (job.error_count or 0) + 1
                 job.last_error = error[:1000] if error else None
-            
+
             await session.commit()

@@ -16,16 +16,17 @@ Usage:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from decimal import Decimal
-from typing import Optional, Sequence
 
-from sqlalchemy import select, delete, func
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.logging import get_logger
 from app.database.connection import get_session
 from app.database.orm import Symbol
-from app.core.logging import get_logger
+
 
 logger = get_logger("repositories.symbols_orm")
 
@@ -42,11 +43,11 @@ async def invalidate_symbol_caches(symbol: str | None = None) -> None:
                 If None, invalidate all ranking/chart caches.
     """
     from app.cache.cache import Cache
-    
+
     try:
         ranking_cache = Cache(prefix="ranking")
         await ranking_cache.invalidate_pattern("*")
-        
+
         if symbol:
             chart_cache = Cache(prefix="chart")
             await chart_cache.invalidate_pattern(f"{symbol}:*")
@@ -73,7 +74,7 @@ async def _list_symbols(session: AsyncSession) -> Sequence[Symbol]:
     return result.scalars().all()
 
 
-async def _get_symbol(session: AsyncSession, symbol: str) -> Optional[Symbol]:
+async def _get_symbol(session: AsyncSession, symbol: str) -> Symbol | None:
     """Get a symbol by ticker."""
     result = await session.execute(
         select(Symbol).where(Symbol.symbol == symbol.upper())
@@ -91,7 +92,7 @@ async def _upsert_symbol(
     symbol_upper = symbol.upper()
     existing = await _get_symbol(session, symbol_upper)
     is_new = existing is None
-    
+
     if existing:
         existing.min_dip_pct = Decimal(str(min_dip_pct))
         existing.min_days = min_days
@@ -106,17 +107,17 @@ async def _upsert_symbol(
             is_active=True,
         )
         session.add(symbol_obj)
-    
+
     await session.flush()
-    
+
     # Queue new symbols for initial data ingest
     if is_new:
         from app.jobs.definitions import add_to_ingest_queue
         await add_to_ingest_queue(symbol_upper, priority=0)
-    
+
     # Invalidate caches
     await invalidate_symbol_caches(symbol_upper)
-    
+
     return symbol_obj
 
 
@@ -125,7 +126,7 @@ async def _update_symbol(
     symbol: str,
     min_dip_pct: float | None = None,
     min_days: int | None = None,
-) -> Optional[Symbol]:
+) -> Symbol | None:
     """Update a symbol's configuration."""
     existing = await _get_symbol(session, symbol)
     if not existing:
@@ -136,10 +137,10 @@ async def _update_symbol(
     if min_days is not None:
         existing.min_days = min_days
     existing.updated_at = datetime.utcnow()
-    
+
     await session.flush()
     await invalidate_symbol_caches(symbol.upper())
-    
+
     return existing
 
 
@@ -148,7 +149,7 @@ async def _delete_symbol(session: AsyncSession, symbol: str) -> bool:
     result = await session.execute(
         delete(Symbol).where(Symbol.symbol == symbol.upper())
     )
-    
+
     if result.rowcount > 0:
         await invalidate_symbol_caches(symbol.upper())
         return True
@@ -182,7 +183,7 @@ async def list_symbols() -> Sequence[Symbol]:
         return await _list_symbols(session)
 
 
-async def get_symbol(symbol: str) -> Optional[Symbol]:
+async def get_symbol(symbol: str) -> Symbol | None:
     """Get a symbol by ticker."""
     async with get_session() as session:
         return await _get_symbol(session, symbol)
@@ -204,7 +205,7 @@ async def update_symbol(
     symbol: str,
     min_dip_pct: float | None = None,
     min_days: int | None = None,
-) -> Optional[Symbol]:
+) -> Symbol | None:
     """Update a symbol's configuration."""
     async with get_session() as session:
         result = await _update_symbol(session, symbol, min_dip_pct, min_days)
@@ -255,16 +256,16 @@ async def update_fetch_status(
             select(Symbol).where(Symbol.symbol == symbol.upper())
         )
         sym = result.scalar_one_or_none()
-        
+
         if not sym:
             return False
-        
+
         sym.fetch_status = fetch_status
         sym.fetch_error = fetch_error
         if fetched_at:
             sym.fetched_at = fetched_at
         sym.updated_at = datetime.utcnow()
-        
+
         await session.commit()
         return True
 
@@ -288,10 +289,10 @@ async def update_symbol_info(
             select(Symbol).where(Symbol.symbol == symbol.upper())
         )
         sym = result.scalar_one_or_none()
-        
+
         if not sym:
             return False
-        
+
         if name is not None:
             sym.name = name
         if sector is not None:
@@ -299,7 +300,7 @@ async def update_symbol_info(
         if summary_ai is not None:
             sym.summary_ai = summary_ai
         sym.updated_at = datetime.utcnow()
-        
+
         await session.commit()
         await invalidate_symbol_caches(symbol.upper())
         return True

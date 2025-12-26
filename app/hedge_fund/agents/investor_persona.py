@@ -7,7 +7,6 @@ Uses LLM to generate investment signals based on persona's philosophy.
 
 import json
 import logging
-from typing import Any, Optional
 
 from app.hedge_fund.agents.base import AgentSignal, LLMAgentBase
 from app.hedge_fund.llm.gateway import OpenAIGateway, get_gateway
@@ -19,6 +18,7 @@ from app.hedge_fund.schemas import (
     MarketData,
     Signal,
 )
+
 
 logger = logging.getLogger(__name__)
 
@@ -521,7 +521,7 @@ class InvestorPersonaAgent(LLMAgentBase):
     def __init__(
         self,
         persona: InvestorPersona,
-        gateway: Optional[OpenAIGateway] = None,
+        gateway: OpenAIGateway | None = None,
     ):
         super().__init__(
             agent_id=f"persona_{persona.id}",
@@ -540,9 +540,9 @@ class InvestorPersonaAgent(LLMAgentBase):
         """Build analysis prompt with market data."""
         f = data.fundamentals
         prices = data.prices
-        
+
         current_price = prices.latest.close if prices.latest else "N/A"
-        
+
         # Calculate price changes
         price_changes = {}
         if prices.prices:
@@ -555,26 +555,26 @@ class InvestorPersonaAgent(LLMAgentBase):
                 price_changes["3M"] = (closes[-1] - closes[-63]) / closes[-63] * 100
             if len(closes) >= 252:
                 price_changes["1Y"] = (closes[-1] - closes[-252]) / closes[-252] * 100
-        
+
         # Helper function for formatting optional values
         def fmt(val, spec: str) -> str:
             """Format a value with a format spec, or return 'N/A' if None."""
             if val is None:
                 return "N/A"
             return f"{val:{spec}}"
-        
+
         def fmt_pct(val) -> str:
             """Format a percentage value."""
             if val is None:
                 return "N/A"
             return f"{val:.1%}"
-        
+
         def fmt_money(val) -> str:
             """Format a money value."""
             if val is None:
                 return "N/A"
             return f"${val:,.0f}"
-        
+
         prompt = f"""Analyze {symbol} ({f.name}) for investment potential.
 
 **Company Overview:**
@@ -606,21 +606,21 @@ class InvestorPersonaAgent(LLMAgentBase):
 - Free Cash Flow: {fmt_money(f.free_cash_flow)}
 
 **Market Performance:**"""
-        
+
         for period, change in price_changes.items():
             prompt += f"\n- {period} Change: {change:+.1f}%"
-        
+
         if f.beta:
             prompt += f"\n- Beta: {f.beta:.2f}"
-        
+
         if f.dividend_yield:
             prompt += f"\n- Dividend Yield: {f.dividend_yield:.2%}"
-        
+
         # Add domain-specific metrics when available
         domain_section = self._build_domain_section(f)
         if domain_section:
             prompt += domain_section
-        
+
         prompt += """
 
 **Your Task:**
@@ -633,14 +633,14 @@ Respond with a JSON object containing:
 - "key_factors": array of 3-5 key factors driving your recommendation"""
 
         return prompt
-    
+
     def _build_domain_section(self, f) -> str:
         """Build domain-specific section of the prompt based on company type."""
         domain = (f.domain or "").lower()
-        
+
         if not domain:
             return ""
-        
+
         def fmt_money(val) -> str:
             if val is None:
                 return "N/A"
@@ -651,19 +651,19 @@ Respond with a JSON object containing:
             if abs(val) >= 1e6:
                 return f"${val/1e6:.1f}M"
             return f"${val:,.0f}"
-        
+
         def fmt_pct(val) -> str:
             if val is None:
                 return "N/A"
             return f"{val:.2%}"
-        
+
         def fmt_ratio(val) -> str:
             if val is None:
                 return "N/A"
             return f"{val:.1f}x"
-        
+
         lines = []
-        
+
         if domain == "bank":
             lines.append("\n\n**Bank-Specific Metrics:**")
             if f.net_interest_income is not None:
@@ -671,7 +671,7 @@ Respond with a JSON object containing:
             if f.net_interest_margin is not None:
                 lines.append(f"- Net Interest Margin: {fmt_pct(f.net_interest_margin)}")
             lines.append("- Note: D/E ratio is less meaningful for banks (leverage is the business)")
-            
+
         elif domain == "reit":
             lines.append("\n\n**REIT-Specific Metrics:**")
             if f.ffo is not None:
@@ -681,7 +681,7 @@ Respond with a JSON object containing:
             if f.p_ffo is not None:
                 lines.append(f"- Price/FFO: {fmt_ratio(f.p_ffo)}")
             lines.append("- Note: P/E is misleading for REITs due to depreciation; use P/FFO instead")
-            
+
         elif domain == "insurer":
             lines.append("\n\n**Insurance-Specific Metrics:**")
             if f.loss_ratio is not None:
@@ -691,22 +691,22 @@ Respond with a JSON object containing:
                 elif f.loss_ratio > 0.80:
                     lines.append("  (Elevated claims, needs attention)")
             lines.append("- Note: ROE and book value are key metrics for insurers")
-            
+
         elif domain == "etf":
             lines.append("\n\n**ETF Note:**")
             lines.append("- This is an ETF/fund. Traditional fundamental analysis does not apply.")
             lines.append("- Focus on: expense ratio, tracking error, liquidity, and asset composition.")
-            
+
         elif domain == "utility":
             lines.append("\n\n**Utility Note:**")
             lines.append("- Regulated utility with predictable cash flows")
             lines.append("- Higher debt levels are normal; focus on dividend sustainability")
-            
+
         elif domain == "biotech":
             lines.append("\n\n**Biotech Note:**")
             lines.append("- Clinical-stage biotech. Traditional metrics may not apply.")
             lines.append("- Focus on: pipeline, cash runway, clinical trial results, partnerships")
-        
+
         if len(lines) > 1:  # More than just the header
             return "\n".join(lines)
         return ""
@@ -717,7 +717,7 @@ Respond with a JSON object containing:
         data: MarketData,
         *,
         mode: LLMMode = LLMMode.REALTIME,
-        run_id: Optional[str] = None,
+        run_id: str | None = None,
     ) -> AgentSignal:
         """
         Run persona analysis and return signal.
@@ -742,7 +742,7 @@ Respond with a JSON object containing:
             },
             require_json=True,
         )
-        
+
         # Respect mode parameter - use realtime or batch accordingly
         if mode == LLMMode.BATCH:
             # For batch mode, submit task and return a placeholder signal
@@ -757,10 +757,10 @@ Respond with a JSON object containing:
                 key_factors=["Awaiting batch completion"],
                 metrics={"batch_id": batch_id, "persona": self.persona.id},
             )
-        
+
         # Realtime mode
         result = await self.gateway.run_realtime(task)
-        
+
         if result.failed:
             logger.error(f"LLM call failed for {symbol} with {self.agent_name}: {result.error}")
             return self._build_signal(
@@ -770,24 +770,24 @@ Respond with a JSON object containing:
                 reasoning=f"Analysis failed: {result.error}",
                 key_factors=["LLM call failed"],
             )
-        
+
         # Parse response
         try:
             if result.parsed_json:
                 parsed = result.parsed_json
             else:
                 parsed = json.loads(result.content)
-            
+
             # Support both "signal" (gateway realtime) and "rating" (RATING_SCHEMA batch)
             signal_str = parsed.get("signal") or parsed.get("rating", "hold")
             confidence = parsed.get("confidence", 5)
             reasoning = parsed.get("reasoning", "No reasoning provided")
             key_factors = parsed.get("key_factors", [])
-            
+
             # Normalize confidence to 0-1
             if isinstance(confidence, int) and confidence > 1:
                 confidence = confidence / 10.0
-            
+
             return self._build_signal(
                 symbol=symbol,
                 signal=signal_str,
@@ -815,7 +815,7 @@ Respond with a JSON object containing:
 # =============================================================================
 
 
-def get_persona(persona_id: str) -> Optional[InvestorPersona]:
+def get_persona(persona_id: str) -> InvestorPersona | None:
     """Get persona by ID."""
     return PERSONAS.get(persona_id)
 
@@ -827,8 +827,8 @@ def get_all_personas() -> list[InvestorPersona]:
 
 def get_persona_agent(
     persona_id: str,
-    gateway: Optional[OpenAIGateway] = None,
-) -> Optional[InvestorPersonaAgent]:
+    gateway: OpenAIGateway | None = None,
+) -> InvestorPersonaAgent | None:
     """Get a persona agent by ID."""
     persona = get_persona(persona_id)
     if not persona:
@@ -837,7 +837,7 @@ def get_persona_agent(
 
 
 def get_all_persona_agents(
-    gateway: Optional[OpenAIGateway] = None,
+    gateway: OpenAIGateway | None = None,
 ) -> list[InvestorPersonaAgent]:
     """Get all persona agents."""
     return [

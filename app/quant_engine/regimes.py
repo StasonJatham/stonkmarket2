@@ -16,6 +16,7 @@ import pandas as pd
 
 from app.quant_engine.types import RegimeState, RegimeTrend, RegimeVolatility
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -51,19 +52,19 @@ def compute_trend_regime(
     """
     if len(market_returns) < long_window:
         return RegimeTrend.NEUTRAL, 0.0
-    
+
     # Compute cumulative returns for MA calculation
     cum_ret = (1 + market_returns).cumprod()
-    
+
     short_ma = cum_ret.rolling(short_window).mean().iloc[-1]
     long_ma = cum_ret.rolling(long_window).mean().iloc[-1]
-    
+
     # Score: (short - long) / long
     if long_ma > 0:
         score = float((short_ma - long_ma) / long_ma)
     else:
         score = 0.0
-    
+
     # Classify
     if score > bull_threshold:
         regime = RegimeTrend.BULL
@@ -71,7 +72,7 @@ def compute_trend_regime(
         regime = RegimeTrend.BEAR
     else:
         regime = RegimeTrend.NEUTRAL
-    
+
     return regime, score
 
 
@@ -104,10 +105,10 @@ def compute_volatility_regime(
     """
     if len(market_returns) < window:
         return RegimeVolatility.MEDIUM, 0.15
-    
+
     # Compute annualized volatility
     vol = float(market_returns.iloc[-window:].std() * np.sqrt(252))
-    
+
     # Classify
     if vol < low_threshold:
         regime = RegimeVolatility.LOW
@@ -115,7 +116,7 @@ def compute_volatility_regime(
         regime = RegimeVolatility.HIGH
     else:
         regime = RegimeVolatility.MEDIUM
-    
+
     return regime, vol
 
 
@@ -150,10 +151,10 @@ def compute_regime_state(
     # Filter to as_of date
     ts = pd.Timestamp(as_of)
     returns = market_returns[market_returns.index <= ts]
-    
+
     trend, trend_score = compute_trend_regime(returns, short_window, long_window)
     vol, vol_score = compute_volatility_regime(returns, vol_window)
-    
+
     return RegimeState(
         trend=trend,
         volatility=vol,
@@ -189,18 +190,18 @@ def compute_regime_series(
         DataFrame with columns: trend, vol, trend_score, vol_score.
     """
     records = []
-    
+
     for i in range(long_window, len(market_returns)):
         dt = market_returns.index[i]
         returns_to_date = market_returns.iloc[:i+1]
-        
+
         trend, trend_score = compute_trend_regime(
             returns_to_date, short_window, long_window
         )
         vol, vol_score = compute_volatility_regime(
             returns_to_date, vol_window
         )
-        
+
         records.append({
             "date": dt,
             "trend": trend.value,
@@ -208,7 +209,7 @@ def compute_regime_series(
             "trend_score": trend_score,
             "vol_score": vol_score,
         })
-    
+
     return pd.DataFrame(records).set_index("date")
 
 
@@ -233,17 +234,17 @@ def get_regime_conditional_stats(
     """
     # Align
     returns, regimes = returns.align(regimes, join="inner", axis=0)
-    
+
     results = {}
-    
+
     for trend in RegimeTrend:
         for vol in RegimeVolatility:
             mask = (regimes["trend"] == trend.value) & (regimes["vol"] == vol.value)
             regime_returns = returns.loc[mask]
-            
+
             if len(regime_returns) < 10:
                 continue
-            
+
             key = f"{trend.value}_{vol.value}"
             results[key] = {
                 "mean": float(regime_returns.mean().mean()),
@@ -253,5 +254,5 @@ def get_regime_conditional_stats(
                     regime_returns.mean().mean() / regime_returns.std().mean() * np.sqrt(252)
                 ) if regime_returns.std().mean() > 1e-12 else 0.0,
             }
-    
+
     return results

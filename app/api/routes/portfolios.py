@@ -3,37 +3,37 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import List
 
 from fastapi import APIRouter, Depends, Query, status
 
 from app.api.dependencies import require_user
 from app.core.exceptions import NotFoundError, ValidationError
 from app.core.security import TokenData
-from app.repositories import auth_user_orm as auth_repo
-from app.repositories import portfolios_orm as portfolios_repo
-from app.repositories import portfolio_analytics_jobs_orm as analytics_jobs_repo
 from app.portfolio.service import (
+    get_cached_tool_result,
+    invalidate_portfolio_analytics_cache,
+    is_cached_result_stale,
     run_portfolio_tools,
     split_tools,
-    get_cached_tool_result,
-    is_cached_result_stale,
-    invalidate_portfolio_analytics_cache,
 )
+from app.repositories import auth_user_orm as auth_repo
+from app.repositories import portfolio_analytics_jobs_orm as analytics_jobs_repo
+from app.repositories import portfolios_orm as portfolios_repo
 from app.schemas.portfolio import (
-    PortfolioCreateRequest,
-    PortfolioUpdateRequest,
-    PortfolioResponse,
-    PortfolioDetailResponse,
     HoldingInput,
     HoldingResponse,
-    TransactionInput,
-    TransactionResponse,
+    PortfolioAnalyticsJobResponse,
     PortfolioAnalyticsRequest,
     PortfolioAnalyticsResponse,
-    PortfolioAnalyticsJobResponse,
+    PortfolioCreateRequest,
+    PortfolioDetailResponse,
+    PortfolioResponse,
+    PortfolioUpdateRequest,
     ToolResult,
+    TransactionInput,
+    TransactionResponse,
 )
+
 
 router = APIRouter(prefix="/portfolios", tags=["Portfolios"])
 
@@ -45,10 +45,10 @@ async def _get_user_id(user: TokenData) -> int:
     return record.id
 
 
-@router.get("", response_model=List[PortfolioResponse])
+@router.get("", response_model=list[PortfolioResponse])
 async def list_portfolios(
     user: TokenData = Depends(require_user),
-) -> List[PortfolioResponse]:
+) -> list[PortfolioResponse]:
     user_id = await _get_user_id(user)
     rows = await portfolios_repo.list_portfolios(user_id)
     return [PortfolioResponse(**r) for r in rows]
@@ -122,11 +122,11 @@ async def delete_portfolio(
     await invalidate_portfolio_analytics_cache(portfolio_id)
 
 
-@router.get("/{portfolio_id}/holdings", response_model=List[HoldingResponse])
+@router.get("/{portfolio_id}/holdings", response_model=list[HoldingResponse])
 async def list_holdings(
     portfolio_id: int,
     user: TokenData = Depends(require_user),
-) -> List[HoldingResponse]:
+) -> list[HoldingResponse]:
     user_id = await _get_user_id(user)
     portfolio = await portfolios_repo.get_portfolio(portfolio_id, user_id)
     if not portfolio:
@@ -172,12 +172,12 @@ async def delete_holding(
     await invalidate_portfolio_analytics_cache(portfolio_id)
 
 
-@router.get("/{portfolio_id}/transactions", response_model=List[TransactionResponse])
+@router.get("/{portfolio_id}/transactions", response_model=list[TransactionResponse])
 async def list_transactions(
     portfolio_id: int,
     limit: int = Query(200, ge=1, le=500),
     user: TokenData = Depends(require_user),
-) -> List[TransactionResponse]:
+) -> list[TransactionResponse]:
     user_id = await _get_user_id(user)
     portfolio = await portfolios_repo.get_portfolio(portfolio_id, user_id)
     if not portfolio:

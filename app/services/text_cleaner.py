@@ -7,7 +7,6 @@ This module provides utilities to detect and replace these artifacts.
 from __future__ import annotations
 
 import re
-from typing import Optional
 
 
 # Common AI artifacts: Unicode characters that LLMs prefer over ASCII equivalents
@@ -17,7 +16,7 @@ AI_REPLACEMENTS = {
     "\u2013": "-",      # – (en dash)
     "\u2012": "-",      # ‒ (figure dash)
     "\u2015": "-",      # ― (horizontal bar)
-    
+
     # Smart quotes → regular quotes
     "\u201c": '"',      # " (left double quotation)
     "\u201d": '"',      # " (right double quotation)
@@ -29,10 +28,10 @@ AI_REPLACEMENTS = {
     "\u201b": "'",      # ‛ (single high-reversed-9 quotation)
     "\u2032": "'",      # ′ (prime)
     "\u2033": '"',      # ″ (double prime)
-    
+
     # Ellipsis
     "\u2026": "...",    # … (horizontal ellipsis)
-    
+
     # Spaces
     "\u00a0": " ",      # Non-breaking space
     "\u2003": " ",      # Em space
@@ -41,13 +40,13 @@ AI_REPLACEMENTS = {
     "\u200a": " ",      # Hair space
     "\u202f": " ",      # Narrow no-break space
     "\u205f": " ",      # Medium mathematical space
-    
+
     # Bullets and symbols
     "\u2022": "-",      # • (bullet)
     "\u2023": "-",      # ‣ (triangular bullet)
     "\u2043": "-",      # ⁃ (hyphen bullet)
     "\u25e6": "-",      # ◦ (white bullet)
-    
+
     # Other common replacements
     "\u2212": "-",      # − (minus sign)
     "\u2010": "-",      # ‐ (hyphen)
@@ -57,14 +56,14 @@ AI_REPLACEMENTS = {
     "\u200c": "",       # Zero-width non-joiner
     "\u200d": "",       # Zero-width joiner
     "\ufeff": "",       # BOM / zero-width no-break space
-    
+
     # Fractions (common in AI text)
     "\u00bd": "1/2",    # ½
     "\u00bc": "1/4",    # ¼
     "\u00be": "3/4",    # ¾
     "\u2153": "1/3",    # ⅓
     "\u2154": "2/3",    # ⅔
-    
+
     # Other symbols
     "\u00d7": "x",      # × (multiplication sign)
     "\u00f7": "/",      # ÷ (division sign)
@@ -81,7 +80,7 @@ AI_REPLACEMENTS = {
 _TRANSLATION_TABLE = str.maketrans(AI_REPLACEMENTS)
 
 
-def clean_ai_text(text: Optional[str]) -> Optional[str]:
+def clean_ai_text(text: str | None) -> str | None:
     """
     Remove common AI-generated text artifacts.
     
@@ -96,22 +95,22 @@ def clean_ai_text(text: Optional[str]) -> Optional[str]:
     """
     if text is None:
         return None
-    
+
     if not text:
         return text
-    
+
     # Apply character replacements
     cleaned = text.translate(_TRANSLATION_TABLE)
-    
+
     # Normalize multiple spaces
     cleaned = re.sub(r' +', ' ', cleaned)
-    
+
     # Normalize multiple dashes (common in AI text: "high--performance")
     cleaned = re.sub(r'-{2,}', '-', cleaned)
-    
+
     # Strip leading/trailing whitespace
     cleaned = cleaned.strip()
-    
+
     return cleaned
 
 
@@ -165,42 +164,42 @@ def truncate_summary(
     """
     if not text or len(text) <= max_chars:
         return text
-    
+
     # If slightly over target but within max, accept it
     if len(text) <= max_chars:
         return text
-    
+
     # Try to find a good sentence break point
     # Look for sentence endings (. ! ?) near target
     search_start = max(0, target_chars - 50)
     search_end = min(len(text), target_chars + 50)
     search_region = text[search_start:search_end]
-    
+
     # Find last sentence break in search region
     last_break = -1
     for i, char in enumerate(search_region):
         if char in '.!?' and i + search_start < target_chars + 30:
             last_break = i
-    
+
     if last_break > 0:
         # Found a sentence break - use it
         truncated = text[:search_start + last_break + 1].strip()
         if len(truncated) <= max_chars:
             return truncated
-    
+
     # No good sentence break - truncate at word boundary
     truncated = text[:target_chars]
-    
+
     # Find last space to avoid cutting mid-word
     last_space = truncated.rfind(' ')
     if last_space > target_chars - 50:  # Don't go too far back
         truncated = truncated[:last_space]
-    
+
     # Add ellipsis if we truncated
     truncated = truncated.rstrip('.,;:!? ') + '...'
-    
+
     # Final safety check
     if len(truncated) > max_chars:
         truncated = truncated[:max_chars - 3] + '...'
-    
+
     return truncated

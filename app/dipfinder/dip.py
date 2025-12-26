@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
-from typing import Optional
 
 import numpy as np
 
@@ -185,10 +184,10 @@ def compute_typical_dip(
         Typical dip value, or 0.0 if no valid dips
     """
     valid = dip_series[~np.isnan(dip_series)]
-    
+
     # Filter to positive dips only (above threshold)
     positive_dips = valid[valid >= min_dip_threshold]
-    
+
     if len(positive_dips) == 0:
         return 0.0
 
@@ -233,7 +232,7 @@ def compute_dip_metrics(
     ticker: str,
     close_prices: np.ndarray,
     window: int,
-    config: Optional[DipFinderConfig] = None,
+    config: DipFinderConfig | None = None,
 ) -> DipMetrics:
     """
     Compute complete dip metrics for a ticker.
@@ -337,7 +336,7 @@ class IncrementalDipTracker:
         self._max_deque: deque = deque()  # (index, value)
         self._day_index = 0
 
-    def update(self, price: float) -> Optional[float]:
+    def update(self, price: float) -> float | None:
         """
         Add a new price and return current dip.
 
@@ -373,7 +372,7 @@ class IncrementalDipTracker:
         return None
 
     @property
-    def current_dip(self) -> Optional[float]:
+    def current_dip(self) -> float | None:
         """Get current dip without adding new data."""
         if len(self._prices) < self.window:
             return None
@@ -389,7 +388,7 @@ class IncrementalDipTracker:
         return 0.0
 
     @property
-    def current_peak(self) -> Optional[float]:
+    def current_peak(self) -> float | None:
         """Get current peak price."""
         if not self._max_deque:
             return None

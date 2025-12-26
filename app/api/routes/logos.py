@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Query, HTTPException, Depends
-
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 
+from app.api.dependencies import require_admin
 from app.core.logging import get_logger
 from app.core.security import TokenData
-from app.services.logo_service import get_logo, LogoTheme, prefetch_logos
-from app.api.dependencies import require_admin
+from app.services.logo_service import LogoTheme, get_logo, prefetch_logos
+
 
 logger = get_logger("api.logos")
 
@@ -39,10 +39,10 @@ async def get_stock_logo(
     Falls back to favicon if the logo isn't available.
     """
     logo_theme = LogoTheme.LIGHT if theme == "light" else LogoTheme.DARK
-    
+
     try:
         logo_data = await get_logo(symbol.upper(), logo_theme)
-        
+
         if logo_data:
             return Response(
                 content=logo_data,
@@ -52,9 +52,9 @@ async def get_stock_logo(
                     "X-Logo-Source": "cached",
                 },
             )
-        
+
         raise HTTPException(status_code=404, detail=f"Logo not found for {symbol}")
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -81,12 +81,12 @@ async def prefetch_stock_logos(
             status_code=400,
             detail="Maximum 100 symbols per request",
         )
-    
+
     results = await prefetch_logos(symbols)
-    
+
     successful = sum(1 for v in results.values() if v)
     failed = len(results) - successful
-    
+
     return {
         "message": f"Prefetched logos for {successful} symbols, {failed} failed",
         "results": results,

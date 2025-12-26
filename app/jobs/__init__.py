@@ -1,16 +1,16 @@
 """Background job utilities."""
-from .registry import (
-    JobRegistry,
-    register_job,
-    get_job,
+from .dispatch import (
+    enqueue_job,
+    get_task_status,
 )
 from .executor import (
     execute_job,
     execute_job_with_retry,
 )
-from .dispatch import (
-    enqueue_job,
-    get_task_status,
+from .registry import (
+    JobRegistry,
+    get_job,
+    register_job,
 )
 
 
@@ -21,11 +21,11 @@ async def reschedule_job(name: str, _cron_expression: str) -> bool:
 
 __all__ = [
     "JobRegistry",
-    "register_job",
-    "get_job",
+    "enqueue_job",
     "execute_job",
     "execute_job_with_retry",
-    "enqueue_job",
+    "get_job",
     "get_task_status",
+    "register_job",
     "reschedule_job",
 ]

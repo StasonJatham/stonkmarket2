@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import re
 
-from typing import Optional
-
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -62,9 +60,9 @@ class SymbolResponse(BaseModel):
     symbol: str = Field(..., description="Stock ticker symbol")
     min_dip_pct: float = Field(..., description="Minimum dip percentage threshold")
     min_days: int = Field(..., description="Minimum days below threshold")
-    name: Optional[str] = Field(None, description="Company name")
-    fetch_status: Optional[str] = Field(None, description="Data fetch status: pending, fetching, fetched, error")
-    fetch_error: Optional[str] = Field(None, description="Error message if fetch failed")
-    task_id: Optional[str] = Field(None, description="Celery task id")
+    name: str | None = Field(None, description="Company name")
+    fetch_status: str | None = Field(None, description="Data fetch status: pending, fetching, fetched, error")
+    fetch_error: str | None = Field(None, description="Error message if fetch failed")
+    task_id: str | None = Field(None, description="Celery task id")
 
     model_config = {"from_attributes": True}

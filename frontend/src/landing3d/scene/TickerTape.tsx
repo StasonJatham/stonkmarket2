@@ -1,12 +1,13 @@
 import { useFrame } from '@react-three/fiber';
 import { Text } from '@react-three/drei';
 import { useEffect, useMemo, useRef } from 'react';
+import type { MutableRefObject } from 'react';
 import { Color, Matrix4, Object3D, Vector3 } from 'three';
 import type { QualitySettings } from '../lib/perf/quality';
 
 interface TickerTapeProps {
   count: number;
-  visibilityRef: React.MutableRefObject<boolean>;
+  visibilityRef: MutableRefObject<boolean>;
   quality: QualitySettings;
 }
 
@@ -42,8 +43,12 @@ export function TickerTape({ count, visibilityRef, quality }: TickerTapeProps) {
       tempColor.set('#2953a8');
       accentRef.current?.setColorAt(index, tempColor);
     });
-    baseRef.current.instanceColor!.needsUpdate = true;
-    accentRef.current.instanceColor!.needsUpdate = true;
+    if (baseRef.current.instanceColor) {
+      baseRef.current.instanceColor.needsUpdate = true;
+    }
+    if (accentRef.current.instanceColor) {
+      accentRef.current.instanceColor.needsUpdate = true;
+    }
   }, [tickerData, tempColor]);
 
   useFrame((state) => {
@@ -77,12 +82,24 @@ export function TickerTape({ count, visibilityRef, quality }: TickerTapeProps) {
     <group>
       <instancedMesh ref={baseRef} args={[undefined, undefined, tickerData.length]}>
         <planeGeometry args={[2.4, 0.18]} />
-        <meshStandardMaterial emissive="#1c3d7a" color="#0b1626" roughness={0.4} metalness={0.2} />
+        <meshStandardMaterial
+          emissive="#1c3d7a"
+          color="#0b1626"
+          roughness={0.4}
+          metalness={0.2}
+          vertexColors
+        />
       </instancedMesh>
 
       <instancedMesh ref={accentRef} args={[undefined, undefined, tickerData.length]}>
         <planeGeometry args={[1.1, 0.06]} />
-        <meshStandardMaterial emissive="#3b6cff" color="#16253b" roughness={0.2} metalness={0.4} />
+        <meshStandardMaterial
+          emissive="#3b6cff"
+          color="#16253b"
+          roughness={0.2}
+          metalness={0.4}
+          vertexColors
+        />
       </instancedMesh>
 
       <group position={[-3.5, 2.2, 0]}>

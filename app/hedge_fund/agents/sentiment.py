@@ -6,17 +6,16 @@ Pure calculation-based - no LLM required.
 """
 
 import logging
-from typing import Optional
 
 from app.hedge_fund.agents.base import AgentSignal, CalculationAgentBase
 from app.hedge_fund.schemas import (
     AgentType,
     Fundamentals,
-    LLMMode,
     MarketData,
     SentimentMetrics,
     Signal,
 )
+
 
 logger = logging.getLogger(__name__)
 
@@ -43,37 +42,37 @@ class SentimentAgent(CalculationAgentBase):
         """Analyze sentiment and return signal."""
         f = data.fundamentals
         current_price = data.prices.latest.close if data.prices.latest else None
-        
+
         # Calculate sentiment metrics
         metrics = self._calculate_sentiment_metrics(f, current_price)
-        
+
         # Score components
         analyst_score = self._score_analyst_sentiment(f, current_price)
         short_score = self._score_short_interest(f)
         institutional_score = self._score_institutional(f)
-        
+
         # Weight the scores
         weights = {
             "analyst": 0.45,
             "short": 0.30,
             "institutional": 0.25,
         }
-        
+
         total_score = (
             analyst_score * weights["analyst"]
             + short_score * weights["short"]
             + institutional_score * weights["institutional"]
         )
-        
+
         # Map to signal
         signal, confidence = self._score_to_signal(total_score)
-        
+
         # Key factors
         key_factors = self._identify_key_factors(f, metrics)
-        
+
         # Reasoning
         reasoning = self._build_reasoning(f, metrics, total_score)
-        
+
         return self._build_signal(
             symbol=symbol,
             signal=signal.value,
@@ -95,7 +94,7 @@ class SentimentAgent(CalculationAgentBase):
     def _calculate_sentiment_metrics(
         self,
         f: Fundamentals,
-        current_price: Optional[float],
+        current_price: float | None,
     ) -> SentimentMetrics:
         """Calculate comprehensive sentiment metrics."""
         # Analyst target upside
@@ -104,10 +103,10 @@ class SentimentAgent(CalculationAgentBase):
             target_mean = f.raw_info.get("targetMeanPrice")
             if target_mean:
                 target_upside = (target_mean - current_price) / current_price
-        
+
         # Calculate overall sentiment score (-1 to 1)
         sentiment_scores = []
-        
+
         # Analyst sentiment
         if target_upside is not None:
             if target_upside > 0.30:
@@ -120,7 +119,7 @@ class SentimentAgent(CalculationAgentBase):
                 sentiment_scores.append(-0.2)
             else:
                 sentiment_scores.append(-0.6)
-        
+
         # Short interest sentiment
         if f.short_percent_of_float is not None:
             if f.short_percent_of_float < 0.03:
@@ -131,12 +130,12 @@ class SentimentAgent(CalculationAgentBase):
                 sentiment_scores.append(-0.2)
             else:
                 sentiment_scores.append(-0.6)
-        
+
         sentiment_score = (
             sum(sentiment_scores) / len(sentiment_scores)
             if sentiment_scores else 0.0
         )
-        
+
         # Map to sentiment label
         if sentiment_score > 0.5:
             overall_sentiment = "Very Bullish"
@@ -148,7 +147,7 @@ class SentimentAgent(CalculationAgentBase):
             overall_sentiment = "Bearish"
         else:
             overall_sentiment = "Very Bearish"
-        
+
         return SentimentMetrics(
             symbol=f.symbol,
             target_upside=target_upside,
@@ -161,11 +160,11 @@ class SentimentAgent(CalculationAgentBase):
     def _score_analyst_sentiment(
         self,
         f: Fundamentals,
-        current_price: Optional[float],
+        current_price: float | None,
     ) -> float:
         """Score analyst sentiment (0-100)."""
         scores = []
-        
+
         # Target price upside
         if current_price and f.raw_info:
             target_mean = f.raw_info.get("targetMeanPrice")
@@ -185,7 +184,7 @@ class SentimentAgent(CalculationAgentBase):
                     scores.append(40)
                 else:
                     scores.append(25)
-        
+
         # Recommendation
         if f.raw_info:
             rec_key = f.raw_info.get("recommendationKey", "").lower()
@@ -198,13 +197,13 @@ class SentimentAgent(CalculationAgentBase):
             }
             if rec_key in rec_map:
                 scores.append(rec_map[rec_key])
-        
+
         return sum(scores) / len(scores) if scores else 50
 
     def _score_short_interest(self, f: Fundamentals) -> float:
         """Score short interest (0-100). Lower short = higher score."""
         scores = []
-        
+
         # Short percent of float
         if f.short_percent_of_float is not None:
             spf = f.short_percent_of_float
@@ -218,7 +217,7 @@ class SentimentAgent(CalculationAgentBase):
                 scores.append(35)
             else:
                 scores.append(20)  # Very high short interest
-        
+
         # Short ratio (days to cover)
         if f.short_ratio is not None:
             sr = f.short_ratio
@@ -232,14 +231,14 @@ class SentimentAgent(CalculationAgentBase):
                 scores.append(35)
             else:
                 scores.append(20)
-        
+
         return sum(scores) / len(scores) if scores else 50
 
     def _score_institutional(self, f: Fundamentals) -> float:
         """Score institutional sentiment (0-100)."""
         # Limited data from yfinance, use what's available
         scores = []
-        
+
         if f.raw_info:
             # Institutional holders percentage
             inst_pct = f.raw_info.get("heldPercentInstitutions")
@@ -254,7 +253,7 @@ class SentimentAgent(CalculationAgentBase):
                     scores.append(50)
                 else:
                     scores.append(45)  # Low institutional interest
-        
+
         return sum(scores) / len(scores) if scores else 50
 
     def _score_to_signal(self, score: float) -> tuple[Signal, float]:
@@ -278,29 +277,29 @@ class SentimentAgent(CalculationAgentBase):
     ) -> list[str]:
         """Identify key sentiment factors."""
         factors = []
-        
+
         # Target upside
         if metrics.target_upside is not None:
             if metrics.target_upside > 0:
                 factors.append(f"Analyst target implies {metrics.target_upside:.1%} upside")
             else:
                 factors.append(f"Analyst target implies {abs(metrics.target_upside):.1%} downside")
-        
+
         # Short interest
         if f.short_percent_of_float is not None:
             if f.short_percent_of_float > 0.10:
                 factors.append(f"High short interest: {f.short_percent_of_float:.1%} of float")
             elif f.short_percent_of_float < 0.03:
                 factors.append(f"Low short interest: {f.short_percent_of_float:.1%} of float")
-        
+
         # Days to cover
         if f.short_ratio is not None:
             if f.short_ratio > 5:
                 factors.append(f"High days to cover: {f.short_ratio:.1f}")
-        
+
         # Overall sentiment
         factors.append(f"Overall sentiment: {metrics.overall_sentiment}")
-        
+
         return factors[:5]
 
     def _build_reasoning(
@@ -312,19 +311,19 @@ class SentimentAgent(CalculationAgentBase):
         """Build reasoning text."""
         parts = [f"Sentiment score: {score:.0f}/100."]
         parts.append(f"Overall market sentiment: {metrics.overall_sentiment}.")
-        
+
         if metrics.target_upside is not None:
             direction = "upside" if metrics.target_upside > 0 else "downside"
             parts.append(f"Analyst targets imply {abs(metrics.target_upside):.1%} {direction}.")
-        
+
         if f.short_percent_of_float is not None:
             parts.append(f"Short interest at {f.short_percent_of_float:.1%} of float.")
-        
+
         return " ".join(parts)
 
 
 # Singleton
-_sentiment_agent: Optional[SentimentAgent] = None
+_sentiment_agent: SentimentAgent | None = None
 
 
 def get_sentiment_agent() -> SentimentAgent:

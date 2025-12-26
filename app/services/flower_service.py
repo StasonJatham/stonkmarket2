@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional, Tuple
+from typing import Any
 
 import httpx
 
@@ -10,10 +10,11 @@ from app.core.config import settings
 from app.core.exceptions import ExternalServiceError
 from app.core.logging import get_logger
 
+
 logger = get_logger("services.flower")
 
 
-def _parse_basic_auth() -> Optional[Tuple[str, str]]:
+def _parse_basic_auth() -> tuple[str, str] | None:
     if not settings.flower_basic_auth:
         return None
 
@@ -29,7 +30,7 @@ def _parse_basic_auth() -> Optional[Tuple[str, str]]:
     return username, password
 
 
-async def fetch_flower(path: str, params: Optional[dict[str, Any]] = None) -> Any:
+async def fetch_flower(path: str, params: dict[str, Any] | None = None) -> Any:
     """Fetch JSON from Flower API."""
     base_url = settings.flower_api_url.rstrip("/")
     url = f"{base_url}/{path.lstrip('/')}"

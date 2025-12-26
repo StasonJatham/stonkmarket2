@@ -5,8 +5,13 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Path, Query
 
 from app.api.dependencies import require_admin
+from app.core.exceptions import ExternalServiceError
+from app.core.logging import get_logger
 from app.core.security import TokenData
 from app.services.flower_service import fetch_flower
+
+
+logger = get_logger("routes.celery")
 
 router = APIRouter(prefix="/celery", tags=["Celery"])
 
@@ -54,7 +59,12 @@ async def get_task_info(
 async def list_queues(
     admin: TokenData = Depends(require_admin),
 ) -> dict:
-    return await fetch_flower("api/queues")
+    try:
+        return await fetch_flower("api/queues")
+    except ExternalServiceError:
+        # Flower may not support queues endpoint - return empty
+        logger.debug("Flower queues endpoint not available")
+        return {}
 
 
 @router.get(
@@ -65,4 +75,9 @@ async def list_queues(
 async def get_broker_status(
     admin: TokenData = Depends(require_admin),
 ) -> dict:
-    return await fetch_flower("api/broker")
+    try:
+        return await fetch_flower("api/broker")
+    except ExternalServiceError:
+        # Flower may not support broker endpoint - return empty
+        logger.debug("Flower broker endpoint not available")
+        return {}

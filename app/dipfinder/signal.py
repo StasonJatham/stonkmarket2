@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
 
 import numpy as np
 
@@ -146,7 +145,7 @@ class DipSignal:
 def classify_dip(
     dip_stock: float,
     dip_mkt: float,
-    config: Optional[DipFinderConfig] = None,
+    config: DipFinderConfig | None = None,
 ) -> DipClass:
     """
     Classify dip based on market context.
@@ -182,7 +181,7 @@ def compute_market_context(
     benchmark_prices: np.ndarray,
     benchmark_ticker: str,
     window: int,
-    config: Optional[DipFinderConfig] = None,
+    config: DipFinderConfig | None = None,
 ) -> MarketContext:
     """
     Compute market context for dip classification.
@@ -236,7 +235,7 @@ def compute_market_context(
 def compute_dip_score(
     dip_metrics: DipMetrics,
     market_context: MarketContext,
-    config: Optional[DipFinderConfig] = None,
+    config: DipFinderConfig | None = None,
 ) -> float:
     """
     Compute dip score from dip metrics and market context.
@@ -301,7 +300,7 @@ def generate_reason(
     stability_metrics: StabilityMetrics,
     dip_score: float,
     final_score: float,
-    config: Optional[DipFinderConfig] = None,
+    config: DipFinderConfig | None = None,
 ) -> str:
     """
     Generate human-readable reason for the signal.
@@ -358,7 +357,7 @@ def compute_signal(
     quality_metrics: QualityMetrics,
     stability_metrics: StabilityMetrics,
     as_of_date: str,
-    config: Optional[DipFinderConfig] = None,
+    config: DipFinderConfig | None = None,
 ) -> DipSignal:
     """
     Compute complete dip signal for a ticker.

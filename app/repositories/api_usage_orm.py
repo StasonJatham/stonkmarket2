@@ -5,16 +5,16 @@ Tracks OpenAI and other API costs and batch job status.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Optional, Any
+from typing import Any
 
-from sqlalchemy import select, func, case
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import case, func, select
 
+from app.core.logging import get_logger
 from app.database.connection import get_session
 from app.database.orm import ApiUsage, BatchJob
-from app.core.logging import get_logger
+
 
 logger = get_logger("repositories.api_usage")
 
@@ -26,7 +26,7 @@ async def record_usage(
     output_tokens: int,
     cost_usd: float,
     is_batch: bool = False,
-    metadata: Optional[dict] = None,
+    metadata: dict | None = None,
 ) -> int:
     """Record an API usage entry."""
     async with get_session() as session:
@@ -48,7 +48,7 @@ async def record_usage(
 
 async def get_usage_summary(days: int = 30) -> dict[str, Any]:
     """Get usage summary for the last N days."""
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    cutoff = datetime.now(UTC) - timedelta(days=days)
 
     async with get_session() as session:
         result = await session.execute(
@@ -93,7 +93,7 @@ async def get_usage_summary(days: int = 30) -> dict[str, Any]:
 
 async def get_daily_costs(days: int = 30) -> list[dict[str, Any]]:
     """Get daily cost breakdown."""
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    cutoff = datetime.now(UTC) - timedelta(days=days)
 
     async with get_session() as session:
         result = await session.execute(
@@ -170,30 +170,30 @@ async def record_batch_job(
 async def update_batch_job(
     batch_id: str,
     status: str,
-    cost_usd: Optional[float] = None,
-    error_message: Optional[str] = None,
+    cost_usd: float | None = None,
+    error_message: str | None = None,
 ) -> bool:
     """Update batch job status."""
-    now = datetime.now(timezone.utc)
-    
+    now = datetime.now(UTC)
+
     async with get_session() as session:
         result = await session.execute(
             select(BatchJob).where(BatchJob.batch_id == batch_id)
         )
         job = result.scalar_one_or_none()
-        
+
         if not job:
             return False
-        
+
         job.status = status
-        
+
         if status in ("completed", "failed"):
             job.completed_at = now
-        
+
         if status == "completed" and cost_usd is not None:
             job.actual_cost_usd = Decimal(str(cost_usd))
-        
+
         # Note: error_message handling would go to BatchTaskError if needed
-        
+
         await session.commit()
         return True

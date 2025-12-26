@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 
 from app.cache.cache import Cache
 from app.core.logging import get_logger
@@ -14,6 +14,7 @@ from app.repositories import symbols_orm as symbols_repo
 from app.services.openai_client import generate_bio, rate_dip, summarize_company
 from app.services.runtime_settings import get_runtime_setting
 from app.services.stock_info import get_stock_info_async
+
 
 logger = get_logger("services.symbol_processing")
 
@@ -139,11 +140,11 @@ async def process_new_symbol(symbol: str) -> None:
                     steps_completed.append("ai_summary")
                     logger.info(f"[NEW SYMBOL] Step 5: Generated AI summary ({len(ai_summary)} chars)")
                 else:
-                    logger.warning(f"[NEW SYMBOL] Step 5: No AI summary generated (OpenAI not configured?)")
+                    logger.warning("[NEW SYMBOL] Step 5: No AI summary generated (OpenAI not configured?)")
             except Exception as exc:
                 logger.warning(f"[NEW SYMBOL] Step 5 FAILED: AI summary error for {symbol}: {exc}")
         else:
-            logger.info(f"[NEW SYMBOL] Step 5: Skipped AI summary (no description or too short)")
+            logger.info("[NEW SYMBOL] Step 5: Skipped AI summary (no description or too short)")
 
         # Step 6: Generate AI bio
         bio = None
@@ -157,9 +158,9 @@ async def process_new_symbol(symbol: str) -> None:
             )
             if bio:
                 steps_completed.append("ai_bio")
-                logger.info(f"[NEW SYMBOL] Step 6: Generated AI bio")
+                logger.info("[NEW SYMBOL] Step 6: Generated AI bio")
             else:
-                logger.warning(f"[NEW SYMBOL] Step 6: No AI bio generated (OpenAI not configured?)")
+                logger.warning("[NEW SYMBOL] Step 6: No AI bio generated (OpenAI not configured?)")
         except Exception as exc:
             logger.warning(f"[NEW SYMBOL] Step 6 FAILED: AI bio error for {symbol}: {exc}")
 
@@ -180,7 +181,7 @@ async def process_new_symbol(symbol: str) -> None:
             )
             if rating_data:
                 steps_completed.append("ai_rating")
-                logger.info(f"[NEW SYMBOL] Step 7: Generated AI rating")
+                logger.info("[NEW SYMBOL] Step 7: Generated AI rating")
         except Exception as exc:
             logger.warning(f"[NEW SYMBOL] Step 7 FAILED: AI rating error for {symbol}: {exc}")
 
@@ -195,7 +196,7 @@ async def process_new_symbol(symbol: str) -> None:
                     is_batch=False,
                 )
                 steps_completed.append("ai_store")
-                logger.info(f"[NEW SYMBOL] Step 8: Stored AI analysis")
+                logger.info("[NEW SYMBOL] Step 8: Stored AI analysis")
             except Exception as exc:
                 logger.warning(f"[NEW SYMBOL] Step 8 FAILED: Could not store AI analysis: {exc}")
 
@@ -235,7 +236,7 @@ async def process_new_symbol(symbol: str) -> None:
         await symbols_repo.update_fetch_status(
             symbol.upper(),
             fetch_status="fetched",
-            fetched_at=datetime.now(timezone.utc),
+            fetched_at=datetime.now(UTC),
         )
         from app.services.task_tracking import clear_symbol_task
         await clear_symbol_task(symbol)

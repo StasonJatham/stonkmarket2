@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import date, timedelta
-from typing import List, Tuple
+from datetime import UTC, date, timedelta
 
 from fastapi import APIRouter, Depends, Path, Query, Request
 from pydantic import BaseModel
@@ -14,18 +13,17 @@ from app.cache.cache import Cache
 from app.cache.http_cache import (
     CacheableResponse,
     CachePresets,
+    NotModifiedResponse,
     check_if_none_match,
     generate_etag,
-    NotModifiedResponse,
 )
 from app.core.exceptions import ExternalServiceError, NotFoundError
 from app.core.security import TokenData
 from app.dipfinder.service import get_dipfinder_service  # For chart price data
-from app.repositories import symbols_orm as symbol_repo
 from app.repositories import dips_orm as dips_repo
 from app.schemas.dips import ChartPoint, DipStateResponse, RankingEntry, StockInfo
+from app.services.runtime_settings import get_cache_ttl, get_runtime_setting
 from app.services.stock_info import get_stock_info, get_stock_info_async
-from app.services.runtime_settings import get_runtime_setting, get_cache_ttl
 
 
 router = APIRouter()
@@ -56,7 +54,7 @@ class BenchmarkInfo(BaseModel):
 
 async def _build_ranking(
     force_refresh: bool = False,
-) -> Tuple[List[RankingEntry], List[RankingEntry]]:
+) -> tuple[list[RankingEntry], list[RankingEntry]]:
     """
     Build ranking data from dip_state table and stock info.
     
@@ -68,16 +66,16 @@ async def _build_ranking(
     """
     # Get all dip states with symbol info in one query
     rows = await dips_repo.get_ranking_data()
-    
+
     if not rows:
         return [], []
 
     # Fetch stock info for enrichment (52w low, market cap, etc)
     symbols_list = [r["symbol"] for r in rows]
-    
+
     async def get_info(symbol: str):
         return symbol, await get_stock_info_async(symbol)
-    
+
     info_tasks = [get_info(s) for s in symbols_list]
     info_results = await asyncio.gather(*info_tasks, return_exceptions=True)
     stock_info_map = {}
@@ -90,15 +88,16 @@ async def _build_ranking(
     # Build ranking entries from dip_state
     all_entries = []
     filtered_entries = []
-    
+
     for row in rows:
         symbol = row["symbol"]
         info = stock_info_map.get(symbol, {})
-        
+
         # Calculate days in dip - prefer dip_start_date, fall back to first_seen
         days_in_dip = 0
-        from datetime import datetime, timezone, date as date_type
-        
+        from datetime import date as date_type
+        from datetime import datetime
+
         if row["dip_start_date"]:
             dip_start = row["dip_start_date"]
             if isinstance(dip_start, date_type):
@@ -106,11 +105,11 @@ async def _build_ranking(
         elif row["first_seen"]:
             first_seen = row["first_seen"]
             if hasattr(first_seen, 'tzinfo') and first_seen.tzinfo is None:
-                first_seen = first_seen.replace(tzinfo=timezone.utc)
-            days_in_dip = (datetime.now(timezone.utc) - first_seen).days
-        
+                first_seen = first_seen.replace(tzinfo=UTC)
+            days_in_dip = (datetime.now(UTC) - first_seen).days
+
         dip_pct = float(row["dip_percentage"]) if row["dip_percentage"] else 0
-        
+
         entry = RankingEntry(
             symbol=symbol,
             name=row["name"] or info.get("name") or symbol,
@@ -129,7 +128,7 @@ async def _build_ranking(
             updated_at=row["last_updated"].isoformat() if row["last_updated"] else None,
         )
         all_entries.append(entry)
-        
+
         # Check if this stock meets its individual dip threshold
         min_dip_threshold = float(row["min_dip_pct"]) if row["min_dip_pct"] else 0.10
         if dip_pct / 100 >= min_dip_threshold:
@@ -144,7 +143,7 @@ async def _build_ranking(
 
 @router.get(
     "/benchmarks",
-    response_model=List[BenchmarkInfo],
+    response_model=list[BenchmarkInfo],
     summary="Get available benchmarks",
     description="Get list of available benchmarks for comparison. Public endpoint.",
 )
@@ -157,7 +156,7 @@ async def get_benchmarks() -> CacheableResponse:
     benchmarks = get_runtime_setting("benchmarks", [])
     data = [BenchmarkInfo(**b).model_dump() for b in benchmarks]
     etag = generate_etag(data)
-    
+
     return CacheableResponse(
         data,
         etag=etag,
@@ -187,11 +186,11 @@ async def get_ranking(
         ranking = [RankingEntry(**item) for item in cached]
         data = [r.model_dump(mode="json") for r in ranking]
         etag = generate_etag(data)
-        
+
         # Check for conditional request (If-None-Match)
         if check_if_none_match(request, etag):
             return NotModifiedResponse(etag=etag)
-        
+
         return CacheableResponse(
             data,
             etag=etag,
@@ -200,14 +199,14 @@ async def get_ranking(
 
     # Build ranking (use shared helper)
     all_entries, filtered_entries = await _build_ranking(force_refresh=False)
-    
+
     # Select appropriate result based on show_all
     ranking = all_entries if show_all else filtered_entries
     data = [r.model_dump(mode="json") for r in ranking]
 
     # Cache the result with dynamic TTL
     await _ranking_cache.set(cache_key, data, ttl=get_cache_ttl("ranking"))
-    
+
     etag = generate_etag(data)
     return CacheableResponse(
         data,
@@ -218,7 +217,7 @@ async def get_ranking(
 
 @router.post(
     "/ranking/refresh",
-    response_model=List[RankingEntry],
+    response_model=list[RankingEntry],
     summary="Refresh dip ranking",
     description="Force refresh of dip ranking (admin only).",
     responses={
@@ -227,7 +226,7 @@ async def get_ranking(
 )
 async def refresh_ranking(
     admin: TokenData = Depends(require_admin),
-) -> List[RankingEntry]:
+) -> list[RankingEntry]:
     """Force refresh of dip ranking (fetches new data)."""
     # Invalidate both cache keys
     await _ranking_cache.delete("all:True")
@@ -246,11 +245,11 @@ async def refresh_ranking(
 
 @router.get(
     "/states",
-    response_model=List[DipStateResponse],
+    response_model=list[DipStateResponse],
     summary="Get all dip states",
     description="Get current dip state for all tracked symbols.",
 )
-async def get_states() -> List[DipStateResponse]:
+async def get_states() -> list[DipStateResponse]:
     """Get current dip state for all tracked symbols."""
     # Get dip states from database
     rows = await dips_repo.get_all_dip_states()
@@ -336,11 +335,11 @@ async def get_chart(
     if cached:
         data = [ChartPoint(**item).model_dump(mode="json") for item in cached]
         etag = generate_etag(data)
-        
+
         # Check for conditional request (If-None-Match)
         if check_if_none_match(request, etag):
             return NotModifiedResponse(etag=etag)
-        
+
         return CacheableResponse(
             data,
             etag=etag,
@@ -377,7 +376,7 @@ async def get_chart(
             # Find the index of the highest price (52-week or period high)
             ref_high_idx = prices["Close"].idxmax()
             ref_high_date = str(ref_high_idx.date()) if hasattr(ref_high_idx, "date") else str(ref_high_idx)
-            
+
             # Get prices after the peak to find the lowest point (actual dip bottom)
             prices_after_peak = prices.loc[ref_high_idx:]
             if len(prices_after_peak) > 1:

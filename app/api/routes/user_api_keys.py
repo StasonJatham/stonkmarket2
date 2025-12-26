@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.api.dependencies import require_admin
-from app.repositories import user_api_keys_orm as user_api_keys
 from app.core.logging import get_logger
+from app.repositories import user_api_keys_orm as user_api_keys
+
 
 logger = get_logger("user_api_keys_api")
 router = APIRouter(prefix="/admin/user-keys", tags=["admin-user-keys"])
@@ -26,12 +25,12 @@ class CreateUserKeyRequest(BaseModel):
     name: str = Field(
         ..., min_length=1, max_length=100, description="Name/label for the key"
     )
-    description: Optional[str] = Field(None, max_length=500)
+    description: str | None = Field(None, max_length=500)
     vote_weight: int = Field(
         default=10, ge=1, le=100, description="Vote weight multiplier"
     )
     rate_limit_bypass: bool = Field(default=True, description="Bypass rate limits")
-    expires_days: Optional[int] = Field(
+    expires_days: int | None = Field(
         None, ge=1, le=365, description="Days until expiration (null = never)"
     )
 
@@ -45,7 +44,7 @@ class CreateUserKeyResponse(BaseModel):
     name: str
     vote_weight: int
     rate_limit_bypass: bool
-    expires_at: Optional[str] = None
+    expires_at: str | None = None
     warning: str = "This key will only be shown once. Please save it securely."
 
 
@@ -55,23 +54,23 @@ class UserKeyInfo(BaseModel):
     id: int
     key_prefix: str
     name: str
-    description: Optional[str] = None
+    description: str | None = None
     vote_weight: int
     rate_limit_bypass: bool
     is_active: bool
     usage_count: int
-    last_used_at: Optional[str] = None
+    last_used_at: str | None = None
     created_at: str
-    expires_at: Optional[str] = None
+    expires_at: str | None = None
 
 
 class UpdateUserKeyRequest(BaseModel):
     """Request to update a user API key."""
 
-    name: Optional[str] = Field(None, min_length=1, max_length=100)
-    description: Optional[str] = Field(None, max_length=500)
-    vote_weight: Optional[int] = Field(None, ge=1, le=100)
-    rate_limit_bypass: Optional[bool] = None
+    name: str | None = Field(None, min_length=1, max_length=100)
+    description: str | None = Field(None, max_length=500)
+    vote_weight: int | None = Field(None, ge=1, le=100)
+    rate_limit_bypass: bool | None = None
 
 
 class UserKeyStatsResponse(BaseModel):
@@ -82,7 +81,7 @@ class UserKeyStatsResponse(BaseModel):
     inactive_keys: int
     expired_keys: int
     total_usage: int
-    last_used: Optional[str] = None
+    last_used: str | None = None
 
 
 # ============================================================================

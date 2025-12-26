@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter
 
@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.core.logging import get_logger
 from app.database.connection import get_pg_pool
 from app.schemas.common import HealthResponse
+
 
 router = APIRouter(prefix="/health")
 
@@ -59,7 +60,7 @@ async def health_check() -> HealthResponse:
     return HealthResponse(
         status=status,
         version=settings.app_version,
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(UTC),
         checks=checks,
     )
 
@@ -113,7 +114,7 @@ async def cache_stats() -> dict:
     Useful for monitoring and debugging cache performance.
     """
     from app.cache.metrics import cache_metrics
-    
+
     return cache_metrics.get_summary()
 
 

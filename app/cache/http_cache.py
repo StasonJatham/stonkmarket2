@@ -25,14 +25,16 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
+from collections.abc import Callable
+from datetime import datetime
 from functools import wraps
-from typing import Any, Callable, Optional, TypeVar, Union
+from typing import Any, TypeVar
 
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 
 from app.core.logging import get_logger
+
 
 logger = get_logger("cache.http")
 
@@ -48,7 +50,7 @@ def generate_etag(data: Any) -> str:
         content = json.dumps(data, sort_keys=True, default=str)
     else:
         content = str(data)
-    
+
     hash_val = hashlib.md5(content.encode(), usedforsecurity=False).hexdigest()[:16]
     return f'W/"{hash_val}"'
 
@@ -73,7 +75,7 @@ class CacheableResponse(JSONResponse):
         etag: Custom ETag (auto-generated if None)
         last_modified: Last modification datetime for the data
     """
-    
+
     def __init__(
         self,
         content: Any,
@@ -82,32 +84,32 @@ class CacheableResponse(JSONResponse):
         stale_while_revalidate: int = 0,
         stale_if_error: int = 0,
         private: bool = False,
-        etag: Optional[str] = None,
-        last_modified: Optional[datetime] = None,
+        etag: str | None = None,
+        last_modified: datetime | None = None,
         status_code: int = 200,
-        headers: Optional[dict] = None,
+        headers: dict | None = None,
         **kwargs,
     ):
         super().__init__(content=content, status_code=status_code, headers=headers, **kwargs)
-        
+
         # Build Cache-Control header
         cache_parts = []
         cache_parts.append("private" if private else "public")
         cache_parts.append(f"max-age={max_age}")
-        
+
         if stale_while_revalidate > 0:
             cache_parts.append(f"stale-while-revalidate={stale_while_revalidate}")
-        
+
         if stale_if_error > 0:
             cache_parts.append(f"stale-if-error={stale_if_error}")
-        
+
         self.headers["Cache-Control"] = ", ".join(cache_parts)
-        
+
         # Generate and set ETag
         if etag is None:
             etag = generate_etag(content)
         self.headers["ETag"] = etag
-        
+
         # Set Last-Modified if provided
         if last_modified:
             self.headers["Last-Modified"] = last_modified.strftime(
@@ -117,8 +119,8 @@ class CacheableResponse(JSONResponse):
 
 class NotModifiedResponse(Response):
     """304 Not Modified response for conditional requests."""
-    
-    def __init__(self, etag: str, headers: Optional[dict] = None):
+
+    def __init__(self, etag: str, headers: dict | None = None):
         super().__init__(
             content=None,
             status_code=304,
@@ -135,12 +137,12 @@ def check_if_none_match(request: Request, etag: str) -> bool:
     if_none_match = request.headers.get("If-None-Match")
     if not if_none_match:
         return False
-    
+
     # Handle multiple ETags (comma-separated)
-    client_etags = [e.strip().strip('"').lstrip("W/").strip('"') 
+    client_etags = [e.strip().strip('"').lstrip("W/").strip('"')
                     for e in if_none_match.split(",")]
     server_etag = etag.strip('"').lstrip("W/").strip('"')
-    
+
     return server_etag in client_etags
 
 
@@ -165,10 +167,10 @@ def with_http_cache(
     """
     def decorator(func: Callable[..., T]) -> Callable[..., T]:
         @wraps(func)
-        async def wrapper(*args, request: Request, **kwargs) -> Union[T, NotModifiedResponse]:
+        async def wrapper(*args, request: Request, **kwargs) -> T | NotModifiedResponse:
             # Call the original function
             result = await func(*args, request=request, **kwargs)
-            
+
             # If already a Response, just add headers
             if isinstance(result, Response):
                 if "Cache-Control" not in result.headers:
@@ -177,15 +179,15 @@ def with_http_cache(
                         cache_parts.append(f"stale-while-revalidate={stale_while_revalidate}")
                     result.headers["Cache-Control"] = ", ".join(cache_parts)
                 return result
-            
+
             # Generate ETag from result
             etag = generate_etag(result)
-            
+
             # Check If-None-Match for conditional request
             if check_if_none_match(request, etag):
                 logger.debug(f"304 Not Modified: {request.url.path}")
                 return NotModifiedResponse(etag=etag)
-            
+
             # Return with cache headers
             return CacheableResponse(
                 content=result,
@@ -195,7 +197,7 @@ def with_http_cache(
                 private=private,
                 etag=etag,
             )
-        
+
         return wrapper
     return decorator
 
@@ -203,39 +205,39 @@ def with_http_cache(
 # Preset cache configurations for common patterns
 class CachePresets:
     """Common cache configurations for different data types."""
-    
+
     # Stock ranking - updates after cron job, but check often
     RANKING = {
         "max_age": 60,
         "stale_while_revalidate": 300,
         "stale_if_error": 3600,
     }
-    
+
     # Chart data - stable for the day, long cache
     CHART = {
         "max_age": 3600,
         "stale_while_revalidate": 86400,
         "stale_if_error": 86400,
     }
-    
+
     # Stock info - rarely changes
     STOCK_INFO = {
         "max_age": 3600,
         "stale_while_revalidate": 86400,
     }
-    
+
     # Symbol list - changes on add/remove
     SYMBOLS = {
         "max_age": 3600,
         "stale_while_revalidate": 86400,
     }
-    
+
     # Benchmarks - very stable configuration
     BENCHMARKS = {
         "max_age": 86400,
         "stale_while_revalidate": 86400 * 7,
     }
-    
+
     # Settings - always fresh for admin
     NO_CACHE = {
         "max_age": 0,

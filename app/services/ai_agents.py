@@ -27,9 +27,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timedelta, timezone
-from typing import Any, Optional, Literal
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from typing import Any, Literal
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
@@ -37,9 +37,10 @@ from sqlalchemy.dialects.postgresql import insert
 from app.core.logging import get_logger
 from app.database.connection import get_session
 from app.database.orm import AiAgentAnalysis, AnalysisVersion, Symbol
-from app.services.fundamentals import get_fundamentals, get_fundamentals_for_analysis
 from app.services import stock_info
-from app.services.openai_client import generate, TaskType
+from app.services.fundamentals import get_fundamentals_for_analysis
+from app.services.openai_client import TaskType, generate
+
 
 logger = get_logger("ai_agents")
 
@@ -57,7 +58,7 @@ def _compute_input_hash(fundamentals: dict[str, Any], stock_data: dict[str, Any]
     # Combine ALL data points used in prompts for accurate change detection
     key_data = {
         "fundamentals": {
-            k: v for k, v in fundamentals.items() 
+            k: v for k, v in fundamentals.items()
             if v is not None and k in (
                 # Valuation metrics
                 "pe_ratio", "forward_pe", "peg_ratio", "price_to_book", "ev_to_ebitda",
@@ -65,7 +66,7 @@ def _compute_input_hash(fundamentals: dict[str, Any], stock_data: dict[str, Any]
                 "profit_margin", "operating_margin", "return_on_equity", "return_on_assets",
                 # Financial health
                 "debt_to_equity", "current_ratio", "free_cash_flow",
-                # Growth metrics  
+                # Growth metrics
                 "revenue_growth", "earnings_growth",
                 # Risk metrics
                 "beta", "short_percent_of_float",
@@ -82,7 +83,7 @@ def _compute_input_hash(fundamentals: dict[str, Any], stock_data: dict[str, Any]
     return hashlib.sha256(content.encode()).hexdigest()[:16]
 
 
-async def _get_stored_input_hash(symbol: str) -> Optional[str]:
+async def _get_stored_input_hash(symbol: str) -> str | None:
     """Get the stored input hash for a symbol's agent analysis."""
     async with get_session() as session:
         result = await session.execute(
@@ -96,19 +97,19 @@ async def _get_stored_input_hash(symbol: str) -> Optional[str]:
 
 
 async def _store_analysis_version(
-    symbol: str, 
+    symbol: str,
     input_hash: str,
-    batch_job_id: Optional[str] = None,
+    batch_job_id: str | None = None,
 ) -> None:
     """Store/update the analysis version after successful analysis."""
-    expires_at = datetime.now(timezone.utc) + timedelta(days=7)
-    
+    expires_at = datetime.now(UTC) + timedelta(days=7)
+
     async with get_session() as session:
         stmt = insert(AnalysisVersion).values(
             symbol=symbol,
             analysis_type="agent_analysis",
             input_version_hash=input_hash,
-            generated_at=datetime.now(timezone.utc),
+            generated_at=datetime.now(UTC),
             expires_at=expires_at,
             batch_job_id=batch_job_id,
         )
@@ -203,7 +204,7 @@ class AgentAnalysisResult:
 def _format_metrics_for_prompt(fundamentals: dict[str, Any], stock_data: dict[str, Any]) -> str:
     """Format fundamentals and stock data into a concise prompt section."""
     lines = []
-    
+
     # Basic info
     if stock_data.get("name"):
         lines.append(f"Company: {stock_data['name']}")
@@ -211,7 +212,7 @@ def _format_metrics_for_prompt(fundamentals: dict[str, Any], stock_data: dict[st
         lines.append(f"Sector: {stock_data['sector']}")
     if stock_data.get("industry"):
         lines.append(f"Industry: {stock_data['industry']}")
-    
+
     # Valuation metrics
     valuation = []
     if fundamentals.get("pe_ratio"):
@@ -226,7 +227,7 @@ def _format_metrics_for_prompt(fundamentals: dict[str, Any], stock_data: dict[st
         valuation.append(f"EV/EBITDA: {fundamentals['ev_to_ebitda']}")
     if valuation:
         lines.append(f"Valuation: {', '.join(valuation)}")
-    
+
     # Profitability
     profit = []
     if fundamentals.get("profit_margin"):
@@ -239,7 +240,7 @@ def _format_metrics_for_prompt(fundamentals: dict[str, Any], stock_data: dict[st
         profit.append(f"ROA: {fundamentals['return_on_assets']}")
     if profit:
         lines.append(f"Profitability: {', '.join(profit)}")
-    
+
     # Financial health
     health = []
     if fundamentals.get("debt_to_equity"):
@@ -250,7 +251,7 @@ def _format_metrics_for_prompt(fundamentals: dict[str, Any], stock_data: dict[st
         health.append(f"FCF: {fundamentals['free_cash_flow']}")
     if health:
         lines.append(f"Financial Health: {', '.join(health)}")
-    
+
     # Growth
     growth = []
     if fundamentals.get("revenue_growth"):
@@ -259,7 +260,7 @@ def _format_metrics_for_prompt(fundamentals: dict[str, Any], stock_data: dict[st
         growth.append(f"Earnings: {fundamentals['earnings_growth']}")
     if growth:
         lines.append(f"Growth: {', '.join(growth)}")
-    
+
     # Risk
     risk = []
     if fundamentals.get("beta"):
@@ -268,13 +269,13 @@ def _format_metrics_for_prompt(fundamentals: dict[str, Any], stock_data: dict[st
         risk.append(f"Short %: {fundamentals['short_percent_of_float']}")
     if risk:
         lines.append(f"Risk: {', '.join(risk)}")
-    
+
     # Analyst consensus
     if fundamentals.get("recommendation"):
         lines.append(f"Analyst Consensus: {fundamentals['recommendation']}")
     if fundamentals.get("target_mean_price"):
         lines.append(f"Price Target: ${fundamentals['target_mean_price']}")
-    
+
     return "\n".join(lines)
 
 
@@ -282,12 +283,12 @@ async def _run_single_agent(
     agent_id: str,
     symbol: str,
     metrics_text: str,
-) -> Optional[AgentVerdict]:
+) -> AgentVerdict | None:
     """Run a single agent's analysis using OpenAI."""
     agent = AGENTS.get(agent_id)
     if not agent:
         return None
-    
+
     prompt = f"""You are {agent['name']}, the legendary investor. Analyze this stock using your investment philosophy.
 
 YOUR PHILOSOPHY: {agent['philosophy']}
@@ -315,25 +316,25 @@ Be specific about what the numbers tell you. If data is missing, factor that int
             json_output=True,
             max_tokens=300,
         )
-        
+
         if not result:
             return None
-        
+
         # Parse the response
         if isinstance(result, str):
             data = json.loads(result)
         else:
             data = result
-        
+
         # Extract signal from "rating" field (RATING_SCHEMA uses "rating", not "signal")
         # Also support "signal" for backward compat with any legacy responses
         raw_signal = data.get("rating") or data.get("signal", "hold")
         signal = _normalize_signal(raw_signal)
-        
+
         # Scale confidence from 1-10 to 0-100 (RATING_SCHEMA uses 1-10)
         raw_confidence = data.get("confidence", 5)
         confidence = min(100, max(0, int(raw_confidence) * 10))
-        
+
         return AgentVerdict(
             agent_id=agent_id,
             agent_name=agent["name"],
@@ -351,7 +352,7 @@ def _aggregate_signals(verdicts: list[AgentVerdict]) -> tuple[SignalType, int, s
     """Aggregate individual agent verdicts into overall signal."""
     if not verdicts:
         return "hold", 0, "No agent analysis available"
-    
+
     # Numeric scores for 5-value signals
     SIGNAL_SCORES = {
         "strong_buy": 2,
@@ -360,26 +361,26 @@ def _aggregate_signals(verdicts: list[AgentVerdict]) -> tuple[SignalType, int, s
         "sell": -1,
         "strong_sell": -2,
     }
-    
+
     # Weight signals by confidence
     weighted_sum = 0.0
     total_weight = 0.0
     total_confidence = 0
-    
+
     bullish_agents = []  # strong_buy or buy
     bearish_agents = []  # sell or strong_sell
-    
+
     for v in verdicts:
         weight = v.confidence / 100
         total_weight += weight
         total_confidence += v.confidence
         weighted_sum += SIGNAL_SCORES.get(v.signal, 0) * weight
-        
+
         if v.signal in ("strong_buy", "buy"):
             bullish_agents.append(v.agent_name)
         elif v.signal in ("sell", "strong_sell"):
             bearish_agents.append(v.agent_name)
-    
+
     # Determine overall signal from weighted average
     if total_weight > 0:
         avg_score = weighted_sum / total_weight
@@ -395,28 +396,28 @@ def _aggregate_signals(verdicts: list[AgentVerdict]) -> tuple[SignalType, int, s
             overall_signal = "strong_sell"
     else:
         overall_signal = "hold"
-    
+
     # Calculate overall confidence
     overall_confidence = int(total_confidence / len(verdicts)) if verdicts else 0
-    
+
     # Generate summary
     summary_parts = []
     if bullish_agents:
         summary_parts.append(f"Bullish: {', '.join(bullish_agents)}")
     if bearish_agents:
         summary_parts.append(f"Bearish: {', '.join(bearish_agents)}")
-    
+
     summary = ". ".join(summary_parts) if summary_parts else "Mixed signals from analysts"
-    
+
     return overall_signal, overall_confidence, summary
 
 
 async def run_agent_analysis(
     symbol: str,
-    agents: Optional[list[str]] = None,
+    agents: list[str] | None = None,
     store_result: bool = True,
     force: bool = False,
-) -> Optional[AgentAnalysisResult]:
+) -> AgentAnalysisResult | None:
     """
     Run AI agent analysis on a single stock.
     
@@ -434,65 +435,65 @@ async def run_agent_analysis(
     """
     symbol = symbol.upper()
     logger.info(f"Running agent analysis for {symbol}")
-    
+
     # Get fundamentals
     fundamentals = await get_fundamentals_for_analysis(symbol)
     if not fundamentals:
         logger.warning(f"No fundamentals available for {symbol}")
         fundamentals = {}
-    
+
     # Get stock info
     info = await stock_info.get_stock_info_async(symbol)
     stock_data = info if info else {}
-    
+
     # Format metrics for prompts
     metrics_text = _format_metrics_for_prompt(fundamentals, stock_data)
-    
+
     if not metrics_text.strip():
         logger.warning(f"No data available for {symbol}")
         return None
-    
+
     # Compute input hash for version checking
     input_hash = _compute_input_hash(fundamentals, stock_data)
-    
+
     # Check if we can skip (input unchanged)
     if not force:
         stored_hash = await _get_stored_input_hash(symbol)
         if stored_hash == input_hash:
             logger.info(f"Skipping {symbol}: input data unchanged (hash={input_hash[:8]})")
             return None  # Signal that we skipped
-    
+
     # Run agents
     agent_ids = agents or list(AGENTS.keys())
     verdicts = []
-    
+
     for agent_id in agent_ids:
         verdict = await _run_single_agent(agent_id, symbol, metrics_text)
         if verdict:
             verdicts.append(verdict)
-    
+
     if not verdicts:
         logger.warning(f"No agent verdicts generated for {symbol}")
         return None
-    
+
     # Aggregate signals
     overall_signal, overall_confidence, summary = _aggregate_signals(verdicts)
-    
+
     result = AgentAnalysisResult(
         symbol=symbol,
         verdicts=verdicts,
         overall_signal=overall_signal,
         overall_confidence=overall_confidence,
         summary=summary,
-        analyzed_at=datetime.now(timezone.utc),
+        analyzed_at=datetime.now(UTC),
     )
-    
+
     # Store in database
     if store_result:
         await _store_agent_analysis(result)
         # Store the input hash for future change detection
         await _store_analysis_version(symbol, input_hash)
-    
+
     logger.info(f"Agent analysis complete for {symbol}: {overall_signal} ({overall_confidence}%)")
     return result
 
@@ -511,9 +512,9 @@ async def _store_agent_analysis(result: AgentAnalysisResult) -> None:
         }
         for v in result.verdicts
     ]
-    
-    expires_at = datetime.now(timezone.utc) + timedelta(days=7)
-    
+
+    expires_at = datetime.now(UTC) + timedelta(days=7)
+
     async with get_session() as session:
         stmt = insert(AiAgentAnalysis).values(
             symbol=result.symbol,
@@ -539,7 +540,7 @@ async def _store_agent_analysis(result: AgentAnalysisResult) -> None:
         await session.commit()
 
 
-async def get_agent_analysis(symbol: str, max_age_hours: int = 168) -> Optional[dict[str, Any]]:
+async def get_agent_analysis(symbol: str, max_age_hours: int = 168) -> dict[str, Any] | None:
     """
     Get stored agent analysis for a symbol.
     
@@ -551,24 +552,24 @@ async def get_agent_analysis(symbol: str, max_age_hours: int = 168) -> Optional[
         Dict with analysis data or None if not found/expired
     """
     symbol = symbol.upper()
-    
+
     async with get_session() as session:
         result = await session.execute(
             select(AiAgentAnalysis).where(
                 AiAgentAnalysis.symbol == symbol,
-                AiAgentAnalysis.expires_at > datetime.now(timezone.utc),
+                AiAgentAnalysis.expires_at > datetime.now(UTC),
             )
         )
         row = result.scalar_one_or_none()
-    
+
     if not row:
         return None
-    
+
     # Parse verdicts JSON
     verdicts = row.verdicts
     if isinstance(verdicts, str):
         verdicts = json.loads(verdicts)
-    
+
     return {
         "symbol": row.symbol,
         "verdicts": verdicts,
@@ -582,17 +583,17 @@ async def get_agent_analysis(symbol: str, max_age_hours: int = 168) -> Optional[
 
 async def get_symbols_needing_analysis() -> list[str]:
     """Get symbols that need agent analysis (new or expired)."""
-    from sqlalchemy import and_, not_, exists
-    
+    from sqlalchemy import exists, not_
+
     async with get_session() as session:
         # Subquery to check for non-expired analysis
         has_valid_analysis = exists(
             select(AiAgentAnalysis.symbol).where(
                 AiAgentAnalysis.symbol == Symbol.symbol,
-                AiAgentAnalysis.expires_at > datetime.now(timezone.utc),
+                AiAgentAnalysis.expires_at > datetime.now(UTC),
             )
         )
-        
+
         result = await session.execute(
             select(Symbol.symbol)
             .where(
@@ -618,17 +619,17 @@ async def run_all_agent_analyses(force: bool = False) -> dict[str, Any]:
         Dict with counts of analyzed/skipped/failed symbols
     """
     symbols = await get_symbols_needing_analysis()
-    
+
     if not symbols:
         logger.info("No symbols need agent analysis")
         return {"analyzed": 0, "skipped": 0, "failed": 0, "symbols": []}
-    
+
     logger.info(f"Running agent analysis for {len(symbols)} symbols")
-    
+
     analyzed = []
     skipped = []
     failed = []
-    
+
     for symbol in symbols:
         try:
             result = await run_agent_analysis(symbol, force=force)
@@ -640,7 +641,7 @@ async def run_all_agent_analyses(force: bool = False) -> dict[str, Any]:
         except Exception as e:
             logger.error(f"Agent analysis failed for {symbol}: {e}")
             failed.append(symbol)
-    
+
     return {
         "analyzed": len(analyzed),
         "skipped": len(skipped),
@@ -661,7 +662,7 @@ def _build_agent_prompt(agent_id: str, symbol: str, metrics_text: str) -> str:
     agent = AGENTS.get(agent_id)
     if not agent:
         return ""
-    
+
     return f"""You are {agent['name']}, the legendary investor. Analyze this stock using your investment philosophy.
 
 YOUR PHILOSOPHY: {agent['philosophy']}
@@ -700,32 +701,32 @@ async def prepare_batch_items(symbols: list[str]) -> tuple[list[dict[str, Any]],
     """
     items = []
     input_hashes: dict[str, str] = {}
-    
+
     for symbol in symbols:
         symbol = symbol.upper()
-        
+
         # Get fundamentals
         fundamentals = await get_fundamentals_for_analysis(symbol)
         if not fundamentals:
             fundamentals = {}
-        
+
         # Get stock info
         info = await stock_info.get_stock_info_async(symbol)
         stock_data = info if info else {}
-        
+
         # Format metrics
         metrics_text = _format_metrics_for_prompt(fundamentals, stock_data)
-        
+
         if not metrics_text.strip():
             logger.warning(f"No data for {symbol}, skipping batch item")
             continue
-        
+
         # Compute and store input hash
         input_hash = _compute_input_hash(fundamentals, stock_data)
         input_hashes[symbol] = input_hash
-        
+
         # Create item for each agent
-        for agent_id in AGENTS.keys():
+        for agent_id in AGENTS:
             prompt = _build_agent_prompt(agent_id, symbol, metrics_text)
             items.append({
                 "symbol": symbol,
@@ -733,11 +734,11 @@ async def prepare_batch_items(symbols: list[str]) -> tuple[list[dict[str, Any]],
                 "prompt": prompt,
                 "input_hash": input_hash,
             })
-    
+
     return items, input_hashes
 
 
-async def submit_agent_batch(symbols: list[str]) -> Optional[tuple[str, dict[str, str]]]:
+async def submit_agent_batch(symbols: list[str]) -> tuple[str, dict[str, str]] | None:
     """
     Submit a batch job for agent analysis on multiple symbols.
     
@@ -750,30 +751,30 @@ async def submit_agent_batch(symbols: list[str]) -> Optional[tuple[str, dict[str
     Returns:
         Tuple of (batch_job_id, input_hashes) or None on failure
     """
-    from app.services.openai_client import submit_batch, TaskType
-    
+    from app.services.openai_client import TaskType, submit_batch
+
     # Prepare batch items
     items, input_hashes = await prepare_batch_items(symbols)
-    
+
     if not items:
         logger.warning("No valid items for batch")
         return None
-    
+
     logger.info(f"Submitting batch with {len(items)} items for {len(input_hashes)} symbols")
-    
+
     # Submit using existing batch infrastructure
     batch_id = await submit_batch(
         task=TaskType.RATING,  # Use RATING for structured JSON output
         items=items,
     )
-    
+
     if not batch_id:
         return None
-    
+
     # Store batch job ID for each symbol
     for symbol, input_hash in input_hashes.items():
         await _store_analysis_version(symbol, input_hash, batch_job_id=batch_id)
-    
+
     return batch_id, input_hashes
 
 
@@ -791,22 +792,22 @@ async def collect_agent_batch(batch_id: str) -> dict[str, AgentAnalysisResult]:
         Dict of symbol -> AgentAnalysisResult
     """
     from app.services.openai_client import collect_batch
-    
+
     results = await collect_batch(batch_id)
     if not results:
         return {}
-    
+
     # Group results by symbol
     symbol_verdicts: dict[str, list[AgentVerdict]] = {}
-    
+
     for item in results:
         if item.get("failed"):
             logger.warning(f"Batch item failed: {item.get('custom_id')}")
             continue
-        
+
         custom_id = item.get("custom_id", "")
         result_data = item.get("result")
-        
+
         # Parse custom_id format: "batch_run_id:symbol:agent_id:task"
         # Colon-delimited to avoid ambiguity with multi-part agent IDs like "warren_buffett"
         parts = custom_id.split(":")
@@ -831,26 +832,26 @@ async def collect_agent_batch(batch_id: str) -> dict[str, AgentAnalysisResult]:
             else:
                 logger.warning(f"Unknown custom_id format: {custom_id}")
                 continue
-        
+
         if not result_data or not isinstance(result_data, dict):
             continue
-        
+
         # Get agent info
         agent = AGENTS.get(agent_id)
         agent_name = agent["name"] if agent else agent_id
-        
+
         # Initialize symbol's verdict list
         if symbol not in symbol_verdicts:
             symbol_verdicts[symbol] = []
-        
+
         # Build verdict from result - use "rating" field (RATING_SCHEMA) with "signal" fallback
         raw_signal = result_data.get("rating") or result_data.get("signal", "hold")
         signal = _normalize_signal(raw_signal)
-        
+
         # Scale confidence from 1-10 to 0-100
         raw_confidence = result_data.get("confidence", 5)
         confidence = min(100, max(0, int(raw_confidence) * 10))
-        
+
         verdict = AgentVerdict(
             agent_id=agent_id,
             agent_name=agent_name,
@@ -860,29 +861,29 @@ async def collect_agent_batch(batch_id: str) -> dict[str, AgentAnalysisResult]:
             key_factors=result_data.get("key_factors", []),
         )
         symbol_verdicts[symbol].append(verdict)
-    
+
     # Build final results
     final_results: dict[str, AgentAnalysisResult] = {}
-    
+
     for symbol, verdicts in symbol_verdicts.items():
         if not verdicts:
             continue
-        
+
         overall_signal, overall_confidence, summary = _aggregate_signals(verdicts)
-        
+
         result = AgentAnalysisResult(
             symbol=symbol,
             verdicts=verdicts,
             overall_signal=overall_signal,
             overall_confidence=overall_confidence,
             summary=summary,
-            analyzed_at=datetime.now(timezone.utc),
+            analyzed_at=datetime.now(UTC),
         )
-        
+
         # Store in database
         await _store_agent_analysis(result)
         final_results[symbol] = result
-    
+
     return final_results
 
 
@@ -903,7 +904,7 @@ async def run_all_agent_analyses_batch() -> dict[str, Any]:
         Dict with batch_id, symbol counts, etc.
     """
     symbols = await get_symbols_needing_analysis()
-    
+
     if not symbols:
         logger.info("No symbols need agent analysis")
         return {
@@ -912,33 +913,33 @@ async def run_all_agent_analyses_batch() -> dict[str, Any]:
             "skipped": 0,
             "message": "No symbols need analysis",
         }
-    
+
     logger.info(f"Preparing batch analysis for {len(symbols)} symbols")
-    
+
     # Filter symbols where input has changed
     symbols_to_analyze = []
     skipped = []
-    
+
     for symbol in symbols:
         symbol = symbol.upper()
-        
+
         # Get current data to compute hash
         fundamentals = await get_fundamentals_for_analysis(symbol)
         info = await stock_info.get_stock_info_async(symbol)
-        
+
         if not fundamentals and not info:
             skipped.append(symbol)
             continue
-        
+
         current_hash = _compute_input_hash(fundamentals or {}, info or {})
         stored_hash = await _get_stored_input_hash(symbol)
-        
+
         if stored_hash == current_hash:
             logger.debug(f"Skipping {symbol}: input unchanged")
             skipped.append(symbol)
         else:
             symbols_to_analyze.append(symbol)
-    
+
     if not symbols_to_analyze:
         return {
             "batch_id": None,
@@ -946,10 +947,10 @@ async def run_all_agent_analyses_batch() -> dict[str, Any]:
             "skipped": len(skipped),
             "message": "All symbols have unchanged input data",
         }
-    
+
     # Submit batch
     result = await submit_agent_batch(symbols_to_analyze)
-    
+
     if not result:
         return {
             "batch_id": None,
@@ -957,9 +958,9 @@ async def run_all_agent_analyses_batch() -> dict[str, Any]:
             "skipped": len(skipped),
             "error": "Failed to submit batch",
         }
-    
+
     batch_id, input_hashes = result
-    
+
     return {
         "batch_id": batch_id,
         "submitted": len(symbols_to_analyze),

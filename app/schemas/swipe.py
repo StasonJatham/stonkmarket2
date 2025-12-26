@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Optional, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -41,33 +41,33 @@ class DipCard(BaseModel):
     """A stock dip card for the swipe interface."""
 
     symbol: str
-    name: Optional[str] = None
-    sector: Optional[str] = None
-    industry: Optional[str] = None
-    website: Optional[str] = Field(None, description="Company website URL for logo")
-    ipo_year: Optional[int] = Field(None, description="Year of IPO/first trade")
+    name: str | None = None
+    sector: str | None = None
+    industry: str | None = None
+    website: str | None = Field(None, description="Company website URL for logo")
+    ipo_year: int | None = Field(None, description="Year of IPO/first trade")
 
     # Price data
     current_price: float
     ref_high: float
     dip_pct: float = Field(..., description="Dip percentage from high")
     days_below: int = Field(..., description="Days below dip threshold")
-    min_dip_pct: Optional[float] = Field(None, description="Configured dip threshold")
+    min_dip_pct: float | None = Field(None, description="Configured dip threshold")
 
     # AI content
-    summary_ai: Optional[str] = Field(None, description="AI-generated company summary from finance description")
-    swipe_bio: Optional[str] = Field(None, description="AI-generated swipe-style bio")
-    ai_rating: Optional[str] = Field(
+    summary_ai: str | None = Field(None, description="AI-generated company summary from finance description")
+    swipe_bio: str | None = Field(None, description="AI-generated swipe-style bio")
+    ai_rating: str | None = Field(
         None, description="AI rating: strong_buy, buy, hold, sell, strong_sell"
     )
-    ai_reasoning: Optional[str] = Field(None, description="AI explanation for rating")
-    ai_confidence: Optional[int] = Field(
+    ai_reasoning: str | None = Field(None, description="AI explanation for rating")
+    ai_confidence: int | None = Field(
         None, ge=1, le=10, description="AI confidence score"
     )
-    ai_pending: Optional[bool] = Field(
+    ai_pending: bool | None = Field(
         None, description="AI refresh queued; data will update asynchronously"
     )
-    ai_task_id: Optional[str] = Field(None, description="Celery task id for AI refresh")
+    ai_task_id: str | None = Field(None, description="Celery task id for AI refresh")
 
     # Voting
     vote_counts: VoteCounts = Field(default_factory=VoteCounts)

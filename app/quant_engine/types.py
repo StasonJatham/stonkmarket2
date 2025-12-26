@@ -6,9 +6,8 @@ All dataclasses are frozen and use strict typing for reproducibility.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date, datetime
-from decimal import Decimal
 from enum import Enum
 from typing import Any, Literal
 
@@ -66,45 +65,45 @@ class QuantConfig:
     max_leverage: float = 1.0  # No leverage
     fixed_cost_eur: float = 1.0  # €1 per trade (TradeRepublic)
     min_trade_eur: float = 10.0  # Minimum trade size
-    
+
     # Monthly inflow range (for planning)
     inflow_min_eur: float = 1000.0
     inflow_max_eur: float = 1500.0
-    
+
     # Hyperparameter candidates (tuned OOS)
     forecast_horizon_months: int = 2  # H ∈ {1, 2, 3}
-    
+
     # Alpha model hyperparameters
     ridge_alpha: float = 10.0  # Ridge regularization
     lasso_alpha: float = 0.01  # Lasso regularization (if used)
     use_lasso: bool = False  # Whether to include Lasso in ensemble
     ensemble_method: Literal["inverse_mse", "equal"] = "inverse_mse"
-    
+
     # Dip integration
     dip_k: float = 0.002  # Dip coefficient for μ_hat adjustment
     dip_uncertainty_scale: float = 0.0  # Scale uncertainty by |DipScore|
-    
+
     # Risk model
     n_pca_factors: int = 5  # K ∈ {3, 5, 8}
-    
+
     # Optimizer
     lambda_risk: float = 10.0  # Risk aversion λ
     max_weight: float = 0.15  # Maximum position weight
     max_turnover: float = 0.20  # Maximum monthly turnover
     turnover_penalty: float = 0.001  # L1 penalty on turnover
     allow_cash: bool = True  # Whether to allow cash position
-    
+
     # Feature engineering
     momentum_windows: tuple[int, ...] = (21, 63, 126, 252)  # Trading days
     volatility_window: int = 21
     reversal_window: int = 5
-    
+
     # Walk-forward validation
     train_months: int = 36  # Minimum training window
     validation_months: int = 6  # Validation window for HP selection
     test_months: int = 6  # Test window for final evaluation
     retrain_frequency_months: int = 3  # How often to retune
-    
+
     # DipScore computation
     dip_resid_vol_window: int = 20  # Rolling residual volatility window
     dip_min_obs: int = 120  # Minimum observations for factor regression
@@ -134,7 +133,7 @@ class AlphaResult:
     model_weights: dict[str, float]  # Ensemble weights α_k
     oos_scores: dict[str, AlphaModelScore]  # OOS performance
     shrinkage_applied: pd.Series  # How much shrinkage toward zero
-    
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serializable dict."""
         return {
@@ -164,7 +163,7 @@ class DipArtifacts:
     resid_sigma: pd.DataFrame  # Conditional volatility of residuals
     factor_betas: dict[str, pd.Series]  # Factor loadings per asset
     bucket: pd.Series | None = None  # Bucketed DipScore for current date
-    
+
     def get_current(self, as_of: date) -> pd.Series:
         """Get DipScore as of a specific date."""
         if as_of in self.dip_score.index:
@@ -174,7 +173,7 @@ class DipArtifacts:
         if len(valid_dates) == 0:
             return pd.Series(dtype=float)
         return self.dip_score.loc[valid_dates[-1]]
-    
+
     def bucketize(self, score: float) -> str:
         """Convert DipScore to bucket string."""
         if score <= -2:
@@ -197,7 +196,7 @@ class RegimeState:
     trend_score: float  # Underlying continuous score
     vol_score: float  # Underlying continuous score
     as_of: date
-    
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serializable dict."""
         return {
@@ -226,20 +225,20 @@ class RiskModel:
     explained_variance: np.ndarray  # Per-factor explained variance
     n_factors: int
     assets: list[str]
-    
+
     def get_covariance(self) -> np.ndarray:
         """Compute full covariance matrix Σ."""
         return self.B @ self.sigma_f @ self.B.T + np.diag(self.D)
-    
+
     def portfolio_variance(self, w: np.ndarray) -> float:
         """Compute portfolio variance w' Σ w."""
         sigma = self.get_covariance()
         return float(w @ sigma @ w)
-    
+
     def portfolio_volatility(self, w: np.ndarray) -> float:
         """Compute portfolio volatility sqrt(w' Σ w)."""
         return np.sqrt(self.portfolio_variance(w))
-    
+
     def marginal_contribution_to_risk(self, w: np.ndarray) -> np.ndarray:
         """
         Compute marginal contribution to risk (MCR).
@@ -279,7 +278,7 @@ class OptimizationResult:
     constraint_status: ConstraintStatus
     transaction_cost_eur: float
     marginal_utilities: np.ndarray  # Per-asset marginal utility
-    
+
     def get_trades(self, portfolio_value_eur: float) -> dict[str, float]:
         """Convert Δw to EUR trade amounts."""
         return {
@@ -296,7 +295,7 @@ class DipAnnotation:
     bucket: str
     regime: RegimeState
     momentum_12m: MomentumCondition
-    
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serializable dict."""
         return {
@@ -313,7 +312,7 @@ class MuHatUncertainty:
     ci_low: float  # Lower confidence interval bound
     ci_high: float  # Upper confidence interval bound
     oos_rmse: float  # Out-of-sample RMSE
-    
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serializable dict."""
         return {
@@ -327,7 +326,7 @@ class RiskInfo:
     """Risk information for a single asset."""
     marginal_vol: float  # Marginal contribution to volatility
     mcr: float  # Marginal contribution to risk
-    
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serializable dict."""
         return {
@@ -355,7 +354,7 @@ class RecommendationRow:
     trade_cost_eur: float
     constraints: list[str]
     dip: DipAnnotation | None
-    
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serializable dict."""
         return {
@@ -386,7 +385,7 @@ class AuditBlock:
     risk_model: dict[str, Any]
     hyperparams: dict[str, Any]
     data_hash: str  # SHA-256 of input data for reproducibility
-    
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serializable dict."""
         return {
@@ -416,7 +415,7 @@ class EngineOutput:
     expected_portfolio_return: float = 0.0
     expected_portfolio_risk: float = 0.0
     diagnostics: dict[str, Any] | None = None  # Optional dip/regime info
-    
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serializable dict."""
         return {
@@ -445,7 +444,7 @@ class HyperparameterCandidate:
     n_pca_factors: int
     lambda_risk: float
     turnover_penalty: float
-    
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serializable dict."""
         return {
@@ -475,7 +474,7 @@ class HyperparameterLog:
     validation_max_drawdown: float
     baseline_sharpe: float
     selected: bool = False
-    
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serializable dict."""
         return {
