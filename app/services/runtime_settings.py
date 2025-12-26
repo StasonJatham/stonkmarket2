@@ -224,7 +224,7 @@ def get_cache_ttl(cache_type: str) -> int:
 async def check_openai_configured() -> bool:
     """Check if OpenAI API key is configured (env or database)."""
     import os
-    from app.repositories import api_keys as api_keys_repo
+    from app.repositories import api_keys_orm as api_keys_repo
     
     # Check environment variable first
     if os.environ.get("OPENAI_API_KEY"):
@@ -241,7 +241,7 @@ async def check_openai_configured() -> bool:
 async def check_logo_dev_configured() -> bool:
     """Check if Logo.dev API key is configured (env or database)."""
     from app.core.config import settings
-    from app.repositories import api_keys as api_keys_repo
+    from app.repositories import api_keys_orm as api_keys_repo
     
     # Check environment variable first
     if settings.logo_dev_public_key:

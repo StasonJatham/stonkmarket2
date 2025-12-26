@@ -1,0 +1,17 @@
+# Optional quant analytics dependencies
+# Install with: pip install -r requirements-quant.txt
+
+arch>=7.0.0
+prophet>=1.1.5
+quantstats>=0.0.62
+pyfolio>=0.9.2
+alphalens>=0.4.0
+FinQuant>=0.7.0
+gluonts>=0.16.0
+pyflux>=0.4.17
+mlfinlab>=1.6.0
+skfolio>=0.2.2
+lppls>=0.1.0
+talipp>=1.9.2
+pandas-ta>=0.3.14b0
+vectorbt>=0.26.2

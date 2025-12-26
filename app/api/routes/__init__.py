@@ -16,6 +16,7 @@ from . import admin_settings
 from . import metrics
 from . import seo
 from . import logos
+from . import portfolios
 
 __all__ = [
     "auth",
@@ -34,4 +35,5 @@ __all__ = [
     "metrics",
     "seo",
     "logos",
+    "portfolios",
 ]

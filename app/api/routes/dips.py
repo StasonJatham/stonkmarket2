@@ -22,7 +22,7 @@ from app.core.exceptions import ExternalServiceError, NotFoundError
 from app.core.security import TokenData
 from app.database.connection import fetch_all, fetch_one
 from app.dipfinder.service import get_dipfinder_service  # For chart price data
-from app.repositories import symbols as symbol_repo
+from app.repositories import symbols_orm as symbol_repo
 from app.schemas.dips import ChartPoint, DipStateResponse, RankingEntry, StockInfo
 from app.services.stock_info import get_stock_info, get_stock_info_async
 from app.services.runtime_settings import get_runtime_setting, get_cache_ttl

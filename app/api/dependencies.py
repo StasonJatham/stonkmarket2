@@ -73,7 +73,7 @@ async def get_current_user(
             return None
 
         # Verify user still exists in database (async)
-        from app.repositories import auth_user as auth_repo
+        from app.repositories import auth_user_orm as auth_repo
 
         user = await auth_repo.get_user(token_data.sub)
         if user is None:
@@ -114,7 +114,7 @@ async def require_user(
         )
 
     # Verify user still exists in database (async)
-    from app.repositories import auth_user as auth_repo
+    from app.repositories import auth_user_orm as auth_repo
 
     user = await auth_repo.get_user(token_data.sub)
     if user is None:

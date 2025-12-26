@@ -18,7 +18,7 @@ import httpx
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.database.connection import fetch_one, execute
-from app.repositories import api_keys as api_keys_repo
+from app.repositories import api_keys_orm as api_keys_repo
 
 logger = get_logger("services.logo")
 

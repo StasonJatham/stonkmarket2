@@ -63,7 +63,7 @@ class JobScheduler:
 
     async def _load_jobs(self) -> None:
         """Load job schedules from database, seeding any missing registered jobs."""
-        from app.repositories import cronjobs as cron_repo
+        from app.repositories import cronjobs_orm as cron_repo
         from app.database.connection import execute
 
         # First, seed any registered jobs that don't exist in DB
@@ -82,6 +82,7 @@ class JobScheduler:
             "batch_poll": ("*/5 * * * *", "Poll for completed batch jobs every 5 min"),
             "fundamentals_refresh": ("0 2 1 * *", "Refresh stock fundamentals monthly 1st at 2am"),
             "ai_agents_analysis": ("0 5 * * 0", "AI agent analysis weekly Sunday 5am"),
+            "portfolio_analytics_worker": ("*/5 * * * *", "Process queued portfolio analytics jobs"),
             "cleanup": ("0 0 * * *", "Clean up expired data daily midnight"),
         }
 
@@ -136,7 +137,7 @@ class JobScheduler:
     async def _execute_job(self, name: str, func: Callable) -> None:
         """Execute a job with distributed locking and logging."""
         from app.cache.distributed_lock import DistributedLock
-        from app.repositories import cronjobs as cron_repo
+        from app.repositories import cronjobs_orm as cron_repo
 
         lock = DistributedLock(f"job:{name}", timeout=60 * 30)  # 30 min max
 

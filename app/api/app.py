@@ -30,6 +30,7 @@ from .routes import (
     metrics,
     seo,
     logos,
+    portfolios,
 )
 
 logger = get_logger("api")
@@ -197,5 +198,6 @@ def create_api_app() -> FastAPI:
     app.include_router(metrics.router, tags=["Metrics"])
     app.include_router(logos.router, tags=["Logos"])
     app.include_router(seo.router, tags=["SEO"])  # No prefix - serves at root for crawlers
+    app.include_router(portfolios.router, tags=["Portfolios"])
 
     return app

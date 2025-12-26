@@ -220,7 +220,95 @@ async def get_calendar_events(symbol: str) -> CalendarEvents:
 
 
 async def get_fundamentals(symbol: str, include_financials: bool = True) -> Fundamentals:
-    """Get fundamental data for a symbol, including domain-specific metrics."""
+    """
+    Get fundamental data for a symbol, including domain-specific metrics.
+    
+    Reads from database first (stock_fundamentals table), falls back to yfinance
+    if not found. This minimizes API calls since fundamentals change quarterly.
+    """
+    from app.services.fundamentals import get_fundamentals as get_db_fundamentals
+    
+    # Try to get from DB first (already cached with domain metrics)
+    db_data = await get_db_fundamentals(symbol)
+    
+    if db_data:
+        # Map DB fields to Fundamentals schema
+        return Fundamentals(
+            symbol=symbol,
+            name=db_data.get("name") or symbol,
+            sector=db_data.get("sector"),
+            industry=db_data.get("industry"),
+            market_cap=_safe_float(db_data.get("market_cap")),
+            enterprise_value=_safe_float(db_data.get("enterprise_value")),
+            
+            # Valuation
+            pe_ratio=_safe_float(db_data.get("pe_ratio")),
+            forward_pe=_safe_float(db_data.get("forward_pe")),
+            peg_ratio=_safe_float(db_data.get("peg_ratio")),
+            price_to_book=_safe_float(db_data.get("price_to_book")),
+            price_to_sales=_safe_float(db_data.get("price_to_sales")),
+            ev_to_ebitda=_safe_float(db_data.get("ev_to_ebitda")),
+            ev_to_revenue=_safe_float(db_data.get("ev_to_revenue")),
+            
+            # Profitability
+            profit_margin=_safe_float(db_data.get("profit_margin")),
+            operating_margin=_safe_float(db_data.get("operating_margin")),
+            gross_margin=_safe_float(db_data.get("gross_margin")),
+            roe=_safe_float(db_data.get("return_on_equity")),
+            roa=_safe_float(db_data.get("return_on_assets")),
+            
+            # Growth
+            revenue_growth=_safe_float(db_data.get("revenue_growth")),
+            earnings_growth=_safe_float(db_data.get("earnings_growth")),
+            
+            # Financial health
+            current_ratio=_safe_float(db_data.get("current_ratio")),
+            quick_ratio=_safe_float(db_data.get("quick_ratio")),
+            debt_to_equity=_safe_float(db_data.get("debt_to_equity")),
+            free_cash_flow=_safe_float(db_data.get("free_cash_flow")),
+            
+            # Dividends
+            dividend_yield=_safe_float(db_data.get("dividend_yield")),
+            payout_ratio=_safe_float(db_data.get("payout_ratio")),
+            
+            # Per-share
+            eps=_safe_float(db_data.get("eps_trailing")),
+            eps_forward=_safe_float(db_data.get("eps_forward")),
+            book_value_per_share=_safe_float(db_data.get("book_value")),
+            
+            # Risk
+            beta=_safe_float(db_data.get("beta")),
+            shares_outstanding=_safe_float(db_data.get("shares_outstanding")),
+            float_shares=_safe_float(db_data.get("float_shares")),
+            short_ratio=_safe_float(db_data.get("short_ratio")),
+            short_percent_of_float=_safe_float(db_data.get("short_percent_of_float")),
+            
+            # Domain-specific from DB
+            domain=db_data.get("domain"),
+            financials={
+                "quarterly": {
+                    "income_statement": db_data.get("income_stmt_quarterly"),
+                    "balance_sheet": db_data.get("balance_sheet_quarterly"),
+                    "cash_flow": db_data.get("cash_flow_quarterly"),
+                },
+                "annual": {
+                    "income_statement": db_data.get("income_stmt_annual"),
+                    "balance_sheet": db_data.get("balance_sheet_annual"),
+                    "cash_flow": db_data.get("cash_flow_annual"),
+                },
+            } if db_data.get("income_stmt_quarterly") else None,
+            net_interest_income=_safe_float(db_data.get("net_interest_income")),
+            net_interest_margin=_safe_float(db_data.get("net_interest_margin")),
+            ffo=_safe_float(db_data.get("ffo")),
+            ffo_per_share=_safe_float(db_data.get("ffo_per_share")),
+            p_ffo=_safe_float(db_data.get("p_ffo")),
+            loss_ratio=_safe_float(db_data.get("loss_ratio")),
+            
+            raw_info=db_data,
+        )
+    
+    # Fallback to yfinance if not in DB (and store the result)
+    logger.info(f"No DB data for {symbol}, fetching from yfinance")
     service = get_yfinance_service()
     
     # Fetch info and optionally financials concurrently
@@ -239,6 +327,15 @@ async def get_fundamentals(symbol: str, include_financials: bool = True) -> Fund
     # Detect domain and calculate domain-specific metrics
     domain = _detect_domain(info)
     domain_metrics = _calculate_domain_metrics(info, financials, domain)
+    
+    # Store in DB for future requests (via the fundamentals service)
+    try:
+        from app.services.fundamentals import _fetch_fundamentals_from_service, _store_fundamentals
+        fetched = await _fetch_fundamentals_from_service(symbol)
+        if fetched:
+            await _store_fundamentals(fetched)
+    except Exception as e:
+        logger.warning(f"Failed to store fundamentals for {symbol}: {e}")
     
     return Fundamentals(
         symbol=symbol,

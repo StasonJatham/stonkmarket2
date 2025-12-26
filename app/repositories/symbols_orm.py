@@ -60,10 +60,10 @@ async def invalidate_symbol_caches(symbol: str | None = None) -> None:
 
 
 # =============================================================================
-# ORM REPOSITORY FUNCTIONS (session-managed)
+# INTERNAL ORM REPOSITORY FUNCTIONS (session-managed)
 # =============================================================================
 
-async def list_symbols(session: AsyncSession) -> Sequence[Symbol]:
+async def _list_symbols(session: AsyncSession) -> Sequence[Symbol]:
     """List all active symbols."""
     result = await session.execute(
         select(Symbol)
@@ -73,7 +73,7 @@ async def list_symbols(session: AsyncSession) -> Sequence[Symbol]:
     return result.scalars().all()
 
 
-async def get_symbol(session: AsyncSession, symbol: str) -> Optional[Symbol]:
+async def _get_symbol(session: AsyncSession, symbol: str) -> Optional[Symbol]:
     """Get a symbol by ticker."""
     result = await session.execute(
         select(Symbol).where(Symbol.symbol == symbol.upper())
@@ -81,7 +81,7 @@ async def get_symbol(session: AsyncSession, symbol: str) -> Optional[Symbol]:
     return result.scalar_one_or_none()
 
 
-async def upsert_symbol(
+async def _upsert_symbol(
     session: AsyncSession,
     symbol: str,
     min_dip_pct: float = 0.15,
@@ -89,7 +89,7 @@ async def upsert_symbol(
 ) -> Symbol:
     """Create or update a symbol."""
     symbol_upper = symbol.upper()
-    existing = await get_symbol(session, symbol_upper)
+    existing = await _get_symbol(session, symbol_upper)
     is_new = existing is None
     
     if existing:
@@ -120,14 +120,14 @@ async def upsert_symbol(
     return symbol_obj
 
 
-async def update_symbol(
+async def _update_symbol(
     session: AsyncSession,
     symbol: str,
     min_dip_pct: float | None = None,
     min_days: int | None = None,
 ) -> Optional[Symbol]:
     """Update a symbol's configuration."""
-    existing = await get_symbol(session, symbol)
+    existing = await _get_symbol(session, symbol)
     if not existing:
         return None
 
@@ -143,7 +143,7 @@ async def update_symbol(
     return existing
 
 
-async def delete_symbol(session: AsyncSession, symbol: str) -> bool:
+async def _delete_symbol(session: AsyncSession, symbol: str) -> bool:
     """Delete a symbol."""
     result = await session.execute(
         delete(Symbol).where(Symbol.symbol == symbol.upper())
@@ -155,7 +155,7 @@ async def delete_symbol(session: AsyncSession, symbol: str) -> bool:
     return False
 
 
-async def symbol_exists(session: AsyncSession, symbol: str) -> bool:
+async def _symbol_exists(session: AsyncSession, symbol: str) -> bool:
     """Check if a symbol exists."""
     result = await session.execute(
         select(func.count()).select_from(Symbol).where(Symbol.symbol == symbol.upper())
@@ -163,7 +163,7 @@ async def symbol_exists(session: AsyncSession, symbol: str) -> bool:
     return (result.scalar() or 0) > 0
 
 
-async def count_symbols(session: AsyncSession) -> int:
+async def _count_symbols(session: AsyncSession) -> int:
     """Count total symbols."""
     result = await session.execute(
         select(func.count()).select_from(Symbol)
@@ -172,50 +172,62 @@ async def count_symbols(session: AsyncSession) -> int:
 
 
 # =============================================================================
-# CONVENIENCE FUNCTIONS (auto-manage sessions)
-# These create their own sessions for simple one-off operations.
-# For multiple operations, use the session-managed versions above.
+# PUBLIC API FUNCTIONS (auto-manage sessions)
+# These match the original symbols.py API for drop-in compatibility.
 # =============================================================================
 
-async def list_symbols_auto() -> Sequence[Symbol]:
-    """List all active symbols (auto-managed session)."""
+async def list_symbols() -> Sequence[Symbol]:
+    """List all active symbols."""
     async with get_session() as session:
-        return await list_symbols(session)
+        return await _list_symbols(session)
 
 
-async def get_symbol_auto(symbol: str) -> Optional[Symbol]:
-    """Get a symbol by ticker (auto-managed session)."""
+async def get_symbol(symbol: str) -> Optional[Symbol]:
+    """Get a symbol by ticker."""
     async with get_session() as session:
-        return await get_symbol(session, symbol)
+        return await _get_symbol(session, symbol)
 
 
-async def upsert_symbol_auto(
+async def upsert_symbol(
     symbol: str,
     min_dip_pct: float = 0.15,
     min_days: int = 5,
 ) -> Symbol:
-    """Create or update a symbol (auto-managed session)."""
+    """Create or update a symbol."""
     async with get_session() as session:
-        result = await upsert_symbol(session, symbol, min_dip_pct, min_days)
+        result = await _upsert_symbol(session, symbol, min_dip_pct, min_days)
         await session.commit()
         return result
 
 
-async def delete_symbol_auto(symbol: str) -> bool:
-    """Delete a symbol (auto-managed session)."""
+async def update_symbol(
+    symbol: str,
+    min_dip_pct: float | None = None,
+    min_days: int | None = None,
+) -> Optional[Symbol]:
+    """Update a symbol's configuration."""
     async with get_session() as session:
-        result = await delete_symbol(session, symbol)
+        result = await _update_symbol(session, symbol, min_dip_pct, min_days)
+        if result:
+            await session.commit()
+        return result
+
+
+async def delete_symbol(symbol: str) -> bool:
+    """Delete a symbol."""
+    async with get_session() as session:
+        result = await _delete_symbol(session, symbol)
         await session.commit()
         return result
 
 
-async def symbol_exists_auto(symbol: str) -> bool:
-    """Check if a symbol exists (auto-managed session)."""
+async def symbol_exists(symbol: str) -> bool:
+    """Check if a symbol exists."""
     async with get_session() as session:
-        return await symbol_exists(session, symbol)
+        return await _symbol_exists(session, symbol)
 
 
-async def count_symbols_auto() -> int:
-    """Count total symbols (auto-managed session)."""
+async def count_symbols() -> int:
+    """Count total symbols."""
     async with get_session() as session:
-        return await count_symbols(session)
+        return await _count_symbols(session)

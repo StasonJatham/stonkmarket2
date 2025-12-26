@@ -12,7 +12,7 @@ from app.api.dependencies import require_admin
 from app.core.exceptions import NotFoundError
 from app.core.security import TokenData
 from app.jobs import execute_job
-from app.repositories import cronjobs as cron_repo
+from app.repositories import cronjobs_orm as cron_repo
 from app.schemas.cronjobs import (
     CronJobResponse,
     CronJobUpdate,

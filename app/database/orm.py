@@ -67,6 +67,8 @@ class AuthUser(Base):
     # Relationships
     api_keys: Mapped[List["UserApiKey"]] = relationship(back_populates="user")
     secure_keys: Mapped[List["SecureApiKey"]] = relationship(back_populates="created_by_user")
+    portfolios: Mapped[List["Portfolio"]] = relationship(back_populates="user")
+    portfolio_analytics_jobs: Mapped[List["PortfolioAnalyticsJob"]] = relationship(back_populates="user")
 
     __table_args__ = (
         Index("idx_auth_user_username", "username"),
@@ -837,6 +839,149 @@ class SymbolSearchLog(Base):
         CheckConstraint("source IN ('local', 'api', 'mixed')", name="ck_search_log_source"),
         Index("idx_search_log_query", "query_normalized"),
         Index("idx_search_log_searched", "searched_at", postgresql_ops={"searched_at": "DESC"}),
+    )
+
+
+# =============================================================================
+# PORTFOLIOS & HOLDINGS
+# =============================================================================
+
+
+class Portfolio(Base):
+    """User-managed investment portfolio."""
+    __tablename__ = "portfolios"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("auth_user.id", ondelete="CASCADE"), nullable=False)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    base_currency: Mapped[str] = mapped_column(String(10), default="USD")
+    cash_balance: Mapped[Optional[Decimal]] = mapped_column(Numeric(18, 4), default=Decimal("0.0"))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    # Relationships
+    user: Mapped["AuthUser"] = relationship(back_populates="portfolios")
+    holdings: Mapped[List["PortfolioHolding"]] = relationship(back_populates="portfolio")
+    transactions: Mapped[List["PortfolioTransaction"]] = relationship(back_populates="portfolio")
+    analytics: Mapped[List["PortfolioAnalytics"]] = relationship(back_populates="portfolio")
+    analytics_jobs: Mapped[List["PortfolioAnalyticsJob"]] = relationship(back_populates="portfolio")
+
+    __table_args__ = (
+        Index("idx_portfolios_user", "user_id"),
+        Index("idx_portfolios_active", "is_active", postgresql_where=text("is_active = TRUE")),
+    )
+
+
+class PortfolioHolding(Base):
+    """Current holdings for a portfolio."""
+    __tablename__ = "portfolio_holdings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    portfolio_id: Mapped[int] = mapped_column(ForeignKey("portfolios.id", ondelete="CASCADE"), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(20), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    avg_cost: Mapped[Optional[Decimal]] = mapped_column(Numeric(18, 4))
+    target_weight: Mapped[Optional[Decimal]] = mapped_column(Numeric(6, 4))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    portfolio: Mapped["Portfolio"] = relationship(back_populates="holdings")
+
+    __table_args__ = (
+        UniqueConstraint("portfolio_id", "symbol", name="uq_portfolio_holdings_symbol"),
+        Index("idx_portfolio_holdings_portfolio", "portfolio_id"),
+        Index("idx_portfolio_holdings_symbol", "symbol"),
+    )
+
+
+class PortfolioTransaction(Base):
+    """Ledger of portfolio transactions."""
+    __tablename__ = "portfolio_transactions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    portfolio_id: Mapped[int] = mapped_column(ForeignKey("portfolios.id", ondelete="CASCADE"), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(20), nullable=False)
+    side: Mapped[str] = mapped_column(String(20), nullable=False)  # buy, sell, dividend, split, deposit, withdrawal
+    quantity: Mapped[Optional[Decimal]] = mapped_column(Numeric(18, 6))
+    price: Mapped[Optional[Decimal]] = mapped_column(Numeric(18, 4))
+    fees: Mapped[Optional[Decimal]] = mapped_column(Numeric(18, 4))
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False)
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    portfolio: Mapped["Portfolio"] = relationship(back_populates="transactions")
+
+    __table_args__ = (
+        CheckConstraint(
+            "side IN ('buy', 'sell', 'dividend', 'split', 'deposit', 'withdrawal')",
+            name="ck_portfolio_transactions_side",
+        ),
+        Index("idx_portfolio_transactions_portfolio", "portfolio_id"),
+        Index("idx_portfolio_transactions_symbol", "symbol"),
+        Index("idx_portfolio_transactions_date", "trade_date", postgresql_ops={"trade_date": "DESC"}),
+    )
+
+
+class PortfolioAnalytics(Base):
+    """Stored analytics output for portfolio tools."""
+    __tablename__ = "portfolio_analytics"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    portfolio_id: Mapped[int] = mapped_column(ForeignKey("portfolios.id", ondelete="CASCADE"), nullable=False)
+    tool: Mapped[str] = mapped_column(String(50), nullable=False)
+    as_of_date: Mapped[Optional[date]] = mapped_column(Date)
+    window: Mapped[Optional[str]] = mapped_column(String(50))
+    params: Mapped[Optional[dict]] = mapped_column(JSONB)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="ok")  # ok, error, partial
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    portfolio: Mapped["Portfolio"] = relationship(back_populates="analytics")
+
+    __table_args__ = (
+        CheckConstraint("status IN ('ok', 'error', 'partial')", name="ck_portfolio_analytics_status"),
+        Index("idx_portfolio_analytics_portfolio", "portfolio_id"),
+        Index("idx_portfolio_analytics_tool", "tool"),
+        Index("idx_portfolio_analytics_created", "created_at", postgresql_ops={"created_at": "DESC"}),
+    )
+
+
+class PortfolioAnalyticsJob(Base):
+    """Background analytics job for heavy portfolio tools."""
+    __tablename__ = "portfolio_analytics_jobs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    portfolio_id: Mapped[int] = mapped_column(ForeignKey("portfolios.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("auth_user.id", ondelete="CASCADE"), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    tools: Mapped[list] = mapped_column(JSONB, nullable=False)
+    params: Mapped[Optional[dict]] = mapped_column(JSONB)
+    window: Mapped[Optional[str]] = mapped_column(String(50))
+    start_date: Mapped[Optional[date]] = mapped_column(Date)
+    end_date: Mapped[Optional[date]] = mapped_column(Date)
+    benchmark: Mapped[Optional[str]] = mapped_column(String(20))
+    force_refresh: Mapped[bool] = mapped_column(Boolean, default=False)
+    results_count: Mapped[int] = mapped_column(Integer, default=0)
+    error_message: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    portfolio: Mapped["Portfolio"] = relationship(back_populates="analytics_jobs")
+    user: Mapped["AuthUser"] = relationship(back_populates="portfolio_analytics_jobs")
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'running', 'completed', 'failed', 'cancelled')",
+            name="ck_portfolio_analytics_jobs_status",
+        ),
+        Index("idx_portfolio_analytics_jobs_portfolio", "portfolio_id"),
+        Index("idx_portfolio_analytics_jobs_user", "user_id"),
+        Index("idx_portfolio_analytics_jobs_status", "status"),
+        Index("idx_portfolio_analytics_jobs_created", "created_at", postgresql_ops={"created_at": "DESC"}),
     )
 
 

@@ -3,9 +3,22 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Optional
 
-from app.database.connection import fetch_all, execute
+from sqlalchemy import select, update
+from sqlalchemy.dialects.postgresql import insert
+
+from app.database.connection import get_session
+from app.database.orm import (
+    DipState,
+    DipAIAnalysis,
+    StockSuggestion,
+    BatchJob,
+    Symbol,
+    StockFundamentals,
+    DipfinderSignal,
+)
 from app.services.openai_client import (
     submit_batch,
     check_batch,
@@ -14,7 +27,7 @@ from app.services.openai_client import (
     rate_dip,
     TaskType,
 )
-from app.repositories import api_usage
+from app.repositories import api_usage_orm as api_usage
 from app.core.logging import get_logger
 
 logger = get_logger("batch_scheduler")
@@ -22,52 +35,122 @@ logger = get_logger("batch_scheduler")
 
 async def get_all_dip_symbols() -> list[str]:
     """Get all current dip symbols."""
-    rows = await fetch_all("SELECT symbol FROM dip_state")
-    return [r["symbol"] for r in rows]
+    async with get_session() as session:
+        result = await session.execute(select(DipState.symbol))
+        return [r[0] for r in result.all()]
 
 
 async def get_pending_suggestions() -> list[dict]:
     """Get pending stock suggestions that need AI bios."""
-    rows = await fetch_all(
-        """
-        SELECT id, symbol, company_name, reason
-        FROM stock_suggestions
-        WHERE status = 'pending'
-        """
-    )
-    return [dict(r) for r in rows]
+    async with get_session() as session:
+        result = await session.execute(
+            select(
+                StockSuggestion.id,
+                StockSuggestion.symbol,
+                StockSuggestion.company_name,
+                StockSuggestion.reason,
+            ).where(StockSuggestion.status == "pending")
+        )
+        return [
+            {"id": r[0], "symbol": r[1], "company_name": r[2], "reason": r[3]}
+            for r in result.all()
+        ]
 
 
 async def get_dips_needing_analysis() -> list[dict]:
     """Get dips that need AI analysis (new or expired), with fundamentals."""
-    rows = await fetch_all(
-        """
-        SELECT ds.symbol, ds.current_price, ds.ath_price, ds.dip_percentage, ds.first_seen,
-               sig.dip_class as classification, sig.excess_dip, sig.quality_score, sig.stability_score,
-               s.name, s.sector, s.summary_ai,
-               f.pe_ratio, f.forward_pe, f.peg_ratio, f.price_to_book, f.ev_to_ebitda,
-               f.profit_margin, f.gross_margin, f.return_on_equity,
-               f.revenue_growth, f.earnings_growth,
-               f.debt_to_equity, f.current_ratio, f.free_cash_flow,
-               f.recommendation, f.target_mean_price, f.num_analyst_opinions,
-               f.beta, f.short_percent_of_float, f.held_percent_institutions
-        FROM dip_state ds
-        LEFT JOIN symbols s ON s.symbol = ds.symbol
-        LEFT JOIN stock_fundamentals f ON ds.symbol = f.symbol
-        LEFT JOIN LATERAL (
-            SELECT dip_class, excess_dip, quality_score, stability_score
-            FROM dipfinder_signals
-            WHERE ticker = ds.symbol
-            ORDER BY as_of_date DESC
-            LIMIT 1
-        ) sig ON true
-        LEFT JOIN dip_ai_analysis ai ON ds.symbol = ai.symbol
-        WHERE ai.symbol IS NULL 
-           OR ai.expires_at < NOW()
-           OR ai.generated_at < NOW() - INTERVAL '7 days'
-        """
-    )
-    return [dict(r) for r in rows]
+    async with get_session() as session:
+        # Build subquery for latest dipfinder signal
+        signal_subq = (
+            select(
+                DipfinderSignal.ticker,
+                DipfinderSignal.dip_class,
+                DipfinderSignal.excess_dip,
+                DipfinderSignal.quality_score,
+                DipfinderSignal.stability_score,
+            )
+            .order_by(DipfinderSignal.as_of_date.desc())
+            .limit(1)
+            .subquery()
+        )
+
+        # Main query joining dip_state with symbols, fundamentals, signals, and analysis
+        result = await session.execute(
+            select(
+                DipState.symbol,
+                DipState.current_price,
+                DipState.ath_price,
+                DipState.dip_percentage,
+                DipState.first_seen,
+                Symbol.name,
+                Symbol.sector,
+                Symbol.summary_ai,
+                StockFundamentals.pe_ratio,
+                StockFundamentals.forward_pe,
+                StockFundamentals.peg_ratio,
+                StockFundamentals.price_to_book,
+                StockFundamentals.ev_to_ebitda,
+                StockFundamentals.profit_margin,
+                StockFundamentals.gross_margin,
+                StockFundamentals.return_on_equity,
+                StockFundamentals.revenue_growth,
+                StockFundamentals.earnings_growth,
+                StockFundamentals.debt_to_equity,
+                StockFundamentals.current_ratio,
+                StockFundamentals.free_cash_flow,
+                StockFundamentals.recommendation,
+                StockFundamentals.target_mean_price,
+                StockFundamentals.num_analyst_opinions,
+                StockFundamentals.beta,
+                StockFundamentals.short_percent_of_float,
+                StockFundamentals.held_percent_institutions,
+                DipAIAnalysis.symbol.label("ai_symbol"),
+                DipAIAnalysis.expires_at,
+                DipAIAnalysis.generated_at,
+            )
+            .outerjoin(Symbol, Symbol.symbol == DipState.symbol)
+            .outerjoin(StockFundamentals, StockFundamentals.symbol == DipState.symbol)
+            .outerjoin(DipAIAnalysis, DipAIAnalysis.symbol == DipState.symbol)
+            .where(
+                (DipAIAnalysis.symbol == None)
+                | (DipAIAnalysis.expires_at < datetime.now(timezone.utc))
+                | (DipAIAnalysis.generated_at < datetime.now(timezone.utc) - timedelta(days=7))
+            )
+        )
+        
+        rows = result.all()
+        return [
+            {
+                "symbol": r[0],
+                "current_price": r[1],
+                "ath_price": r[2],
+                "dip_percentage": r[3],
+                "first_seen": r[4],
+                "name": r[5],
+                "sector": r[6],
+                "summary_ai": r[7],
+                "pe_ratio": r[8],
+                "forward_pe": r[9],
+                "peg_ratio": r[10],
+                "price_to_book": r[11],
+                "ev_to_ebitda": r[12],
+                "profit_margin": r[13],
+                "gross_margin": r[14],
+                "return_on_equity": r[15],
+                "revenue_growth": r[16],
+                "earnings_growth": r[17],
+                "debt_to_equity": r[18],
+                "current_ratio": r[19],
+                "free_cash_flow": r[20],
+                "recommendation": r[21],
+                "target_mean_price": r[22],
+                "num_analyst_opinions": r[23],
+                "beta": r[24],
+                "short_percent_of_float": r[25],
+                "held_percent_institutions": r[26],
+            }
+            for r in rows
+        ]
 
 
 async def schedule_batch_dip_analysis() -> Optional[str]:
@@ -232,19 +315,19 @@ async def process_completed_batch_jobs() -> int:
         Number of jobs processed
     """
     # Get pending batch jobs
-    rows = await fetch_all(
-        """
-        SELECT batch_id, job_type, status
-        FROM batch_jobs
-        WHERE status IN ('pending', 'validating', 'in_progress', 'finalizing')
-        """
-    )
+    async with get_session() as session:
+        result = await session.execute(
+            select(BatchJob.batch_id, BatchJob.job_type, BatchJob.status).where(
+                BatchJob.status.in_(["pending", "validating", "in_progress", "finalizing"])
+            )
+        )
+        rows = result.all()
 
     processed = 0
 
     for row in rows:
-        batch_id = row["batch_id"]
-        job_type = row["job_type"]
+        batch_id = row[0]
+        job_type = row[1]
 
         # Check status
         status_info = await check_batch(batch_id)
@@ -255,23 +338,19 @@ async def process_completed_batch_jobs() -> int:
         new_status = status_info.get("status", "unknown")
 
         # Update status in database
-        await execute(
-            """
-            UPDATE batch_jobs
-            SET status = $1,
-                completed_requests = $2,
-                failed_requests = $3,
-                output_file_id = $4,
-                error_file_id = $5
-            WHERE batch_id = $6
-            """,
-            new_status,
-            status_info.get("completed_count", 0),
-            status_info.get("failed_count", 0),
-            status_info.get("output_file_id"),
-            status_info.get("error_file_id"),
-            batch_id,
-        )
+        async with get_session() as session:
+            await session.execute(
+                update(BatchJob)
+                .where(BatchJob.batch_id == batch_id)
+                .values(
+                    status=new_status,
+                    completed_requests=status_info.get("completed_count", 0),
+                    failed_requests=status_info.get("failed_count", 0),
+                    output_file_id=status_info.get("output_file_id"),
+                    error_file_id=status_info.get("error_file_id"),
+                )
+            )
+            await session.commit()
 
         # If completed, retrieve and process results
         if new_status == "completed":
@@ -282,16 +361,18 @@ async def process_completed_batch_jobs() -> int:
                 processed += 1
 
                 # Update completion time and cost
-                await execute(
-                    """
-                    UPDATE batch_jobs
-                    SET completed_at = NOW(),
-                        actual_cost_usd = $1
-                    WHERE batch_id = $2
-                    """,
-                    status_info.get("total_cost", 0),
-                    batch_id,
-                )
+                async with get_session() as session:
+                    await session.execute(
+                        update(BatchJob)
+                        .where(BatchJob.batch_id == batch_id)
+                        .values(
+                            completed_at=datetime.now(timezone.utc),
+                            actual_cost_usd=Decimal(str(status_info.get("total_cost", 0))),
+                        )
+                    )
+                    await session.commit()
+
+    return processed
 
     return processed
 
@@ -341,42 +422,43 @@ async def _store_dip_analysis(symbol: str, content: dict | str, batch_id: str) -
 
     expires_at = datetime.now(timezone.utc) + timedelta(days=7)
 
-    await execute(
-        """
-        INSERT INTO dip_ai_analysis (
-            symbol, ai_rating, rating_reasoning,
-            model_used, is_batch_generated, batch_job_id, generated_at, expires_at
+    async with get_session() as session:
+        stmt = insert(DipAIAnalysis).values(
+            symbol=symbol.upper(),
+            ai_rating=rating,
+            rating_reasoning=reasoning,
+            model_used="gpt-5-mini",
+            is_batch_generated=True,
+            batch_job_id=batch_id,
+            generated_at=datetime.now(timezone.utc),
+            expires_at=expires_at,
         )
-        VALUES ($1, $2, $3, 'gpt-5-mini', TRUE, $4, NOW(), $5)
-        ON CONFLICT (symbol) DO UPDATE SET
-            ai_rating = EXCLUDED.ai_rating,
-            rating_reasoning = EXCLUDED.rating_reasoning,
-            is_batch_generated = TRUE,
-            batch_job_id = EXCLUDED.batch_job_id,
-            generated_at = NOW(),
-            expires_at = EXCLUDED.expires_at
-        """,
-        symbol.upper(),
-        rating,
-        reasoning,
-        batch_id,
-        expires_at,
-    )
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["symbol"],
+            set_={
+                "ai_rating": stmt.excluded.ai_rating,
+                "rating_reasoning": stmt.excluded.rating_reasoning,
+                "is_batch_generated": True,
+                "batch_job_id": stmt.excluded.batch_job_id,
+                "generated_at": datetime.now(timezone.utc),
+                "expires_at": stmt.excluded.expires_at,
+            },
+        )
+        await session.execute(stmt)
+        await session.commit()
 
     logger.debug(f"Stored AI rating for {symbol}: {rating}")
 
 
 async def _store_suggestion_bio(symbol: str, bio: str) -> None:
     """Store AI bio for a suggestion."""
-    await execute(
-        """
-        UPDATE stock_suggestions
-        SET ai_bio = $1, updated_at = NOW()
-        WHERE symbol = $2
-        """,
-        bio,
-        symbol.upper(),
-    )
+    async with get_session() as session:
+        await session.execute(
+            update(StockSuggestion)
+            .where(StockSuggestion.symbol == symbol.upper())
+            .values(ai_bio=bio, updated_at=datetime.now(timezone.utc))
+        )
+        await session.commit()
 
     logger.debug(f"Stored AI bio for suggestion {symbol}")
 
@@ -429,27 +511,30 @@ async def run_realtime_analysis_for_new_stock(
         # Store the analysis
         expires_at = datetime.now(timezone.utc) + timedelta(days=7)
 
-        await execute(
-            """
-            INSERT INTO dip_ai_analysis (
-                symbol, swipe_bio, ai_rating, rating_reasoning,
-                model_used, is_batch_generated, generated_at, expires_at
+        async with get_session() as session:
+            stmt = insert(DipAIAnalysis).values(
+                symbol=symbol.upper(),
+                swipe_bio=bio,
+                ai_rating=rating_data.get("rating") if rating_data else None,
+                rating_reasoning=rating_data.get("reasoning", "") if rating_data else "",
+                model_used="gpt-5-mini",
+                is_batch_generated=False,
+                generated_at=datetime.now(timezone.utc),
+                expires_at=expires_at,
             )
-            VALUES ($1, $2, $3, $4, 'gpt-5-mini', FALSE, NOW(), $5)
-            ON CONFLICT (symbol) DO UPDATE SET
-                swipe_bio = EXCLUDED.swipe_bio,
-                ai_rating = EXCLUDED.ai_rating,
-                rating_reasoning = EXCLUDED.rating_reasoning,
-                is_batch_generated = FALSE,
-                generated_at = NOW(),
-                expires_at = EXCLUDED.expires_at
-            """,
-            symbol.upper(),
-            bio,
-            rating_data.get("rating") if rating_data else None,  # String rating like 'buy', 'hold'
-            rating_data.get("reasoning", "") if rating_data else "",
-            expires_at,
-        )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["symbol"],
+                set_={
+                    "swipe_bio": stmt.excluded.swipe_bio,
+                    "ai_rating": stmt.excluded.ai_rating,
+                    "rating_reasoning": stmt.excluded.rating_reasoning,
+                    "is_batch_generated": False,
+                    "generated_at": datetime.now(timezone.utc),
+                    "expires_at": stmt.excluded.expires_at,
+                },
+            )
+            await session.execute(stmt)
+            await session.commit()
 
         logger.info(f"Completed real-time analysis for {symbol}")
 
@@ -526,7 +611,8 @@ async def cron_cleanup_expired() -> dict:
 
     Runs daily at midnight.
     """
-    from app.repositories.dip_history import cleanup_old_history
+    from app.repositories.dip_history_orm import cleanup_old_history
+    from sqlalchemy import text
 
     logger.info("Running daily cleanup")
 
@@ -534,7 +620,9 @@ async def cron_cleanup_expired() -> dict:
     history_deleted = await cleanup_old_history(days=90)
 
     # Clean up old rate limit entries
-    await execute("SELECT cleanup_rate_limits()")
+    async with get_session() as session:
+        await session.execute(text("SELECT cleanup_rate_limits()"))
+        await session.commit()
 
     return {
         "job": "cleanup_expired",

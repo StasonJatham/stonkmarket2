@@ -16,7 +16,7 @@ from app.core.security import (
     verify_password,
 )
 from app.database.connection import execute
-from app.repositories import auth_user as auth_repo
+from app.repositories import auth_user_orm as auth_repo
 from app.schemas.auth import (
     LoginRequest,
     LoginResponse,

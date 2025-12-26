@@ -50,8 +50,8 @@ from typing import Any, Literal, Optional, TypedDict
 from openai import AsyncOpenAI, APITimeoutError, APIConnectionError, RateLimitError, APIStatusError
 
 from app.core.logging import get_logger
-from app.repositories import api_keys as api_keys_repo
-from app.repositories import api_usage as api_usage_repo
+from app.repositories import api_keys_orm as api_keys_repo
+from app.repositories import api_usage_orm as api_usage_repo
 from app.services.text_cleaner import clean_ai_text, truncate_summary
 
 logger = get_logger("openai")

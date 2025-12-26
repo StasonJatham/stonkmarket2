@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.api.dependencies import require_admin
-from app.repositories import user_api_keys
+from app.repositories import user_api_keys_orm as user_api_keys
 from app.core.logging import get_logger
 
 logger = get_logger("user_api_keys_api")

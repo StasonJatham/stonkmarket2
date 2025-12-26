@@ -12,7 +12,7 @@ from app.cache.cache import Cache
 from app.core.exceptions import ConflictError, NotFoundError
 from app.core.logging import get_logger
 from app.core.security import TokenData
-from app.repositories import symbols as symbol_repo
+from app.repositories import symbols_orm as symbol_repo
 from app.schemas.symbols import SymbolCreate, SymbolResponse, SymbolUpdate
 from app.services.stock_info import get_stock_info
 from app.services.runtime_settings import get_cache_ttl

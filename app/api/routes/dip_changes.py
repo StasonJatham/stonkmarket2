@@ -9,8 +9,8 @@ from hashlib import sha256
 from fastapi import APIRouter, HTTPException, Query, Request, Header
 from pydantic import BaseModel
 
-from app.repositories import dip_history
-from app.repositories import user_api_keys
+from app.repositories import dip_history_orm as dip_history
+from app.repositories import user_api_keys_orm as user_api_keys
 from app.cache.cache import cache_manager
 from app.core.logging import get_logger
 

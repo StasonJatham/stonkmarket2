@@ -8,7 +8,7 @@ import { useTheme } from '@/context/ThemeContext';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { SuggestStockDialog } from '@/components/SuggestStockDialog';
 import { ColorPickerInline } from '@/components/ui/color-picker';
-import { TrendingUp, Settings, LogOut, Heart, BarChart3, Eye, EyeOff } from 'lucide-react';
+import { TrendingUp, Settings, LogOut, Heart, BarChart3, Eye, EyeOff, PieChart } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 const navLinks = [
@@ -16,6 +16,7 @@ const navLinks = [
   { href: '/swipe', label: 'DipSwipe', icon: Heart },
   { href: '/learn', label: 'Learn' },
   { href: '/signals', label: 'Signals', icon: BarChart3 },
+  { href: '/portfolio', label: 'Portfolio', icon: PieChart, requiresAuth: true },
 ];
 
 const adminLinks = [
@@ -45,7 +46,7 @@ export function Header() {
 
           {/* Desktop Navigation */}
           <nav className="hidden md:flex items-center gap-6">
-            {navLinks.map((link) => {
+            {navLinks.filter((link) => !link.requiresAuth || user).map((link) => {
               const Icon = link.icon;
               return (
                 <Link
@@ -152,7 +153,7 @@ export function Header() {
               transition={{ duration: 0.3, delay: 0.1 }}
               className="flex flex-col items-center justify-center h-full gap-8"
             >
-              {navLinks.map((link, i) => (
+              {navLinks.filter((link) => !link.requiresAuth || user).map((link, i) => (
                 <motion.div
                   key={link.href}
                   initial={{ opacity: 0, y: 20 }}

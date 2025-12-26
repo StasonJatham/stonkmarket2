@@ -1510,3 +1510,196 @@ export interface BatchJobListResponse {
 export async function getBatchJobs(limit: number = 20, includeCompleted: boolean = true): Promise<BatchJobListResponse> {
   return fetchAPI<BatchJobListResponse>(`/admin/settings/batch-jobs?limit=${limit}&include_completed=${includeCompleted}`);
 }
+
+// =============================================================================
+// PORTFOLIO API
+// =============================================================================
+
+export interface Portfolio {
+  id: number;
+  user_id: number;
+  name: string;
+  description?: string | null;
+  base_currency: string;
+  cash_balance?: number | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at?: string | null;
+}
+
+export interface Holding {
+  id: number;
+  portfolio_id: number;
+  symbol: string;
+  quantity: number;
+  avg_cost?: number | null;
+  target_weight?: number | null;
+  created_at: string;
+  updated_at?: string | null;
+}
+
+export interface Transaction {
+  id: number;
+  portfolio_id: number;
+  symbol: string;
+  side: string;
+  quantity?: number | null;
+  price?: number | null;
+  fees?: number | null;
+  trade_date: string;
+  notes?: string | null;
+  created_at: string;
+}
+
+export interface PortfolioDetail extends Portfolio {
+  holdings: Holding[];
+  transactions: Transaction[];
+}
+
+export interface PortfolioAnalyticsResult {
+  tool: string;
+  status: string;
+  data: Record<string, unknown>;
+  warnings: string[];
+  source?: string | null;
+  generated_at?: string | null;
+}
+
+export interface PortfolioAnalyticsResponse {
+  portfolio_id: number;
+  as_of_date: string;
+  results: PortfolioAnalyticsResult[];
+  job_id?: string | null;
+  job_status?: string | null;
+  scheduled_tools: string[];
+}
+
+export interface PortfolioAnalyticsJob {
+  job_id: string;
+  portfolio_id: number;
+  status: string;
+  tools: string[];
+  results_count: number;
+  error_message?: string | null;
+  created_at: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+}
+
+export async function getPortfolios(): Promise<Portfolio[]> {
+  return fetchAPI<Portfolio[]>('/portfolios');
+}
+
+export async function createPortfolio(payload: {
+  name: string;
+  description?: string;
+  base_currency?: string;
+  cash_balance?: number;
+}): Promise<Portfolio> {
+  const result = await fetchAPI<Portfolio>('/portfolios', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  invalidateEtagCache(/\/portfolios/);
+  return result;
+}
+
+export async function updatePortfolio(
+  portfolioId: number,
+  payload: Partial<{
+    name: string;
+    description: string;
+    base_currency: string;
+    cash_balance: number;
+    is_active: boolean;
+  }>
+): Promise<Portfolio> {
+  const result = await fetchAPI<Portfolio>(`/portfolios/${portfolioId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+  invalidateEtagCache(/\/portfolios/);
+  return result;
+}
+
+export async function deletePortfolio(portfolioId: number): Promise<void> {
+  await fetchAPI<void>(`/portfolios/${portfolioId}`, { method: 'DELETE' });
+  invalidateEtagCache(/\/portfolios/);
+}
+
+export async function getPortfolioDetail(portfolioId: number): Promise<PortfolioDetail> {
+  return fetchAPI<PortfolioDetail>(`/portfolios/${portfolioId}`);
+}
+
+export async function upsertHolding(
+  portfolioId: number,
+  payload: { symbol: string; quantity: number; avg_cost?: number; target_weight?: number }
+): Promise<Holding> {
+  const result = await fetchAPI<Holding>(`/portfolios/${portfolioId}/holdings`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  invalidateEtagCache(new RegExp(`/portfolios/${portfolioId}`));
+  return result;
+}
+
+export async function deleteHolding(portfolioId: number, symbol: string): Promise<void> {
+  await fetchAPI<void>(`/portfolios/${portfolioId}/holdings/${symbol}`, { method: 'DELETE' });
+  invalidateEtagCache(new RegExp(`/portfolios/${portfolioId}`));
+}
+
+export async function getTransactions(portfolioId: number, limit: number = 200): Promise<Transaction[]> {
+  return fetchAPI<Transaction[]>(`/portfolios/${portfolioId}/transactions?limit=${limit}`);
+}
+
+export async function addTransaction(
+  portfolioId: number,
+  payload: {
+    symbol: string;
+    side: string;
+    quantity?: number;
+    price?: number;
+    fees?: number;
+    trade_date: string;
+    notes?: string;
+  }
+): Promise<Transaction> {
+  const result = await fetchAPI<Transaction>(`/portfolios/${portfolioId}/transactions`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  invalidateEtagCache(new RegExp(`/portfolios/${portfolioId}`));
+  return result;
+}
+
+export async function deleteTransaction(portfolioId: number, transactionId: number): Promise<void> {
+  await fetchAPI<void>(`/portfolios/${portfolioId}/transactions/${transactionId}`, { method: 'DELETE' });
+  invalidateEtagCache(new RegExp(`/portfolios/${portfolioId}`));
+}
+
+export async function runPortfolioAnalytics(
+  portfolioId: number,
+  payload: {
+    tools?: string[];
+    window?: string;
+    start_date?: string;
+    end_date?: string;
+    benchmark?: string;
+    params?: Record<string, unknown>;
+    force_refresh?: boolean;
+  }
+): Promise<PortfolioAnalyticsResponse> {
+  return fetchAPI<PortfolioAnalyticsResponse>(`/portfolios/${portfolioId}/analytics`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getPortfolioAnalyticsJob(
+  portfolioId: number,
+  jobId: string
+): Promise<PortfolioAnalyticsJob> {
+  return fetchAPI<PortfolioAnalyticsJob>(
+    `/portfolios/${portfolioId}/analytics/jobs/${jobId}`
+  );
+}

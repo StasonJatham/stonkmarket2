@@ -7,6 +7,7 @@ Jobs:
 - batch_ai_*: OpenAI Batch API for AI analysis
 - fundamentals_refresh: Monthly fundamentals update (change-driven)
 - ai_agents_analysis: Weekly AI agent analysis
+- portfolio_analytics_worker: Process queued portfolio analytics jobs
 - cleanup: Daily cleanup of expired data
 """
 
@@ -627,29 +628,30 @@ async def batch_poll_job() -> str:
 @register_job("fundamentals_refresh")
 async def fundamentals_refresh_job() -> str:
     """
-    Refresh stock fundamentals from Yahoo Finance.
+    Refresh stock fundamentals and financial statements from Yahoo Finance.
     
-    Change-driven: Only refreshes when:
-    1. Data is expired (>30 days old)
-    2. Earnings date has passed since last refresh
-    3. Data was never fetched
+    Change-driven refresh criteria:
+    1. Basic fundamentals never fetched
+    2. Basic fundamentals expired (>30 days old)
+    3. Earnings date has passed since last fetch (new quarterly data available)
+    4. Financial statements never fetched (financials_fetched_at is NULL)
+    5. Financial statements stale (>90 days old) - statements change less frequently
+    6. Next earnings date is within 7 days (pre-fetch for upcoming data)
 
     Schedule: Weekly on Sunday at 2am (checks all conditions)
     """
     from app.services.fundamentals import refresh_all_fundamentals
-    from app.services.data_providers import get_yfinance_service
-    from app.database.connection import fetch_all, execute
-    from datetime import datetime, timezone
+    from app.database.connection import fetch_all
+    from datetime import datetime, timezone, timedelta
 
     logger.info("Starting fundamentals_refresh job")
 
     try:
-        yf_service = get_yfinance_service()
-        
         # Find symbols that need refresh based on multiple criteria
         rows = await fetch_all(
             """
-            SELECT s.symbol, f.fetched_at, f.earnings_date
+            SELECT s.symbol, f.fetched_at, f.earnings_date, f.next_earnings_date, 
+                   f.financials_fetched_at, f.domain
             FROM symbols s
             LEFT JOIN stock_fundamentals f ON s.symbol = f.symbol
             WHERE s.symbol_type = 'stock'
@@ -659,44 +661,60 @@ async def fundamentals_refresh_job() -> str:
         
         symbols_to_refresh = []
         now = datetime.now(timezone.utc)
+        seven_days_from_now = now + timedelta(days=7)
         
         for row in rows:
             symbol = row["symbol"]
             fetched_at = row["fetched_at"]
             earnings_date = row["earnings_date"]
+            next_earnings_date = row["next_earnings_date"]
+            financials_fetched_at = row["financials_fetched_at"]
+            domain = row["domain"]
             
-            # Criterion 1: Never fetched
+            # Criterion 1: Basic fundamentals never fetched
             if not fetched_at:
                 symbols_to_refresh.append((symbol, "never_fetched"))
                 continue
             
-            # Criterion 2: Expired (>30 days old)
-            age_days = (now - fetched_at.replace(tzinfo=timezone.utc)).days if fetched_at else 999
+            # Normalize fetched_at to UTC
+            fetched_at_utc = fetched_at.replace(tzinfo=timezone.utc) if fetched_at.tzinfo is None else fetched_at
+            
+            # Criterion 2: Basic fundamentals expired (>30 days old)
+            age_days = (now - fetched_at_utc).days
             if age_days > 30:
                 symbols_to_refresh.append((symbol, f"expired_{age_days}d"))
                 continue
             
             # Criterion 3: Earnings date passed since last fetch
-            if earnings_date and fetched_at:
-                # If earnings_date is in the past and after last fetch, refresh
-                if isinstance(earnings_date, str):
-                    try:
-                        earnings_dt = datetime.fromisoformat(earnings_date)
-                    except ValueError:
-                        earnings_dt = None
-                else:
-                    earnings_dt = earnings_date
-                
-                if earnings_dt:
-                    if hasattr(earnings_dt, 'tzinfo') and earnings_dt.tzinfo is None:
-                        earnings_dt = earnings_dt.replace(tzinfo=timezone.utc)
-                    
-                    if earnings_dt < now and earnings_dt > fetched_at.replace(tzinfo=timezone.utc):
-                        symbols_to_refresh.append((symbol, "earnings_passed"))
+            if earnings_date:
+                earnings_dt = _parse_datetime(earnings_date)
+                if earnings_dt and earnings_dt < now and earnings_dt > fetched_at_utc:
+                    symbols_to_refresh.append((symbol, "earnings_passed"))
+                    continue
+            
+            # Criterion 4: Financial statements never fetched
+            if not financials_fetched_at:
+                symbols_to_refresh.append((symbol, "financials_never_fetched"))
+                continue
+            
+            # Criterion 5: Financial statements stale (>90 days - quarterly data)
+            financials_at_utc = financials_fetched_at.replace(tzinfo=timezone.utc) if financials_fetched_at.tzinfo is None else financials_fetched_at
+            financials_age_days = (now - financials_at_utc).days
+            if financials_age_days > 90:
+                symbols_to_refresh.append((symbol, f"financials_stale_{financials_age_days}d"))
+                continue
+            
+            # Criterion 6: Next earnings date within 7 days (pre-fetch)
+            if next_earnings_date:
+                next_earnings_dt = _parse_datetime(next_earnings_date)
+                if next_earnings_dt and now <= next_earnings_dt <= seven_days_from_now:
+                    # Only add if we haven't fetched since 1 week before earnings
+                    if fetched_at_utc < (next_earnings_dt - timedelta(days=7)):
+                        symbols_to_refresh.append((symbol, "upcoming_earnings"))
                         continue
             
             # Otherwise skip - data is fresh enough
-            logger.debug(f"Skipping {symbol}: fresh data (age={age_days}d)")
+            logger.debug(f"Skipping {symbol}: fresh data (age={age_days}d, financials_age={financials_age_days}d)")
         
         if not symbols_to_refresh:
             message = "No symbols need fundamentals refresh"
@@ -708,12 +726,13 @@ async def fundamentals_refresh_job() -> str:
         # Log reasons for refresh
         reasons = {}
         for _, reason in symbols_to_refresh:
-            reasons[reason] = reasons.get(reason, 0) + 1
+            base_reason = reason.split("_")[0] if reason.startswith("expired") or reason.startswith("financials_stale") else reason
+            reasons[base_reason] = reasons.get(base_reason, 0) + 1
         logger.info(f"Refresh reasons: {reasons}")
         
-        # Use the existing refresh function
+        # Use the existing refresh function with specific symbols
         symbols_only = [s for s, _ in symbols_to_refresh]
-        result = await refresh_all_fundamentals(batch_size=5)
+        result = await refresh_all_fundamentals(symbols=symbols_only, batch_size=5)
 
         message = f"Fundamentals refresh: {result['refreshed']} updated, {result['failed']} failed, {result['skipped']} skipped"
         logger.info(f"fundamentals_refresh: {message}")
@@ -722,6 +741,30 @@ async def fundamentals_refresh_job() -> str:
     except Exception as e:
         logger.error(f"fundamentals_refresh failed: {e}")
         raise
+
+
+def _parse_datetime(dt_value) -> datetime | None:
+    """Parse datetime from various formats."""
+    from datetime import datetime, timezone
+    
+    if not dt_value:
+        return None
+    
+    if isinstance(dt_value, datetime):
+        if dt_value.tzinfo is None:
+            return dt_value.replace(tzinfo=timezone.utc)
+        return dt_value
+    
+    if isinstance(dt_value, str):
+        try:
+            parsed = datetime.fromisoformat(dt_value)
+            if parsed.tzinfo is None:
+                return parsed.replace(tzinfo=timezone.utc)
+            return parsed
+        except ValueError:
+            return None
+    
+    return None
 
 
 @register_job("ai_agents_analysis")
@@ -918,3 +961,23 @@ async def cleanup_job() -> str:
         logger.error(f"cleanup failed: {e}")
         raise
 
+
+@register_job("portfolio_analytics_worker")
+async def portfolio_analytics_worker_job() -> str:
+    """
+    Process queued portfolio analytics jobs.
+
+    Schedule: Every 5 minutes
+    """
+    from app.portfolio.jobs import process_pending_jobs
+
+    logger.info("Starting portfolio_analytics_worker job")
+
+    try:
+        processed = await process_pending_jobs(limit=3)
+        message = f"Processed {processed} portfolio analytics jobs"
+        logger.info(f"portfolio_analytics_worker: {message}")
+        return message
+    except Exception as e:
+        logger.error(f"portfolio_analytics_worker failed: {e}")
+        raise

@@ -20,7 +20,7 @@ from app.core.mfa import (
     verify_backup_code,
 )
 from app.core.security import TokenData
-from app.repositories import auth_user as auth_repo
+from app.repositories import auth_user_orm as auth_repo
 from app.schemas.mfa import (
     MFASetupResponse,
     MFAVerifyRequest,

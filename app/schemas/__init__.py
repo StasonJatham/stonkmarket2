@@ -40,6 +40,18 @@ from .suggestions import (
     SuggestionReject,
     TopSuggestion,
 )
+from .portfolio import (
+    PortfolioCreateRequest,
+    PortfolioUpdateRequest,
+    PortfolioResponse,
+    PortfolioDetailResponse,
+    HoldingInput,
+    HoldingResponse,
+    TransactionInput,
+    TransactionResponse,
+    PortfolioAnalyticsRequest,
+    PortfolioAnalyticsResponse,
+)
 
 __all__ = [
     # Auth
@@ -72,6 +84,17 @@ __all__ = [
     "SuggestionApprove",
     "SuggestionReject",
     "TopSuggestion",
+    # Portfolio
+    "PortfolioCreateRequest",
+    "PortfolioUpdateRequest",
+    "PortfolioResponse",
+    "PortfolioDetailResponse",
+    "HoldingInput",
+    "HoldingResponse",
+    "TransactionInput",
+    "TransactionResponse",
+    "PortfolioAnalyticsRequest",
+    "PortfolioAnalyticsResponse",
     # Common
     "ErrorResponse",
     "HealthResponse",

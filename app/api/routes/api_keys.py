@@ -9,8 +9,8 @@ from app.core.encryption import decrypt_api_key
 from app.core.exceptions import AuthenticationError, NotFoundError, ValidationError
 from app.core.mfa import verify_totp, verify_backup_code
 from app.core.security import TokenData
-from app.repositories import auth_user as auth_repo
-from app.repositories import api_keys as api_keys_repo
+from app.repositories import auth_user_orm as auth_repo
+from app.repositories import api_keys_orm as api_keys_repo
 from app.schemas.api_keys import (
     ApiKeyCreate,
     ApiKeyResponse,

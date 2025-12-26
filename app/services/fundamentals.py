@@ -235,7 +235,11 @@ async def _fetch_fundamentals_from_service(symbol: str) -> Optional[dict[str, An
     """
     Fetch fundamentals via unified YFinanceService.
     
-    Converts the ticker info response to fundamentals format.
+    Fetches:
+    - Basic fundamentals from ticker info
+    - Earnings calendar
+    - Financial statements (quarterly/annual income stmt, balance sheet, cash flow)
+    - Domain-specific metrics (NIM, FFO, loss ratio based on domain type)
     """
     if symbol.startswith("^"):
         logger.debug(f"Skipping fundamentals for index: {symbol}")
@@ -243,8 +247,17 @@ async def _fetch_fundamentals_from_service(symbol: str) -> Optional[dict[str, An
     
     service = get_yfinance_service()
     
-    # Get ticker info - includes all fundamental data
-    info = await service.get_ticker_info(symbol)
+    # Fetch ticker info and financials concurrently
+    info_task = service.get_ticker_info(symbol)
+    financials_task = service.get_financials(symbol)
+    calendar_task = service.get_calendar(symbol)
+    
+    info, financials, (calendar, _) = await asyncio.gather(
+        info_task,
+        financials_task,
+        calendar_task,
+    )
+    
     if not info:
         return None
     
@@ -263,9 +276,13 @@ async def _fetch_fundamentals_from_service(symbol: str) -> Optional[dict[str, An
         logger.debug(f"Skipping fundamentals for {quote_type}: {symbol}")
         return None
     
-    # Get calendar for earnings dates
-    calendar, _ = await service.get_calendar(symbol)
+    # Detect domain
+    domain = _detect_domain(info)
     
+    # Calculate domain-specific metrics
+    domain_metrics = _calculate_domain_metrics(info, financials, domain)
+    
+    # Parse earnings dates
     next_earnings_date = None
     earnings_estimate_high = None
     earnings_estimate_low = None
@@ -277,8 +294,11 @@ async def _fetch_fundamentals_from_service(symbol: str) -> Optional[dict[str, An
         earnings_estimate_low = calendar.get("earnings_estimate_low")
         earnings_estimate_avg = calendar.get("earnings_estimate_avg")
     
-    return {
+    # Build result with all data
+    result = {
         "symbol": symbol.upper(),
+        # Domain
+        "domain": domain,
         # Valuation
         "pe_ratio": _safe_float(info.get("pe_ratio")),
         "forward_pe": _safe_float(info.get("forward_pe")),
@@ -338,18 +358,45 @@ async def _fetch_fundamentals_from_service(symbol: str) -> Optional[dict[str, An
         "earnings_estimate_high": _safe_float(earnings_estimate_high),
         "earnings_estimate_low": _safe_float(earnings_estimate_low),
         "earnings_estimate_avg": _safe_float(earnings_estimate_avg),
+        # Financial Statements (store as JSONB)
+        "income_stmt_quarterly": financials.get("quarterly", {}).get("income_statement") if financials else None,
+        "income_stmt_annual": financials.get("annual", {}).get("income_statement") if financials else None,
+        "balance_sheet_quarterly": financials.get("quarterly", {}).get("balance_sheet") if financials else None,
+        "balance_sheet_annual": financials.get("annual", {}).get("balance_sheet") if financials else None,
+        "cash_flow_quarterly": financials.get("quarterly", {}).get("cash_flow") if financials else None,
+        "cash_flow_annual": financials.get("annual", {}).get("cash_flow") if financials else None,
+        # Domain-Specific Metrics
+        "net_interest_income": domain_metrics.get("net_interest_income"),
+        "net_interest_margin": domain_metrics.get("net_interest_margin"),
+        "ffo": domain_metrics.get("ffo"),
+        "ffo_per_share": domain_metrics.get("ffo_per_share"),
+        "p_ffo": domain_metrics.get("p_ffo"),
+        "loss_ratio": domain_metrics.get("loss_ratio"),
+        "combined_ratio": domain_metrics.get("combined_ratio"),
+        # Timestamp for financials
+        "financials_fetched_at": datetime.now(timezone.utc) if financials else None,
     }
+    
+    return result
 
 
 async def _store_fundamentals(data: dict[str, Any]) -> None:
-    """Store fundamentals in database."""
+    """Store fundamentals in database including financial statements and domain metrics."""
+    import json
+    
     symbol = data["symbol"]
     expires_at = datetime.now(timezone.utc) + timedelta(days=30)
+    
+    # Convert dict columns to JSON strings for PostgreSQL JSONB
+    def to_json(val):
+        if val is None:
+            return None
+        return json.dumps(val)
     
     await execute(
         """
         INSERT INTO stock_fundamentals (
-            symbol,
+            symbol, domain,
             pe_ratio, forward_pe, peg_ratio, price_to_book, price_to_sales,
             enterprise_value, ev_to_ebitda, ev_to_revenue,
             profit_margin, operating_margin, gross_margin, ebitda_margin,
@@ -366,7 +413,13 @@ async def _store_fundamentals(data: dict[str, Any]) -> None:
             target_high_price, target_low_price, target_mean_price, target_median_price,
             revenue, ebitda, net_income,
             next_earnings_date, earnings_estimate_high, earnings_estimate_low, earnings_estimate_avg,
-            fetched_at, expires_at
+            income_stmt_quarterly, income_stmt_annual,
+            balance_sheet_quarterly, balance_sheet_annual,
+            cash_flow_quarterly, cash_flow_annual,
+            net_interest_income, net_interest_margin,
+            ffo, ffo_per_share, p_ffo,
+            loss_ratio, combined_ratio,
+            fetched_at, expires_at, financials_fetched_at
         )
         VALUES (
             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
@@ -374,9 +427,11 @@ async def _store_fundamentals(data: dict[str, Any]) -> None:
             $21, $22, $23, $24, $25, $26, $27, $28, $29, $30,
             $31, $32, $33, $34, $35, $36, $37, $38, $39, $40,
             $41, $42, $43, $44, $45, $46, $47, $48, $49, $50,
-            NOW(), $51
+            $51, $52, $53, $54, $55, $56, $57, $58, $59, $60,
+            $61, $62, $63, $64, NOW(), $65, $66
         )
         ON CONFLICT (symbol) DO UPDATE SET
+            domain = EXCLUDED.domain,
             pe_ratio = EXCLUDED.pe_ratio,
             forward_pe = EXCLUDED.forward_pe,
             peg_ratio = EXCLUDED.peg_ratio,
@@ -426,36 +481,57 @@ async def _store_fundamentals(data: dict[str, Any]) -> None:
             earnings_estimate_high = EXCLUDED.earnings_estimate_high,
             earnings_estimate_low = EXCLUDED.earnings_estimate_low,
             earnings_estimate_avg = EXCLUDED.earnings_estimate_avg,
+            income_stmt_quarterly = EXCLUDED.income_stmt_quarterly,
+            income_stmt_annual = EXCLUDED.income_stmt_annual,
+            balance_sheet_quarterly = EXCLUDED.balance_sheet_quarterly,
+            balance_sheet_annual = EXCLUDED.balance_sheet_annual,
+            cash_flow_quarterly = EXCLUDED.cash_flow_quarterly,
+            cash_flow_annual = EXCLUDED.cash_flow_annual,
+            net_interest_income = EXCLUDED.net_interest_income,
+            net_interest_margin = EXCLUDED.net_interest_margin,
+            ffo = EXCLUDED.ffo,
+            ffo_per_share = EXCLUDED.ffo_per_share,
+            p_ffo = EXCLUDED.p_ffo,
+            loss_ratio = EXCLUDED.loss_ratio,
+            combined_ratio = EXCLUDED.combined_ratio,
             fetched_at = NOW(),
-            expires_at = EXCLUDED.expires_at
+            expires_at = EXCLUDED.expires_at,
+            financials_fetched_at = EXCLUDED.financials_fetched_at
         """,
         symbol,
-        data["pe_ratio"], data["forward_pe"], data["peg_ratio"],
-        data["price_to_book"], data["price_to_sales"],
-        data["enterprise_value"], data["ev_to_ebitda"], data["ev_to_revenue"],
-        data["profit_margin"], data["operating_margin"],
-        data["gross_margin"], data["ebitda_margin"],
-        data["return_on_equity"], data["return_on_assets"],
-        data["debt_to_equity"], data["current_ratio"], data["quick_ratio"],
-        data["total_cash"], data["total_debt"],
-        data["free_cash_flow"], data["operating_cash_flow"],
-        data["book_value"], data["eps_trailing"], data["eps_forward"],
-        data["revenue_per_share"],
-        data["revenue_growth"], data["earnings_growth"], data["earnings_quarterly_growth"],
-        data["shares_outstanding"], data["float_shares"],
-        data["held_percent_insiders"], data["held_percent_institutions"],
-        data["short_ratio"], data["short_percent_of_float"],
-        data["beta"],
-        data["recommendation"], data["recommendation_mean"], data["num_analyst_opinions"],
-        data["target_high_price"], data["target_low_price"],
-        data["target_mean_price"], data["target_median_price"],
-        data["revenue"], data["ebitda"], data["net_income"],
-        data["next_earnings_date"],
-        data["earnings_estimate_high"], data["earnings_estimate_low"], data["earnings_estimate_avg"],
-        expires_at,
+        data.get("domain"),
+        data.get("pe_ratio"), data.get("forward_pe"), data.get("peg_ratio"),
+        data.get("price_to_book"), data.get("price_to_sales"),
+        data.get("enterprise_value"), data.get("ev_to_ebitda"), data.get("ev_to_revenue"),
+        data.get("profit_margin"), data.get("operating_margin"),
+        data.get("gross_margin"), data.get("ebitda_margin"),
+        data.get("return_on_equity"), data.get("return_on_assets"),
+        data.get("debt_to_equity"), data.get("current_ratio"), data.get("quick_ratio"),
+        data.get("total_cash"), data.get("total_debt"),
+        data.get("free_cash_flow"), data.get("operating_cash_flow"),
+        data.get("book_value"), data.get("eps_trailing"), data.get("eps_forward"),
+        data.get("revenue_per_share"),
+        data.get("revenue_growth"), data.get("earnings_growth"), data.get("earnings_quarterly_growth"),
+        data.get("shares_outstanding"), data.get("float_shares"),
+        data.get("held_percent_insiders"), data.get("held_percent_institutions"),
+        data.get("short_ratio"), data.get("short_percent_of_float"),
+        data.get("beta"),
+        data.get("recommendation"), data.get("recommendation_mean"), data.get("num_analyst_opinions"),
+        data.get("target_high_price"), data.get("target_low_price"),
+        data.get("target_mean_price"), data.get("target_median_price"),
+        data.get("revenue"), data.get("ebitda"), data.get("net_income"),
+        data.get("next_earnings_date"),
+        data.get("earnings_estimate_high"), data.get("earnings_estimate_low"), data.get("earnings_estimate_avg"),
+        to_json(data.get("income_stmt_quarterly")), to_json(data.get("income_stmt_annual")),
+        to_json(data.get("balance_sheet_quarterly")), to_json(data.get("balance_sheet_annual")),
+        to_json(data.get("cash_flow_quarterly")), to_json(data.get("cash_flow_annual")),
+        data.get("net_interest_income"), data.get("net_interest_margin"),
+        data.get("ffo"), data.get("ffo_per_share"), data.get("p_ffo"),
+        data.get("loss_ratio"), data.get("combined_ratio"),
+        expires_at, data.get("financials_fetched_at"),
     )
     
-    logger.debug(f"Stored fundamentals for {symbol}")
+    logger.debug(f"Stored fundamentals for {symbol} (domain={data.get('domain')})")
 
 
 async def fetch_fundamentals_live(symbol: str) -> Optional[dict[str, Any]]:
@@ -606,31 +682,36 @@ async def refresh_fundamentals(symbol: str) -> Optional[dict[str, Any]]:
     return await get_fundamentals(symbol, force_refresh=True)
 
 
-async def refresh_all_fundamentals(batch_size: int = 10) -> dict[str, int]:
+async def refresh_all_fundamentals(
+    symbols: list[str] | None = None, 
+    batch_size: int = 10
+) -> dict[str, int]:
     """
-    Refresh fundamentals for all symbols with expired or missing data.
+    Refresh fundamentals for specified symbols or all symbols with expired/missing data.
     
     Args:
+        symbols: Optional list of specific symbols to refresh. If None, auto-detects.
         batch_size: Number of symbols to process in parallel
         
     Returns:
         Dict with counts: {"refreshed": N, "failed": M, "skipped": K}
     """
-    # Get symbols needing refresh (expired or missing)
-    rows = await fetch_all(
-        """
-        SELECT s.symbol
-        FROM symbols s
-        LEFT JOIN stock_fundamentals f ON s.symbol = f.symbol
-        WHERE s.symbol_type = 'stock'
-          AND s.is_active = TRUE
-          AND (f.symbol IS NULL OR f.expires_at < NOW())
-        ORDER BY f.expires_at NULLS FIRST
-        LIMIT 100
-        """
-    )
+    if symbols is None:
+        # Get symbols needing refresh (expired or missing)
+        rows = await fetch_all(
+            """
+            SELECT s.symbol
+            FROM symbols s
+            LEFT JOIN stock_fundamentals f ON s.symbol = f.symbol
+            WHERE s.symbol_type = 'stock'
+              AND s.is_active = TRUE
+              AND (f.symbol IS NULL OR f.expires_at < NOW())
+            ORDER BY f.expires_at NULLS FIRST
+            LIMIT 100
+            """
+        )
+        symbols = [r["symbol"] for r in rows]
     
-    symbols = [r["symbol"] for r in rows]
     logger.info(f"Refreshing fundamentals for {len(symbols)} symbols")
     
     refreshed = 0
