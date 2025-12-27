@@ -804,16 +804,26 @@ async def ai_personas_weekly_job() -> str:
     Each persona analyzes stocks using their investment philosophy.
     Results are stored for frontend display.
 
+    Uses Batch API for 50% cost savings. Results collected by ai_batch_poll job.
     Uses input version checking to skip symbols whose data hasn't changed.
     """
-    from app.services.ai_agents import run_all_agent_analyses
+    from app.services.ai_agents import run_all_agent_analyses_batch
+    from app.services.batch_scheduler import process_completed_batch_jobs
 
     logger.info("Starting ai_personas_weekly job")
 
     try:
-        result = await run_all_agent_analyses()
+        # Process any completed agent batches first
+        processed = await process_completed_batch_jobs()
 
-        message = f"Persona analysis: {result['analyzed']} analyzed, {result.get('skipped', 0)} skipped, {result['failed']} failed"
+        # Submit new batch
+        result = await run_all_agent_analyses_batch()
+
+        batch_id = result.get("batch_id")
+        submitted = result.get("submitted", 0)
+        skipped = result.get("skipped", 0)
+
+        message = f"Batch: {batch_id or 'none needed'}, submitted: {submitted}, skipped: {skipped}, processed: {processed}"
         logger.info(f"ai_personas_weekly: {message}")
         return message
 

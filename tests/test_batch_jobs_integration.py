@@ -1306,7 +1306,7 @@ class TestRealDBDataUnifiedBatch:
         Test the complete data ingest flow for a new stock.
         This verifies the scheduled job works correctly.
         """
-        from app.repositories import symbols as symbols_repo
+        from app.repositories import symbols_orm as symbols_repo
         from app.services.fundamentals import refresh_fundamentals, get_fundamentals_from_db
         from app.database.connection import fetch_one, fetch_all, execute
         from app.services.data_providers import get_yfinance_service
@@ -1380,7 +1380,7 @@ class TestRealDBDataUnifiedBatch:
     @pytest.mark.asyncio
     async def test_add_stock_and_fetch_data(self):
         """Add a new stock if needed and verify data fetch works."""
-        from app.repositories import symbols as symbols_repo
+        from app.repositories import symbols_orm as symbols_repo
         from app.hedge_fund.data import get_market_data
         from app.database.connection import fetch_one
 

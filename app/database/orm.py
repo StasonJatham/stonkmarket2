@@ -835,6 +835,8 @@ class StockFundamentals(Base):
     # Banks
     net_interest_income: Mapped[int | None] = mapped_column(BigInteger)  # NII from income stmt
     net_interest_margin: Mapped[Decimal | None] = mapped_column(Numeric(10, 6))  # NIM = NII / Interest-earning assets
+    interest_income: Mapped[int | None] = mapped_column(BigInteger)  # Total interest income
+    interest_expense: Mapped[int | None] = mapped_column(BigInteger)  # Total interest expense
 
     # REITs
     ffo: Mapped[int | None] = mapped_column(BigInteger)  # Funds From Operations = Net Income + D&A
@@ -843,6 +845,7 @@ class StockFundamentals(Base):
 
     # Insurers
     loss_ratio: Mapped[Decimal | None] = mapped_column(Numeric(10, 6))  # Loss adj expense / Premiums
+    expense_ratio: Mapped[Decimal | None] = mapped_column(Numeric(10, 6))  # Total expenses / Revenue
     combined_ratio: Mapped[Decimal | None] = mapped_column(Numeric(10, 6))  # Loss ratio + expense ratio
 
     # Timestamps

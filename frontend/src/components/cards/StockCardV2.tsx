@@ -112,6 +112,11 @@ export interface StockCardData {
   ai_summary?: string | null;
   domain_analysis?: string | null;
   
+  // Domain-specific analysis
+  domain_context?: string | null;
+  domain_risk_level?: string | null;
+  volatility_regime?: string | null;
+  
   // Signal metrics
   mu_hat?: number; // Expected return
   uncertainty?: number;
@@ -619,8 +624,25 @@ export const StockCardV2 = memo(function StockCardV2({
               />
             )}
             
+            {/* Domain-specific indicator for banks/REITs/insurance */}
+            {stock.domain_context && (
+              <InfoTooltip content={stock.domain_context}>
+                <Badge 
+                  variant="outline" 
+                  className="text-[9px] px-1.5 py-0 h-4 cursor-help border-blue-500/50 text-blue-600"
+                >
+                  {stock.domain_context.includes('Bank') || stock.domain_context.includes('NIM') ? '🏦' :
+                   stock.domain_context.includes('REIT') || stock.domain_context.includes('FFO') ? '🏢' :
+                   stock.domain_context.includes('Insur') || stock.domain_context.includes('Combined') ? '🛡️' :
+                   stock.domain_context.includes('Utility') ? '⚡' :
+                   stock.domain_context.includes('Biotech') ? '🧬' : '📊'}
+                  Domain
+                </Badge>
+              </InfoTooltip>
+            )}
+            
             {/* Market Cap */}
-            {!compact && stock.market_cap && (
+            {!compact && stock.market_cap && !stock.domain_context && (
               <div className="text-[10px] text-muted-foreground">
                 <span className="text-foreground/60">MCap:</span>{' '}
                 <span className="font-medium">{formatMarketCap(stock.market_cap)}</span>

@@ -864,9 +864,9 @@ async def submit_agent_batch(symbols: list[str]) -> tuple[str, dict[str, str]] |
 
     logger.info(f"Submitting batch with {len(items)} items for {len(input_hashes)} symbols")
 
-    # Submit using existing batch infrastructure
+    # Submit using AGENT task type for proper batch routing
     batch_id = await submit_batch(
-        task=TaskType.RATING,  # Use RATING for structured JSON output
+        task=TaskType.AGENT,  # Use AGENT for persona analysis batches
         items=items,
     )
 

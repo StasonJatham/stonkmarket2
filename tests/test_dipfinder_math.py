@@ -766,6 +766,7 @@ class TestFullSignalFlow:
 # ===========================================================================
 
 
+@pytest.mark.slow
 class TestRealYFinanceData:
     """Tests that validate calculations using real yfinance data.
     
@@ -773,6 +774,8 @@ class TestRealYFinanceData:
     1. The calculations produce sensible results
     2. Dip values are within expected ranges
     3. Benchmark comparisons work correctly
+    
+    Note: Marked as slow - skip with '-m "not slow"' for faster test runs.
     """
 
     @pytest.fixture

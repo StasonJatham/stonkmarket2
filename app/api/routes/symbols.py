@@ -219,6 +219,22 @@ class SymbolFundamentalsResponse(BaseModel):
     num_analyst_opinions: int | None = None
     beta: str | None = None
     next_earnings_date: str | None = None
+    # Domain detection
+    domain: str | None = None  # bank, reit, insurer, utility, biotech, stock
+    # Domain-specific metrics (Banks)
+    net_interest_income: int | None = None
+    net_interest_margin: float | None = None
+    interest_income: int | None = None
+    interest_expense: int | None = None
+    # Domain-specific metrics (REITs)
+    ffo: int | None = None
+    ffo_per_share: float | None = None
+    p_ffo: float | None = None
+    # Domain-specific metrics (Insurance)
+    loss_ratio: float | None = None
+    expense_ratio: float | None = None
+    combined_ratio: float | None = None
+    # Metadata
     source: str = "database"  # "database" or "api"
     fetched_at: str | None = None
     expires_at: str | None = None
@@ -298,6 +314,21 @@ async def get_symbol_fundamentals(
             "num_analyst_opinions": db_data.get("num_analyst_opinions"),
             "beta": fmt_ratio(db_data.get("beta")),
             "next_earnings_date": str(db_data.get("next_earnings_date")) if db_data.get("next_earnings_date") else None,
+            # Domain detection
+            "domain": db_data.get("domain"),
+            # Domain-specific metrics (Banks)
+            "net_interest_income": db_data.get("net_interest_income"),
+            "net_interest_margin": db_data.get("net_interest_margin"),
+            "interest_income": db_data.get("interest_income"),
+            "interest_expense": db_data.get("interest_expense"),
+            # Domain-specific metrics (REITs)
+            "ffo": db_data.get("ffo"),
+            "ffo_per_share": db_data.get("ffo_per_share"),
+            "p_ffo": db_data.get("p_ffo"),
+            # Domain-specific metrics (Insurance)
+            "loss_ratio": db_data.get("loss_ratio"),
+            "expense_ratio": db_data.get("expense_ratio"),
+            "combined_ratio": db_data.get("combined_ratio"),
         }
     else:
         # Not in database, fetch live from yfinance (without storing)
@@ -330,6 +361,21 @@ async def get_symbol_fundamentals(
         num_analyst_opinions=data.get("num_analyst_opinions"),
         beta=data.get("beta"),
         next_earnings_date=data.get("next_earnings_date"),
+        # Domain detection
+        domain=data.get("domain"),
+        # Domain-specific metrics (Banks)
+        net_interest_income=data.get("net_interest_income"),
+        net_interest_margin=data.get("net_interest_margin"),
+        interest_income=data.get("interest_income"),
+        interest_expense=data.get("interest_expense"),
+        # Domain-specific metrics (REITs)
+        ffo=data.get("ffo"),
+        ffo_per_share=data.get("ffo_per_share"),
+        p_ffo=data.get("p_ffo"),
+        # Domain-specific metrics (Insurance)
+        loss_ratio=data.get("loss_ratio"),
+        expense_ratio=data.get("expense_ratio"),
+        combined_ratio=data.get("combined_ratio"),
         source=source,
         fetched_at=db_data.get("fetched_at").isoformat() if db_data and db_data.get("fetched_at") else None,
         expires_at=db_data.get("expires_at").isoformat() if db_data and db_data.get("expires_at") else None,

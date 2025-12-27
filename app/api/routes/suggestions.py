@@ -49,7 +49,11 @@ async def _start_symbol_enrichment(
     name: str | None,
     sector: str | None,
 ) -> str:
-    """Ensure symbol is tracked and queue enrichment workflows."""
+    """Ensure symbol is tracked and queue enrichment workflows.
+    
+    Triggers immediate real-time processing for fast user feedback.
+    Does NOT add to ingest queue since immediate task handles everything.
+    """
     await suggestions_repo.add_symbol_from_suggestion(
         symbol=symbol,
         name=name,
@@ -63,9 +67,10 @@ async def _start_symbol_enrichment(
         fetch_error=None,
     )
 
-    from app.jobs.definitions import add_to_ingest_queue
-
-    await add_to_ingest_queue(symbol, priority=5)
+    # Trigger immediate processing for fast feedback
+    # Note: We intentionally don't add to ingest queue since the immediate
+    # task (process_approved_symbol) handles all data fetching and AI generation.
+    # Adding to queue would cause duplicate yfinance calls and wasted API usage.
     return await _enqueue_symbol_processing(symbol)
 
 

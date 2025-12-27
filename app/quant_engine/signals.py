@@ -278,22 +278,22 @@ SIGNAL_CONFIGS = [
         "direction": "below",
         "threshold_range": [-0.40, -0.15],
     },
-    # Price vs SMA
+    # Price vs SMA - Event-based crossover signals
     {
-        "name": "Below SMA 50",
-        "description": "Price below 50-day moving average",
+        "name": "Cross Below SMA 50",
+        "description": "Price crosses below 50-day moving average",
         "compute": lambda p, **kw: compute_price_vs_sma(p["close"], 50),
-        "default_threshold": -0.05,
-        "direction": "below",
-        "threshold_range": [-0.15, -0.02],
+        "default_threshold": -0.02,
+        "direction": "cross_below",
+        "threshold_range": [-0.10, 0.0],
     },
     {
-        "name": "Below SMA 200",
-        "description": "Price below 200-day moving average",
+        "name": "Cross Below SMA 200",
+        "description": "Price crosses below 200-day moving average",
         "compute": lambda p, **kw: compute_price_vs_sma(p["close"], 200),
-        "default_threshold": -0.05,
-        "direction": "below",
-        "threshold_range": [-0.20, -0.02],
+        "default_threshold": -0.02,
+        "direction": "cross_below",
+        "threshold_range": [-0.15, 0.0],
     },
     # MACD
     {
@@ -395,6 +395,10 @@ def backtest_signal(
         # Signal crosses above threshold from below
         prev_signal = signal.shift(1)
         triggers = (signal > threshold) & (prev_signal <= threshold)
+    elif direction == "cross_below":
+        # Signal crosses below threshold from above (event-based buy signal)
+        prev_signal = signal.shift(1)
+        triggers = (signal < threshold) & (prev_signal >= threshold)
     else:
         triggers = signal < threshold  # Default to below
     
@@ -660,9 +664,14 @@ def evaluate_signal_for_stock(
             else:
                 strength = 1.0 if is_buy else 0.0
         elif direction == "cross_above":
-            # For crossover, check if just crossed
+            # For crossover, check if just crossed above
             prev_value = signal_values.iloc[-2] if len(signal_values) > 1 else current_value
             is_buy = (current_value > opt_threshold) and (prev_value <= opt_threshold)
+            strength = 1.0 if is_buy else 0.0
+        elif direction == "cross_below":
+            # For crossover, check if just crossed below (event-based buy signal)
+            prev_value = signal_values.iloc[-2] if len(signal_values) > 1 else current_value
+            is_buy = (current_value < opt_threshold) and (prev_value >= opt_threshold)
             strength = 1.0 if is_buy else 0.0
         else:  # above
             is_buy = current_value > opt_threshold
@@ -945,6 +954,9 @@ def get_historical_triggers(
         elif direction == "cross_above":
             prev_signal = signal_values.shift(1)
             is_triggered = (signal_values > threshold) & (prev_signal <= threshold)
+        elif direction == "cross_below":
+            prev_signal = signal_values.shift(1)
+            is_triggered = (signal_values < threshold) & (prev_signal >= threshold)
         else:
             is_triggered = signal_values < threshold
         

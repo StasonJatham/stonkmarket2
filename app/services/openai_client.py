@@ -109,6 +109,7 @@ class TaskType(str, Enum):
     BIO = "bio"              # Dating-app style stock bio
     RATING = "rating"        # Buy/hold/sell rating with reasoning
     SUMMARY = "summary"      # Company description summary
+    AGENT = "agent"          # Persona agent analysis (Buffett, Lynch, etc.)
 
 
 # JSON Schema for RATING task - enforces exact structure with Structured Outputs
@@ -174,6 +175,13 @@ TASK_CONFIGS: dict[TaskType, TaskConfig] = {
         max_chars=420,  # Target 300-400, allow buffer up to 420
         reasoning_overhead=150,
         default_max_tokens=250,  # 400 chars / 4 + buffer
+    ),
+    TaskType.AGENT: TaskConfig(
+        min_chars=0,
+        max_chars=0,
+        reasoning_overhead=300,
+        reasoning_max_chars=500,  # Agent reasoning can be longer
+        default_max_tokens=500,  # JSON with detailed reasoning
     ),
 }
 

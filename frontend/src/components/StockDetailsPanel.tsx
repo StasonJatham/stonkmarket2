@@ -552,7 +552,7 @@ export function StockDetailsPanel({
                         strokeWidth={2}
                       />
                     )}
-                    {/* Buy signal trigger dots (green with lightning icon) */}
+                    {/* Buy signal trigger dots with tooltip */}
                     {dotsVisible && showSignals && signalPoints.map((point, idx) => (
                       <ReferenceDot
                         key={`signal-${idx}`}
@@ -562,17 +562,39 @@ export function StockDetailsPanel({
                         fill="var(--success)"
                         stroke="var(--background)"
                         strokeWidth={2}
+                        shape={(props: { cx?: number; cy?: number }) => {
+                          const { cx = 0, cy = 0 } = props;
+                          const signal = point.signal;
+                          const tooltipText = `${signal.signal_name}\n` +
+                            `Win Rate: ${(signal.win_rate * 100).toFixed(0)}%\n` +
+                            `Avg Return: ${signal.avg_return_pct >= 0 ? '+' : ''}${signal.avg_return_pct.toFixed(1)}%\n` +
+                            `Hold: ${signal.holding_days} days\n` +
+                            `Price: $${signal.price.toFixed(2)}`;
+                          return (
+                            <g style={{ cursor: 'pointer' }}>
+                              <title>{tooltipText}</title>
+                              <circle
+                                cx={cx}
+                                cy={cy}
+                                r={8}
+                                fill="var(--success)"
+                                stroke="var(--background)"
+                                strokeWidth={2}
+                              />
+                            </g>
+                          );
+                        }}
                       >
                         <RechartsLabel
                           position="top"
                           offset={10}
                           style={{
-                            fontSize: 10,
+                            fontSize: 9,
                             fill: 'var(--foreground)',
                             fontWeight: 600,
                           }}
                         >
-                          {`${(point.signal.drawdown_pct * 100).toFixed(0)}%`}
+                          {`${(point.signal.win_rate * 100).toFixed(0)}%`}
                         </RechartsLabel>
                       </ReferenceDot>
                     ))}
@@ -588,525 +610,258 @@ export function StockDetailsPanel({
             </div>
           </div>
 
-          {/* Data Section */}
+          {/* Data Section - Simplified for Decision Making */}
           <CardContent className="pt-3 pb-4 px-3 md:px-6">
-            {/* Key Stats */}
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-2 md:gap-3">
-              <StatItem
-                icon={TrendingDown}
-                label="Dip Depth"
-                value={`-${(stock.depth * 100).toFixed(1)}%`}
-                valueColor="text-danger"
-              />
-              <StatItem
-                icon={Calendar}
-                label="Days in Dip"
-                value={stock.days_since_dip?.toString() ?? '—'}
-              />
-              <StatItem
-                icon={DollarSign}
-                label="52W High"
-                value={stock.high_52w ? `$${stock.high_52w.toFixed(2)}` : '—'}
-              />
-              <StatItem
-                icon={DollarSign}
-                label="52W Low"
-                value={stock.low_52w ? `$${stock.low_52w.toFixed(2)}` : '—'}
-              />
-              <StatItem
-                icon={Building2}
-                label="Market Cap"
-                value={formatMarketCap(stock.market_cap ?? stockInfo?.market_cap ?? null)}
-              />
-              <StatItem
-                icon={BarChart3}
-                label="P/E Ratio"
-                value={stock.pe_ratio?.toFixed(2) ?? '—'}
-              />
+            {/* HERO: Opportunity Score Card */}
+            {(currentSignals || dipAnalysis) && !isLoadingQuant && (
+              <div className={cn(
+                "p-4 rounded-xl mb-4 text-center",
+                currentSignals?.overall_action === 'STRONG_BUY' && "bg-gradient-to-br from-success/20 to-success/10 border-2 border-success/40",
+                currentSignals?.overall_action === 'BUY' && "bg-gradient-to-br from-success/15 to-success/5 border border-success/30",
+                currentSignals?.overall_action === 'HOLD' && "bg-gradient-to-br from-muted/40 to-muted/20 border border-border",
+                currentSignals?.overall_action === 'SELL' && "bg-gradient-to-br from-warning/15 to-warning/5 border border-warning/30",
+                currentSignals?.overall_action === 'STRONG_SELL' && "bg-gradient-to-br from-danger/20 to-danger/10 border-2 border-danger/40",
+                !currentSignals?.overall_action && "bg-gradient-to-br from-muted/40 to-muted/20 border border-border"
+              )}>
+                <div className="flex items-center justify-center gap-2 mb-2">
+                  {currentSignals?.overall_action === 'STRONG_BUY' && <Zap className="h-6 w-6 text-success" />}
+                  {currentSignals?.overall_action === 'BUY' && <TrendingUp className="h-6 w-6 text-success" />}
+                  {currentSignals?.overall_action === 'HOLD' && <Activity className="h-5 w-5 text-muted-foreground" />}
+                  {currentSignals?.overall_action === 'SELL' && <TrendingDown className="h-5 w-5 text-warning" />}
+                  {currentSignals?.overall_action === 'STRONG_SELL' && <XCircle className="h-6 w-6 text-danger" />}
+                  <span className={cn(
+                    "text-2xl font-bold",
+                    currentSignals?.overall_action?.includes('BUY') && "text-success",
+                    currentSignals?.overall_action === 'HOLD' && "text-foreground",
+                    currentSignals?.overall_action?.includes('SELL') && "text-danger",
+                  )}>
+                    {currentSignals?.overall_action?.replace('_', ' ') || 'Analyzing...'}
+                  </span>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  {currentSignals?.reasoning}
+                </p>
+              </div>
+            )}
+
+            {isLoadingQuant && (
+              <div className="p-4 rounded-xl mb-4 bg-muted/20 border border-border">
+                <Skeleton className="h-8 w-32 mx-auto mb-2" />
+                <Skeleton className="h-4 w-3/4 mx-auto" />
+              </div>
+            )}
+
+            {/* Quick Stats Row - Only the essentials */}
+            <div className="grid grid-cols-3 gap-2 mb-4">
+              <div className="p-3 rounded-lg bg-muted/50 text-center">
+                <p className="text-xs text-muted-foreground">Dip</p>
+                <p className="text-lg font-bold text-danger">-{(stock.depth * 100).toFixed(0)}%</p>
+              </div>
+              <div className="p-3 rounded-lg bg-muted/50 text-center">
+                <p className="text-xs text-muted-foreground">Win Rate</p>
+                <p className={cn(
+                  "text-lg font-bold",
+                  currentSignals && currentSignals.buy_signals.length > 0 
+                    ? (currentSignals.buy_signals[0].win_rate > 0.6 ? "text-success" : "text-foreground")
+                    : "text-muted-foreground"
+                )}>
+                  {currentSignals?.buy_signals?.[0]?.win_rate 
+                    ? `${(currentSignals.buy_signals[0].win_rate * 100).toFixed(0)}%`
+                    : '—'}
+                </p>
+              </div>
+              <div className="p-3 rounded-lg bg-muted/50 text-center">
+                <p className="text-xs text-muted-foreground">Exp. Return</p>
+                <p className={cn(
+                  "text-lg font-bold",
+                  currentSignals && currentSignals.buy_signals.length > 0 
+                    ? (currentSignals.buy_signals[0].avg_return > 0 ? "text-success" : "text-danger")
+                    : "text-muted-foreground"
+                )}>
+                  {currentSignals?.buy_signals?.[0]?.avg_return 
+                    ? `+${currentSignals.buy_signals[0].avg_return.toFixed(0)}%`
+                    : '—'}
+                </p>
+              </div>
             </div>
 
-            {/* Extended Fundamentals from stockInfo */}
-            {stockInfo && (
-              <>
-                <Separator className="my-3" />
+            {/* Risk & Context Card */}
+            {(dipAnalysis || aiData) && (
+              <div className="p-3 rounded-lg bg-muted/30 mb-4">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-medium">Analysis</span>
+                  <div className="flex gap-1">
+                    {aiData?.volatility_regime && (
+                      <Badge 
+                        variant="outline" 
+                        className={cn(
+                          "text-xs",
+                          aiData.volatility_regime === 'extreme' && "border-danger text-danger",
+                          aiData.volatility_regime === 'high' && "border-warning text-warning",
+                          aiData.volatility_regime === 'normal' && "border-muted-foreground text-muted-foreground",
+                          aiData.volatility_regime === 'low' && "border-success text-success",
+                        )}
+                      >
+                        {aiData.volatility_regime} vol
+                      </Badge>
+                    )}
+                    {aiData?.domain_risk_level && (
+                      <Badge 
+                        variant="outline" 
+                        className={cn(
+                          "text-xs",
+                          aiData.domain_risk_level === 'high' && "border-danger text-danger",
+                          aiData.domain_risk_level === 'medium' && "border-warning text-warning",
+                          aiData.domain_risk_level === 'low' && "border-success text-success",
+                        )}
+                      >
+                        {aiData.domain_risk_level} risk
+                      </Badge>
+                    )}
+                    {dipAnalysis?.dip_type && (
+                      <Badge 
+                        variant={dipAnalysis.dip_type === 'overreaction' ? 'default' : 'secondary'}
+                        className="text-xs"
+                      >
+                        {dipAnalysis.dip_type === 'overreaction' ? '📉 Overreaction' : dipAnalysis.dip_type.replace('_', ' ')}
+                      </Badge>
+                    )}
+                  </div>
+                </div>
                 
-                {/* Valuation & Risk Metrics */}
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-2 md:gap-3 mb-3">
-                  {stockInfo.forward_pe !== null && stockInfo.forward_pe !== undefined && (
-                    <StatItem
-                      icon={Activity}
-                      label="Forward P/E"
-                      value={stockInfo.forward_pe.toFixed(2)}
-                    />
-                  )}
-                  {stockInfo.peg_ratio !== null && stockInfo.peg_ratio !== undefined && (
-                    <StatItem
-                      icon={Activity}
-                      label="PEG Ratio"
-                      value={stockInfo.peg_ratio.toFixed(2)}
-                      valueColor={stockInfo.peg_ratio < 1 ? 'text-success' : stockInfo.peg_ratio > 2 ? 'text-danger' : undefined}
-                    />
-                  )}
-                  {stockInfo.dividend_yield !== null && stockInfo.dividend_yield !== undefined && (
-                    <StatItem
-                      icon={Percent}
-                      label="Div Yield"
-                      value={`${(stockInfo.dividend_yield * 100).toFixed(2)}%`}
-                      valueColor={stockInfo.dividend_yield > 0 ? 'text-success' : undefined}
-                    />
-                  )}
-                  {stockInfo.beta !== null && stockInfo.beta !== undefined && (
-                    <StatItem
-                      icon={Activity}
-                      label="Beta"
-                      value={stockInfo.beta.toFixed(2)}
-                    />
-                  )}
+                {/* Domain context - sector-specific insights */}
+                {aiData?.domain_context && (
+                  <p className="text-xs text-foreground leading-relaxed mb-2 font-medium">
+                    🏢 {aiData.domain_context}
+                  </p>
+                )}
+                
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  {dipAnalysis?.reasoning || aiData?.ai_reasoning || 'No analysis available'}
+                </p>
+                
+                {/* Sector performance comparison */}
+                {aiData?.vs_sector_performance !== undefined && aiData?.vs_sector_performance !== null && (
+                  <div className="mt-2 flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground">vs Sector:</span>
+                    <span className={cn(
+                      "text-xs font-medium",
+                      aiData.vs_sector_performance > 0 ? "text-success" : "text-danger"
+                    )}>
+                      {aiData.vs_sector_performance > 0 ? '+' : ''}{aiData.vs_sector_performance.toFixed(1)}%
+                    </span>
+                    {aiData.domain_recovery_days && (
+                      <>
+                        <span className="text-xs text-muted-foreground">•</span>
+                        <span className="text-xs text-muted-foreground">
+                          ~{aiData.domain_recovery_days}d typical recovery
+                        </span>
+                      </>
+                    )}
+                  </div>
+                )}
+                
+                {/* Key warnings if any */}
+                {aiData?.domain_warnings && aiData.domain_warnings.length > 0 && (
+                  <div className="mt-2 pt-2 border-t border-border/50">
+                    {aiData.domain_warnings.slice(0, 2).map((w, i) => (
+                      <p key={i} className="text-xs text-warning flex items-center gap-1">
+                        <AlertTriangle className="h-3 w-3 shrink-0" />
+                        {w}
+                      </p>
+                    ))}
+                  </div>
+                )}
+                
+                {/* Risk factors */}
+                {aiData?.domain_risk_factors && aiData.domain_risk_factors.length > 0 && (
+                  <div className="mt-2 pt-2 border-t border-border/50">
+                    <span className="text-xs text-muted-foreground">Key risks: </span>
+                    <span className="text-xs text-foreground">
+                      {aiData.domain_risk_factors.slice(0, 4).join(' • ')}
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Active Signals - Compact */}
+            {currentSignals && (currentSignals.buy_signals.length > 0 || currentSignals.sell_signals.length > 0) && (
+              <div className="flex flex-wrap gap-1 mb-4">
+                {currentSignals.buy_signals.slice(0, 3).map((sig, i) => (
+                  <Badge key={i} variant="outline" className="text-xs border-success/40 text-success bg-success/5">
+                    <CheckCircle2 className="h-3 w-3 mr-1" />
+                    {sig.name}
+                  </Badge>
+                ))}
+                {currentSignals.sell_signals.slice(0, 2).map((sig, i) => (
+                  <Badge key={i} variant="outline" className="text-xs border-warning/40 text-warning bg-warning/5">
+                    <AlertTriangle className="h-3 w-3 mr-1" />
+                    {sig.name}
+                  </Badge>
+                ))}
+              </div>
+            )}
+
+            <Separator className="my-3" />
+            
+            {/* Company Info - Collapsed by default */}
+            <details className="group">
+              <summary className="flex items-center justify-between cursor-pointer py-2 text-sm font-medium">
+                <span>Company Details</span>
+                <span className="text-xs text-muted-foreground group-open:hidden">Click to expand</span>
+              </summary>
+              <div className="pt-2 space-y-3">
+                {/* Basic metrics grid */}
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                  <StatItem
+                    icon={Building2}
+                    label="Market Cap"
+                    value={formatMarketCap(stock.market_cap ?? stockInfo?.market_cap ?? null)}
+                  />
+                  <StatItem
+                    icon={BarChart3}
+                    label="P/E Ratio"
+                    value={stock.pe_ratio?.toFixed(2) ?? stockInfo?.pe_ratio?.toFixed(2) ?? '—'}
+                  />
+                  <StatItem
+                    icon={Calendar}
+                    label="Days in Dip"
+                    value={stock.days_since_dip?.toString() ?? '—'}
+                  />
                 </div>
 
-                {/* Profitability Metrics */}
-                {(stockInfo.profit_margin !== null || stockInfo.gross_margin !== null || stockInfo.return_on_equity !== null) && (
+                {/* Company summary */}
+                {stockInfo && (
                   <>
-                    <p className="text-xs font-medium text-muted-foreground mb-2">Profitability</p>
-                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2 md:gap-3 mb-3">
-                      {stockInfo.profit_margin !== null && stockInfo.profit_margin !== undefined && (
-                        <StatItem
-                          icon={Percent}
-                          label="Profit Margin"
-                          value={`${(stockInfo.profit_margin * 100).toFixed(1)}%`}
-                          valueColor={stockInfo.profit_margin > 0.15 ? 'text-success' : stockInfo.profit_margin < 0.05 ? 'text-danger' : undefined}
-                        />
-                      )}
-                      {stockInfo.gross_margin !== null && stockInfo.gross_margin !== undefined && (
-                        <StatItem
-                          icon={Percent}
-                          label="Gross Margin"
-                          value={`${(stockInfo.gross_margin * 100).toFixed(1)}%`}
-                          valueColor={stockInfo.gross_margin > 0.4 ? 'text-success' : stockInfo.gross_margin < 0.2 ? 'text-danger' : undefined}
-                        />
-                      )}
-                      {stockInfo.return_on_equity !== null && stockInfo.return_on_equity !== undefined && (
-                        <StatItem
-                          icon={PiggyBank}
-                          label="ROE"
-                          value={`${(stockInfo.return_on_equity * 100).toFixed(1)}%`}
-                          valueColor={stockInfo.return_on_equity > 0.15 ? 'text-success' : stockInfo.return_on_equity < 0.05 ? 'text-danger' : undefined}
-                        />
-                      )}
-                      {stockInfo.revenue_growth !== null && stockInfo.revenue_growth !== undefined && (
-                        <StatItem
-                          icon={TrendingUp}
-                          label="Revenue Growth"
-                          value={`${(stockInfo.revenue_growth * 100).toFixed(1)}%`}
-                          valueColor={stockInfo.revenue_growth > 0 ? 'text-success' : 'text-danger'}
-                        />
-                      )}
-                    </div>
-                  </>
-                )}
-
-                {/* Financial Health Metrics */}
-                {(stockInfo.debt_to_equity !== null || stockInfo.current_ratio !== null || stockInfo.free_cash_flow !== null) && (
-                  <>
-                    <p className="text-xs font-medium text-muted-foreground mb-2">Financial Health</p>
-                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2 md:gap-3 mb-3">
-                      {stockInfo.debt_to_equity !== null && stockInfo.debt_to_equity !== undefined && (
-                        <StatItem
-                          icon={Scale}
-                          label="Debt/Equity"
-                          value={stockInfo.debt_to_equity.toFixed(2)}
-                          valueColor={stockInfo.debt_to_equity < 50 ? 'text-success' : stockInfo.debt_to_equity > 150 ? 'text-danger' : undefined}
-                        />
-                      )}
-                      {stockInfo.current_ratio !== null && stockInfo.current_ratio !== undefined && (
-                        <StatItem
-                          icon={Scale}
-                          label="Current Ratio"
-                          value={stockInfo.current_ratio.toFixed(2)}
-                          valueColor={stockInfo.current_ratio > 1.5 ? 'text-success' : stockInfo.current_ratio < 1 ? 'text-danger' : undefined}
-                        />
-                      )}
-                      {stockInfo.free_cash_flow !== null && stockInfo.free_cash_flow !== undefined && (
-                        <StatItem
-                          icon={Banknote}
-                          label="Free Cash Flow"
-                          value={formatMarketCap(stockInfo.free_cash_flow)}
-                          valueColor={stockInfo.free_cash_flow > 0 ? 'text-success' : 'text-danger'}
-                        />
-                      )}
-                    </div>
-                  </>
-                )}
-
-                {/* Analyst Info */}
-                {(stockInfo.target_mean_price !== null || stockInfo.num_analyst_opinions !== null) && (
-                  <>
-                    <p className="text-xs font-medium text-muted-foreground mb-2">Analyst Estimates</p>
-                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2 md:gap-3 mb-3">
-                      {stockInfo.target_mean_price !== null && stockInfo.target_mean_price !== undefined && (
-                        <StatItem
-                          icon={Target}
-                          label="Price Target"
-                          value={`$${stockInfo.target_mean_price.toFixed(2)}`}
-                          valueColor={stockInfo.target_mean_price > displayPrice ? 'text-success' : 'text-danger'}
-                        />
-                      )}
-                      {stockInfo.num_analyst_opinions !== null && stockInfo.num_analyst_opinions !== undefined && (
-                        <StatItem
-                          icon={Users}
-                          label="Analysts"
-                          value={stockInfo.num_analyst_opinions.toString()}
-                        />
-                      )}
-                    </div>
-                  </>
-                )}
-                
-                <div className="space-y-3">
-                  {stockInfo.sector && (
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <Badge variant="secondary">{stockInfo.sector}</Badge>
-                      {stockInfo.industry && (
-                        <span className="text-sm text-muted-foreground">{stockInfo.industry}</span>
-                      )}
-                    </div>
-                  )}
-
-                  {(stockInfo.summary_ai || stockInfo.summary) && (
-                    <div className="mt-2 p-3 bg-muted/30 rounded-lg">
-                      <p className="text-xs font-medium text-muted-foreground mb-1">About the Company</p>
-                      <p className="text-sm leading-relaxed">
+                    {stockInfo.sector && (
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Badge variant="secondary">{stockInfo.sector}</Badge>
+                        {stockInfo.industry && (
+                          <span className="text-xs text-muted-foreground">{stockInfo.industry}</span>
+                        )}
+                      </div>
+                    )}
+                    {(stockInfo.summary_ai || stockInfo.summary) && (
+                      <p className="text-xs text-muted-foreground leading-relaxed">
                         {stockInfo.summary_ai || stockInfo.summary}
                       </p>
-                    </div>
-                  )}
-
-                  {stockInfo.recommendation && (
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-muted-foreground">Analyst Rating:</span>
-                      <Badge variant={
-                        stockInfo.recommendation.includes('buy') ? 'default' :
-                        stockInfo.recommendation.includes('sell') ? 'destructive' : 'secondary'
-                      }>
-                        {stockInfo.recommendation.replace('_', ' ').toUpperCase()}
-                      </Badge>
-                    </div>
-                  )}
-
-                  {stockInfo.website && (
-                    <a
-                      href={stockInfo.website}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                      <ExternalLink className="h-3 w-3" />
-                      Visit website
-                    </a>
-                  )}
-                </div>
-              </>
-            )}
-
-            {isLoadingInfo && (
-              <>
-                <Separator className="my-4" />
-                <div className="space-y-2">
-                  <Skeleton className="h-5 w-24" />
-                  <Skeleton className="h-4 w-full" />
-                  <Skeleton className="h-4 w-3/4" />
-                </div>
-              </>
-            )}
-
-            {/* Quant Signals Section */}
-            {(dipAnalysis || currentSignals || isLoadingQuant) && (
-              <>
-                <Separator className="my-4" />
-                <div className="p-3 bg-gradient-to-br from-chart-1/5 to-chart-2/10 rounded-lg border border-chart-1/20">
-                  <div className="flex items-center gap-2 mb-3">
-                    <TrendingUpDown className="h-4 w-4 text-chart-1" />
-                    <span className="text-sm font-medium">Quant Signals</span>
-                  </div>
-                  {isLoadingQuant ? (
-                    <div className="space-y-2">
-                      <Skeleton className="h-4 w-full" />
-                      <Skeleton className="h-4 w-3/4" />
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      {/* Overall Action */}
-                      {currentSignals && (
-                        <div className="flex items-center gap-2">
-                          {currentSignals.overall_action === 'STRONG_BUY' && (
-                            <Badge className="bg-success text-success-foreground">
-                              <CheckCircle2 className="h-3 w-3 mr-1" />
-                              Strong Buy
-                            </Badge>
-                          )}
-                          {currentSignals.overall_action === 'BUY' && (
-                            <Badge className="bg-success/80 text-success-foreground">
-                              <TrendingUp className="h-3 w-3 mr-1" />
-                              Buy
-                            </Badge>
-                          )}
-                          {currentSignals.overall_action === 'HOLD' && (
-                            <Badge variant="secondary">
-                              <Activity className="h-3 w-3 mr-1" />
-                              Hold
-                            </Badge>
-                          )}
-                          {currentSignals.overall_action === 'SELL' && (
-                            <Badge className="bg-warning text-warning-foreground">
-                              <TrendingDown className="h-3 w-3 mr-1" />
-                              Sell
-                            </Badge>
-                          )}
-                          {currentSignals.overall_action === 'STRONG_SELL' && (
-                            <Badge variant="destructive">
-                              <XCircle className="h-3 w-3 mr-1" />
-                              Strong Sell
-                            </Badge>
-                          )}
-                          <span className="text-xs text-muted-foreground">
-                            {currentSignals.reasoning}
-                          </span>
-                        </div>
-                      )}
-
-                      {/* Dip Analysis */}
-                      {dipAnalysis && (
-                        <div className="space-y-2">
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="text-muted-foreground">Dip Type:</span>
-                            <Badge 
-                              variant={
-                                dipAnalysis.dip_type === 'overreaction'
-                                  ? 'default' 
-                                  : dipAnalysis.dip_type === 'fundamental_decline' 
-                                    ? 'destructive' 
-                                    : 'secondary'
-                              }
-                              className="text-xs"
-                            >
-                              {dipAnalysis.dip_type.toUpperCase().replace('_', ' ')}
-                            </Badge>
-                          </div>
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="text-muted-foreground">Current Dip:</span>
-                            <span className="font-mono font-medium text-danger">
-                              -{dipAnalysis.current_drawdown_pct.toFixed(1)}%
-                            </span>
-                          </div>
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="text-muted-foreground">Typical Dip:</span>
-                            <span className="font-mono">{dipAnalysis.typical_dip_pct.toFixed(1)}%</span>
-                          </div>
-                          {dipAnalysis.is_unusually_deep && (
-                            <div className="flex items-center gap-1 text-xs text-warning">
-                              <AlertTriangle className="h-3 w-3" />
-                              Unusually deep ({dipAnalysis.dip_zscore.toFixed(1)}σ from typical)
-                            </div>
-                          )}
-                          {/* Technical indicators */}
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="text-muted-foreground">Technical Score:</span>
-                            <span className={`font-mono font-medium ${dipAnalysis.technical_score > 0 ? 'text-success' : dipAnalysis.technical_score < 0 ? 'text-danger' : ''}`}>
-                              {dipAnalysis.technical_score > 0 ? '+' : ''}{(dipAnalysis.technical_score * 100).toFixed(0)}%
-                            </span>
-                          </div>
-                          {dipAnalysis.momentum_divergence && (
-                            <div className="flex items-center gap-1 text-xs text-success">
-                              <TrendingUp className="h-3 w-3" />
-                              Bullish divergence detected
-                            </div>
-                          )}
-                          {dipAnalysis.trend_broken && (
-                            <div className="flex items-center gap-1 text-xs text-warning">
-                              <AlertTriangle className="h-3 w-3" />
-                              Long-term trend broken
-                            </div>
-                          )}
-                          {dipAnalysis.recovery_probability > 0.6 && (
-                            <div className="flex items-center justify-between text-xs">
-                              <span className="text-muted-foreground">Recovery Prob:</span>
-                              <span className="font-mono text-success">{(dipAnalysis.recovery_probability * 100).toFixed(0)}%</span>
-                            </div>
-                          )}
-                          <p className="text-xs text-muted-foreground">
-                            {dipAnalysis.reasoning}
-                          </p>
-                        </div>
-                      )}
-
-                      {/* Active Signals */}
-                      {currentSignals && currentSignals.buy_signals.length > 0 && (
-                        <div>
-                          <p className="text-xs font-medium text-success mb-1">Active Buy Signals:</p>
-                          <div className="flex flex-wrap gap-1">
-                            {currentSignals.buy_signals.map((sig, i) => (
-                              <Badge key={i} variant="outline" className="text-xs border-success/30 text-success">
-                                {sig.name}
-                              </Badge>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                      {currentSignals && currentSignals.sell_signals.length > 0 && (
-                        <div>
-                          <p className="text-xs font-medium text-warning mb-1">Active Sell Signals:</p>
-                          <div className="flex flex-wrap gap-1">
-                            {currentSignals.sell_signals.map((sig, i) => (
-                              <Badge key={i} variant="outline" className="text-xs border-warning/30 text-warning">
-                                {sig.name}
-                              </Badge>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </>
-            )}
-
-            {/* AI Analysis Section */}
-            {(aiData?.ai_reasoning || aiData?.domain_analysis || aiData?.domain_context || isLoadingAi) && (
-              <>
-                <Separator className="my-4" />
-                <div className="p-3 bg-gradient-to-br from-primary/5 to-primary/10 rounded-lg border border-primary/20">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Sparkles className="h-4 w-4 text-primary" />
-                    <span className="text-sm font-medium">AI Analysis</span>
-                  </div>
-                  {isLoadingAi ? (
-                    <div className="space-y-1">
-                      <Skeleton className="h-3 w-full" />
-                      <Skeleton className="h-3 w-4/5" />
-                      <Skeleton className="h-3 w-3/4" />
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      {/* Domain-specific quant analysis */}
-                      {aiData?.domain_context && (
-                        <div className="space-y-2">
-                          <div className="flex items-center gap-2">
-                            <p className="text-xs font-medium text-primary">Sector Analysis</p>
-                            {aiData.sector && (
-                              <Badge variant="secondary" className="text-[10px] py-0">
-                                {aiData.sector}
-                              </Badge>
-                            )}
-                          </div>
-                          <p className="text-xs leading-relaxed text-muted-foreground">
-                            {aiData.domain_context}
-                          </p>
-                          
-                          {/* Domain adjustment reason */}
-                          {aiData.domain_adjustment_reason && (
-                            <p className="text-xs italic text-muted-foreground">
-                              {aiData.domain_adjustment_reason}
-                            </p>
-                          )}
-                          
-                          {/* Key metrics row */}
-                          <div className="flex flex-wrap gap-2 mt-2">
-                            {aiData.volatility_regime && (
-                              <Badge 
-                                variant="outline" 
-                                className={cn(
-                                  "text-[10px] py-0",
-                                  aiData.volatility_regime === 'extreme' && "border-red-500 text-red-500",
-                                  aiData.volatility_regime === 'high' && "border-orange-500 text-orange-500",
-                                  aiData.volatility_regime === 'normal' && "border-blue-500 text-blue-500",
-                                  aiData.volatility_regime === 'low' && "border-green-500 text-green-500",
-                                )}
-                              >
-                                Vol: {aiData.volatility_regime}
-                              </Badge>
-                            )}
-                            {aiData.domain_risk_level && (
-                              <Badge 
-                                variant="outline" 
-                                className={cn(
-                                  "text-[10px] py-0",
-                                  aiData.domain_risk_level === 'high' && "border-red-500 text-red-500",
-                                  aiData.domain_risk_level === 'medium' && "border-yellow-500 text-yellow-500",
-                                  aiData.domain_risk_level === 'low' && "border-green-500 text-green-500",
-                                )}
-                              >
-                                Risk: {aiData.domain_risk_level}
-                              </Badge>
-                            )}
-                            {aiData.vs_sector_performance !== null && aiData.vs_sector_performance !== undefined && (
-                              <Badge 
-                                variant="outline" 
-                                className={cn(
-                                  "text-[10px] py-0",
-                                  aiData.vs_sector_performance >= 0 ? "border-green-500 text-green-500" : "border-red-500 text-red-500",
-                                )}
-                              >
-                                vs Sector: {aiData.vs_sector_performance >= 0 ? '+' : ''}{aiData.vs_sector_performance.toFixed(1)}%
-                              </Badge>
-                            )}
-                            {aiData.domain_recovery_days && (
-                              <Badge variant="outline" className="text-[10px] py-0">
-                                Typical recovery: {aiData.domain_recovery_days}d
-                              </Badge>
-                            )}
-                          </div>
-                          
-                          {/* Domain warnings */}
-                          {aiData.domain_warnings && aiData.domain_warnings.length > 0 && (
-                            <div className="mt-2 space-y-1">
-                              {aiData.domain_warnings.map((warning, i) => (
-                                <p key={i} className="text-[10px] text-orange-500 flex items-center gap-1">
-                                  <AlertTriangle className="h-3 w-3" />
-                                  {warning}
-                                </p>
-                              ))}
-                            </div>
-                          )}
-                          
-                          {/* Risk factors */}
-                          {aiData.domain_risk_factors && aiData.domain_risk_factors.length > 0 && (
-                            <div className="flex flex-wrap gap-1 mt-2">
-                              <span className="text-[10px] text-muted-foreground">Key risks:</span>
-                              {aiData.domain_risk_factors.slice(0, 3).map((factor, i) => (
-                                <Badge key={i} variant="secondary" className="text-[10px] py-0">
-                                  {factor}
-                                </Badge>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                      
-                      {/* Fallback to old domain_analysis if no domain_context */}
-                      {!aiData?.domain_context && aiData?.domain_analysis && (
-                        <div>
-                          <p className="text-xs font-medium text-primary mb-1">Sector Analysis</p>
-                          <p className="text-xs leading-relaxed text-muted-foreground whitespace-pre-wrap">
-                            {aiData.domain_analysis}
-                          </p>
-                        </div>
-                      )}
-                      {/* General AI reasoning */}
-                      {aiData?.ai_reasoning && (
-                        <div>
-                          {(aiData?.domain_analysis || aiData?.domain_context) && (
-                            <p className="text-xs font-medium text-primary mb-1">General Analysis</p>
-                          )}
-                          <p className="text-xs leading-relaxed text-muted-foreground whitespace-pre-wrap">
-                            {aiData.ai_reasoning}
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </>
-            )}
+                    )}
+                    {stockInfo.website && (
+                      <a
+                        href={stockInfo.website}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                      >
+                        <ExternalLink className="h-3 w-3" />
+                        {stockInfo.website.replace(/^https?:\/\/(www\.)?/, '').split('/')[0]}
+                      </a>
+                    )}
+                  </>
+                )}
+              </div>
+            </details>
           </CardContent>
         </ScrollArea>
       </Card>

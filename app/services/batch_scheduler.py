@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from typing import Any
 
 from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
@@ -11,6 +14,7 @@ from sqlalchemy.dialects.postgresql import insert
 from app.core.logging import get_logger
 from app.database.connection import get_session
 from app.database.orm import (
+    AnalysisVersion,
     BatchJob,
     DipAIAnalysis,
     DipfinderSignal,
@@ -30,6 +34,82 @@ from app.services.statistical_rating import calculate_rating
 
 
 logger = get_logger("batch_scheduler")
+
+
+# =============================================================================
+# INPUT HASH FUNCTIONS FOR DIP AI ANALYSIS
+# =============================================================================
+
+
+def _compute_dip_input_hash(dip_data: dict[str, Any]) -> str:
+    """
+    Compute hash of dip data for change detection.
+    
+    Used to skip AI analysis if input data hasn't changed.
+    Includes all fields that affect AI rating output.
+    """
+    key_data = {
+        # Price and dip metrics
+        "dip_percentage": round(float(dip_data.get("dip_percentage") or 0), 2),
+        # Fundamentals (all used in AI prompt)
+        "pe_ratio": round(float(dip_data.get("pe_ratio") or 0), 2) if dip_data.get("pe_ratio") else None,
+        "forward_pe": round(float(dip_data.get("forward_pe") or 0), 2) if dip_data.get("forward_pe") else None,
+        "peg_ratio": round(float(dip_data.get("peg_ratio") or 0), 2) if dip_data.get("peg_ratio") else None,
+        "price_to_book": round(float(dip_data.get("price_to_book") or 0), 2) if dip_data.get("price_to_book") else None,
+        "profit_margin": round(float(dip_data.get("profit_margin") or 0), 4) if dip_data.get("profit_margin") else None,
+        "return_on_equity": round(float(dip_data.get("return_on_equity") or 0), 4) if dip_data.get("return_on_equity") else None,
+        "debt_to_equity": round(float(dip_data.get("debt_to_equity") or 0), 2) if dip_data.get("debt_to_equity") else None,
+        "recommendation": dip_data.get("recommendation"),
+        # Signal data
+        "dip_class": dip_data.get("classification"),
+        "quality_score": round(float(dip_data.get("quality_score") or 0), 2) if dip_data.get("quality_score") else None,
+        "stability_score": round(float(dip_data.get("stability_score") or 0), 2) if dip_data.get("stability_score") else None,
+    }
+    content = json.dumps(key_data, sort_keys=True, default=str)
+    return hashlib.sha256(content.encode()).hexdigest()[:16]
+
+
+async def _get_stored_dip_hash(symbol: str) -> str | None:
+    """Get the stored input hash for a symbol's dip AI analysis."""
+    async with get_session() as session:
+        result = await session.execute(
+            select(AnalysisVersion.input_version_hash).where(
+                AnalysisVersion.symbol == symbol,
+                AnalysisVersion.analysis_type == "dip_rating",
+            )
+        )
+        row = result.scalar_one_or_none()
+        return row if row else None
+
+
+async def _store_dip_analysis_version(
+    symbol: str,
+    input_hash: str,
+    batch_job_id: str | None = None,
+) -> None:
+    """Store/update the analysis version after successful dip analysis."""
+    expires_at = datetime.now(UTC) + timedelta(days=7)
+
+    async with get_session() as session:
+        stmt = insert(AnalysisVersion).values(
+            symbol=symbol,
+            analysis_type="dip_rating",
+            input_version_hash=input_hash,
+            generated_at=datetime.now(UTC),
+            expires_at=expires_at,
+            batch_job_id=batch_job_id,
+        )
+        stmt = stmt.on_conflict_do_update(
+            constraint="uq_analysis_version_symbol_type",
+            set_={
+                "input_version_hash": stmt.excluded.input_version_hash,
+                "generated_at": stmt.excluded.generated_at,
+                "expires_at": stmt.excluded.expires_at,
+                "batch_job_id": stmt.excluded.batch_job_id,
+            },
+        )
+        await session.execute(stmt)
+        await session.commit()
 
 
 async def get_all_dip_symbols() -> list[str]:
@@ -138,7 +218,9 @@ async def get_dips_needing_analysis() -> list[dict]:
 async def schedule_batch_dip_analysis() -> str | None:
     """
     Schedule a batch job to analyze all current dips.
-
+    
+    Uses input-hash filtering to skip dips whose data hasn't changed.
+    
     Returns:
         Batch job ID if created, None if no dips to analyze
     """
@@ -148,11 +230,35 @@ async def schedule_batch_dip_analysis() -> str | None:
         logger.info("No dips need AI analysis")
         return None
 
-    logger.info(f"Scheduling batch AI analysis for {len(dips)} dips")
+    logger.info(f"Checking {len(dips)} dips for AI analysis")
+
+    # Filter dips by input hash - skip if data unchanged
+    dips_to_analyze = []
+    skipped_count = 0
+    input_hashes: dict[str, str] = {}
+    
+    for dip in dips:
+        symbol = dip["symbol"]
+        current_hash = _compute_dip_input_hash(dip)
+        stored_hash = await _get_stored_dip_hash(symbol)
+        
+        if stored_hash == current_hash:
+            logger.debug(f"Skipping {symbol}: input unchanged (hash={current_hash[:8]}...)")
+            skipped_count += 1
+            continue
+            
+        dips_to_analyze.append(dip)
+        input_hashes[symbol] = current_hash
+    
+    if not dips_to_analyze:
+        logger.info(f"All {skipped_count} dips have unchanged input data - skipping batch")
+        return None
+
+    logger.info(f"Scheduling batch AI analysis for {len(dips_to_analyze)} dips ({skipped_count} skipped)")
 
     # Prepare items for batch - use context keys expected by _build_prompt
     items = []
-    for dip in dips:
+    for dip in dips_to_analyze:
         # Calculate days in dip
         days_below = 0
         if dip.get("first_seen"):
@@ -234,8 +340,12 @@ async def schedule_batch_dip_analysis() -> str | None:
             job_type=TaskType.RATING.value,
             total_requests=len(items),
         )
+        
+        # Store input hashes for all symbols in batch
+        for symbol, input_hash in input_hashes.items():
+            await _store_dip_analysis_version(symbol, input_hash, batch_job_id=batch_id)
 
-        logger.info(f"Created batch job {batch_id} for {len(dips)} dips")
+        logger.info(f"Created batch job {batch_id} for {len(dips_to_analyze)} dips")
 
     return batch_id
 
@@ -333,7 +443,15 @@ async def _process_batch_results(
     results: list[dict],
 ) -> None:
     """Process results from a completed batch job."""
-    logger.info(f"Processing {len(results)} results from batch {batch_id}")
+    logger.info(f"Processing {len(results)} results from batch {batch_id} (type: {job_type})")
+
+    # AGENT batches are handled by collect_agent_batch which does its own processing
+    if job_type == TaskType.AGENT.value:
+        from app.services.ai_agents import collect_agent_batch
+        
+        agent_results = await collect_agent_batch(batch_id)
+        logger.info(f"Processed AGENT batch {batch_id}: {len(agent_results)} symbols analyzed")
+        return
 
     for result in results:
         custom_id = result.get("custom_id", "")

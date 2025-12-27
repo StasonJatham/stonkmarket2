@@ -22,6 +22,8 @@ addopts = [
     "--strict-markers",
     "--tb=short",
     "-ra",
+    # NOTE: Parallel execution (-n auto) disabled by default for async test stability
+    # Run with: pytest -n auto --dist=loadfile for parallel execution
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
@@ -34,6 +36,7 @@ markers = [
     "integration: marks tests as integration tests requiring DB",
     "e2e: marks tests as end-to-end tests",
     "unit: marks tests as unit tests",
+    "serial: marks tests that must run serially (not in parallel)",
 ]
 
 # ============================================================================

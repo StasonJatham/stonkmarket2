@@ -181,10 +181,12 @@ def _calculate_domain_metrics(
     """
     Calculate domain-specific metrics from financial statements.
     
+    Supports both yfinance and yahooquery field names.
+    
     Returns dict with:
-    - Banks: net_interest_income, net_interest_margin
+    - Banks: net_interest_income, net_interest_margin, interest_income, interest_expense
     - REITs: ffo, ffo_per_share, p_ffo
-    - Insurers: loss_ratio, combined_ratio
+    - Insurers: loss_ratio, combined_ratio, expense_ratio
     """
     result = {}
 
@@ -195,25 +197,55 @@ def _calculate_domain_metrics(
     quarterly = financials.get("quarterly", {})
     income_stmt = quarterly.get("income_statement", {})
     balance_sheet = quarterly.get("balance_sheet", {})
+    cash_flow = quarterly.get("cash_flow", {})
 
     if domain == "bank":
-        # Net Interest Income
-        nii = income_stmt.get("Net Interest Income")
-        if nii:
+        # Net Interest Income - try multiple field names (yahooquery vs yfinance)
+        nii = (
+            income_stmt.get("NetInterestIncome") or  # yahooquery
+            income_stmt.get("Net Interest Income")    # yfinance
+        )
+        if nii and nii > 0:
             result["net_interest_income"] = int(nii)
+        
+        # Interest Income and Expense
+        int_income = (
+            income_stmt.get("InterestIncome") or 
+            income_stmt.get("Interest Income")
+        )
+        int_expense = (
+            income_stmt.get("InterestExpense") or 
+            income_stmt.get("Interest Expense")
+        )
+        if int_income:
+            result["interest_income"] = int(int_income)
+        if int_expense:
+            result["interest_expense"] = int(int_expense)
 
         # Net Interest Margin (NII / Interest-earning assets)
-        total_assets = balance_sheet.get("Total Assets")
-        if nii and total_assets and total_assets > 0:
+        total_assets = (
+            balance_sheet.get("TotalAssets") or
+            balance_sheet.get("Total Assets")
+        )
+        if nii and nii > 0 and total_assets and total_assets > 0:
             # Rough approximation - real NIM uses interest-earning assets
             result["net_interest_margin"] = (nii * 4) / total_assets  # Annualized
 
     elif domain == "reit":
         # FFO = Net Income + Depreciation & Amortization
-        net_income = income_stmt.get("Net Income") or info.get("net_income")
-        depreciation = income_stmt.get("Depreciation And Amortization In Income Statement")
-        if not depreciation:
-            depreciation = income_stmt.get("Depreciation Amortization Depletion")
+        net_income = (
+            income_stmt.get("NetIncome") or
+            income_stmt.get("Net Income") or 
+            info.get("net_income")
+        )
+        
+        # Depreciation from cash flow (more reliable) or income statement
+        depreciation = (
+            cash_flow.get("DepreciationAndAmortization") or  # yahooquery
+            income_stmt.get("DepreciationAndAmortizationInIncomeStatement") or
+            income_stmt.get("Depreciation And Amortization In Income Statement") or
+            income_stmt.get("Depreciation Amortization Depletion")
+        )
 
         if net_income:
             ffo = int(net_income)
@@ -224,7 +256,7 @@ def _calculate_domain_metrics(
             # FFO per share
             shares = info.get("shares_outstanding") or info.get("sharesOutstanding")
             if shares and shares > 0:
-                ffo_per_share = ffo / shares
+                ffo_per_share = (ffo * 4) / shares  # Annualized FFO per share
                 result["ffo_per_share"] = round(ffo_per_share, 4)
 
                 # P/FFO
@@ -233,18 +265,33 @@ def _calculate_domain_metrics(
                     result["p_ffo"] = round(price / ffo_per_share, 4)
 
     elif domain == "insurer":
-        # Loss ratio = Loss Adjustment Expense / Premiums Earned
-        loss_expense = income_stmt.get("Net Policyholder Benefits And Claims")
-        if not loss_expense:
-            loss_expense = income_stmt.get("Policyholder Benefits And Claims")
+        # For insurers, calculate expense ratio as proxy for efficiency
+        total_revenue = (
+            income_stmt.get("TotalRevenue") or
+            income_stmt.get("Total Revenue") or
+            income_stmt.get("OperatingRevenue") or
+            info.get("revenue")
+        )
+        
+        total_expenses = (
+            income_stmt.get("TotalExpenses") or
+            income_stmt.get("Total Expenses")
+        )
+        
+        # Loss ratio from policyholder benefits if available
+        loss_expense = (
+            income_stmt.get("NetPolicyholderBenefitsAndClaims") or
+            income_stmt.get("Net Policyholder Benefits And Claims") or
+            income_stmt.get("PolicyholderBenefitsAndClaims") or
+            income_stmt.get("Policyholder Benefits And Claims")
+        )
 
-        premiums = income_stmt.get("Total Revenue") or info.get("revenue")
-
-        if loss_expense and premiums and premiums > 0:
-            result["loss_ratio"] = abs(loss_expense) / premiums
-
-        # Combined ratio (would need expense ratio too, but often not available)
-        # Just use loss ratio for now
+        if loss_expense and total_revenue and total_revenue > 0:
+            result["loss_ratio"] = abs(loss_expense) / total_revenue
+            
+        # Expense ratio as alternative
+        if total_expenses and total_revenue and total_revenue > 0:
+            result["expense_ratio"] = abs(total_expenses) / total_revenue
 
     return result
 
@@ -402,10 +449,13 @@ async def _fetch_fundamentals_from_service(
         # Domain-Specific Metrics
         "net_interest_income": domain_metrics.get("net_interest_income"),
         "net_interest_margin": domain_metrics.get("net_interest_margin"),
+        "interest_income": domain_metrics.get("interest_income"),
+        "interest_expense": domain_metrics.get("interest_expense"),
         "ffo": domain_metrics.get("ffo"),
         "ffo_per_share": domain_metrics.get("ffo_per_share"),
         "p_ffo": domain_metrics.get("p_ffo"),
         "loss_ratio": domain_metrics.get("loss_ratio"),
+        "expense_ratio": domain_metrics.get("expense_ratio"),
         "combined_ratio": domain_metrics.get("combined_ratio"),
         # Timestamp for financials
         "financials_fetched_at": datetime.now(UTC) if financials else None,
@@ -487,10 +537,13 @@ async def _store_fundamentals(
         "cash_flow_annual": data.get("cash_flow_annual"),
         "net_interest_income": data.get("net_interest_income"),
         "net_interest_margin": data.get("net_interest_margin"),
+        "interest_income": data.get("interest_income"),
+        "interest_expense": data.get("interest_expense"),
         "ffo": data.get("ffo"),
         "ffo_per_share": data.get("ffo_per_share"),
         "p_ffo": data.get("p_ffo"),
         "loss_ratio": data.get("loss_ratio"),
+        "expense_ratio": data.get("expense_ratio"),
         "combined_ratio": data.get("combined_ratio"),
         "fetched_at": now,
         "expires_at": expires_at,
@@ -511,10 +564,13 @@ async def _store_fundamentals(
             "cash_flow_annual",
             "net_interest_income",
             "net_interest_margin",
+            "interest_income",
+            "interest_expense",
             "ffo",
             "ffo_per_share",
             "p_ffo",
             "loss_ratio",
+            "expense_ratio",
             "combined_ratio",
             "financials_fetched_at",
         }:
@@ -710,10 +766,13 @@ def _fundamentals_to_dict(f: StockFundamentals) -> dict[str, Any]:
         "cash_flow_annual": f.cash_flow_annual,
         "net_interest_income": f.net_interest_income,
         "net_interest_margin": float(f.net_interest_margin) if f.net_interest_margin else None,
+        "interest_income": f.interest_income,
+        "interest_expense": f.interest_expense,
         "ffo": f.ffo,
         "ffo_per_share": float(f.ffo_per_share) if f.ffo_per_share else None,
         "p_ffo": float(f.p_ffo) if f.p_ffo else None,
         "loss_ratio": float(f.loss_ratio) if f.loss_ratio else None,
+        "expense_ratio": float(f.expense_ratio) if f.expense_ratio else None,
         "combined_ratio": float(f.combined_ratio) if f.combined_ratio else None,
         "fetched_at": f.fetched_at,
         "expires_at": f.expires_at,

@@ -1102,8 +1102,8 @@ export function quantToDipStock(rec: QuantRecommendation): DipStock {
     pe_ratio: null,
     volume: null,
     // Use actual dip_score from backend (0-1 range, higher = deeper dip)
-    // Fall back to marginal_utility if dip_score not available
-    dip_score: rec.dip_score ?? rec.marginal_utility,
+    // IMPORTANT: Use marginal_utility for sorting, not dip_score (which is z-score)
+    dip_score: rec.marginal_utility ?? rec.dip_score ?? 0,
     recovery_potential: rec.mu_hat,
   };
 }

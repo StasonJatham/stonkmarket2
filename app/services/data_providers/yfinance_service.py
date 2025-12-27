@@ -827,6 +827,9 @@ class YFinanceService:
         """
         Get financial statements with caching.
         
+        Uses yahooquery as PRIMARY source (richer data with 95+ balance sheet columns),
+        with yfinance as FALLBACK if yahooquery fails.
+        
         Returns quarterly and annual income statement, balance sheet, and cash flow.
         Useful for domain-specific analysis:
         - Banks: Net Interest Income, Interest Expense, Provision for Credit Losses
@@ -855,10 +858,24 @@ class YFinanceService:
                 self._set_in_memory(cache_key, valkey_data)
                 return valkey_data
 
-        # Cache miss - fetch from yfinance
-        logger.debug(f"Financials cache miss for {symbol}, fetching from yfinance")
-        loop = asyncio.get_event_loop()
-        data = await loop.run_in_executor(_executor, self._fetch_financials_sync, symbol)
+        # Cache miss - try yahooquery first (richer financial data)
+        data = None
+        try:
+            from app.services.data_providers.yahooquery_service import get_yahooquery_service
+            yq_service = get_yahooquery_service()
+            if yq_service.is_available():
+                logger.debug(f"Financials cache miss for {symbol}, trying yahooquery first")
+                data = await yq_service.get_financials(symbol)
+                if data:
+                    logger.debug(f"Got financials from yahooquery for {symbol}")
+        except Exception as e:
+            logger.debug(f"yahooquery financials failed for {symbol}: {e}")
+
+        # Fallback to yfinance if yahooquery failed
+        if not data:
+            logger.debug(f"Falling back to yfinance for financials: {symbol}")
+            loop = asyncio.get_event_loop()
+            data = await loop.run_in_executor(_executor, self._fetch_financials_sync, symbol)
 
         if data:
             # Store in cache
