@@ -11,7 +11,7 @@
  * - Domain analysis result
  */
 
-import { useMemo, memo, useCallback } from 'react';
+import { useMemo, memo, useCallback, useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { AreaChart, Area, ResponsiveContainer } from 'recharts';
 import { CHART_MINI_ANIMATION } from '@/lib/chartConfig';
@@ -20,7 +20,6 @@ import { prefetchStockChart, prefetchStockInfo } from '@/services/api';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Progress } from '@/components/ui/progress';
 import { 
   Tooltip,
   TooltipContent,
@@ -32,13 +31,36 @@ import {
   TrendingUp, 
   TrendingDown, 
   ChevronRight, 
-  Info,
   Zap,
   Target,
   BarChart2,
-  Activity,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useTheme } from '@/context/ThemeContext';
+
+// Get chart colors respecting theme and colorblind mode
+function useChartColors() {
+  const { colorblindMode, customColors } = useTheme();
+  const [colors, setColors] = useState({ success: '#22c55e', danger: '#ef4444' });
+  
+  useEffect(() => {
+    // Read computed colors from CSS variables (respects theme and colorblind mode)
+    const root = document.documentElement;
+    const success = getComputedStyle(root).getPropertyValue('--success').trim();
+    const danger = getComputedStyle(root).getPropertyValue('--danger').trim();
+    
+    if (success && danger) {
+      setColors({ success, danger });
+    } else if (colorblindMode) {
+      // Fallback colorblind colors
+      setColors({ success: '#3b82f6', danger: '#f97316' }); // Blue/Orange
+    } else if (customColors) {
+      setColors({ success: customColors.up, danger: customColors.down });
+    }
+  }, [colorblindMode, customColors]);
+  
+  return colors;
+}
 
 // ============================================================================
 // Types
@@ -61,6 +83,13 @@ export interface StockCardData {
   depth: number; // Fraction (0.15 = 15% dip)
   days_since_dip: number | null;
   dip_bucket: string | null;
+  
+  // Recovery and unusual dip metrics (quant engine backtest data)
+  expected_recovery_days?: number | null; // Expected time to recover based on optimal holding period
+  typical_dip_pct?: number | null; // Stock's typical dip size as percentage
+  dip_vs_typical?: number | null; // Current dip / typical dip ratio (>1.5 = unusual)
+  is_unusual_dip?: boolean; // True if current dip is significantly larger than typical
+  win_rate?: number | null; // Historical win rate for similar signals
   
   // Technical signals
   top_signal?: {
@@ -209,10 +238,10 @@ function getOpportunityRating(score: number): 'strong_buy' | 'buy' | 'hold' | 'a
 
 function getOpportunityColor(rating: string): string {
   switch (rating) {
-    case 'strong_buy': return 'text-green-500';
-    case 'buy': return 'text-emerald-500';
-    case 'hold': return 'text-yellow-500';
-    case 'avoid': return 'text-red-500';
+    case 'strong_buy': return 'text-success';
+    case 'buy': return 'text-success/80';
+    case 'hold': return 'text-warning';
+    case 'avoid': return 'text-danger';
     default: return 'text-muted-foreground';
   }
 }
@@ -290,7 +319,7 @@ function SectorDelta({ delta, sectorEtf, sector }: SectorDeltaProps) {
     <InfoTooltip content={tooltipText}>
       <div className={cn(
         'flex items-center gap-0.5 text-[10px] cursor-help',
-        isOutperforming ? 'text-emerald-600' : 'text-orange-500'
+        isOutperforming ? 'text-success' : 'text-danger'
       )}>
         <BarChart2 className="h-3 w-3" />
         <span>{formatPercent(delta)}</span>
@@ -324,9 +353,9 @@ function OpportunityMeter({ score, rating, compact = false }: OpportunityMeterPr
           <div 
             className={cn(
               'h-full transition-all duration-300 rounded-full',
-              rating === 'strong_buy' ? 'bg-green-500' :
-              rating === 'buy' ? 'bg-emerald-500' :
-              rating === 'hold' ? 'bg-yellow-500' : 'bg-red-500'
+              rating === 'strong_buy' ? 'bg-success' :
+              rating === 'buy' ? 'bg-success/80' :
+              rating === 'hold' ? 'bg-warning' : 'bg-danger'
             )}
             style={{ width: `${score}%` }}
           />
@@ -340,9 +369,23 @@ interface DipContextProps {
   depth: number;
   days: number | null;
   bucket: string | null;
+  expectedRecoveryDays?: number | null;
+  typicalDipPct?: number | null;
+  dipVsTypical?: number | null;
+  isUnusualDip?: boolean;
+  winRate?: number | null;
 }
 
-function DipContext({ depth, days, bucket }: DipContextProps) {
+function DipContext({ 
+  depth, 
+  days, 
+  bucket, 
+  expectedRecoveryDays, 
+  typicalDipPct, 
+  dipVsTypical, 
+  isUnusualDip,
+  winRate,
+}: DipContextProps) {
   const dipPct = depth * 100;
   
   let severity: 'shallow' | 'moderate' | 'deep' | 'extreme' = 'shallow';
@@ -357,20 +400,37 @@ function DipContext({ depth, days, bucket }: DipContextProps) {
   }
   
   const severityColors = {
-    shallow: 'text-yellow-500',
-    moderate: 'text-orange-500',
-    deep: 'text-red-500',
-    very_deep: 'text-red-600',
-    extreme: 'text-red-700',
+    shallow: 'text-warning',
+    moderate: 'text-warning',
+    deep: 'text-danger',
+    very_deep: 'text-danger',
+    extreme: 'text-danger',
   };
   
-  const tooltipContent = days !== null 
-    ? `${dipPct.toFixed(1)}% below recent high, persisting for ${days} days. ${
-        severity === 'deep' || severity === 'extreme' 
-          ? 'Historical data suggests similar dips often recover within 3-6 months.'
-          : ''
-      }`
-    : `${dipPct.toFixed(1)}% below recent high`;
+  // Build detailed tooltip
+  let tooltipLines: string[] = [
+    `${dipPct.toFixed(1)}% below recent high`,
+  ];
+  
+  if (days !== null) {
+    tooltipLines.push(`Persisting for ${days} days`);
+  }
+  
+  if (isUnusualDip && dipVsTypical) {
+    tooltipLines.push(`⚠️ UNUSUAL: ${dipVsTypical.toFixed(1)}x larger than typical dip`);
+  } else if (dipVsTypical) {
+    tooltipLines.push(`${dipVsTypical.toFixed(1)}x vs typical dip (${typicalDipPct?.toFixed(1) || '?'}%)`);
+  }
+  
+  if (expectedRecoveryDays) {
+    tooltipLines.push(`📈 Expected recovery: ~${expectedRecoveryDays} trading days`);
+  }
+  
+  if (winRate) {
+    tooltipLines.push(`Historical win rate: ${(winRate * 100).toFixed(0)}%`);
+  }
+  
+  const tooltipContent = tooltipLines.join('. ');
   
   return (
     <InfoTooltip content={tooltipContent}>
@@ -379,7 +439,17 @@ function DipContext({ depth, days, bucket }: DipContextProps) {
         <span className={cn('text-xs font-medium', severityColors[severity] || severityColors.moderate)}>
           {formatDipPercent(depth)}
         </span>
-        {days !== null && (
+        {isUnusualDip && (
+          <span className="text-[9px] px-1 py-0.5 bg-amber-500/20 text-amber-500 rounded font-semibold">
+            UNUSUAL
+          </span>
+        )}
+        {expectedRecoveryDays && !isUnusualDip && (
+          <span className="text-[10px] text-muted-foreground">
+            ~{expectedRecoveryDays}d
+          </span>
+        )}
+        {days !== null && !expectedRecoveryDays && !isUnusualDip && (
           <span className="text-[10px] text-muted-foreground">
             ({days}d)
           </span>
@@ -403,20 +473,20 @@ function MiniSparkline({ data, color, id }: MiniSparklineProps) {
   if (data.length === 0) return null;
   
   return (
-    <div className="absolute inset-0 opacity-30 pointer-events-none">
+    <div className="absolute bottom-0 left-0 right-0 h-1/2 opacity-60 pointer-events-none">
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart data={data} margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
           <defs>
             <linearGradient id={`sparkline-${id}`} x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor={color} stopOpacity={0.4} />
-              <stop offset="100%" stopColor={color} stopOpacity={0} />
+              <stop offset="100%" stopColor={color} stopOpacity={0.02} />
             </linearGradient>
           </defs>
           <Area
             type="monotone"
             dataKey="y"
             stroke={color}
-            strokeWidth={1}
+            strokeWidth={1.5}
             fill={`url(#sparkline-${id})`}
             {...CHART_MINI_ANIMATION}
           />
@@ -439,7 +509,10 @@ export const StockCardV2 = memo(function StockCardV2({
   onClick,
 }: StockCardV2Props) {
   const isPositive = (stock.change_percent ?? 0) >= 0;
-  const chartColor = isPositive ? 'var(--success)' : 'var(--danger)';
+  
+  // Get theme-aware colors for SVG chart (respects colorblind mode)
+  const chartColors = useChartColors();
+  const chartColor = isPositive ? chartColors.success : chartColors.danger;
   
   // Calculate opportunity metrics
   const opportunityScore = stock.opportunity_score ?? calculateOpportunityScore(stock);
@@ -525,8 +598,17 @@ export const StockCardV2 = memo(function StockCardV2({
           
           {/* Metrics Row */}
           <div className="flex items-center gap-3 mt-3 pt-2 border-t border-border/40">
-            {/* Dip Context */}
-            <DipContext depth={stock.depth} days={stock.days_since_dip} bucket={stock.dip_bucket} />
+            {/* Dip Context with recovery and unusual dip info */}
+            <DipContext 
+              depth={stock.depth} 
+              days={stock.days_since_dip} 
+              bucket={stock.dip_bucket}
+              expectedRecoveryDays={stock.expected_recovery_days}
+              typicalDipPct={stock.typical_dip_pct}
+              dipVsTypical={stock.dip_vs_typical}
+              isUnusualDip={stock.is_unusual_dip}
+              winRate={stock.win_rate}
+            />
             
             {/* Sector Delta */}
             {stock.sector_delta !== undefined && (
@@ -551,36 +633,21 @@ export const StockCardV2 = memo(function StockCardV2({
             <OpportunityMeter score={opportunityScore} rating={opportunityRating} compact={compact} />
           </div>
           
-          {/* Signals Row */}
+          {/* Signals Row - only show unique info not shown elsewhere */}
           <div className="flex items-center gap-2 mt-2">
-            {/* Technical Signal */}
+            {/* Technical Signal with description */}
             {stock.top_signal && <SignalBadge signal={stock.top_signal} />}
             
-            {/* AI Rating Badge */}
-            {stock.ai_rating && (
-              <InfoTooltip content={stock.ai_summary || 'AI-generated investment rating'}>
+            {/* Win Rate - only show if high and no signal badge already showing it */}
+            {!stock.top_signal && stock.win_rate && stock.win_rate >= 0.65 && (
+              <InfoTooltip content={`Historical win rate: ${(stock.win_rate * 100).toFixed(0)}% of similar setups were profitable`}>
                 <Badge 
                   variant="outline" 
-                  className={cn(
-                    'gap-1 text-[10px] px-1.5 py-0 h-5 cursor-help',
-                    stock.ai_rating.includes('buy') ? 'border-emerald-500/50 text-emerald-600' :
-                    stock.ai_rating.includes('sell') ? 'border-red-500/50 text-red-600' :
-                    'border-muted'
-                  )}
+                  className="gap-1 text-[10px] px-1.5 py-0 h-5 cursor-help border-emerald-500/50 text-emerald-600"
                 >
-                  <Activity className="h-3 w-3" />
-                  AI: {stock.ai_rating.replace(/_/g, ' ')}
+                  <Target className="h-3 w-3" />
+                  {(stock.win_rate * 100).toFixed(0)}% Win
                 </Badge>
-              </InfoTooltip>
-            )}
-            
-            {/* Domain Analysis Snippet */}
-            {stock.domain_analysis && !compact && (
-              <InfoTooltip content={stock.domain_analysis}>
-                <span className="text-[10px] text-muted-foreground truncate max-w-[120px] cursor-help flex items-center gap-1">
-                  <Info className="h-3 w-3 shrink-0" />
-                  <span className="truncate">{stock.domain_analysis}</span>
-                </span>
               </InfoTooltip>
             )}
             

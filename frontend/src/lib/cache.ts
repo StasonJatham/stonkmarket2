@@ -329,4 +329,5 @@ export const CACHE_TTL = {
   SYMBOLS: 30 * 1000,           // 30 seconds - symbol list, invalidated on mutations
   SETTINGS: 5 * 60 * 1000,      // 5 minutes - runtime settings
   SUGGESTIONS: 30 * 1000,       // 30 seconds - suggestions change with votes
+  RECOMMENDATIONS: 60 * 1000,   // 1 minute - quant recommendations
 } as const;

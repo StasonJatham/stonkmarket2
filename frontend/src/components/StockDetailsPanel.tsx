@@ -8,10 +8,12 @@ import {
   Line,
   ComposedChart,
   ReferenceDot,
+  Label as RechartsLabel,
 } from 'recharts';
 import { ChartTooltip, SimpleChartTooltipContent } from '@/components/ui/chart';
 import { CHART_LINE_ANIMATION, CHART_TRENDLINE_ANIMATION, CHART_ANIMATION } from '@/lib/chartConfig';
-import type { DipStock, ChartDataPoint, StockInfo, BenchmarkType, ComparisonChartData } from '@/services/api';
+import type { DipStock, ChartDataPoint, StockInfo, BenchmarkType, ComparisonChartData, SignalTrigger, DipAnalysis, CurrentSignals } from '@/services/api';
+import { getSignalTriggers, getDipAnalysis, getCurrentSignals } from '@/services/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -34,13 +36,33 @@ import {
   Scale,
   Banknote,
   Users,
+  Zap,
+  AlertTriangle,
+  CheckCircle2,
+  XCircle,
+  TrendingUpDown,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { StockLogo } from '@/components/StockLogo';
+import { Switch } from '@/components/ui/switch';
+import { cn } from '@/lib/utils';
 
 interface AiData {
   ai_rating: 'strong_buy' | 'buy' | 'hold' | 'sell' | 'strong_sell' | null;
   ai_reasoning: string | null;
+  domain_analysis?: string | null;
+  // Domain-specific analysis (sector-aware)
+  domain_context?: string | null;
+  domain_adjustment?: number | null;
+  domain_adjustment_reason?: string | null;
+  domain_risk_level?: string | null;
+  domain_risk_factors?: string[] | null;
+  domain_recovery_days?: number | null;
+  domain_warnings?: string[] | null;
+  volatility_regime?: string | null;
+  volatility_percentile?: number | null;
+  vs_sector_performance?: number | null;
+  sector?: string | null;
 }
 
 interface StockDetailsPanelProps {
@@ -93,6 +115,46 @@ export function StockDetailsPanel({
 }: StockDetailsPanelProps) {
   // Track when dots should be visible (after chart animation completes)
   const [dotsVisible, setDotsVisible] = useState(false);
+  
+  // Signal triggers for buy signal markers
+  const [signalTriggers, setSignalTriggers] = useState<SignalTrigger[]>([]);
+  const [showSignals, setShowSignals] = useState(true);
+  
+  // Quant analysis state
+  const [dipAnalysis, setDipAnalysis] = useState<DipAnalysis | null>(null);
+  const [currentSignals, setCurrentSignals] = useState<CurrentSignals | null>(null);
+  const [isLoadingQuant, setIsLoadingQuant] = useState(false);
+  
+  // Fetch signal triggers when stock changes
+  useEffect(() => {
+    if (!stock?.symbol) {
+      setSignalTriggers([]);
+      return;
+    }
+    
+    getSignalTriggers(stock.symbol, Math.max(chartPeriod + 30, 365))
+      .then(setSignalTriggers)
+      .catch(() => setSignalTriggers([]));
+  }, [stock?.symbol, chartPeriod]);
+  
+  // Fetch quant analysis when stock changes
+  useEffect(() => {
+    if (!stock?.symbol) {
+      setDipAnalysis(null);
+      setCurrentSignals(null);
+      return;
+    }
+    
+    setIsLoadingQuant(true);
+    Promise.all([
+      getDipAnalysis(stock.symbol).catch(() => null),
+      getCurrentSignals(stock.symbol).catch(() => null),
+    ]).then(([dip, signals]) => {
+      setDipAnalysis(dip);
+      setCurrentSignals(signals);
+      setIsLoadingQuant(false);
+    });
+  }, [stock?.symbol]);
   
   // When chart period or data changes, hide dots and show them after animation completes
   useEffect(() => {
@@ -170,6 +232,23 @@ export function StockDetailsPanel({
       };
     });
   }, [formattedChartData, refHighIndex, currentPrice, refHighPrice]);
+
+  // Find signal trigger points that match chart dates
+  const signalPoints = useMemo(() => {
+    if (!showSignals || signalTriggers.length === 0 || formattedChartData.length === 0) return [];
+    
+    // Create a map of date -> signal for quick lookup
+    const signalMap = new Map<string, SignalTrigger>();
+    signalTriggers.forEach(s => signalMap.set(s.date, s));
+    
+    // Find chart points that have matching signals
+    return formattedChartData
+      .filter(point => signalMap.has(point.date))
+      .map(point => ({
+        ...point,
+        signal: signalMap.get(point.date)!,
+      }));
+  }, [showSignals, signalTriggers, formattedChartData]);
 
   const priceChange = useMemo(() => {
     if (chartData.length < 2) return 0;
@@ -260,13 +339,26 @@ export function StockDetailsPanel({
                   </Button>
                 ))}
               </div>
-              {/* Compact Dip Info */}
+              {/* Compact Dip Info + Signals Toggle */}
               {stock && (
-                <div className="flex items-center gap-2 text-xs">
+                <div className="flex items-center gap-3 text-xs">
                   <span className="font-medium text-danger">-{(stock.depth * 100).toFixed(1)}%</span>
                   {stock.days_since_dip && (
                     <span className="text-muted-foreground">{stock.days_since_dip}d</span>
                   )}
+                  {/* Signals toggle */}
+                  <div className="flex items-center gap-1.5 ml-1 border-l border-border pl-2">
+                    <Zap className="h-3 w-3 text-success" />
+                    <Switch
+                      id="signals-toggle"
+                      checked={showSignals}
+                      onCheckedChange={setShowSignals}
+                      className="h-4 w-7 data-[state=checked]:bg-success"
+                    />
+                    {signalTriggers.length > 0 && (
+                      <span className="text-muted-foreground">({signalTriggers.length})</span>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
@@ -460,6 +552,30 @@ export function StockDetailsPanel({
                         strokeWidth={2}
                       />
                     )}
+                    {/* Buy signal trigger dots (green with lightning icon) */}
+                    {dotsVisible && showSignals && signalPoints.map((point, idx) => (
+                      <ReferenceDot
+                        key={`signal-${idx}`}
+                        x={point.displayDate}
+                        y={point.close}
+                        r={8}
+                        fill="var(--success)"
+                        stroke="var(--background)"
+                        strokeWidth={2}
+                      >
+                        <RechartsLabel
+                          position="top"
+                          offset={10}
+                          style={{
+                            fontSize: 10,
+                            fill: 'var(--foreground)',
+                            fontWeight: 600,
+                          }}
+                        >
+                          {`${(point.signal.drawdown_pct * 100).toFixed(0)}%`}
+                        </RechartsLabel>
+                      </ReferenceDot>
+                    ))}
                   </ComposedChart>
                 </ResponsiveContainer>
                   ) : (
@@ -703,28 +819,165 @@ export function StockDetailsPanel({
               </>
             )}
 
+            {/* Quant Signals Section */}
+            {(dipAnalysis || currentSignals || isLoadingQuant) && (
+              <>
+                <Separator className="my-4" />
+                <div className="p-3 bg-gradient-to-br from-chart-1/5 to-chart-2/10 rounded-lg border border-chart-1/20">
+                  <div className="flex items-center gap-2 mb-3">
+                    <TrendingUpDown className="h-4 w-4 text-chart-1" />
+                    <span className="text-sm font-medium">Quant Signals</span>
+                  </div>
+                  {isLoadingQuant ? (
+                    <div className="space-y-2">
+                      <Skeleton className="h-4 w-full" />
+                      <Skeleton className="h-4 w-3/4" />
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {/* Overall Action */}
+                      {currentSignals && (
+                        <div className="flex items-center gap-2">
+                          {currentSignals.overall_action === 'STRONG_BUY' && (
+                            <Badge className="bg-success text-success-foreground">
+                              <CheckCircle2 className="h-3 w-3 mr-1" />
+                              Strong Buy
+                            </Badge>
+                          )}
+                          {currentSignals.overall_action === 'BUY' && (
+                            <Badge className="bg-success/80 text-success-foreground">
+                              <TrendingUp className="h-3 w-3 mr-1" />
+                              Buy
+                            </Badge>
+                          )}
+                          {currentSignals.overall_action === 'HOLD' && (
+                            <Badge variant="secondary">
+                              <Activity className="h-3 w-3 mr-1" />
+                              Hold
+                            </Badge>
+                          )}
+                          {currentSignals.overall_action === 'SELL' && (
+                            <Badge className="bg-warning text-warning-foreground">
+                              <TrendingDown className="h-3 w-3 mr-1" />
+                              Sell
+                            </Badge>
+                          )}
+                          {currentSignals.overall_action === 'STRONG_SELL' && (
+                            <Badge variant="destructive">
+                              <XCircle className="h-3 w-3 mr-1" />
+                              Strong Sell
+                            </Badge>
+                          )}
+                          <span className="text-xs text-muted-foreground">
+                            {currentSignals.reasoning}
+                          </span>
+                        </div>
+                      )}
+
+                      {/* Dip Analysis */}
+                      {dipAnalysis && (
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-muted-foreground">Dip Type:</span>
+                            <Badge 
+                              variant={
+                                dipAnalysis.dip_type === 'overreaction'
+                                  ? 'default' 
+                                  : dipAnalysis.dip_type === 'fundamental_decline' 
+                                    ? 'destructive' 
+                                    : 'secondary'
+                              }
+                              className="text-xs"
+                            >
+                              {dipAnalysis.dip_type.toUpperCase().replace('_', ' ')}
+                            </Badge>
+                          </div>
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-muted-foreground">Current Dip:</span>
+                            <span className="font-mono font-medium text-danger">
+                              -{dipAnalysis.current_drawdown_pct.toFixed(1)}%
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-muted-foreground">Typical Dip:</span>
+                            <span className="font-mono">{dipAnalysis.typical_dip_pct.toFixed(1)}%</span>
+                          </div>
+                          {dipAnalysis.is_unusually_deep && (
+                            <div className="flex items-center gap-1 text-xs text-warning">
+                              <AlertTriangle className="h-3 w-3" />
+                              Unusually deep ({dipAnalysis.dip_zscore.toFixed(1)}σ from typical)
+                            </div>
+                          )}
+                          {/* Technical indicators */}
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-muted-foreground">Technical Score:</span>
+                            <span className={`font-mono font-medium ${dipAnalysis.technical_score > 0 ? 'text-success' : dipAnalysis.technical_score < 0 ? 'text-danger' : ''}`}>
+                              {dipAnalysis.technical_score > 0 ? '+' : ''}{(dipAnalysis.technical_score * 100).toFixed(0)}%
+                            </span>
+                          </div>
+                          {dipAnalysis.momentum_divergence && (
+                            <div className="flex items-center gap-1 text-xs text-success">
+                              <TrendingUp className="h-3 w-3" />
+                              Bullish divergence detected
+                            </div>
+                          )}
+                          {dipAnalysis.trend_broken && (
+                            <div className="flex items-center gap-1 text-xs text-warning">
+                              <AlertTriangle className="h-3 w-3" />
+                              Long-term trend broken
+                            </div>
+                          )}
+                          {dipAnalysis.recovery_probability > 0.6 && (
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="text-muted-foreground">Recovery Prob:</span>
+                              <span className="font-mono text-success">{(dipAnalysis.recovery_probability * 100).toFixed(0)}%</span>
+                            </div>
+                          )}
+                          <p className="text-xs text-muted-foreground">
+                            {dipAnalysis.reasoning}
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Active Signals */}
+                      {currentSignals && currentSignals.buy_signals.length > 0 && (
+                        <div>
+                          <p className="text-xs font-medium text-success mb-1">Active Buy Signals:</p>
+                          <div className="flex flex-wrap gap-1">
+                            {currentSignals.buy_signals.map((sig, i) => (
+                              <Badge key={i} variant="outline" className="text-xs border-success/30 text-success">
+                                {sig.name}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {currentSignals && currentSignals.sell_signals.length > 0 && (
+                        <div>
+                          <p className="text-xs font-medium text-warning mb-1">Active Sell Signals:</p>
+                          <div className="flex flex-wrap gap-1">
+                            {currentSignals.sell_signals.map((sig, i) => (
+                              <Badge key={i} variant="outline" className="text-xs border-warning/30 text-warning">
+                                {sig.name}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+
             {/* AI Analysis Section */}
-            {(aiData?.ai_reasoning || isLoadingAi) && (
+            {(aiData?.ai_reasoning || aiData?.domain_analysis || aiData?.domain_context || isLoadingAi) && (
               <>
                 <Separator className="my-4" />
                 <div className="p-3 bg-gradient-to-br from-primary/5 to-primary/10 rounded-lg border border-primary/20">
                   <div className="flex items-center gap-2 mb-2">
                     <Sparkles className="h-4 w-4 text-primary" />
                     <span className="text-sm font-medium">AI Analysis</span>
-                    {aiData?.ai_rating && (
-                      <Badge 
-                        variant={
-                          aiData.ai_rating === 'strong_buy' || aiData.ai_rating === 'buy' 
-                            ? 'default' 
-                            : aiData.ai_rating === 'strong_sell' || aiData.ai_rating === 'sell'
-                              ? 'destructive'
-                              : 'secondary'
-                        }
-                        className="ml-auto"
-                      >
-                        {aiData.ai_rating.replace('_', ' ').toUpperCase()}
-                      </Badge>
-                    )}
                   </div>
                   {isLoadingAi ? (
                     <div className="space-y-1">
@@ -732,11 +985,125 @@ export function StockDetailsPanel({
                       <Skeleton className="h-3 w-4/5" />
                       <Skeleton className="h-3 w-3/4" />
                     </div>
-                  ) : aiData?.ai_reasoning ? (
-                    <p className="text-xs leading-relaxed text-muted-foreground whitespace-pre-wrap">
-                      {aiData.ai_reasoning}
-                    </p>
-                  ) : null}
+                  ) : (
+                    <div className="space-y-3">
+                      {/* Domain-specific quant analysis */}
+                      {aiData?.domain_context && (
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-2">
+                            <p className="text-xs font-medium text-primary">Sector Analysis</p>
+                            {aiData.sector && (
+                              <Badge variant="secondary" className="text-[10px] py-0">
+                                {aiData.sector}
+                              </Badge>
+                            )}
+                          </div>
+                          <p className="text-xs leading-relaxed text-muted-foreground">
+                            {aiData.domain_context}
+                          </p>
+                          
+                          {/* Domain adjustment reason */}
+                          {aiData.domain_adjustment_reason && (
+                            <p className="text-xs italic text-muted-foreground">
+                              {aiData.domain_adjustment_reason}
+                            </p>
+                          )}
+                          
+                          {/* Key metrics row */}
+                          <div className="flex flex-wrap gap-2 mt-2">
+                            {aiData.volatility_regime && (
+                              <Badge 
+                                variant="outline" 
+                                className={cn(
+                                  "text-[10px] py-0",
+                                  aiData.volatility_regime === 'extreme' && "border-red-500 text-red-500",
+                                  aiData.volatility_regime === 'high' && "border-orange-500 text-orange-500",
+                                  aiData.volatility_regime === 'normal' && "border-blue-500 text-blue-500",
+                                  aiData.volatility_regime === 'low' && "border-green-500 text-green-500",
+                                )}
+                              >
+                                Vol: {aiData.volatility_regime}
+                              </Badge>
+                            )}
+                            {aiData.domain_risk_level && (
+                              <Badge 
+                                variant="outline" 
+                                className={cn(
+                                  "text-[10px] py-0",
+                                  aiData.domain_risk_level === 'high' && "border-red-500 text-red-500",
+                                  aiData.domain_risk_level === 'medium' && "border-yellow-500 text-yellow-500",
+                                  aiData.domain_risk_level === 'low' && "border-green-500 text-green-500",
+                                )}
+                              >
+                                Risk: {aiData.domain_risk_level}
+                              </Badge>
+                            )}
+                            {aiData.vs_sector_performance !== null && aiData.vs_sector_performance !== undefined && (
+                              <Badge 
+                                variant="outline" 
+                                className={cn(
+                                  "text-[10px] py-0",
+                                  aiData.vs_sector_performance >= 0 ? "border-green-500 text-green-500" : "border-red-500 text-red-500",
+                                )}
+                              >
+                                vs Sector: {aiData.vs_sector_performance >= 0 ? '+' : ''}{aiData.vs_sector_performance.toFixed(1)}%
+                              </Badge>
+                            )}
+                            {aiData.domain_recovery_days && (
+                              <Badge variant="outline" className="text-[10px] py-0">
+                                Typical recovery: {aiData.domain_recovery_days}d
+                              </Badge>
+                            )}
+                          </div>
+                          
+                          {/* Domain warnings */}
+                          {aiData.domain_warnings && aiData.domain_warnings.length > 0 && (
+                            <div className="mt-2 space-y-1">
+                              {aiData.domain_warnings.map((warning, i) => (
+                                <p key={i} className="text-[10px] text-orange-500 flex items-center gap-1">
+                                  <AlertTriangle className="h-3 w-3" />
+                                  {warning}
+                                </p>
+                              ))}
+                            </div>
+                          )}
+                          
+                          {/* Risk factors */}
+                          {aiData.domain_risk_factors && aiData.domain_risk_factors.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-2">
+                              <span className="text-[10px] text-muted-foreground">Key risks:</span>
+                              {aiData.domain_risk_factors.slice(0, 3).map((factor, i) => (
+                                <Badge key={i} variant="secondary" className="text-[10px] py-0">
+                                  {factor}
+                                </Badge>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      
+                      {/* Fallback to old domain_analysis if no domain_context */}
+                      {!aiData?.domain_context && aiData?.domain_analysis && (
+                        <div>
+                          <p className="text-xs font-medium text-primary mb-1">Sector Analysis</p>
+                          <p className="text-xs leading-relaxed text-muted-foreground whitespace-pre-wrap">
+                            {aiData.domain_analysis}
+                          </p>
+                        </div>
+                      )}
+                      {/* General AI reasoning */}
+                      {aiData?.ai_reasoning && (
+                        <div>
+                          {(aiData?.domain_analysis || aiData?.domain_context) && (
+                            <p className="text-xs font-medium text-primary mb-1">General Analysis</p>
+                          )}
+                          <p className="text-xs leading-relaxed text-muted-foreground whitespace-pre-wrap">
+                            {aiData.ai_reasoning}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </>
             )}

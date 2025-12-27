@@ -48,8 +48,23 @@ class BenchmarkInfo(BaseModel):
     """Public benchmark information."""
     id: str
     symbol: str
-    name: str
-    description: str | None = None
+
+
+class BatchChartRequest(BaseModel):
+    """Request model for batch chart data."""
+    symbols: list[str]
+    days: int = 60
+
+
+class MiniChartData(BaseModel):
+    """Minimal chart data for card backgrounds."""
+    symbol: str
+    points: list[dict]  # [{date, close}]
+
+
+class BatchChartResponse(BaseModel):
+    """Response for batch chart data."""
+    charts: list[MiniChartData]
 
 
 async def _build_ranking(
@@ -418,6 +433,71 @@ async def get_chart(
             message=f"Could not fetch chart data for '{symbol}'",
             details={"symbol": symbol, "error": str(e)},
         )
+
+
+@router.post(
+    "/batch/charts",
+    response_model=BatchChartResponse,
+    summary="Get batch chart data",
+    description="Get mini chart data for multiple symbols at once. Used for card backgrounds.",
+)
+async def get_batch_charts(
+    request: BatchChartRequest,
+) -> BatchChartResponse:
+    """Get minimal chart data for multiple symbols (for card sparklines).
+    
+    Returns simplified chart data (just date and close price) optimized for card backgrounds.
+    Limits to 50 data points per symbol and max 30 symbols per request.
+    """
+    # Limit symbols to prevent abuse
+    symbols = request.symbols[:30]
+    days = min(request.days, 120)
+    
+    async def fetch_mini_chart(symbol: str) -> MiniChartData | None:
+        """Fetch mini chart for a single symbol."""
+        try:
+            symbol = symbol.strip().upper()
+            cache_key = f"{symbol}:{days}"
+            
+            # Try cache first
+            cached = await _chart_cache.get(cache_key)
+            if cached:
+                # Extract just date and close for mini chart (last 50 points)
+                points = [{"date": p["date"], "close": p["close"]} for p in cached[-50:]]
+                return MiniChartData(symbol=symbol, points=points)
+            
+            # Fetch from service
+            service = get_dipfinder_service()
+            prices = await service.price_provider.get_prices(
+                symbol,
+                start_date=date.today() - timedelta(days=days),
+                end_date=date.today(),
+            )
+            
+            if prices is None or prices.empty:
+                return None
+            
+            # Convert to mini chart points (last 50)
+            points = []
+            for idx, row_data in list(prices.iterrows())[-50:]:
+                close = float(row_data["Close"]) if "Close" in row_data else 0.0
+                points.append({
+                    "date": str(idx.date()) if hasattr(idx, "date") else str(idx),
+                    "close": close,
+                })
+            
+            return MiniChartData(symbol=symbol, points=points)
+        except Exception:
+            return None
+    
+    # Fetch all in parallel
+    tasks = [fetch_mini_chart(s) for s in symbols]
+    results = await asyncio.gather(*tasks)
+    
+    # Filter out None results
+    charts = [r for r in results if r is not None]
+    
+    return BatchChartResponse(charts=charts)
 
 
 @router.get(

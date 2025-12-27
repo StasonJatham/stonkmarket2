@@ -219,6 +219,43 @@ export async function getStockChart(symbol: string, days: number = 180): Promise
   );
 }
 
+/** Mini chart data for card backgrounds */
+export interface MiniChartData {
+  symbol: string;
+  points: { date: string; close: number }[];
+}
+
+/** Get batch mini chart data for multiple symbols (for card backgrounds) */
+export async function getBatchCharts(symbols: string[], days: number = 60): Promise<Record<string, ChartDataPoint[]>> {
+  const cacheKey = `batch-charts:${symbols.sort().join(',')}:${days}`;
+  
+  const fetcher = async (): Promise<Record<string, ChartDataPoint[]>> => {
+    const response = await fetchAPI<{ charts: MiniChartData[] }>('/dips/batch/charts', {
+      method: 'POST',
+      body: JSON.stringify({ symbols, days }),
+    });
+    
+    // Use Record instead of Map for proper JSON serialization in cache
+    const result: Record<string, ChartDataPoint[]> = {};
+    for (const chart of response.charts) {
+      // Convert mini chart to ChartDataPoint format
+      result[chart.symbol] = chart.points.map(p => ({
+        date: p.date,
+        close: p.close,
+        ref_high: 0,
+        threshold: 0,
+        drawdown: 0,
+        since_dip: null,
+        dip_start_date: null,
+        ref_high_date: null,
+      }));
+    }
+    return result;
+  };
+  
+  return apiCache.fetch(cacheKey, fetcher, { ttl: CACHE_TTL.CHART, staleWhileRevalidate: true });
+}
+
 export async function getStockInfo(symbol: string): Promise<StockInfo> {
   const cacheKey = `info:${symbol}`;
   
@@ -310,6 +347,171 @@ export interface PublicBenchmark {
   symbol: string;
   name: string;
   description?: string | null;
+}
+
+// Signal trigger for chart markers
+export interface SignalTrigger {
+  date: string;
+  signal_name: string;
+  price: number;
+  win_rate: number;
+  avg_return_pct: number;
+  holding_days: number;
+  drawdown_pct: number;  // The threshold that triggered (for drawdown signals)
+}
+
+export interface SignalTriggersResponse {
+  symbol: string;
+  signal_name: string | null;
+  triggers: SignalTrigger[];
+}
+
+/** Get historical signal triggers for chart markers */
+export async function getSignalTriggers(symbol: string, lookbackDays: number = 365): Promise<SignalTrigger[]> {
+  const cacheKey = `signal-triggers:${symbol}:${lookbackDays}`;
+  
+  return apiCache.fetch(
+    cacheKey,
+    async () => {
+      const response = await fetchAPI<SignalTriggersResponse>(
+        `/recommendations/${symbol}/signal-triggers?lookback_days=${lookbackDays}`
+      );
+      return response.triggers;
+    },
+    { ttl: CACHE_TTL.RECOMMENDATIONS, staleWhileRevalidate: true }
+  );
+}
+
+// =============================================================================
+// TRADE ENGINE API (Buy + Sell Signals, Full Trade Optimization)
+// =============================================================================
+
+export interface TradeCycle {
+  entry_date: string;
+  exit_date: string;
+  entry_price: number;
+  exit_price: number;
+  return_pct: number;
+  holding_days: number;
+  entry_signal: string;
+  exit_signal: string;
+}
+
+export interface FullTradeResponse {
+  symbol: string;
+  entry_signal_name: string;
+  entry_threshold: number;
+  entry_description: string;
+  exit_strategy_name: string;
+  exit_threshold: number;
+  exit_description: string;
+  n_complete_trades: number;
+  win_rate: number;
+  avg_return_pct: number;
+  total_return_pct: number;
+  max_return_pct: number;
+  max_drawdown_pct: number;
+  avg_holding_days: number;
+  sharpe_ratio: number;
+  // Benchmark comparison
+  buy_hold_return_pct: number;
+  spy_return_pct: number;
+  edge_vs_buy_hold_pct: number;
+  edge_vs_spy_pct: number;
+  beats_both_benchmarks: boolean;
+  // Exit timing analysis
+  exit_predictability: number;  // How consistent is exit timing?
+  upside_captured_pct: number;  // What % of potential gain was captured?
+  trades: TradeCycle[];
+  current_buy_signal: boolean;
+  current_sell_signal: boolean;
+  days_since_last_signal: number;
+}
+
+export interface CombinedSignalResult {
+  name: string;
+  component_signals: string[];
+  logic: string;
+  win_rate: number;
+  avg_return_pct: number;
+  n_signals: number;
+  improvement_vs_best_single: number;
+}
+
+export interface DipAnalysis {
+  symbol: string;
+  current_drawdown_pct: number;
+  typical_dip_pct: number;
+  max_historical_dip_pct: number;
+  dip_zscore: number;  // How many std devs from typical
+  is_unusually_deep: boolean;
+  deviation_from_typical: number;
+  // Technical analysis
+  technical_score: number;  // -1 (bearish) to +1 (bullish)
+  trend_broken: boolean;  // Below SMA 200?
+  volume_confirmation: boolean;  // High volume = capitulation
+  momentum_divergence: boolean;  // Price down but RSI up
+  // Classification
+  dip_type: 'overreaction' | 'normal_volatility' | 'fundamental_decline' | 'insufficient_data';
+  confidence: number;
+  action: 'STRONG_BUY' | 'BUY' | 'WAIT' | 'AVOID';
+  reasoning: string;
+  // Probability estimates
+  recovery_probability: number;
+  expected_return_if_buy: number;
+  expected_loss_if_knife: number;
+}
+
+export interface CurrentSignals {
+  symbol: string;
+  buy_signals: Array<{ name: string; value: number; threshold: number; description?: string }>;
+  sell_signals: Array<{ name: string; value: number; threshold: number; description?: string }>;
+  overall_action: 'STRONG_BUY' | 'BUY' | 'WEAK_BUY' | 'HOLD' | 'SELL' | 'STRONG_SELL';
+  reasoning: string;
+}
+
+/** Get optimized full trade strategy (entry + exit) for a stock */
+export async function getFullTradeStrategy(symbol: string): Promise<FullTradeResponse> {
+  const cacheKey = `full-trade:${symbol}`;
+  
+  return apiCache.fetch(
+    cacheKey,
+    () => fetchAPI<FullTradeResponse>(`/recommendations/${symbol}/full-trade`),
+    { ttl: CACHE_TTL.RECOMMENDATIONS, staleWhileRevalidate: true }
+  );
+}
+
+/** Get signal combinations (multiple indicators together) */
+export async function getSignalCombinations(symbol: string): Promise<CombinedSignalResult[]> {
+  const cacheKey = `signal-combos:${symbol}`;
+  
+  return apiCache.fetch(
+    cacheKey,
+    () => fetchAPI<CombinedSignalResult[]>(`/recommendations/${symbol}/signal-combinations`),
+    { ttl: CACHE_TTL.RECOMMENDATIONS, staleWhileRevalidate: true }
+  );
+}
+
+/** Analyze if dip is overreaction or real decline */
+export async function getDipAnalysis(symbol: string): Promise<DipAnalysis> {
+  const cacheKey = `dip-analysis:${symbol}`;
+  
+  return apiCache.fetch(
+    cacheKey,
+    () => fetchAPI<DipAnalysis>(`/recommendations/${symbol}/dip-analysis`),
+    { ttl: CACHE_TTL.RECOMMENDATIONS, staleWhileRevalidate: true }
+  );
+}
+
+/** Get current real-time buy and sell signals */
+export async function getCurrentSignals(symbol: string): Promise<CurrentSignals> {
+  const cacheKey = `current-signals:${symbol}`;
+  
+  return apiCache.fetch(
+    cacheKey,
+    () => fetchAPI<CurrentSignals>(`/recommendations/${symbol}/current-signals`),
+    { ttl: 60_000, staleWhileRevalidate: true }  // Short TTL for real-time signals
+  );
 }
 
 export async function getAvailableBenchmarks(): Promise<PublicBenchmark[]> {
@@ -796,16 +998,45 @@ export interface QuantRecommendation {
   last_price: number | null;
   change_percent: number | null;
   market_cap: number | null;
+  // Sector info
+  sector: string | null;
+  sector_etf: string | null;
   // Signal metrics
   mu_hat: number;
   uncertainty: number;
   risk_contribution: number;
+  // Top technical signal
+  top_signal_name: string | null;
+  top_signal_is_buy: boolean;
+  top_signal_strength: number;
+  top_signal_description: string | null;
+  // Opportunity score
+  opportunity_score: number | null;
+  opportunity_rating: 'strong_buy' | 'buy' | 'hold' | 'avoid' | null;
+  // Recovery and unusual dip metrics (quant engine backtest data)
+  expected_recovery_days: number | null;  // Expected time to recover based on optimal holding period
+  typical_dip_pct: number | null;  // Stock's typical dip size as percentage
+  dip_vs_typical: number | null;  // Current dip / typical dip ratio (>1.5 = unusual)
+  is_unusual_dip: boolean;  // True if current dip is significantly larger than typical
+  win_rate: number | null;  // Historical win rate for similar signals
+  // Dip metrics
   dip_score: number | null;
   dip_bucket: string | null;
   marginal_utility: number;
   // AI analysis
   ai_summary: string | null;
   ai_rating: string | null;
+  // Domain-specific analysis (sector-aware analysis)
+  domain_context: string | null;
+  domain_adjustment: number | null;
+  domain_adjustment_reason: string | null;
+  domain_risk_level: string | null;
+  domain_risk_factors: string[] | null;
+  domain_recovery_days: number | null;
+  domain_warnings: string[] | null;
+  volatility_regime: string | null;
+  volatility_percentile: number | null;
+  vs_sector_performance: number | null;
   // Legacy compatibility
   legacy_dip_pct: number | null;
   legacy_days_in_dip: number | null;
@@ -903,6 +1134,13 @@ export interface StockCardData {
   days_since_dip: number | null;
   dip_bucket: string | null;
   
+  // Recovery and unusual dip metrics (quant engine backtest data)
+  expected_recovery_days?: number | null;  // Expected time to recover based on optimal holding period
+  typical_dip_pct?: number | null;  // Stock's typical dip size as percentage
+  dip_vs_typical?: number | null;  // Current dip / typical dip ratio (>1.5 = unusual)
+  is_unusual_dip?: boolean;  // True if current dip is significantly larger than typical
+  win_rate?: number | null;  // Historical win rate for similar signals
+  
   // Technical signals
   top_signal?: {
     name: string;
@@ -923,6 +1161,18 @@ export interface StockCardData {
   ai_rating?: string | null;
   ai_summary?: string | null;
   domain_analysis?: string | null;
+  
+  // Domain-specific analysis (sector-aware)
+  domain_context?: string | null;
+  domain_adjustment?: number | null;
+  domain_adjustment_reason?: string | null;
+  domain_risk_level?: string | null;
+  domain_risk_factors?: string[] | null;
+  domain_recovery_days?: number | null;
+  domain_warnings?: string[] | null;
+  volatility_regime?: string | null;
+  volatility_percentile?: number | null;
+  vs_sector_performance?: number | null;
   
   // Signal metrics
   mu_hat?: number;
@@ -956,51 +1206,57 @@ const SECTOR_ETF_MAP: Record<string, string> = {
 
 /**
  * Convert QuantRecommendation to StockCardData for StockCardV2.
- * Enriches the recommendation with sector info and computed opportunity metrics.
+ * Now uses pre-computed fields from backend.
  */
 export function quantToStockCardData(
   rec: QuantRecommendation,
   stockInfo?: StockInfo | null
 ): StockCardData {
-  const sector = stockInfo?.sector || null;
-  const sectorEtf = sector ? SECTOR_ETF_MAP[sector] || null : null;
+  // Use sector from backend first, fallback to stockInfo
+  const sector = rec.sector || stockInfo?.sector || null;
+  const sectorEtf = rec.sector_etf || (sector ? SECTOR_ETF_MAP[sector] : null) || null;
   
-  // Compute opportunity score from available data
-  let opportunityScore = 50;
+  // Use pre-computed opportunity score from backend, or fallback calculation
+  let opportunityScore = rec.opportunity_score ?? 50;
+  let opportunityRating = rec.opportunity_rating ?? 'hold';
   
-  // Dip contribution (up to 25 points)
-  const dipPct = rec.legacy_dip_pct || 0;
-  if (dipPct > 5) opportunityScore += Math.min(dipPct / 2, 25);
-  
-  // Domain score contribution (up to 20 points)
-  if (rec.legacy_domain_score && rec.legacy_domain_score > 50) {
-    opportunityScore += (rec.legacy_domain_score - 50) * 0.4;
+  // Only calculate locally if backend didn't provide
+  if (rec.opportunity_score === null || rec.opportunity_score === undefined) {
+    opportunityScore = 50;
+    
+    const dipPct = rec.legacy_dip_pct || 0;
+    if (dipPct > 5) opportunityScore += Math.min(dipPct / 2, 25);
+    
+    if (rec.legacy_domain_score && rec.legacy_domain_score > 50) {
+      opportunityScore += (rec.legacy_domain_score - 50) * 0.4;
+    }
+    
+    if (rec.ai_rating) {
+      const ratingBonus: Record<string, number> = {
+        'strong_buy': 15, 'buy': 10, 'hold': 0, 'sell': -10, 'strong_sell': -15,
+      };
+      opportunityScore += ratingBonus[rec.ai_rating] || 0;
+    }
+    
+    if (rec.mu_hat > 0) {
+      opportunityScore += Math.min(rec.mu_hat * 100, 10);
+    }
+    
+    opportunityScore = Math.max(0, Math.min(100, opportunityScore));
+    
+    if (opportunityScore >= 75) opportunityRating = 'strong_buy';
+    else if (opportunityScore >= 60) opportunityRating = 'buy';
+    else if (opportunityScore >= 40) opportunityRating = 'hold';
+    else opportunityRating = 'avoid';
   }
   
-  // AI rating contribution (up to 15 points)
-  if (rec.ai_rating) {
-    const ratingBonus: Record<string, number> = {
-      'strong_buy': 15,
-      'buy': 10,
-      'hold': 0,
-      'sell': -10,
-      'strong_sell': -15,
-    };
-    opportunityScore += ratingBonus[rec.ai_rating] || 0;
-  }
-  
-  // Expected return contribution (up to 10 points)
-  if (rec.mu_hat > 0) {
-    opportunityScore += Math.min(rec.mu_hat * 100, 10);
-  }
-  
-  opportunityScore = Math.max(0, Math.min(100, opportunityScore));
-  
-  // Determine rating from score
-  let opportunityRating: 'strong_buy' | 'buy' | 'hold' | 'avoid' = 'hold';
-  if (opportunityScore >= 75) opportunityRating = 'strong_buy';
-  else if (opportunityScore >= 60) opportunityRating = 'buy';
-  else if (opportunityScore < 40) opportunityRating = 'avoid';
+  // Build top signal from backend data
+  const topSignal = rec.top_signal_name ? {
+    name: rec.top_signal_name,
+    is_buy: rec.top_signal_is_buy,
+    strength: rec.top_signal_strength,
+    description: rec.top_signal_description || undefined,
+  } : null;
   
   return {
     symbol: rec.ticker,
@@ -1014,20 +1270,31 @@ export function quantToStockCardData(
     depth: rec.legacy_dip_pct !== null ? rec.legacy_dip_pct / 100 : 0,
     days_since_dip: rec.legacy_days_in_dip,
     dip_bucket: rec.dip_bucket,
-    // Signal - will be enriched from backend in future
-    top_signal: rec.legacy_domain_score && rec.legacy_domain_score > 60 ? {
-      name: 'Buy Signal',
-      is_buy: true,
-      strength: rec.legacy_domain_score / 100,
-      description: `Domain score: ${rec.legacy_domain_score.toFixed(0)}/100`,
-    } : null,
-    sector_delta: null, // TODO: Will be added when backend provides sector comparison
+    // Recovery and unusual dip metrics from quant engine
+    expected_recovery_days: rec.expected_recovery_days,
+    typical_dip_pct: rec.typical_dip_pct,
+    dip_vs_typical: rec.dip_vs_typical,
+    is_unusual_dip: rec.is_unusual_dip,
+    win_rate: rec.win_rate,
+    top_signal: topSignal,
+    sector_delta: rec.vs_sector_performance ?? null,
     sector_etf: sectorEtf,
     opportunity_score: opportunityScore,
-    opportunity_rating: opportunityRating,
+    opportunity_rating: opportunityRating as 'strong_buy' | 'buy' | 'hold' | 'avoid',
     ai_rating: rec.ai_rating,
     ai_summary: rec.ai_summary,
-    domain_analysis: rec.ai_summary ? rec.ai_summary.substring(0, 100) + '...' : null,
+    domain_analysis: rec.domain_context || rec.ai_summary || null,
+    // Domain-specific analysis
+    domain_context: rec.domain_context,
+    domain_adjustment: rec.domain_adjustment,
+    domain_adjustment_reason: rec.domain_adjustment_reason,
+    domain_risk_level: rec.domain_risk_level,
+    domain_risk_factors: rec.domain_risk_factors,
+    domain_recovery_days: rec.domain_recovery_days,
+    domain_warnings: rec.domain_warnings,
+    volatility_regime: rec.volatility_regime,
+    volatility_percentile: rec.volatility_percentile,
+    vs_sector_performance: rec.vs_sector_performance,
     mu_hat: rec.mu_hat,
     uncertainty: rec.uncertainty,
     marginal_utility: rec.marginal_utility,
@@ -1173,7 +1440,7 @@ export async function autocompleteSymbols(partial: string, limit = 5): Promise<A
 export interface AgentVerdict {
   agent_id: string;
   agent_name: string;
-  signal: 'strong_buy' | 'buy' | 'hold' | 'sell' | 'strong_sell';
+  signal: 'strong_buy' | 'buy' | 'hold' | 'sell' | 'strong_sell' | 'bullish' | 'bearish' | 'neutral';
   confidence: number;
   reasoning: string;
   key_factors: string[];
@@ -1184,10 +1451,13 @@ export interface AgentAnalysis {
   symbol: string;
   analyzed_at: string;
   verdicts: AgentVerdict[];
-  overall_signal: 'strong_buy' | 'buy' | 'hold' | 'sell' | 'strong_sell';
+  overall_signal: 'strong_buy' | 'buy' | 'hold' | 'sell' | 'strong_sell' | 'bullish' | 'bearish' | 'neutral';
   overall_confidence: number;
   summary?: string;
   expires_at?: string;
+  bullish_count?: number;
+  bearish_count?: number;
+  neutral_count?: number;
 }
 
 export interface AgentInfo {

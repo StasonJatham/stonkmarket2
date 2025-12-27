@@ -38,7 +38,7 @@ import {
   Calendar,
   Flame,
   TrendingDown,
-  Award
+  // Award - currently unused
 } from 'lucide-react';
 import { StockLogo } from '@/components/StockLogo';
 
@@ -301,12 +301,7 @@ function SwipeableCard({
                 <span className="font-bold text-base">
                   {card.symbol}
                 </span>
-                {card.ai_rating === 'strong_buy' || card.ai_rating === 'buy' ? (
-                  <Badge className="bg-blue-500 text-white border-0 text-xs">
-                    <Award className="w-3 h-3 mr-0.5" />
-                    AI Pick
-                  </Badge>
-                ) : null}
+
               </div>
               <p className="text-xs text-muted-foreground font-medium mt-0.5 line-clamp-1">
                 {card.name || 'Loading...'}

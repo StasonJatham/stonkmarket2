@@ -224,6 +224,13 @@ class QuantRecommendation(BaseModel):
     opportunity_score: float | None = Field(None, description="Composite opportunity score 0-100")
     opportunity_rating: str | None = Field(None, description="Rating: strong_buy, buy, hold, avoid")
     
+    # Recovery and unusual dip metrics (from quant engine backtest)
+    expected_recovery_days: int | None = Field(None, description="Expected days to recover based on optimal holding period")
+    typical_dip_pct: float | None = Field(None, description="Stock's typical dip size as percentage")
+    dip_vs_typical: float | None = Field(None, description="Current dip / typical dip ratio (>1.5 = unusual)")
+    is_unusual_dip: bool = Field(False, description="True if current dip is significantly larger than typical")
+    win_rate: float | None = Field(None, description="Historical win rate for similar signals")
+    
     # Dip-based metrics
     dip_score: float | None = Field(None, description="Dip score (z-score or buy_score)")
     dip_bucket: str | None = Field(None, description="Dip bucket classification")
@@ -237,6 +244,19 @@ class QuantRecommendation(BaseModel):
     # AI Analysis (if available)
     ai_summary: str | None = Field(None, description="AI-generated analysis snippet")
     ai_rating: str | None = Field(None, description="AI rating: strong_buy, buy, hold, sell, strong_sell")
+    
+    # Domain-specific analysis (sector-aware analysis)
+    domain_context: str | None = Field(None, description="Domain-specific interpretation of the dip")
+    domain_adjustment: float | None = Field(None, description="Score adjustment from domain analysis (-1 to +1)")
+    domain_adjustment_reason: str | None = Field(None, description="Explanation for domain adjustment")
+    domain_risk_level: str | None = Field(None, description="Domain-specific risk level: low, medium, high")
+    domain_risk_factors: list[str] | None = Field(None, description="Primary risk factors for this sector")
+    domain_recovery_days: int | None = Field(None, description="Sector-typical recovery time")
+    domain_warnings: list[str] | None = Field(None, description="Domain-specific warnings")
+    volatility_regime: str | None = Field(None, description="Volatility regime: low, normal, high, extreme")
+    volatility_percentile: float | None = Field(None, description="Current volatility percentile 0-100")
+    vs_sector_performance: float | None = Field(None, description="Performance vs sector ETF (percentage points)")
+
 
 
 class QuantAuditBlock(BaseModel):

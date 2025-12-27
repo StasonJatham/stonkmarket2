@@ -10,6 +10,7 @@ import {
   XAxis,
   YAxis,
   Tooltip,
+  ReferenceDot,
 } from 'recharts';
 import { useTheme } from '@/context/ThemeContext';
 import { useAuth } from '@/context/AuthContext';
@@ -17,9 +18,11 @@ import {
   getStockChart,
   getQuantRecommendations,
   getAgentAnalysis,
+  getSignalTriggers,
   type ChartDataPoint,
   type QuantRecommendation,
   type AgentAnalysis,
+  type SignalTrigger,
 } from '@/services/api';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -48,6 +51,7 @@ import {
   ThumbsDown,
   MinusCircle,
   Brain,
+  Zap,
 } from 'lucide-react';
 
 // Action icon based on recommendation
@@ -286,28 +290,44 @@ function FeatureCard({
   );
 }
 
-// Hero chart - larger showcase chart
+// Hero chart - larger showcase chart with signal markers
 function HeroChart({
   chartData,
   symbol,
   isLoading,
+  signals = [],
 }: {
   chartData: ChartDataPoint[];
   symbol: string;
   isLoading: boolean;
+  signals?: SignalTrigger[];
 }) {
   const { getActiveColors } = useTheme();
   const colors = getActiveColors();
 
+  // Merge chart data with signal triggers
   const displayData = useMemo(() => {
-    return chartData.map((point) => ({
-      ...point,
-      displayDate: new Date(point.date).toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric',
-      }),
-    }));
-  }, [chartData]);
+    const signalMap = new Map<string, SignalTrigger>();
+    signals.forEach(s => signalMap.set(s.date, s));
+    
+    return chartData.map((point) => {
+      const signalTrigger = signalMap.get(point.date);
+      return {
+        ...point,
+        displayDate: new Date(point.date).toLocaleDateString('en-US', {
+          month: 'short',
+          day: 'numeric',
+        }),
+        signalTrigger,
+      };
+    });
+  }, [chartData, signals]);
+  
+  // Find data points that have signals
+  const signalPoints = useMemo(() => 
+    displayData.filter(d => d.signalTrigger != null),
+    [displayData]
+  );
 
   const priceChange = useMemo(() => {
     if (chartData.length < 2) return 0;
@@ -357,6 +377,13 @@ function HeroChart({
             </div>
           )}
         </div>
+        {/* Signal count badge */}
+        {signalPoints.length > 0 && (
+          <Badge variant="secondary" className="mt-2 gap-1 w-fit text-xs">
+            <Zap className="h-3 w-3 text-success" />
+            {signalPoints.length} buy signal{signalPoints.length > 1 ? 's' : ''} detected
+          </Badge>
+        )}
       </CardHeader>
       <CardContent className="pb-4">
         <div className="h-64">
@@ -392,7 +419,29 @@ function HeroChart({
                   boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
                 }}
                 labelStyle={{ color: 'hsl(var(--popover-foreground))' }}
-                formatter={(value: number) => [`$${value.toFixed(2)}`, 'Price']}
+                content={({ active, payload, label }) => {
+                  if (!active || !payload || payload.length === 0) return null;
+                  const data = payload[0]?.payload;
+                  const trigger = data?.signalTrigger as SignalTrigger | undefined;
+                  const price = payload[0]?.value as number;
+                  
+                  return (
+                    <div className="bg-popover border border-border rounded-lg p-2 shadow-lg">
+                      <p className="text-popover-foreground text-xs mb-1">{label}</p>
+                      <p className="font-mono font-bold">${price?.toFixed(2)}</p>
+                      {trigger && (
+                        <div className="mt-1 pt-1 border-t border-border/50">
+                          <p className="text-success text-xs font-medium">
+                            🟢 {trigger.signal_name}
+                          </p>
+                          <p className="text-muted-foreground text-xs">
+                            {Math.round(trigger.win_rate * 100)}% win rate
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  );
+                }}
               />
               <Area
                 type="monotone"
@@ -401,6 +450,19 @@ function HeroChart({
                 strokeWidth={2}
                 fill="url(#hero-gradient)"
               />
+              
+              {/* Signal marker dots */}
+              {signalPoints.map((point, idx) => (
+                <ReferenceDot
+                  key={`signal-${idx}`}
+                  x={point.displayDate}
+                  y={point.close}
+                  r={6}
+                  fill="hsl(var(--success))"
+                  stroke="hsl(var(--background))"
+                  strokeWidth={2}
+                />
+              ))}
             </AreaChart>
           </ResponsiveContainer>
         </div>
@@ -484,6 +546,7 @@ interface LandingCacheData {
   heroSymbol: string;
   heroRec: QuantRecommendation | null;
   heroAgentAnalysis: AgentAnalysis | null;
+  heroSignals: SignalTrigger[];
   cachedAt: number;
 }
 
@@ -533,6 +596,7 @@ export function Landing() {
   const [heroSymbol, setHeroSymbol] = useState('');
   const [heroRec, setHeroRec] = useState<QuantRecommendation | null>(null);
   const [heroAgentAnalysis, setHeroAgentAnalysis] = useState<AgentAnalysis | null>(null);
+  const [heroSignals, setHeroSignals] = useState<SignalTrigger[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingHero, setIsLoadingHero] = useState(true);
 
@@ -550,6 +614,7 @@ export function Landing() {
           setHeroSymbol(cached.heroSymbol);
           setHeroRec(cached.heroRec);
           setHeroAgentAnalysis(cached.heroAgentAnalysis);
+          setHeroSignals(cached.heroSignals ?? []);
           setIsLoading(false);
           setIsLoadingHero(false);
           
@@ -596,6 +661,7 @@ export function Landing() {
         const buyRec = data.recommendations.find(r => r.action === 'BUY') || data.recommendations[0];
         let newHeroChart: ChartDataPoint[] = [];
         let newHeroAgentAnalysis: AgentAnalysis | null = null;
+        let newHeroSignals: SignalTrigger[] = [];
         
         if (buyRec) {
           setHeroSymbol(buyRec.ticker);
@@ -608,6 +674,14 @@ export function Landing() {
           } else {
             newHeroChart = await getStockChart(buyRec.ticker, 180);
             setHeroChart(newHeroChart);
+          }
+          
+          // Load signal triggers for hero stock
+          try {
+            newHeroSignals = await getSignalTriggers(buyRec.ticker, 180);
+            setHeroSignals(newHeroSignals);
+          } catch (e) {
+            console.warn('Failed to load signals for hero:', e);
           }
           
           // Load AI agent analysis for hero stock
@@ -628,6 +702,7 @@ export function Landing() {
           heroSymbol: buyRec?.ticker ?? '',
           heroRec: buyRec ?? null,
           heroAgentAnalysis: newHeroAgentAnalysis,
+          heroSignals: newHeroSignals,
         });
       } catch (err) {
         console.error('Failed to load landing data:', err);
@@ -717,7 +792,7 @@ export function Landing() {
               transition={{ duration: 0.8, delay: 0.2 }}
               className="space-y-4"
             >
-              <HeroChart chartData={heroChart} symbol={heroSymbol} isLoading={isLoadingHero} />
+              <HeroChart chartData={heroChart} symbol={heroSymbol} isLoading={isLoadingHero} signals={heroSignals} />
               
               {/* Quant Metrics for Hero Stock */}
               {heroRec && (

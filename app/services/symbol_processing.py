@@ -13,6 +13,7 @@ from app.repositories import suggestions_orm as suggestions_repo
 from app.repositories import symbols_orm as symbols_repo
 from app.services.openai_client import generate_bio, rate_dip, summarize_company
 from app.services.runtime_settings import get_runtime_setting
+from app.services.statistical_rating import calculate_rating
 from app.services.stock_info import get_stock_info_async
 
 

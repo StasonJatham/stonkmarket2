@@ -5,6 +5,7 @@ import {
   getStockChart, 
   getStockInfo,
   getBenchmarkChart,
+  getBatchCharts,
   mergeChartData,
   aggregatePortfolioPerformance,
   getAvailableBenchmarks,
@@ -113,8 +114,26 @@ export function Dashboard() {
   const [availableBenchmarks, setAvailableBenchmarks] = useState<PublicBenchmark[]>([]);
   
   // AI Analysis state
-  const [aiData, setAiData] = useState<{ ai_rating: DipCard['ai_rating']; ai_reasoning: string | null } | null>(null);
+  const [aiData, setAiData] = useState<{
+    ai_rating: DipCard['ai_rating'];
+    ai_reasoning: string | null;
+    domain_analysis: string | null;
+    domain_context?: string | null;
+    domain_adjustment?: number | null;
+    domain_adjustment_reason?: string | null;
+    domain_risk_level?: string | null;
+    domain_risk_factors?: string[] | null;
+    domain_recovery_days?: number | null;
+    domain_warnings?: string[] | null;
+    volatility_regime?: string | null;
+    volatility_percentile?: number | null;
+    vs_sector_performance?: number | null;
+    sector?: string | null;
+  } | null>(null);
   const [isLoadingAi, setIsLoadingAi] = useState(false);
+  
+  // Mini charts for card backgrounds
+  const [cardCharts, setCardCharts] = useState<Record<string, ChartDataPoint[]>>({});
   
   // Infinite scroll state
   const [visibleCount, setVisibleCount] = useState(20);
@@ -266,6 +285,26 @@ export function Dashboard() {
   const visibleStocks = useMemo(() => {
     return filteredStocks.slice(0, visibleCount);
   }, [filteredStocks, visibleCount]);
+
+  // Fetch mini charts for visible cards
+  useEffect(() => {
+    const symbolsNeedingCharts = visibleStocks
+      .map(s => s.symbol)
+      .filter(sym => !cardCharts[sym]);
+    
+    if (symbolsNeedingCharts.length > 0) {
+      getBatchCharts(symbolsNeedingCharts, 60)
+        .then(newCharts => {
+          setCardCharts(prev => ({
+            ...prev,
+            ...newCharts,
+          }));
+        })
+        .catch(() => {
+          // Silently fail - cards will just not have sparklines
+        });
+    }
+  }, [visibleStocks, cardCharts]);
 
   // Infinite scroll observer
   useEffect(() => {
@@ -425,10 +464,26 @@ export function Dashboard() {
   async function loadAiData(symbol: string) {
     setIsLoadingAi(true);
     try {
+      // First check if we have domain analysis from the recommendations
+      const cardData = stockCardDataMap.get(symbol);
       const card = await getDipCard(symbol);
       setAiData({
         ai_rating: card.ai_rating,
         ai_reasoning: card.ai_reasoning,
+        // Use domain_analysis from recommendations (quant data) if available
+        domain_analysis: cardData?.domain_analysis || null,
+        // Pass through all domain-specific analysis fields
+        domain_context: cardData?.domain_context || null,
+        domain_adjustment: cardData?.domain_adjustment ?? null,
+        domain_adjustment_reason: cardData?.domain_adjustment_reason || null,
+        domain_risk_level: cardData?.domain_risk_level || null,
+        domain_risk_factors: cardData?.domain_risk_factors || null,
+        domain_recovery_days: cardData?.domain_recovery_days ?? null,
+        domain_warnings: cardData?.domain_warnings || null,
+        volatility_regime: cardData?.volatility_regime || null,
+        volatility_percentile: cardData?.volatility_percentile ?? null,
+        vs_sector_performance: cardData?.vs_sector_performance ?? null,
+        sector: cardData?.sector || null,
       });
     } catch (err) {
       console.error('Failed to load AI data:', err);
@@ -686,6 +741,7 @@ export function Dashboard() {
               >
                 {visibleStocks.map((stock) => {
                   const cardData = stockCardDataMap.get(stock.symbol);
+                  const miniChartData = cardCharts[stock.symbol];
                   return (
                     <motion.div key={stock.symbol} variants={item}>
                       <StockCardV2
@@ -702,6 +758,7 @@ export function Dashboard() {
                           days_since_dip: stock.days_since_dip,
                           dip_bucket: null,
                         }}
+                        chartData={miniChartData}
                         isSelected={selectedStock?.symbol === stock.symbol}
                         compact={viewMode === 'list'}
                         onClick={() => handleStockSelect(stock)}

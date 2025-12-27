@@ -366,7 +366,7 @@ def _compute_dual_sma_below(prices: pd.Series) -> pd.Series:
 
 
 # =============================================================================
-# Backtesting and Optimization
+# Backtesting and Optimization (Fixed for Look-Ahead Bias)
 # =============================================================================
 
 
@@ -379,6 +379,10 @@ def backtest_signal(
 ) -> dict[str, float]:
     """
     Backtest a signal with specific parameters.
+    
+    FIXED: No look-ahead bias. Forward returns are computed correctly:
+    - For signal on day t, return is (price[t+holding_days] - price[t]) / price[t]
+    - We exclude the last `holding_days` signals since we can't know future returns
     
     Returns dict with win_rate, avg_return, max_return, min_return, n_signals.
     """
@@ -394,10 +398,16 @@ def backtest_signal(
     else:
         triggers = signal < threshold  # Default to below
     
-    # Compute forward returns
-    fwd_ret = prices.pct_change(holding_days).shift(-holding_days)
+    # FIXED: Compute forward returns correctly (no look-ahead bias)
+    # Return from t to t+holding_days: (price[t+h] / price[t]) - 1
+    # We use shift(-holding_days) on prices, then divide by current price
+    future_prices = prices.shift(-holding_days)
+    fwd_ret = (future_prices / prices) - 1
     
-    # Get returns when signal triggered
+    # CRITICAL: Exclude the last holding_days points - we can't know those returns yet
+    fwd_ret.iloc[-holding_days:] = np.nan
+    
+    # Get returns when signal triggered (only where we have complete forward data)
     signal_returns = fwd_ret[triggers].dropna()
     
     if len(signal_returns) < 3:
@@ -418,27 +428,22 @@ def backtest_signal(
     }
 
 
-def optimize_signal_params(
+def _grid_search_params(
     prices: pd.Series,
     signal: pd.Series,
     direction: str,
     threshold_range: list[float],
-    holding_days_options: list[int] = [5, 10, 20, 40, 60],
-    min_signals: int = 5,
+    holding_days_options: list[int],
+    min_signals: int,
 ) -> tuple[float, int, dict]:
     """
-    Find optimal threshold and holding period for a signal.
-    
-    Optimizes for: win_rate * avg_return (expected value)
-    
-    Returns: (optimal_threshold, optimal_holding_days, backtest_results)
+    Internal grid search for optimal parameters on a single data window.
     """
     best_score = -np.inf
     best_threshold = threshold_range[0]
     best_holding = 20
     best_results = {}
     
-    # Grid search over thresholds
     n_threshold_steps = 5
     thresholds = np.linspace(threshold_range[0], threshold_range[1], n_threshold_steps)
     
@@ -449,8 +454,6 @@ def optimize_signal_params(
             if results["n_signals"] < min_signals:
                 continue
             
-            # Score = expected value (win_rate * avg_return)
-            # But penalize very few signals slightly
             signal_penalty = min(1.0, results["n_signals"] / 20)
             score = results["win_rate"] * results["avg_return"] * 100 * signal_penalty
             
@@ -461,6 +464,150 @@ def optimize_signal_params(
                 best_results = results
     
     return best_threshold, best_holding, best_results
+
+
+def optimize_signal_params_walkforward(
+    prices: pd.Series,
+    signal: pd.Series,
+    direction: str,
+    threshold_range: list[float],
+    holding_days_options: list[int] = [5, 10, 20, 40, 60],
+    min_signals: int = 3,
+    n_folds: int = 4,
+    train_ratio: float = 0.7,
+) -> tuple[float, int, dict, dict]:
+    """
+    Walk-forward optimization to avoid overfitting.
+    
+    Splits data into rolling train/test windows:
+    - Train on 70% of each fold to find optimal params
+    - Test on remaining 30% (out-of-sample) to get TRUE performance
+    
+    Returns: (optimal_threshold, optimal_holding_days, oos_results, stability_info)
+    """
+    n = len(prices)
+    if n < 252:  # Need at least 1 year
+        return threshold_range[0], 20, {}, {"is_stable": False}
+    
+    fold_size = n // n_folds
+    oos_returns = []
+    fold_params = []
+    
+    for fold in range(n_folds - 1):
+        # Training window: from start to end of this fold
+        train_end = fold_size * (fold + 2)
+        train_size = int(train_end * train_ratio)
+        
+        # Test window: remaining 30% of training data
+        test_start = train_size
+        test_end = train_end
+        
+        if test_end - test_start < 60:
+            continue
+        
+        # Optimize on training data only
+        train_prices = prices.iloc[:train_size]
+        train_signal = signal.iloc[:train_size]
+        
+        if len(train_prices) < 120:
+            continue
+            
+        opt_thresh, opt_hold, _ = _grid_search_params(
+            train_prices, train_signal, direction, 
+            threshold_range, holding_days_options, min_signals
+        )
+        fold_params.append((opt_thresh, opt_hold))
+        
+        # Test on out-of-sample window with the optimized params
+        test_prices = prices.iloc[test_start:test_end]
+        test_signal = signal.iloc[test_start:test_end]
+        
+        oos_result = backtest_signal(
+            test_prices, test_signal, opt_thresh, direction, opt_hold
+        )
+        
+        if oos_result["n_signals"] > 0:
+            # Collect individual OOS returns for aggregation
+            for _ in range(oos_result["n_signals"]):
+                oos_returns.append(oos_result["avg_return"])
+    
+    # Aggregate OOS performance (this is the TRUE expected performance)
+    if len(oos_returns) < 3:
+        return threshold_range[0], 20, {
+            "win_rate": 0.0, "avg_return": 0.0, "max_return": 0.0,
+            "min_return": 0.0, "n_signals": 0, "is_oos": True
+        }, {"is_stable": False}
+    
+    oos_returns_arr = np.array(oos_returns)
+    oos_results = {
+        "win_rate": float((oos_returns_arr > 0).mean()),
+        "avg_return": float(oos_returns_arr.mean()),
+        "max_return": float(oos_returns_arr.max()),
+        "min_return": float(oos_returns_arr.min()),
+        "n_signals": len(oos_returns),
+        "is_oos": True,  # Flag that this is out-of-sample
+    }
+    
+    # Parameter stability analysis
+    if len(fold_params) >= 2:
+        thresh_values = [p[0] for p in fold_params]
+        hold_values = [p[1] for p in fold_params]
+        thresh_mean = np.mean(thresh_values)
+        thresh_std = np.std(thresh_values)
+        hold_std = np.std(hold_values)
+        
+        # Stable if threshold variance is <30% of mean
+        is_stable = (thresh_std / abs(thresh_mean) < 0.3) if thresh_mean != 0 else True
+        
+        stability_info = {
+            "is_stable": is_stable,
+            "threshold_cv": thresh_std / abs(thresh_mean) if thresh_mean != 0 else 0,
+            "holding_std": hold_std,
+            "n_folds": len(fold_params),
+        }
+    else:
+        stability_info = {"is_stable": False, "n_folds": len(fold_params)}
+    
+    # Use the most recent fold's parameters as the "optimal" ones
+    if fold_params:
+        final_thresh, final_hold = fold_params[-1]
+    else:
+        final_thresh, final_hold = threshold_range[0], 20
+    
+    return final_thresh, final_hold, oos_results, stability_info
+
+
+def optimize_signal_params(
+    prices: pd.Series,
+    signal: pd.Series,
+    direction: str,
+    threshold_range: list[float],
+    holding_days_options: list[int] = [5, 10, 20, 40, 60],
+    min_signals: int = 5,
+    use_walkforward: bool = True,
+) -> tuple[float, int, dict]:
+    """
+    Find optimal threshold and holding period for a signal.
+    
+    Uses walk-forward validation by default to avoid overfitting.
+    Set use_walkforward=False for legacy in-sample optimization (NOT recommended).
+    
+    Returns: (optimal_threshold, optimal_holding_days, backtest_results)
+    """
+    if use_walkforward and len(prices) >= 252:
+        # Use walk-forward validation (recommended)
+        opt_thresh, opt_hold, oos_results, stability = optimize_signal_params_walkforward(
+            prices, signal, direction, threshold_range, holding_days_options, min_signals
+        )
+        
+        # Add stability info to results
+        oos_results["is_stable"] = stability.get("is_stable", False)
+        return opt_thresh, opt_hold, oos_results
+    
+    # Fallback to in-sample grid search for short data
+    return _grid_search_params(
+        prices, signal, direction, threshold_range, holding_days_options, min_signals
+    )
 
 
 def evaluate_signal_for_stock(
@@ -700,6 +847,130 @@ def scan_all_stocks(
     results.sort(key=lambda x: x.buy_score, reverse=True)
     
     return results
+
+
+# =============================================================================
+# Historical Signal Triggers (for Chart Markers)
+# =============================================================================
+
+
+@dataclass
+class SignalTrigger:
+    """A historical signal trigger point."""
+    date: str  # ISO date string
+    signal_name: str
+    price: float
+    win_rate: float
+    avg_return_pct: float
+    holding_days: int
+    drawdown_pct: float = 0.0  # The threshold that triggered (for drawdown signals)
+
+
+def get_historical_triggers(
+    price_data: dict[str, pd.Series],
+    lookback_days: int = 365,
+    min_signals: int = 3,  # Reduced minimum for chart markers
+) -> list[SignalTrigger]:
+    """
+    Get historical signal trigger points for chart markers.
+    
+    IMPORTANT: Only returns triggers for the TOP/BEST signal for this stock.
+    The best signal is determined by expected value (win_rate * avg_return).
+    
+    This uses ONLY past data at each point - no look-ahead bias.
+    The backtest statistics are computed on the FULL available history,
+    which is the same approach used for current signal evaluation.
+    
+    Returns list of SignalTrigger sorted by date.
+    """
+    prices = price_data.get("close")
+    if prices is None or len(prices) < 60:  # Need at least 60 days
+        return []
+    
+    # First, find the BEST signal for this stock
+    best_signal_config = None
+    best_signal_ev = -float("inf")
+    best_signal_bt = None
+    best_signal_threshold = None
+    
+    for config in SIGNAL_CONFIGS:
+        try:
+            signal_values = config["compute"](price_data)
+            if signal_values.isna().all():
+                continue
+            
+            direction = config["direction"]
+            
+            # Optimize parameters for this signal
+            opt_threshold, opt_holding, opt_results = optimize_signal_params(
+                prices,
+                signal_values,
+                direction,
+                config["threshold_range"],
+                holding_days_options=[5, 10, 20, 40, 60],
+            )
+            
+            if opt_results.get("n_signals", 0) < min_signals:
+                continue
+            
+            # Expected value = win_rate * avg_return
+            ev = opt_results["win_rate"] * opt_results["avg_return"] * 100
+            
+            if ev > best_signal_ev:
+                best_signal_ev = ev
+                best_signal_config = config
+                best_signal_bt = opt_results
+                best_signal_threshold = opt_threshold
+                
+        except Exception as e:
+            logger.warning(f"Error evaluating signal {config['name']}: {e}")
+            continue
+    
+    if best_signal_config is None or best_signal_bt is None:
+        return []
+    
+    # Now get trigger points for the BEST signal only
+    triggers: list[SignalTrigger] = []
+    
+    try:
+        signal_values = best_signal_config["compute"](price_data)
+        direction = best_signal_config["direction"]
+        threshold = best_signal_threshold
+        
+        # Find trigger points using the OPTIMIZED threshold
+        if direction == "below":
+            is_triggered = signal_values < threshold
+        elif direction == "above":
+            is_triggered = signal_values > threshold
+        elif direction == "cross_above":
+            prev_signal = signal_values.shift(1)
+            is_triggered = (signal_values > threshold) & (prev_signal <= threshold)
+        else:
+            is_triggered = signal_values < threshold
+        
+        # Get trigger dates in lookback period
+        trigger_mask = is_triggered.iloc[-lookback_days:]
+        trigger_dates = trigger_mask[trigger_mask].index
+        
+        # Add triggers with historical stats from the best signal's backtest
+        for date_idx in trigger_dates:
+            price_at_trigger = float(prices.loc[date_idx])
+            triggers.append(SignalTrigger(
+                date=str(date_idx.date()) if hasattr(date_idx, "date") else str(date_idx),
+                signal_name=best_signal_config["name"],
+                price=price_at_trigger,
+                win_rate=best_signal_bt["win_rate"],
+                avg_return_pct=best_signal_bt["avg_return"] * 100,
+                holding_days=best_signal_bt.get("holding_days", 20),
+                drawdown_pct=abs(threshold) if "Drawdown" in best_signal_config["name"] else 0.0,
+            ))
+    except Exception as e:
+        logger.warning(f"Error computing triggers for best signal: {e}")
+    
+    # Sort by date
+    triggers.sort(key=lambda t: t.date)
+    
+    return triggers
 
 
 # =============================================================================

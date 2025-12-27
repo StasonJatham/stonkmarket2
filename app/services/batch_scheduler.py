@@ -24,9 +24,9 @@ from app.services.openai_client import (
     check_batch,
     collect_batch,
     generate_bio,
-    rate_dip,
     submit_batch,
 )
+from app.services.statistical_rating import calculate_rating
 
 
 logger = get_logger("batch_scheduler")

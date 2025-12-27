@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import {
   AreaChart,
   Area,
@@ -6,28 +6,69 @@ import {
   YAxis,
   Tooltip,
   ResponsiveContainer,
+  ReferenceDot,
 } from 'recharts';
 import { CHART_LINE_ANIMATION } from '@/lib/chartConfig';
-import type { ChartDataPoint } from '@/services/api';
+import type { ChartDataPoint, SignalTrigger } from '@/services/api';
+import { getSignalTriggers } from '@/services/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Badge } from '@/components/ui/badge';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
+import { Zap } from 'lucide-react';
 
 interface StockChartProps {
   symbol: string;
   data: ChartDataPoint[];
   isLoading?: boolean;
+  showSignalMarkers?: boolean;
 }
 
-export function StockChart({ symbol, data, isLoading }: StockChartProps) {
+export function StockChart({ symbol, data, isLoading, showSignalMarkers = true }: StockChartProps) {
+  const [signals, setSignals] = useState<SignalTrigger[]>([]);
+  const [showMarkers, setShowMarkers] = useState(showSignalMarkers);
+  const [isLoadingSignals, setIsLoadingSignals] = useState(false);
+  
+  // Fetch signal triggers when symbol changes
+  useEffect(() => {
+    if (!symbol || !showMarkers) return;
+    
+    setIsLoadingSignals(true);
+    getSignalTriggers(symbol, Math.max(180, data.length))
+      .then(setSignals)
+      .catch(() => setSignals([]))
+      .finally(() => setIsLoadingSignals(false));
+  }, [symbol, data.length, showMarkers]);
+  
+  // Merge chart data with signal triggers
   const chartData = useMemo(() => {
-    return data.map((point) => ({
-      ...point,
-      date: new Date(point.date).toLocaleDateString('en-US', {
+    const signalMap = new Map<string, SignalTrigger>();
+    signals.forEach(s => signalMap.set(s.date, s));
+    
+    return data.map((point) => {
+      const formattedDate = new Date(point.date).toLocaleDateString('en-US', {
         month: 'short',
         day: 'numeric',
-      }),
-    }));
-  }, [data]);
+      });
+      const signalTrigger = signalMap.get(point.date);
+      
+      return {
+        ...point,
+        date: formattedDate,
+        originalDate: point.date,
+        signalTrigger,
+        // For the reference dots
+        signalPrice: signalTrigger ? point.close : undefined,
+      };
+    });
+  }, [data, signals]);
+  
+  // Find data points that have signals
+  const signalPoints = useMemo(() => 
+    chartData.filter(d => d.signalTrigger != null),
+    [chartData]
+  );
 
   const priceChange = useMemo(() => {
     if (data.length < 2) return 0;
@@ -70,6 +111,28 @@ export function StockChart({ symbol, data, isLoading }: StockChartProps) {
             </span>
           </div>
         </div>
+        
+        {/* Signal toggle and legend */}
+        <div className="flex items-center justify-between mt-2">
+          <div className="flex items-center gap-2">
+            <Switch
+              id="show-signals"
+              checked={showMarkers}
+              onCheckedChange={setShowMarkers}
+              disabled={isLoadingSignals}
+            />
+            <Label htmlFor="show-signals" className="text-sm text-muted-foreground cursor-pointer">
+              Show buy signals
+            </Label>
+          </div>
+          
+          {showMarkers && signalPoints.length > 0 && (
+            <Badge variant="outline" className="gap-1 text-xs">
+              <Zap className="h-3 w-3 text-success" />
+              {signalPoints.length} signal{signalPoints.length > 1 ? 's' : ''}
+            </Badge>
+          )}
+        </div>
       </CardHeader>
       <CardContent>
         <div className="h-64">
@@ -105,7 +168,24 @@ export function StockChart({ symbol, data, isLoading }: StockChartProps) {
                   borderRadius: '8px',
                 }}
                 labelStyle={{ color: 'hsl(var(--foreground))' }}
-                formatter={(value) => [`$${Number(value).toFixed(2)}`, 'Price']}
+                formatter={(value, _name, props) => {
+                  const trigger = props.payload?.signalTrigger as SignalTrigger | undefined;
+                  if (trigger) {
+                    return [
+                      <div key="price" className="flex flex-col gap-1">
+                        <span>${Number(value).toFixed(2)}</span>
+                        <span className="text-success text-xs font-medium">
+                          🟢 {trigger.signal_name}
+                        </span>
+                        <span className="text-muted-foreground text-xs">
+                          {Math.round(trigger.win_rate * 100)}% win rate
+                        </span>
+                      </div>,
+                      'Price'
+                    ];
+                  }
+                  return [`$${Number(value).toFixed(2)}`, 'Price'];
+                }}
               />
               <Area
                 type="monotone"
@@ -115,9 +195,50 @@ export function StockChart({ symbol, data, isLoading }: StockChartProps) {
                 fill={`url(#gradient-${symbol})`}
                 {...CHART_LINE_ANIMATION}
               />
+              
+              {/* Signal marker dots */}
+              {showMarkers && signalPoints.map((point, idx) => (
+                <ReferenceDot
+                  key={`signal-${idx}`}
+                  x={point.date}
+                  y={point.close}
+                  r={5}
+                  fill="hsl(var(--success))"
+                  stroke="hsl(var(--background))"
+                  strokeWidth={2}
+                />
+              ))}
             </AreaChart>
           </ResponsiveContainer>
         </div>
+        
+        {/* Signal legend below chart */}
+        {showMarkers && signalPoints.length > 0 && (
+          <div className="mt-3 pt-3 border-t">
+            <p className="text-xs text-muted-foreground mb-2">
+              <span className="inline-flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-success" />
+                Buy signals (based on historical data only - no look-ahead)
+              </span>
+            </p>
+            <div className="flex flex-wrap gap-1">
+              {signalPoints.slice(-5).map((point, idx) => (
+                <Badge 
+                  key={idx} 
+                  variant="secondary" 
+                  className="text-[10px] px-1.5 py-0.5"
+                >
+                  {point.originalDate}: {point.signalTrigger?.signal_name}
+                </Badge>
+              ))}
+              {signalPoints.length > 5 && (
+                <Badge variant="outline" className="text-[10px] px-1.5 py-0.5">
+                  +{signalPoints.length - 5} more
+                </Badge>
+              )}
+            </div>
+          </div>
+        )}
       </CardContent>
     </Card>
   );

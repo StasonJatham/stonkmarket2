@@ -78,6 +78,16 @@ from app.quant_engine.signals import (
     StockOpportunity,
 )
 
+# Domain Analysis
+from app.quant_engine.domain_analysis import (
+    DomainAnalysis,
+    DomainMetrics,
+    perform_domain_analysis,
+    domain_analysis_to_dict,
+    normalize_sector,
+    Sector,
+)
+
 
 __all__ = [
     "__version__",
@@ -113,4 +123,11 @@ __all__ = [
     "scan_all_stocks",
     "ScanResult",
     "StockOpportunity",
+    # Domain Analysis
+    "DomainAnalysis",
+    "DomainMetrics",
+    "perform_domain_analysis",
+    "domain_analysis_to_dict",
+    "normalize_sector",
+    "Sector",
 ]

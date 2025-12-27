@@ -191,6 +191,11 @@ A small fact sheet about one company (ticker, company name, sector, business sum
 GOAL:
 Write a bio that feels like a real dating-app profile: flirty, confident, funny, slightly chaotic, and on-brand for the company.
 
+CRITICAL:
+- ALWAYS use the provided Company name and Business summary - NEVER guess the company from the ticker symbol alone.
+- The ticker may look like random letters; the Company and Business fields tell you what the company ACTUALLY does.
+- Example: ticker "CHLSY" with Company "Chocoladefabriken Lindt" means CHOCOLATE, not "Chelsy Cosmetics".
+
 HARD RULES:
 - 150–200 characters total (strict). Count characters.
 - 3 sentences max.
@@ -199,7 +204,7 @@ HARD RULES:
 - Must sound like Tinder: hooks, playful brag, a "date idea" or "dealbreaker" vibe.
 - No investor/market jargon: avoid words like stock, shares, buy, sell, dip, high, low, chart, candle, bearish, bullish, P/E, market cap, earnings, guidance, valuation.
 - Do NOT mention current price, recent high, dip %, days-in-dip, or any numeric stats unless it's part of normal consumer brand identity (e.g., "24/7", "iPhone").
-- Prefer product/brand culture over finance facts.
+- Base the bio on the Company name and Business summary, NOT guesses from the ticker symbol.
 - No hashtags, no bullet points.
 - If the stock is currently down, be dramatically self-aware about it ("looking for someone who sees my true value" energy, "going through a rough patch but still cute" vibes).
 

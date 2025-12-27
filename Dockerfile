@@ -1,5 +1,5 @@
 # Build stage
-FROM python:3.12-slim AS builder
+FROM python:3.14-slim AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -20,7 +20,7 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Production stage
-FROM python:3.12-slim AS production
+FROM python:3.14-slim AS production
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -46,7 +46,7 @@ RUN groupadd --gid 1000 appgroup \
 WORKDIR /app
 
 # Copy Python packages from builder
-COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=builder /usr/local/lib/python3.14/site-packages /usr/local/lib/python3.14/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
 # Copy application code and Alembic migrations

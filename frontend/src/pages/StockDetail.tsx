@@ -386,14 +386,6 @@ export function StockDetailPage() {
                       <CardTitle className="text-3xl font-bold">
                         {info?.name || upperSymbol}
                       </CardTitle>
-                      {dipCard?.ai_rating && (
-                        <Badge variant={
-                          dipCard.ai_rating === 'strong_buy' || dipCard.ai_rating === 'buy' ? 'default' :
-                          dipCard.ai_rating === 'hold' ? 'secondary' : 'destructive'
-                        } className="text-sm">
-                          {dipCard.ai_rating.replace('_', ' ').toUpperCase()}
-                        </Badge>
-                      )}
                     </div>
                     <CardDescription className="flex items-center gap-2 mt-1">
                       <Badge variant="outline" className="font-mono">{upperSymbol}</Badge>
@@ -791,23 +783,7 @@ export function StockDetailPage() {
               <CardTitle className="flex items-center gap-2">
                 <Sparkles className="h-5 w-5 text-primary" />
                 AI Analysis
-                {dipCard.ai_rating && (
-                  <Badge 
-                    variant={
-                      dipCard.ai_rating === 'strong_buy' || dipCard.ai_rating === 'buy' ? 'default' :
-                      dipCard.ai_rating === 'hold' ? 'secondary' : 'destructive'
-                    }
-                    className="ml-auto"
-                  >
-                    {dipCard.ai_rating.replace('_', ' ').toUpperCase()}
-                  </Badge>
-                )}
               </CardTitle>
-              {dipCard.ai_confidence && (
-                <CardDescription>
-                  Confidence: {dipCard.ai_confidence}%
-                </CardDescription>
-              )}
             </CardHeader>
             <CardContent>
               <p className="text-sm leading-relaxed text-muted-foreground whitespace-pre-wrap">
