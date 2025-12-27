@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Path, Query, status
 from pydantic import BaseModel
 
-from app.api.dependencies import require_user
+from app.api.dependencies import require_admin, require_user
 from app.cache.cache import Cache
 from app.celery_app import celery_app
 from app.core.exceptions import ConflictError, NotFoundError
@@ -417,7 +417,8 @@ async def create_symbol(
     """
     Create a new tracked symbol.
 
-    After creation, fetches initial data and generates AI summary in background.
+    Symbol is queued for batch processing (runs every 10 minutes).
+    Batch processing fetches data and generates AI content more efficiently.
     """
     # Check if already exists
     existing = await symbol_repo.get_symbol(payload.symbol)
@@ -427,32 +428,113 @@ async def create_symbol(
             details={"symbol": payload.symbol},
         )
 
-    # Create symbol
+    # Create symbol with pending status - will be picked up by batch job
     created = await symbol_repo.upsert_symbol(
         payload.symbol,
         payload.min_dip_pct,
         payload.min_days,
     )
 
+    # Mark as pending for batch processing (runs every 10 minutes)
     await symbol_repo.update_fetch_status(
         payload.symbol,
-        fetch_status="fetching",
+        fetch_status="pending",
         fetch_error=None,
     )
-
-    # Process symbol in background (fetch data, generate AI summary)
-    task = celery_app.send_task("jobs.process_new_symbol", args=[payload.symbol.upper()])
-    from app.services.task_tracking import store_symbol_task
-    await store_symbol_task(payload.symbol, task.id)
 
     return SymbolResponse(
         symbol=created.symbol,
         min_dip_pct=created.min_dip_pct,
         min_days=created.min_days,
         name=created.name,
-        fetch_status='fetching',  # Will be set to fetching by background task
+        fetch_status='pending',  # Will be processed by batch job every 10 min
         fetch_error=None,
-        task_id=task.id,
+        task_id=None,  # No immediate task - processed in batch
+    )
+
+
+class ProcessSymbolsRequest(BaseModel):
+    """Request to process symbols immediately."""
+
+    symbols: list[str] | None = None  # If None, process all pending
+
+
+class ProcessSymbolsResponse(BaseModel):
+    """Response for immediate symbol processing."""
+
+    processed: int
+    failed: int
+    message: str
+    symbols: list[str]
+
+
+@router.post(
+    "/admin/process-now",
+    response_model=ProcessSymbolsResponse,
+    summary="Process symbols immediately (Admin)",
+    description="Trigger immediate processing of pending symbols instead of waiting for batch job. Admin only.",
+    dependencies=[Depends(require_admin)],
+)
+async def process_symbols_now(
+    request: ProcessSymbolsRequest | None = None,
+) -> ProcessSymbolsResponse:
+    """
+    Admin endpoint to process symbols immediately.
+    
+    If symbols list is provided, process those specific symbols.
+    If symbols list is empty/None, process all pending symbols.
+    
+    This bypasses the 10-minute batch schedule for urgent processing.
+    """
+    from app.jobs.definitions import process_new_symbols_batch_job
+    from app.repositories import symbols_orm
+
+    # Get symbols to process
+    if request and request.symbols:
+        # Process specific symbols - mark them as pending first
+        symbols_to_process = [s.upper() for s in request.symbols]
+        for sym in symbols_to_process:
+            existing = await symbols_orm.get_symbol(sym)
+            if existing:
+                await symbols_orm.update_fetch_status(sym, fetch_status="pending")
+            else:
+                # Create if doesn't exist
+                await symbols_orm.upsert_symbol(sym, min_dip_pct=20.0, min_days=7)
+                await symbols_orm.update_fetch_status(sym, fetch_status="pending")
+    else:
+        # Get all currently pending symbols
+        pending = await symbols_orm.get_symbols_by_status("pending")
+        symbols_to_process = [s.symbol for s in pending]
+
+    if not symbols_to_process:
+        return ProcessSymbolsResponse(
+            processed=0,
+            failed=0,
+            message="No symbols to process",
+            symbols=[],
+        )
+
+    logger.info(f"Admin triggered immediate processing of {len(symbols_to_process)} symbols: {symbols_to_process}")
+
+    # Run the batch job immediately
+    result = await process_new_symbols_batch_job()
+
+    # Parse result to get counts
+    # Result format: "Processed X/Y symbols (Z failed)"
+    import re
+    match = re.search(r"Processed (\d+)/(\d+) symbols \((\d+) failed\)", result)
+    if match:
+        processed = int(match.group(1))
+        failed = int(match.group(3))
+    else:
+        processed = len(symbols_to_process)
+        failed = 0
+
+    return ProcessSymbolsResponse(
+        processed=processed,
+        failed=failed,
+        message=result,
+        symbols=symbols_to_process,
     )
 
 

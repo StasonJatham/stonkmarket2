@@ -1,119 +1,116 @@
 """
-Quantitative Portfolio Engine
-=============================
+Quantitative Portfolio Engine V2
+================================
 
-Research-grade portfolio decision engine implementing:
-- Factor-based expected return models (Ridge/Lasso ensemble)
-- Statistical DipScore (factor-residual z-score, informational only)
-- PCA-based risk model with MCR computation
-- Incremental mean-variance optimization with transaction costs
-- Walk-forward hyperparameter tuning with OOS validation
-- EUR base currency, long-only, €1/trade fixed costs
+A non-predictive, risk-based portfolio optimization system.
 
-The engine NEVER generates direct orders from dip signals.
-All recommendations flow from the optimizer's Δw* solution.
+This engine DOES NOT forecast future returns. Instead, it provides:
+- Risk diagnostics (decomposition, tail risk, diversification metrics)
+- Risk-based portfolio optimization (Risk Parity, Min Variance, CVaR, HRP)
+- Technical signal scanning with per-stock optimization
+- User-friendly translation of complex analytics
+
+Design Philosophy
+-----------------
+1. NO return forecasting - we don't predict prices
+2. Risk-based allocation - optimize for risk, not expected returns  
+3. Robust optimization - methods that don't require return estimates
+4. Backtested signals - only use signals with proven historical edge
+5. User-friendly output - translate quant jargon to plain English
 
 Modules
 -------
-- features: Feature engineering from price/factor data
-- alpha_models: Ridge/Lasso ensemble with uncertainty quantification
-- dip: Statistical DipScore (factor-residual z-score)
-- regimes: Trend/volatility regime detection
-- risk: PCA factor model for covariance estimation
-- optimizer: Incremental QP with constraints and cost modeling
-- walk_forward: Walk-forward validation harness
-- tuner: Automated hyperparameter optimization
-- persistence: Database models and artifact storage
-- service: Main orchestration service
-- schemas: API request/response schemas
+- analytics: Portfolio risk diagnostics and analysis
+- risk_optimizer: Risk-based portfolio optimization methods
+- signals: Technical signal scanner with per-stock optimization
 
-Non-Negotiable Rules
+Optimization Methods
 --------------------
-1. Every decision from explicit mathematics (no ad-hoc triggers)
-2. Every assumption statistically testable and falsifiable
-3. Every signal validated out-of-sample (walk-forward)
-4. Dip logic only affects μ_hat or uncertainty, never orders
-5. Long-only, no leverage, EUR base currency
-6. Monthly inflows (€1,000–€1,500) part of optimization
-7. Transaction costs: fixed €1 per trade modeled explicitly
+- RISK_PARITY: Equal risk contribution from each asset
+- MIN_VARIANCE: Minimize total portfolio volatility
+- MAX_DIVERSIFICATION: Maximize diversification ratio
+- CVAR: Minimize Conditional VaR (expected shortfall)
+- HRP: Hierarchical Risk Parity (López de Prado)
 """
 
 from __future__ import annotations
 
+__version__ = "2.0.0"
 
-__version__ = "1.0.0"
-
-# Core types
-# Alpha models
-from app.quant_engine.alpha_models import AlphaModelEnsemble
-
-# Optimizer
-from app.quant_engine.optimizer import optimize_portfolio
-
-# Risk models
-from app.quant_engine.risk import fit_pca_risk_model
-
-# Services
-from app.quant_engine.service import QuantEngineService, get_default_config
-
-# Tuner
-from app.quant_engine.tuner import HyperparameterGrid, HyperparameterTuner
-from app.quant_engine.types import (
-    ActionType,
-    AlphaResult,
-    ConstraintStatus,
-    DipArtifacts,
-    EngineOutput,
-    HyperparameterLog,
-    MomentumCondition,
-    OptimizationResult,
-    QuantConfig,
-    RecommendationRow,
+# Analytics
+from app.quant_engine.analytics import (
+    analyze_portfolio,
+    compute_correlation_analysis,
+    compute_covariance_matrix,
+    compute_diversification_metrics,
+    compute_risk_decomposition,
+    compute_tail_risk,
+    CorrelationAnalysis,
+    detect_regime,
+    DiversificationMetrics,
+    PortfolioAnalytics,
     RegimeState,
-    RegimeTrend,
-    RegimeVolatility,
-    RiskModel,
-    SolverStatus,
-    WalkForwardFold,
-    WalkForwardResult,
+    RiskDecomposition,
+    TailRiskAnalysis,
+    translate_for_user,
 )
 
-# Walk-forward
-from app.quant_engine.walk_forward import WalkForwardValidator
+# Risk Optimizer
+from app.quant_engine.risk_optimizer import (
+    AllocationRecommendation,
+    generate_allocation_recommendation,
+    optimize_cvar,
+    optimize_hrp,
+    optimize_max_diversification,
+    optimize_min_variance,
+    optimize_portfolio_risk_based,
+    optimize_risk_parity,
+    RiskOptimizationConstraints,
+    RiskOptimizationMethod,
+    RiskOptimizationResult,
+)
+
+# Signals
+from app.quant_engine.signals import (
+    OptimizedSignal,
+    scan_all_stocks,
+    ScanResult,
+    StockOpportunity,
+)
 
 
 __all__ = [
     "__version__",
-    # Types
-    "QuantConfig",
-    "AlphaResult",
-    "DipArtifacts",
+    # Analytics
+    "analyze_portfolio",
+    "compute_correlation_analysis",
+    "compute_covariance_matrix",
+    "compute_diversification_metrics",
+    "compute_risk_decomposition",
+    "compute_tail_risk",
+    "CorrelationAnalysis",
+    "detect_regime",
+    "DiversificationMetrics",
+    "PortfolioAnalytics",
     "RegimeState",
-    "RiskModel",
-    "OptimizationResult",
-    "RecommendationRow",
-    "EngineOutput",
-    "HyperparameterLog",
-    "WalkForwardFold",
-    "WalkForwardResult",
-    "ConstraintStatus",
-    "SolverStatus",
-    "RegimeTrend",
-    "RegimeVolatility",
-    "MomentumCondition",
-    "ActionType",
-    # Services
-    "QuantEngineService",
-    "get_default_config",
-    # Alpha
-    "AlphaModelEnsemble",
-    # Risk
-    "fit_pca_risk_model",
-    # Optimizer
-    "optimize_portfolio",
-    # Validation
-    "WalkForwardValidator",
-    # Tuning
-    "HyperparameterTuner",
-    "HyperparameterGrid",
+    "RiskDecomposition",
+    "TailRiskAnalysis",
+    "translate_for_user",
+    # Risk Optimizer
+    "AllocationRecommendation",
+    "generate_allocation_recommendation",
+    "optimize_cvar",
+    "optimize_hrp",
+    "optimize_max_diversification",
+    "optimize_min_variance",
+    "optimize_portfolio_risk_based",
+    "optimize_risk_parity",
+    "RiskOptimizationConstraints",
+    "RiskOptimizationMethod",
+    "RiskOptimizationResult",
+    # Signals
+    "OptimizedSignal",
+    "scan_all_stocks",
+    "ScanResult",
+    "StockOpportunity",
 ]

@@ -36,6 +36,7 @@ python -m pytest tests/ -x -W error --tb=short
 - `-x` = Stop on first failure
 - `-W error` = Treat warnings as errors
 - `--tb=short` = Always show traceback/error output
+- **ALWAYS** run tests normally and edit files directly; **NEVER** use heredocs or shell-insert tricks to modify files (they can crash VSCode PTY)
 - **ALL errors are FATAL** - Do not proceed until fixed
 - **NEVER skip or ignore test failures** - Every failure is CRITICAL
 - **NEVER just edit tests to make them pass** - Analyze the root cause and fix the actual code
@@ -204,6 +205,7 @@ Before submitting any change:
 6. [ ] Tests pass with `-x -W error`
 7. [ ] shadcn components used where applicable
 8. [ ] Docker compose works if infrastructure changed
+9. [ ] Files edited directly (no heredocs or shell-insert tricks)
 
 ---
 
@@ -225,4 +227,3 @@ Before submitting any change:
 ✅ **Do** fix root causes, not symptoms
 ✅ **Do** treat warnings as errors
 ✅ **Do** use shadcn/ui components  
-

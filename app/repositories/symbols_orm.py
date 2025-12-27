@@ -234,6 +234,22 @@ async def count_symbols() -> int:
         return await _count_symbols(session)
 
 
+async def get_symbols_by_status(fetch_status: str) -> list[Symbol]:
+    """Get all symbols with a specific fetch status.
+    
+    Args:
+        fetch_status: Status to filter by ('pending', 'fetching', 'fetched', 'error')
+    
+    Returns:
+        List of Symbol objects matching the status
+    """
+    async with get_session() as session:
+        result = await session.execute(
+            select(Symbol).where(Symbol.fetch_status == fetch_status)
+        )
+        return list(result.scalars().all())
+
+
 async def update_fetch_status(
     symbol: str,
     fetch_status: str,

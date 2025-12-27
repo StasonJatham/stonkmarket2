@@ -109,6 +109,37 @@ async def get_stock_info_async(symbol: str) -> dict[str, Any] | None:
     return await get_stock_info_with_prices(symbol)
 
 
+async def get_stock_info_batch_async(symbols: list[str]) -> dict[str, dict[str, Any]]:
+    """Fetch stock info for multiple symbols in parallel.
+    
+    Uses asyncio.gather to fetch info for all symbols concurrently,
+    which is more efficient than sequential calls.
+    
+    Args:
+        symbols: List of stock symbols to fetch
+        
+    Returns:
+        Dictionary mapping symbol to its info dict (empty dict for failures)
+    """
+    import asyncio
+
+    async def fetch_one(symbol: str) -> tuple[str, dict[str, Any]]:
+        info = await get_stock_info_with_prices(symbol)
+        return symbol, info or {}
+
+    results = await asyncio.gather(*[fetch_one(s) for s in symbols], return_exceptions=True)
+
+    output = {}
+    for result in results:
+        if isinstance(result, Exception):
+            logger.warning(f"Failed to fetch stock info: {result}")
+            continue
+        symbol, info = result
+        output[symbol] = info
+
+    return output
+
+
 def clear_info_cache() -> None:
     """Clear the stock info cache (no-op - service manages its own cache)."""
     pass

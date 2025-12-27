@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, UploadFile, File, Form, status
 
 from app.api.dependencies import require_user
 from app.core.exceptions import NotFoundError, ValidationError
@@ -19,6 +19,13 @@ from app.portfolio.service import (
 from app.repositories import auth_user_orm as auth_repo
 from app.repositories import portfolio_analytics_jobs_orm as analytics_jobs_repo
 from app.repositories import portfolios_orm as portfolios_repo
+from app.schemas.bulk_import import (
+    BulkImportRequest,
+    BulkImportResponse,
+    ImageExtractionResponse,
+    ImportPositionResult,
+    ImportResultStatus,
+)
 from app.schemas.portfolio import (
     HoldingInput,
     HoldingResponse,

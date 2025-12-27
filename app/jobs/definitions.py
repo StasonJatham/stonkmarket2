@@ -155,6 +155,235 @@ async def add_to_ingest_queue(symbol: str, priority: int = 0) -> bool:
     return await jobs_repo.add_to_ingest_queue(symbol, priority)
 
 
+# =============================================================================
+# BATCH PROCESS NEW SYMBOLS (Efficient batched yfinance + OpenAI)
+# =============================================================================
+
+
+@register_job("process_new_symbols_batch")
+async def process_new_symbols_batch_job() -> str:
+    """
+    Batch process all symbols with fetch_status='pending'.
+
+    Runs every 10 minutes to aggregate new symbol requests and process them
+    efficiently using:
+    - yfinance batch download (single API call for all symbols)
+    - OpenAI Batch API for AI content generation (50% cost savings)
+
+    Schedule: Every 10 minutes (*/10 * * * *)
+    """
+    from datetime import date, timedelta
+
+    from app.cache.cache import Cache
+    from app.repositories import symbols_orm as symbols_repo
+    from app.repositories import price_history_orm as price_history_repo
+    from app.repositories import dip_state_orm as dip_state_repo
+    from app.services.data_providers import get_yfinance_service
+    from app.services.openai_client import TaskType, submit_batch
+    from app.services.fundamentals import get_fundamentals_for_analysis, refresh_fundamentals
+    from app.services.stock_info import get_stock_info_batch_async
+
+    logger.info("Starting process_new_symbols_batch job")
+
+    try:
+        # Get all symbols with pending status
+        pending_symbols = await symbols_repo.get_symbols_by_status("pending")
+
+        if not pending_symbols:
+            return "No pending symbols to process"
+
+        symbols = [s.symbol for s in pending_symbols]
+        logger.info(f"[BATCH] Processing {len(symbols)} pending symbols: {symbols}")
+
+        # Mark all as fetching
+        for symbol in symbols:
+            await symbols_repo.update_fetch_status(symbol, fetch_status="fetching")
+
+        yf_service = get_yfinance_service()
+        processed = 0
+        failed = 0
+        ai_items = []  # Collect items for OpenAI batch
+
+        # Step 1: Batch fetch stock info from yfinance
+        logger.info(f"[BATCH] Step 1: Fetching Yahoo Finance info for {len(symbols)} symbols")
+        stock_infos = await get_stock_info_batch_async(symbols)
+
+        # Step 2: Batch fetch 5 years of price history
+        logger.info(f"[BATCH] Step 2: Batch fetching 5y price history for {len(symbols)} symbols")
+        today = date.today()
+        start_date = today - timedelta(days=1825)  # 5 years
+
+        price_results = await yf_service.get_price_history_batch(
+            symbols=symbols,
+            start_date=start_date,
+            end_date=today,
+        )
+
+        # Step 3: Process each symbol with the fetched data
+        for symbol in symbols:
+            try:
+                info = stock_infos.get(symbol, {})
+                if not info:
+                    logger.warning(f"[BATCH] No Yahoo data for {symbol}")
+                    await symbols_repo.update_fetch_status(
+                        symbol, fetch_status="error", fetch_error="No Yahoo Finance data"
+                    )
+                    failed += 1
+                    continue
+
+                name = info.get("name") or info.get("short_name")
+                sector = info.get("sector")
+                full_summary = info.get("summary")
+                current_price = info.get("current_price", 0)
+                ath_price = info.get("ath_price") or info.get("fifty_two_week_high", 0)
+                dip_pct = ((ath_price - current_price) / ath_price * 100) if ath_price > 0 else 0
+
+                # Update symbol info
+                if name or sector:
+                    await symbols_repo.update_symbol_info(symbol, name=name, sector=sector)
+
+                # Add to dip_state
+                await dip_state_repo.upsert_dip_state(
+                    symbol=symbol,
+                    current_price=current_price,
+                    ath_price=ath_price,
+                    dip_percentage=dip_pct,
+                )
+
+                # Store price history
+                price_data = price_results.get(symbol)
+                if price_data:
+                    prices, _version = price_data
+                    if prices is not None and not prices.empty:
+                        await price_history_repo.save_prices(symbol, prices)
+                        logger.info(f"[BATCH] Saved {len(prices)} days of price history for {symbol}")
+
+                # Fetch and store fundamentals
+                await refresh_fundamentals(symbol)
+
+                # Collect for AI batch processing
+                if full_summary and len(full_summary) > 100:
+                    fundamentals = await get_fundamentals_for_analysis(symbol)
+                    ai_items.append({
+                        "symbol": symbol,
+                        "name": name,
+                        "sector": sector,
+                        "summary": full_summary,
+                        "current_price": current_price,
+                        "ref_high": ath_price,
+                        "dip_pct": dip_pct,
+                        "days_below": 0,
+                        **fundamentals,
+                    })
+
+                processed += 1
+
+            except Exception as e:
+                logger.error(f"[BATCH] Failed to process {symbol}: {e}")
+                await symbols_repo.update_fetch_status(
+                    symbol, fetch_status="error", fetch_error=str(e)[:500]
+                )
+                failed += 1
+
+        # Step 4: Submit AI content generation as batch (if items)
+        batch_id = None
+        if ai_items:
+            logger.info(f"[BATCH] Step 4: Submitting {len(ai_items)} items for AI batch processing")
+            try:
+                batch_id = await submit_batch(
+                    task=TaskType.RATING,
+                    items=ai_items,
+                )
+                if batch_id:
+                    logger.info(f"[BATCH] Submitted OpenAI batch job: {batch_id}")
+                    # Also submit for bio generation
+                    bio_batch_id = await submit_batch(
+                        task=TaskType.BIO,
+                        items=ai_items,
+                    )
+                    if bio_batch_id:
+                        logger.info(f"[BATCH] Submitted bio batch job: {bio_batch_id}")
+            except Exception as e:
+                logger.warning(f"[BATCH] Failed to submit AI batch: {e}")
+                # Fall back to individual AI generation
+                await _fallback_individual_ai_generation(ai_items)
+
+        # Step 5: Mark successful symbols as fetched
+        for symbol in symbols:
+            status = await symbols_repo.get_symbol(symbol)
+            if status and status.fetch_status == "fetching":
+                # AI content will be populated when batch completes
+                await symbols_repo.update_fetch_status(symbol, fetch_status="fetched")
+
+        # Step 6: Invalidate caches
+        ranking_cache = Cache(prefix="ranking", default_ttl=3600)
+        await ranking_cache.invalidate_pattern("*")
+        symbols_cache = Cache(prefix="symbols", default_ttl=3600)
+        await symbols_cache.invalidate_pattern("*")
+
+        message = f"Processed {processed}/{len(symbols)} symbols ({failed} failed)"
+        if batch_id:
+            message += f", AI batch submitted: {batch_id}"
+        logger.info(f"[BATCH] {message}")
+        return message
+
+    except Exception as e:
+        logger.error(f"process_new_symbols_batch failed: {e}", exc_info=True)
+        raise
+
+
+async def _fallback_individual_ai_generation(items: list[dict]) -> None:
+    """Fallback to individual AI generation if batch fails."""
+    from app.services.openai_client import generate_bio, rate_dip, summarize_company
+    from app.repositories import dip_votes_orm as dip_votes_repo
+    from app.repositories import symbols_orm as symbols_repo
+
+    for item in items:
+        symbol = item["symbol"]
+        try:
+            # Generate AI summary
+            ai_summary = await summarize_company(
+                symbol=symbol,
+                name=item.get("name"),
+                description=item.get("summary"),
+            )
+            if ai_summary:
+                await symbols_repo.update_symbol_info(symbol, summary_ai=ai_summary)
+
+            # Generate bio
+            bio = await generate_bio(
+                symbol=symbol,
+                name=item.get("name"),
+                sector=item.get("sector"),
+                summary=item.get("summary"),
+                dip_pct=item.get("dip_pct", 0),
+            )
+
+            # Generate rating
+            rating_data = await rate_dip(
+                symbol=symbol,
+                current_price=item.get("current_price", 0),
+                ref_high=item.get("ref_high", 0),
+                dip_pct=item.get("dip_pct", 0),
+                days_below=item.get("days_below", 0),
+                name=item.get("name"),
+                sector=item.get("sector"),
+                summary=item.get("summary"),
+            )
+
+            # Store AI analysis
+            if bio or rating_data:
+                await dip_votes_repo.upsert_ai_analysis(
+                    symbol=symbol,
+                    swipe_bio=bio,
+                    ai_rating=rating_data.get("rating") if rating_data else None,
+                    ai_reasoning=rating_data.get("reasoning") if rating_data else None,
+                    is_batch=False,
+                )
+        except Exception as e:
+            logger.warning(f"[BATCH] Individual AI generation failed for {symbol}: {e}")
+
+
 @register_job("data_grab")
 async def data_grab_job() -> str:
     """
@@ -882,30 +1111,28 @@ async def portfolio_analytics_worker_job() -> str:
         raise
 
 
-@register_job("quant_recommendations_daily")
-async def quant_recommendations_daily_job() -> str:
+@register_job("signal_scanner_daily")
+async def signal_scanner_daily_job() -> str:
     """
-    Daily quant engine job to pre-compute and cache global recommendations.
+    Daily signal scanner to cache buy opportunities.
 
-    Runs after market close to compute fresh optimizer rankings for all
-    tracked symbols. Results are cached in Redis for fast Dashboard access.
+    Scans all tracked symbols for technical buy signals, caching the results
+    for fast Dashboard access.
 
     Schedule: Daily at 10 PM UTC (after US market close)
     """
     from datetime import date, timedelta
 
-    import numpy as np
     import pandas as pd
 
     from app.cache.cache import Cache
-    from app.quant_engine import QuantEngineService, get_default_config
-    from app.repositories import dips_orm as dips_repo
+    from app.quant_engine import scan_all_stocks
     from app.repositories import price_history_orm as price_history_repo
     from app.repositories import symbols_orm as symbols_repo
 
-    logger.info("Starting quant_recommendations_daily job")
+    logger.info("Starting signal_scanner_daily job")
 
-    cache = Cache(prefix="quant", default_ttl=86400)  # 24 hour TTL
+    cache = Cache(prefix="signals", default_ttl=86400)  # 24 hour TTL
 
     try:
         # Get all tracked symbols
@@ -914,15 +1141,21 @@ async def quant_recommendations_daily_job() -> str:
         if not symbols_list:
             return "No symbols tracked"
 
-        symbols = [s.symbol for s in symbols_list]
-        logger.info(f"Processing {len(symbols)} symbols for quant recommendations")
+        # Filter out benchmarks
+        symbol_list = [
+            s.symbol for s in symbols_list 
+            if s.symbol not in ("SPY", "^GSPC", "URTH")
+        ]
+        symbol_names = {s.symbol: s.name or s.symbol for s in symbols_list}
+        
+        logger.info(f"Scanning {len(symbol_list)} symbols for signals")
 
-        # Fetch price history (550 days for proper training with buffer)
+        # Fetch price history (5 years for backtesting)
         end_date = date.today()
-        start_date = end_date - timedelta(days=550)
+        start_date = end_date - timedelta(days=1260)
 
         price_dfs: dict[str, pd.Series] = {}
-        for symbol in symbols:
+        for symbol in symbol_list:
             df = await price_history_repo.get_prices_as_dataframe(
                 symbol, start_date, end_date
             )
@@ -933,229 +1166,127 @@ async def quant_recommendations_daily_job() -> str:
             logger.warning("No price data available")
             return "No price data"
 
-        prices = pd.DataFrame(price_dfs).dropna(how="all").ffill()
+        # Run signal scanner
+        holding_days_options = [5, 10, 20, 40, 60]
+        opportunities = scan_all_stocks(price_dfs, symbol_names, holding_days_options)
 
-        if len(prices) < 100:
-            logger.warning("Insufficient price history")
-            return "Insufficient price history"
-
-        # Fetch market benchmark (SPY)
-        market_df = await price_history_repo.get_prices_as_dataframe(
-            "SPY", start_date, end_date
-        )
-        market_prices: pd.Series | None = None
-        if market_df is not None and "Close" in market_df.columns:
-            market_prices = market_df["Close"]
-
-        # Get symbol info for names
-        symbol_info: dict[str, dict[str, Any]] = {}
-        for s in symbols_list:
-            symbol_info[s.symbol] = {"name": getattr(s, "name", s.symbol)}
-
-        # Add dip state info (legacy compatibility)
-        dip_states = await dips_repo.get_all_dip_states()
-        for ds in dip_states:
-            if ds.symbol in symbol_info:
-                symbol_info[ds.symbol]["dip_pct"] = ds.dip_pct
-                symbol_info[ds.symbol]["days_in_dip"] = ds.days_in_dip
-                symbol_info[ds.symbol]["domain_score"] = ds.domain_score
-
-        # Initialize and train quant engine
-        config = get_default_config()
-        engine = QuantEngineService(config=config)
-
-        train_result = engine.train(
-            prices=prices,
-            market_prices=market_prices,
-            as_of_date=prices.index.max().to_pydatetime()
-            if hasattr(prices.index.max(), "to_pydatetime")
-            else end_date,
-        )
-
-        if train_result.get("status") == "error":
-            logger.error(f"Training failed: {train_result.get('message')}")
-            return f"Training failed: {train_result.get('message')}"
-
-        # Generate recommendations for different inflow amounts
-        inflow_amounts = [500, 1000, 2000, 5000]
-        cached_count = 0
-
-        for inflow_eur in inflow_amounts:
-            try:
-                # For global view, assume €10k base portfolio
-                assumed_portfolio = max(10000.0, inflow_eur * 10)
-                inflow_weight = inflow_eur / assumed_portfolio
-
-                n_assets = len(prices.columns)
-                w_current = np.zeros(n_assets)
-
-                output = engine.generate_recommendations(
-                    prices=prices,
-                    market_prices=market_prices,
-                    w_current=w_current,
-                    inflow_weight=inflow_weight,
-                    portfolio_value_eur=assumed_portfolio,
-                )
-
-                # Enrich with names and legacy info
-                for rec in output.recommendations:
-                    info = symbol_info.get(rec.ticker, {})
-                    rec.name = info.get("name", rec.ticker)
-                    rec.legacy_dip_pct = info.get("dip_pct")
-                    rec.legacy_days_in_dip = info.get("days_in_dip")
-                    rec.legacy_domain_score = info.get("domain_score")
-
-                # Sort by marginal utility
-                output.recommendations.sort(
-                    key=lambda r: r.marginal_utility, reverse=True
-                )
-
-                # Cache the result
-                cache_data = {
-                    "recommendations": [
-                        {
-                            "ticker": r.ticker,
-                            "name": r.name,
-                            "action": r.action,
-                            "notional_eur": r.notional_eur,
-                            "delta_weight": r.delta_weight,
-                            "target_weight": r.target_weight,
-                            "mu_hat": r.mu_hat,
-                            "uncertainty": r.uncertainty,
-                            "risk_contribution": r.risk_contribution,
-                            "dip_score": r.dip_score,
-                            "dip_bucket": r.dip_bucket,
-                            "marginal_utility": r.marginal_utility,
-                            "legacy_dip_pct": r.legacy_dip_pct,
-                            "legacy_days_in_dip": r.legacy_days_in_dip,
-                            "legacy_domain_score": r.legacy_domain_score,
-                        }
-                        for r in output.recommendations[:40]
-                    ],
-                    "as_of_date": str(output.as_of_date),
-                    "portfolio_value_eur": output.portfolio_value_eur,
-                    "inflow_eur": inflow_eur,
-                    "total_trades": output.total_trades,
-                    "total_transaction_cost_eur": output.total_transaction_cost_eur,
-                    "expected_portfolio_return": output.expected_portfolio_return,
-                    "expected_portfolio_risk": output.expected_portfolio_risk,
-                    "audit": {
-                        "timestamp": str(output.audit.timestamp),
-                        "config_hash": output.audit.config_hash,
-                        "mu_hat_summary": output.audit.mu_hat_summary,
-                        "risk_model_summary": output.audit.risk_model_summary,
-                        "optimizer_status": output.audit.optimizer_status,
-                        "constraint_binding": output.audit.constraint_binding,
-                        "turnover_realized": output.audit.turnover_realized,
-                        "regime_state": output.audit.regime_state,
-                        "dip_stats": output.audit.dip_stats,
-                        "error_message": output.audit.error_message,
-                    },
+        # Cache results
+        cache_data = {
+            "scanned_at": str(date.today()),
+            "n_symbols": len(opportunities),
+            "opportunities": [
+                {
+                    "symbol": opp.symbol,
+                    "name": opp.name,
+                    "buy_score": opp.buy_score,
+                    "opportunity_type": opp.opportunity_type,
+                    "opportunity_reason": opp.opportunity_reason,
+                    "current_price": opp.current_price,
+                    "zscore_20d": opp.zscore_20d,
+                    "rsi_14": opp.rsi_14,
+                    "best_signal_name": opp.best_signal_name,
+                    "best_holding_days": opp.best_holding_days,
+                    "best_expected_return": opp.best_expected_return,
+                    "n_active_signals": len(opp.active_signals),
                 }
+                for opp in opportunities[:50]  # Top 50
+            ],
+        }
 
-                await cache.set(f"recommendations:{inflow_eur}", cache_data)
-                cached_count += 1
-                logger.info(f"Cached recommendations for inflow={inflow_eur}")
+        await cache.set("daily_scan", cache_data)
 
-            except Exception as e:
-                logger.error(f"Failed to generate recommendations for inflow={inflow_eur}: {e}")
+        # Count active signals
+        total_active = sum(len(opp.active_signals) for opp in opportunities)
+        strong_buys = sum(1 for opp in opportunities if opp.opportunity_type == "STRONG_BUY")
 
-        message = f"Cached {cached_count}/{len(inflow_amounts)} recommendation sets"
-        logger.info(f"quant_recommendations_daily: {message}")
+        message = f"Scanned {len(opportunities)} stocks, {strong_buys} strong buys, {total_active} active signals"
+        logger.info(f"signal_scanner_daily: {message}")
         return message
 
     except Exception as e:
-        logger.error(f"quant_recommendations_daily failed: {e}")
+        logger.error(f"signal_scanner_daily failed: {e}")
         raise
 
 
-@register_job("quant_engine_monthly")
-async def quant_engine_monthly_job() -> str:
+@register_job("market_regime_daily")
+async def market_regime_daily_job() -> str:
     """
-    Monthly quant engine optimization for all active portfolios.
+    Daily market regime detection and caching.
 
-    Runs walk-forward validation and hyperparameter tuning if needed,
-    then generates fresh recommendations for each portfolio.
+    Detects current market regime (bull/bear, high/low vol) and caches
+    for Dashboard display.
 
-    Schedule: 1st of each month at 6 AM
+    Schedule: Daily at 10:30 PM UTC (after signal scanner)
     """
     from datetime import date, timedelta
 
     import pandas as pd
 
-    from app.quant_engine import QuantEngineService, get_default_config
-    from app.repositories import portfolios_orm as portfolios_repo
+    from app.cache.cache import Cache
+    from app.quant_engine.analytics import detect_regime, compute_correlation_analysis
     from app.repositories import price_history_orm as price_history_repo
+    from app.repositories import symbols_orm as symbols_repo
 
-    logger.info("Starting quant_engine_monthly job")
+    logger.info("Starting market_regime_daily job")
+
+    cache = Cache(prefix="market", default_ttl=86400)
 
     try:
-        # Get all active portfolios
-        all_portfolios = await portfolios_repo.list_all_active_portfolios()
+        symbols_list = await symbols_repo.list_symbols()
 
-        if not all_portfolios:
-            return "No active portfolios"
+        if not symbols_list:
+            return "No symbols tracked"
 
-        processed = 0
-        failed = 0
+        symbol_list = [
+            s.symbol for s in symbols_list 
+            if s.symbol not in ("SPY", "^GSPC", "URTH")
+        ]
 
-        for portfolio in all_portfolios:
-            portfolio_id = portfolio["id"]
-            portfolio["user_id"]
+        end_date = date.today()
+        start_date = end_date - timedelta(days=400)
 
-            try:
-                # Get holdings
-                holdings = await portfolios_repo.list_holdings(portfolio_id)
-                if not holdings:
-                    logger.debug(f"Portfolio {portfolio_id} has no holdings, skipping")
-                    continue
+        price_dfs: dict[str, pd.Series] = {}
+        for symbol in symbol_list:
+            df = await price_history_repo.get_prices_as_dataframe(
+                symbol, start_date, end_date
+            )
+            if df is not None and "Close" in df.columns:
+                price_dfs[symbol] = df["Close"]
 
-                symbols = [h["symbol"] for h in holdings]
+        if not price_dfs:
+            return "No price data"
 
-                # Fetch price history (550 days for sufficient training buffer)
-                end_date = date.today()
-                start_date = end_date - timedelta(days=550)
+        prices = pd.DataFrame(price_dfs).dropna(how="all").ffill()
+        
+        if len(prices) < 60:
+            return "Insufficient data"
 
-                price_dfs = {}
-                for symbol in symbols:
-                    df = await price_history_repo.get_prices_as_dataframe(
-                        symbol, start_date, end_date
-                    )
-                    if df is not None and "Close" in df.columns:
-                        price_dfs[symbol] = df["Close"]
+        returns = prices.pct_change().dropna()
 
-                if not price_dfs:
-                    logger.warning(f"No price data for portfolio {portfolio_id}")
-                    continue
+        # Detect regime
+        regime = detect_regime(returns)
 
-                prices = pd.DataFrame(price_dfs).dropna(how="all").ffill()
+        # Correlation analysis
+        corr = compute_correlation_analysis(returns)
 
-                if len(prices) < 100:
-                    logger.warning(f"Insufficient price history for portfolio {portfolio_id}")
-                    continue
+        cache_data = {
+            "as_of": str(date.today()),
+            "regime": regime.regime,
+            "trend": regime.trend,
+            "volatility": regime.volatility,
+            "description": regime.description,
+            "recommendation": regime.risk_budget_recommendation,
+            "avg_correlation": corr.average_correlation,
+            "n_clusters": corr.n_clusters,
+            "stress_correlation": corr.stress_correlation,
+        }
 
-                # Initialize engine and train
-                config = get_default_config()
-                engine = QuantEngineService(config=config)
+        await cache.set("regime", cache_data)
 
-                train_result = engine.train(prices)
-
-                if train_result.get("status") == "success":
-                    # Store trained model artifacts (could save to DB)
-                    logger.info(f"Trained quant engine for portfolio {portfolio_id}")
-                    processed += 1
-                else:
-                    logger.warning(f"Training failed for portfolio {portfolio_id}: {train_result.get('message')}")
-                    failed += 1
-
-            except Exception as e:
-                logger.error(f"Failed to process portfolio {portfolio_id}: {e}")
-                failed += 1
-
-        message = f"Quant engine monthly: {processed} portfolios trained, {failed} failed"
-        logger.info(f"quant_engine_monthly: {message}")
+        message = f"Regime: {regime.regime}, Avg Corr: {corr.average_correlation:.1%}"
+        logger.info(f"market_regime_daily: {message}")
         return message
 
     except Exception as e:
-        logger.error(f"quant_engine_monthly failed: {e}")
+        logger.error(f"market_regime_daily failed: {e}")
         raise

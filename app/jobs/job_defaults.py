@@ -12,6 +12,7 @@ from app.database.orm import CronJob
 
 DEFAULT_SCHEDULES: dict[str, tuple[str, str]] = {
     "initial_data_ingest": ("*/15 * * * *", "Process queued symbols every 15 min"),
+    "process_new_symbols_batch": ("*/10 * * * *", "Batch process new symbols every 10 min"),
     "data_grab": ("0 23 * * 1-5", "Fetch stock data Mon-Fri 11pm"),
     "cache_warmup": ("*/30 * * * *", "Pre-cache chart data every 30 min"),
     "batch_ai_swipe": ("0 3 * * 0", "Generate swipe bios weekly Sunday 3am"),
@@ -29,6 +30,7 @@ JOB_PRIORITIES: dict[str, dict[str, int | str]] = {
     "data_grab": {"queue": "high", "priority": 9},
     "cache_warmup": {"queue": "high", "priority": 8},
     "batch_poll": {"queue": "high", "priority": 8},
+    "process_new_symbols_batch": {"queue": "default", "priority": 8},
     "process_new_symbol": {"queue": "default", "priority": 7},
     "process_approved_symbol": {"queue": "default", "priority": 7},
     "regenerate_symbol_summary": {"queue": "default", "priority": 6},

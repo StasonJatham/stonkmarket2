@@ -39,12 +39,9 @@ from .portfolio import (
     TransactionResponse,
 )
 from .quant_engine import (
-    AuditBlockResponse,
-    EngineOutputResponse,
-    GenerateRecommendationsRequest,
-    RecommendationRowResponse,
-    TuningResultResponse,
-    ValidationResultResponse,
+    SignalResultResponse,
+    SignalScanResponse,
+    StockSignalResponse,
 )
 from .suggestions import (
     SuggestionAdminAction,
@@ -108,13 +105,10 @@ __all__ = [
     "PortfolioAnalyticsRequest",
     "PortfolioAnalyticsResponse",
     "PortfolioAnalyticsJobResponse",
-    # Quant Engine
-    "GenerateRecommendationsRequest",
-    "EngineOutputResponse",
-    "RecommendationRowResponse",
-    "AuditBlockResponse",
-    "ValidationResultResponse",
-    "TuningResultResponse",
+    # Quant Engine (Signal Scanner)
+    "SignalResultResponse",
+    "SignalScanResponse",
+    "StockSignalResponse",
     # Common
     "ErrorResponse",
     "HealthResponse",
