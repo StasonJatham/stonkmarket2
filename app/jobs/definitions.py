@@ -277,9 +277,9 @@ async def data_grab_job() -> str:
                 except Exception as e:
                     logger.warning(f"Failed to update {symbol}: {e}")
 
-        # Full refresh batches (1y window)
+        # Full refresh batches (5y window for quant analysis)
         if full_refresh:
-            full_start = today - timedelta(days=365)
+            full_start = today - timedelta(days=1825)
             for batch in _chunked(full_refresh, batch_size):
                 await _process_batch(batch, full_start)
 

@@ -188,13 +188,12 @@ class HyperparameterTuner:
         # Get current config as dict
         config_dict = {
             "base_currency": self.base_config.base_currency,
-            "monthly_inflow_min": self.base_config.monthly_inflow_min,
-            "monthly_inflow_max": self.base_config.monthly_inflow_max,
+            "inflow_min_eur": self.base_config.inflow_min_eur,
+            "inflow_max_eur": self.base_config.inflow_max_eur,
             "max_weight": params.get("max_weight", self.base_config.max_weight),
             "max_turnover": self.base_config.max_turnover,
             "fixed_cost_eur": self.base_config.fixed_cost_eur,
             "min_trade_eur": self.base_config.min_trade_eur,
-            "history_days": params.get("history_months", 36) * 21,
             "train_months": self.base_config.train_months,
             "validation_months": self.base_config.validation_months,
             "test_months": self.base_config.test_months,
@@ -207,12 +206,10 @@ class HyperparameterTuner:
             "n_pca_factors": params.get(
                 "n_pca_factors", self.base_config.n_pca_factors
             ),
-            "min_variance_explained": self.base_config.min_variance_explained,
             "lambda_risk": params.get("lambda_risk", self.base_config.lambda_risk),
             "turnover_penalty": params.get(
                 "turnover_penalty", self.base_config.turnover_penalty
             ),
-            "shrinkage_factor": self.base_config.shrinkage_factor,
         }
 
         return QuantConfig(**config_dict)

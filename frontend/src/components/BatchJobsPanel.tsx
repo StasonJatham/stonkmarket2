@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   getBatchJobs,
+  cancelBatchJob,
+  deleteBatchJob,
   type BatchJob,
   type BatchJobStatus,
 } from '@/services/api';
@@ -19,6 +21,12 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
   RefreshCw,
   Loader2,
   AlertCircle,
@@ -28,6 +36,9 @@ import {
   Pause,
   Zap,
   Package,
+  MoreHorizontal,
+  Trash2,
+  StopCircle,
 } from 'lucide-react';
 
 function getStatusBadge(status: BatchJobStatus) {
@@ -142,6 +153,7 @@ export function BatchJobsPanel() {
   const [activeCount, setActiveCount] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   const loadJobs = useCallback(async () => {
     setIsLoading(true);
@@ -156,6 +168,32 @@ export function BatchJobsPanel() {
       setIsLoading(false);
     }
   }, []);
+
+  const handleCancel = useCallback(async (batchId: string) => {
+    setActionLoading(batchId);
+    setError(null);
+    try {
+      await cancelBatchJob(batchId);
+      await loadJobs();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to cancel batch job');
+    } finally {
+      setActionLoading(null);
+    }
+  }, [loadJobs]);
+
+  const handleDelete = useCallback(async (jobId: number, batchId: string) => {
+    setActionLoading(batchId);
+    setError(null);
+    try {
+      await deleteBatchJob(jobId);
+      await loadJobs();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete batch job');
+    } finally {
+      setActionLoading(null);
+    }
+  }, [loadJobs]);
 
   useEffect(() => {
     loadJobs();
@@ -235,6 +273,7 @@ export function BatchJobsPanel() {
                   <TableHead>Cost</TableHead>
                   <TableHead>Created</TableHead>
                   <TableHead>Completed</TableHead>
+                  <TableHead className="w-[50px]">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -288,6 +327,43 @@ export function BatchJobsPanel() {
                         </TableCell>
                         <TableCell className="text-sm text-muted-foreground">
                           {formatDate(job.completed_at)}
+                        </TableCell>
+                        <TableCell>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button 
+                                variant="ghost" 
+                                size="sm"
+                                disabled={actionLoading === job.batch_id}
+                              >
+                                {actionLoading === job.batch_id ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <MoreHorizontal className="h-4 w-4" />
+                                )}
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              {isActive && (
+                                <DropdownMenuItem 
+                                  onClick={() => handleCancel(job.batch_id)}
+                                  className="text-destructive focus:text-destructive"
+                                >
+                                  <StopCircle className="h-4 w-4 mr-2" />
+                                  Cancel Job
+                                </DropdownMenuItem>
+                              )}
+                              {!isActive && (
+                                <DropdownMenuItem 
+                                  onClick={() => handleDelete(job.id, job.batch_id)}
+                                  className="text-destructive focus:text-destructive"
+                                >
+                                  <Trash2 className="h-4 w-4 mr-2" />
+                                  Delete Job
+                                </DropdownMenuItem>
+                              )}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </TableCell>
                       </motion.tr>
                     );

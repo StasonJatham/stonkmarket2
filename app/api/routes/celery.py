@@ -1,4 +1,4 @@
-"""Celery monitoring routes (Flower proxy)."""
+"""Celery monitoring routes (Flower proxy with Valkey fallback)."""
 
 from __future__ import annotations
 
@@ -20,18 +20,20 @@ router = APIRouter(prefix="/celery", tags=["Celery"])
 @router.get(
     "/workers",
     summary="List Celery workers",
-    description="Proxy to Flower workers endpoint (admin only).",
+    description="Proxy to Flower workers endpoint with Celery inspect fallback (admin only).",
 )
 async def list_workers(
     admin: TokenData = Depends(require_admin),
 ) -> dict:
+    # Try Flower first
     try:
         payload = await fetch_flower("api/workers")
         if isinstance(payload, dict) and payload:
             return payload
     except ExternalServiceError:
-        logger.debug("Flower workers endpoint not available")
+        logger.debug("Flower workers endpoint not available, using Celery inspect")
 
+    # Fallback to Celery inspect
     return celery_inspect.list_workers()
 
 
@@ -44,7 +46,11 @@ async def list_tasks(
     limit: int = Query(100, ge=1, le=1000),
     admin: TokenData = Depends(require_admin),
 ) -> dict:
-    return await fetch_flower("api/tasks", params={"limit": limit})
+    try:
+        return await fetch_flower("api/tasks", params={"limit": limit})
+    except ExternalServiceError:
+        logger.debug("Flower tasks endpoint not available")
+        return {}
 
 
 @router.get(
@@ -56,17 +62,22 @@ async def get_task_info(
     task_id: str = Path(..., min_length=1, max_length=200),
     admin: TokenData = Depends(require_admin),
 ) -> dict:
-    return await fetch_flower(f"api/task/info/{task_id}")
+    try:
+        return await fetch_flower(f"api/task/info/{task_id}")
+    except ExternalServiceError:
+        logger.debug("Flower task info endpoint not available")
+        return {"task_id": task_id, "state": "UNKNOWN"}
 
 
 @router.get(
     "/queues",
     summary="List Celery queues",
-    description="Proxy to Flower queues endpoint (admin only).",
+    description="Proxy to Flower queues endpoint with Valkey fallback (admin only).",
 )
 async def list_queues(
     admin: TokenData = Depends(require_admin),
 ) -> dict | list[dict]:
+    # Try Flower first
     try:
         payload = await fetch_flower("api/queues")
         if payload:
@@ -74,20 +85,32 @@ async def list_queues(
     except ExternalServiceError:
         logger.debug("Flower queues endpoint not available")
 
-    return celery_inspect.list_queues()
+    # Try Celery inspect
+    queues = celery_inspect.list_queues()
+    if queues:
+        return queues
+
+    # Fallback to Valkey direct query
+    queue_lengths = await celery_inspect.get_queue_lengths_from_valkey()
+    return [
+        {"name": name, "messages": length, "state": "active"}
+        for name, length in queue_lengths.items()
+    ]
 
 
 @router.get(
     "/broker",
     summary="Get broker status",
-    description="Proxy to Flower broker endpoint (admin only).",
+    description="Proxy to Flower broker endpoint with Valkey fallback (admin only).",
 )
 async def get_broker_status(
     admin: TokenData = Depends(require_admin),
 ) -> dict:
+    # Try Flower first
     try:
         return await fetch_flower("api/broker")
     except ExternalServiceError:
-        # Flower may not support broker endpoint - return empty
-        logger.debug("Flower broker endpoint not available")
-        return {}
+        logger.debug("Flower broker endpoint not available, using Valkey direct")
+
+    # Fallback to Valkey info
+    return await celery_inspect.get_broker_info_from_valkey()

@@ -24,6 +24,7 @@ You are an expert in:
 - Use `docker-compose.dev.yml` for updates and tests
 - **Rebuild if necessary**: `docker compose -f docker-compose.dev.yml up --build`
 - Check container logs for runtime errors
+- After tests and API calls, continuously review `docker compose -f docker-compose.dev.yml logs` for errors/issues, analyze the root cause, and fix them before proceeding
 
 ### Test Execution Rules
 
@@ -224,5 +225,4 @@ Before submitting any change:
 ✅ **Do** fix root causes, not symptoms
 ✅ **Do** treat warnings as errors
 ✅ **Do** use shadcn/ui components  
-
 

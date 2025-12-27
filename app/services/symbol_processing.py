@@ -107,12 +107,12 @@ async def process_new_symbol(symbol: str) -> None:
         except Exception as exc:
             logger.error(f"[NEW SYMBOL] Step 3 FAILED: Could not add to dip_state for {symbol}: {exc}")
 
-        # Step 4: Fetch price history
+        # Step 4: Fetch price history (5 years for sufficient quant analysis data)
         try:
             service = get_dipfinder_service()
             prices = await service.price_provider.get_prices(
                 symbol.upper(),
-                start_date=date.today() - timedelta(days=365),
+                start_date=date.today() - timedelta(days=1825),  # 5 years
                 end_date=date.today(),
             )
             if prices is not None and not prices.empty:
@@ -351,7 +351,7 @@ async def process_approved_symbol(symbol: str) -> None:
             service = get_dipfinder_service()
             prices = await service.price_provider.get_prices(
                 symbol.upper(),
-                start_date=date.today() - timedelta(days=365),
+                start_date=date.today() - timedelta(days=1825),  # 5 years
                 end_date=date.today(),
             )
             if prices is not None and not prices.empty:

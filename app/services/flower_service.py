@@ -15,14 +15,18 @@ logger = get_logger("services.flower")
 
 
 def _parse_basic_auth() -> tuple[str, str] | None:
-    if not settings.flower_basic_auth:
+    """Parse FLOWER_BASIC_AUTH into (username, password) tuple."""
+    auth_str = settings.flower_basic_auth
+    if not auth_str:
+        logger.debug("FLOWER_BASIC_AUTH not configured")
         return None
 
-    if ":" not in settings.flower_basic_auth:
-        logger.warning("FLOWER_BASIC_AUTH is missing ':' separator")
+    auth_str = auth_str.strip()
+    if not auth_str or ":" not in auth_str:
+        logger.warning("FLOWER_BASIC_AUTH is missing ':' separator or empty")
         return None
 
-    username, password = settings.flower_basic_auth.split(":", 1)
+    username, password = auth_str.split(":", 1)
     if not username or not password:
         logger.warning("FLOWER_BASIC_AUTH missing username or password")
         return None
@@ -35,6 +39,9 @@ async def fetch_flower(path: str, params: dict[str, Any] | None = None) -> Any:
     base_url = settings.flower_api_url.rstrip("/")
     url = f"{base_url}/{path.lstrip('/')}"
     auth = _parse_basic_auth()
+    
+    if auth is None:
+        logger.debug("No Flower auth configured, Flower may reject request")
 
     try:
         async with httpx.AsyncClient(timeout=settings.external_api_timeout) as client:
@@ -45,7 +52,10 @@ async def fetch_flower(path: str, params: dict[str, Any] | None = None) -> Any:
         logger.warning(f"Flower request failed: {exc}")
         raise ExternalServiceError(message="Flower API unavailable") from exc
     except httpx.HTTPStatusError as exc:
-        logger.warning(f"Flower API error: {exc.response.status_code}")
+        if exc.response.status_code == 401:
+            logger.warning("Flower API 401 Unauthorized - check FLOWER_BASIC_AUTH env var")
+        else:
+            logger.warning(f"Flower API error: {exc.response.status_code}")
         raise ExternalServiceError(
             message="Flower API returned an error",
             details={"status_code": exc.response.status_code},

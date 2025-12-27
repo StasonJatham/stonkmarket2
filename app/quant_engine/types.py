@@ -378,22 +378,30 @@ class AuditBlock:
     """
     Audit information for reproducibility and transparency.
     
-    Contains all model artifacts needed to reproduce the decision.
+    Contains all information needed for transparency and debugging.
     """
-    model_weights: dict[str, float]
-    oos_scores: dict[str, dict[str, float]]
-    risk_model: dict[str, Any]
-    hyperparams: dict[str, Any]
-    data_hash: str  # SHA-256 of input data for reproducibility
+    timestamp: datetime
+    config_hash: int
+    mu_hat_summary: dict[str, float]
+    risk_model_summary: dict[str, Any]
+    optimizer_status: str
+    constraint_binding: list[str]
+    turnover_realized: float
+    regime_state: str
+    dip_stats: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serializable dict."""
         return {
-            "model_weights": self.model_weights,
-            "oos_scores": self.oos_scores,
-            "risk_model": self.risk_model,
-            "hyperparams": self.hyperparams,
-            "data_hash": self.data_hash,
+            "timestamp": self.timestamp.isoformat(),
+            "config_hash": self.config_hash,
+            "mu_hat_summary": self.mu_hat_summary,
+            "risk_model_summary": self.risk_model_summary,
+            "optimizer_status": self.optimizer_status,
+            "constraint_binding": self.constraint_binding,
+            "turnover_realized": self.turnover_realized,
+            "regime_state": self.regime_state,
+            "dip_stats": self.dip_stats,
         }
 
 

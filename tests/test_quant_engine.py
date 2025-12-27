@@ -675,12 +675,17 @@ class TestQuantEngineAPI:
             dip=None,
         )
         
+        from datetime import datetime as dt
         audit = AuditBlock(
-            model_weights={"ridge": 0.7, "lasso": 0.3},
-            oos_scores={"ridge": {"mse": 0.001}},
-            risk_model={"n_factors": 5},
-            hyperparams={"lambda_risk": 10.0},
-            data_hash="abc123",
+            timestamp=dt.now(),
+            config_hash=12345,
+            mu_hat_summary={"mean": 0.02, "std": 0.01, "min": 0.0, "max": 0.05},
+            risk_model_summary={"n_factors": 5, "explained_variance": 0.85},
+            optimizer_status="optimal",
+            constraint_binding=[],
+            turnover_realized=0.05,
+            regime_state="neutral_medium",
+            dip_stats=None,
         )
         
         output = EngineOutput(

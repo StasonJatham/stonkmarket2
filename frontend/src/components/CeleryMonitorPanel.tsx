@@ -2,9 +2,11 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   getCeleryBroker,
   getCeleryQueues,
+  getCeleryTasks,
   getCeleryWorkers,
   type CeleryBrokerInfo,
   type CeleryQueueInfo,
+  type CeleryTaskInfo,
   type CeleryWorkerInfo,
   type CeleryWorkersResponse,
 } from '@/services/api';
@@ -20,7 +22,18 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { AlertCircle, Database, RefreshCw, Server, Layers } from 'lucide-react';
+import {
+  AlertCircle,
+  CheckCircle,
+  Clock,
+  Database,
+  Layers,
+  RefreshCw,
+  Server,
+  XCircle,
+  Zap,
+  Activity,
+} from 'lucide-react';
 
 function getActiveCount(info: CeleryWorkerInfo): number | null {
   if (Array.isArray(info.active)) return info.active.length;
@@ -46,58 +59,184 @@ function getConcurrency(info: CeleryWorkerInfo): number | null {
   return typeof value === 'number' ? value : null;
 }
 
-function formatLoadAvg(loadavg: CeleryWorkerInfo['loadavg']): string {
-  if (!loadavg) return '—';
-  if (Array.isArray(loadavg)) return loadavg.join(', ');
-  return String(loadavg);
+function formatUptime(seconds?: number): string {
+  if (!seconds) return '—';
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (hours > 24) {
+    const days = Math.floor(hours / 24);
+    return `${days}d ${hours % 24}h`;
+  }
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
+}
+
+function formatTimestamp(ts?: number): string {
+  if (!ts) return '—';
+  const date = new Date(ts * 1000);
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function formatDuration(seconds?: number): string {
+  if (seconds === undefined || seconds === null) return '—';
+  if (seconds < 1) return `${Math.round(seconds * 1000)}ms`;
+  if (seconds < 60) return `${seconds.toFixed(1)}s`;
+  const minutes = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${minutes}m ${secs.toFixed(0)}s`;
+}
+
+function TaskStateBadge({ state }: { state: string }) {
+  const stateConfig: Record<string, { variant: 'default' | 'secondary' | 'destructive' | 'outline'; icon: typeof CheckCircle }> = {
+    SUCCESS: { variant: 'default', icon: CheckCircle },
+    FAILURE: { variant: 'destructive', icon: XCircle },
+    PENDING: { variant: 'secondary', icon: Clock },
+    STARTED: { variant: 'outline', icon: Zap },
+    RECEIVED: { variant: 'outline', icon: Clock },
+    RETRY: { variant: 'secondary', icon: RefreshCw },
+  };
+
+  const config = stateConfig[state] || { variant: 'outline' as const, icon: Activity };
+  const Icon = config.icon;
+
+  return (
+    <Badge variant={config.variant} className="gap-1">
+      <Icon className="h-3 w-3" />
+      {state}
+    </Badge>
+  );
+}
+
+interface BrokerCardProps {
+  broker: CeleryBrokerInfo | null;
+}
+
+function BrokerCard({ broker }: BrokerCardProps) {
+  if (!broker) {
+    return (
+      <div className="text-sm text-muted-foreground">No broker data available.</div>
+    );
+  }
+
+  const isConnected = broker.connected === true;
+  const transport = (broker.transport as string) || 'unknown';
+  const redisVersion = (broker.redis_version as string) || '';
+  const clients = (broker.connected_clients as number) || 0;
+  const memory = (broker.used_memory_human as string) || '';
+  const uptime = broker.uptime_in_seconds as number | undefined;
+
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-4">
+      <div className="flex flex-col">
+        <span className="text-xs text-muted-foreground">Status</span>
+        <span className="flex items-center gap-1.5 mt-1">
+          {isConnected ? (
+            <>
+              <CheckCircle className="h-4 w-4 text-green-500" />
+              <span className="text-sm font-medium">Connected</span>
+            </>
+          ) : (
+            <>
+              <XCircle className="h-4 w-4 text-destructive" />
+              <span className="text-sm font-medium">Disconnected</span>
+            </>
+          )}
+        </span>
+      </div>
+      <div className="flex flex-col">
+        <span className="text-xs text-muted-foreground">Transport</span>
+        <span className="text-sm font-medium mt-1 capitalize">{transport}</span>
+      </div>
+      {redisVersion && (
+        <div className="flex flex-col">
+          <span className="text-xs text-muted-foreground">Version</span>
+          <span className="text-sm font-medium mt-1">{redisVersion}</span>
+        </div>
+      )}
+      <div className="flex flex-col">
+        <span className="text-xs text-muted-foreground">Clients</span>
+        <span className="text-sm font-medium mt-1">{clients}</span>
+      </div>
+      {memory && (
+        <div className="flex flex-col">
+          <span className="text-xs text-muted-foreground">Memory</span>
+          <span className="text-sm font-medium mt-1">{memory}</span>
+        </div>
+      )}
+      {uptime !== undefined && (
+        <div className="flex flex-col">
+          <span className="text-xs text-muted-foreground">Uptime</span>
+          <span className="text-sm font-medium mt-1">{formatUptime(uptime)}</span>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function CeleryMonitorPanel() {
   const [workers, setWorkers] = useState<CeleryWorkersResponse>({});
   const [queues, setQueues] = useState<CeleryQueueInfo[]>([]);
   const [broker, setBroker] = useState<CeleryBrokerInfo | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [tasks, setTasks] = useState<CeleryTaskInfo[]>([]);
+  const [isInitialLoad, setIsInitialLoad] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadStats = useCallback(async () => {
-    setIsLoading(true);
+  const loadStats = useCallback(async (showRefreshIndicator = false) => {
+    if (showRefreshIndicator) {
+      setIsRefreshing(true);
+    }
     setError(null);
 
-    const [workersResult, queuesResult, brokerResult] = await Promise.allSettled([
+    const [workersResult, queuesResult, brokerResult, tasksResult] = await Promise.allSettled([
       getCeleryWorkers(),
       getCeleryQueues(),
       getCeleryBroker(),
+      getCeleryTasks(30),
     ]);
 
     if (workersResult.status === 'fulfilled') {
       setWorkers(workersResult.value);
     } else {
-      setError('Failed to load Celery workers');
+      console.error('Workers error:', workersResult.reason);
     }
 
     if (queuesResult.status === 'fulfilled') {
       setQueues(queuesResult.value);
-    } else {
-      setError('Failed to load Celery queues');
     }
 
     if (brokerResult.status === 'fulfilled') {
       setBroker(brokerResult.value);
-    } else {
-      setError('Failed to load Celery broker info');
     }
 
-    setIsLoading(false);
+    if (tasksResult.status === 'fulfilled') {
+      setTasks(tasksResult.value);
+    }
+
+    // Only show error if all critical calls failed
+    if (workersResult.status === 'rejected' && brokerResult.status === 'rejected') {
+      setError('Failed to connect to Celery monitoring');
+    }
+
+    setIsInitialLoad(false);
+    setIsRefreshing(false);
   }, []);
 
   useEffect(() => {
     loadStats();
-    const interval = setInterval(loadStats, 15000);
+    const interval = setInterval(() => loadStats(false), 15000);
     return () => clearInterval(interval);
   }, [loadStats]);
 
+  const handleManualRefresh = useCallback(() => {
+    loadStats(true);
+  }, [loadStats]);
+
   const workerEntries = Object.entries(workers);
-  const brokerPayload = broker ? JSON.stringify(broker, null, 2) : '';
+  const totalProcessed = workerEntries.reduce((sum, [, info]) => {
+    const count = getProcessedCount(info);
+    return sum + (count || 0);
+  }, 0);
 
   return (
     <Card className="mt-6">
@@ -109,24 +248,38 @@ export function CeleryMonitorPanel() {
               Celery Monitor
             </CardTitle>
             <CardDescription>
-              Worker status, queue depth, and broker connectivity (via Flower)
+              Real-time worker status, queue depth, and task activity
             </CardDescription>
           </div>
-          <Button variant="outline" size="sm" onClick={loadStats} disabled={isLoading}>
-            <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
-            Refresh
-          </Button>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-4 text-sm">
+              <span className="flex items-center gap-1.5">
+                <Server className="h-4 w-4 text-muted-foreground" />
+                <span className="font-medium">{workerEntries.length}</span>
+                <span className="text-muted-foreground">workers</span>
+              </span>
+              <span className="flex items-center gap-1.5">
+                <Activity className="h-4 w-4 text-muted-foreground" />
+                <span className="font-medium">{totalProcessed}</span>
+                <span className="text-muted-foreground">processed</span>
+              </span>
+            </div>
+            <Button variant="outline" size="sm" onClick={handleManualRefresh} disabled={isRefreshing}>
+              <RefreshCw className={`h-4 w-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
+              Refresh
+            </Button>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-6">
         {error && (
-          <div className="flex items-center gap-2 bg-danger/10 text-danger p-3 rounded-lg">
+          <div className="flex items-center gap-2 bg-destructive/10 text-destructive p-3 rounded-lg">
             <AlertCircle className="h-4 w-4" />
             <span className="text-sm">{error}</span>
           </div>
         )}
 
-        {isLoading ? (
+        {isInitialLoad ? (
           <div className="space-y-3">
             {[...Array(3)].map((_, i) => (
               <Skeleton key={i} className="h-12 w-full" />
@@ -134,6 +287,7 @@ export function CeleryMonitorPanel() {
           </div>
         ) : (
           <>
+            {/* Workers Section */}
             <div>
               <div className="flex items-center gap-2 mb-3 text-sm font-medium">
                 <Server className="h-4 w-4 text-muted-foreground" />
@@ -143,7 +297,12 @@ export function CeleryMonitorPanel() {
                 </Badge>
               </div>
               {workerEntries.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No workers reported by Flower.</p>
+                <div className="flex items-center gap-2 p-4 bg-muted/30 rounded-lg">
+                  <AlertCircle className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm text-muted-foreground">
+                    No workers connected. Check that Celery workers are running.
+                  </span>
+                </div>
               ) : (
                 <div className="overflow-x-auto">
                   <Table>
@@ -151,10 +310,10 @@ export function CeleryMonitorPanel() {
                       <TableRow>
                         <TableHead>Worker</TableHead>
                         <TableHead>Status</TableHead>
-                        <TableHead>Active</TableHead>
-                        <TableHead>Processed</TableHead>
-                        <TableHead>Concurrency</TableHead>
-                        <TableHead>Load</TableHead>
+                        <TableHead className="text-right">Active</TableHead>
+                        <TableHead className="text-right">Processed</TableHead>
+                        <TableHead className="text-right">Concurrency</TableHead>
+                        <TableHead className="text-right">Uptime</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -162,16 +321,31 @@ export function CeleryMonitorPanel() {
                         const active = getActiveCount(info);
                         const processed = getProcessedCount(info);
                         const concurrency = getConcurrency(info);
+                        const uptime = info.uptime;
                         return (
                           <TableRow key={name}>
-                            <TableCell className="font-medium">{name}</TableCell>
-                            <TableCell>
-                              <Badge variant="outline">{info.status || 'unknown'}</Badge>
+                            <TableCell className="font-medium font-mono text-xs">
+                              {name.split('@')[0]}
+                              <span className="text-muted-foreground">@{name.split('@')[1]?.slice(0, 8)}</span>
                             </TableCell>
-                            <TableCell>{active ?? '—'}</TableCell>
-                            <TableCell>{processed ?? '—'}</TableCell>
-                            <TableCell>{concurrency ?? '—'}</TableCell>
-                            <TableCell>{formatLoadAvg(info.loadavg)}</TableCell>
+                            <TableCell>
+                              <Badge variant="default" className="bg-green-600">
+                                <CheckCircle className="h-3 w-3 mr-1" />
+                                online
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-right tabular-nums">
+                              {active !== null ? (
+                                <span className={active > 0 ? 'text-amber-500 font-medium' : ''}>
+                                  {active}
+                                </span>
+                              ) : '—'}
+                            </TableCell>
+                            <TableCell className="text-right tabular-nums">{processed ?? '—'}</TableCell>
+                            <TableCell className="text-right tabular-nums">{concurrency ?? '—'}</TableCell>
+                            <TableCell className="text-right text-muted-foreground">
+                              {formatUptime(uptime)}
+                            </TableCell>
                           </TableRow>
                         );
                       })}
@@ -181,21 +355,27 @@ export function CeleryMonitorPanel() {
               )}
             </div>
 
+            {/* Queues Section */}
             <div>
               <div className="flex items-center gap-2 mb-3 text-sm font-medium">
                 <Layers className="h-4 w-4 text-muted-foreground" />
                 Queues
+                <Badge variant="outline" className="text-muted-foreground">
+                  {queues.length}
+                </Badge>
               </div>
               {queues.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No queue data reported.</p>
+                <div className="flex items-center gap-2 p-4 bg-muted/30 rounded-lg">
+                  <span className="text-sm text-muted-foreground">No queue data available.</span>
+                </div>
               ) : (
                 <div className="overflow-x-auto">
                   <Table>
                     <TableHeader>
                       <TableRow>
                         <TableHead>Queue</TableHead>
-                        <TableHead>Messages</TableHead>
-                        <TableHead>Consumers</TableHead>
+                        <TableHead className="text-right">Messages</TableHead>
+                        <TableHead className="text-right">Consumers</TableHead>
                         <TableHead>State</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -203,9 +383,17 @@ export function CeleryMonitorPanel() {
                       {queues.map((queue, idx) => (
                         <TableRow key={`${queue.name ?? 'queue'}-${idx}`}>
                           <TableCell className="font-medium">{queue.name ?? '—'}</TableCell>
-                          <TableCell>{queue.messages ?? '—'}</TableCell>
-                          <TableCell>{queue.consumers ?? '—'}</TableCell>
-                          <TableCell>{queue.state ?? '—'}</TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {queue.messages !== undefined ? (
+                              <span className={queue.messages > 0 ? 'text-amber-500 font-medium' : ''}>
+                                {queue.messages}
+                              </span>
+                            ) : '—'}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">{queue.consumers ?? '—'}</TableCell>
+                          <TableCell>
+                            <Badge variant="outline">{queue.state ?? 'unknown'}</Badge>
+                          </TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -214,15 +402,67 @@ export function CeleryMonitorPanel() {
               )}
             </div>
 
+            {/* Broker Section */}
             <div>
               <div className="flex items-center gap-2 mb-3 text-sm font-medium">
                 <Database className="h-4 w-4 text-muted-foreground" />
                 Broker
               </div>
-              {brokerPayload ? (
-                <pre className="bg-muted/30 rounded-lg p-3 text-xs overflow-auto max-h-48">{brokerPayload}</pre>
+              <div className="p-4 bg-muted/30 rounded-lg">
+                <BrokerCard broker={broker} />
+              </div>
+            </div>
+
+            {/* Recent Tasks Section */}
+            <div>
+              <div className="flex items-center gap-2 mb-3 text-sm font-medium">
+                <Activity className="h-4 w-4 text-muted-foreground" />
+                Recent Tasks
+                <Badge variant="outline" className="text-muted-foreground">
+                  {tasks.length}
+                </Badge>
+              </div>
+              {tasks.length === 0 ? (
+                <div className="flex items-center gap-2 p-4 bg-muted/30 rounded-lg">
+                  <span className="text-sm text-muted-foreground">
+                    No recent tasks. Tasks will appear here when Flower is available.
+                  </span>
+                </div>
               ) : (
-                <p className="text-sm text-muted-foreground">No broker data reported.</p>
+                <div className="overflow-x-auto max-h-64 overflow-y-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Task</TableHead>
+                        <TableHead>State</TableHead>
+                        <TableHead>Worker</TableHead>
+                        <TableHead className="text-right">Runtime</TableHead>
+                        <TableHead className="text-right">Started</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {tasks.slice(0, 20).map((task) => (
+                        <TableRow key={task.uuid}>
+                          <TableCell className="font-mono text-xs">
+                            {task.name?.split('.').pop() || task.uuid.slice(0, 8)}
+                          </TableCell>
+                          <TableCell>
+                            <TaskStateBadge state={task.state} />
+                          </TableCell>
+                          <TableCell className="text-xs text-muted-foreground">
+                            {task.worker?.split('@')[0] || '—'}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums text-sm">
+                            {formatDuration(task.runtime)}
+                          </TableCell>
+                          <TableCell className="text-right text-xs text-muted-foreground">
+                            {formatTimestamp(task.started || task.received)}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
               )}
             </div>
           </>

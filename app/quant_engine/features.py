@@ -109,6 +109,15 @@ class FeatureSet:
 
         return pd.DataFrame(records)
 
+    def to_dataframe(self) -> pd.DataFrame:
+        """
+        Convert to DataFrame with (date, asset) multi-index.
+        
+        Returns panel-format DataFrame suitable for alpha model training/prediction.
+        """
+        panel = self.to_panel()
+        return panel.set_index(["date", "asset"])
+
 
 def compute_momentum(
     prices: pd.DataFrame,

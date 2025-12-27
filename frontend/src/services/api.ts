@@ -417,6 +417,31 @@ export async function getCeleryBroker(): Promise<CeleryBrokerInfo> {
   return fetchAPI<CeleryBrokerInfo>('/celery/broker');
 }
 
+// Celery task info from Flower
+export interface CeleryTaskInfo {
+  uuid: string;
+  name: string;
+  state: string;
+  received?: number;
+  started?: number;
+  succeeded?: number;
+  failed?: number;
+  runtime?: number;
+  args?: string;
+  kwargs?: string;
+  worker?: string;
+}
+
+export type CeleryTasksResponse = Record<string, CeleryTaskInfo>;
+
+export async function getCeleryTasks(limit = 50): Promise<CeleryTaskInfo[]> {
+  const payload = await fetchAPI<CeleryTasksResponse>(`/celery/tasks?limit=${limit}`);
+  // Convert the dict response to an array sorted by received time
+  return Object.entries(payload)
+    .map(([uuid, info]) => ({ ...info, uuid }))
+    .sort((a, b) => (b.received || 0) - (a.received || 0));
+}
+
 export async function refreshData(): Promise<DipStock[]> {
   return fetchAPI<DipStock[]>('/dips/refresh', {
     method: 'POST',
@@ -1599,6 +1624,20 @@ export interface BatchJobListResponse {
 
 export async function getBatchJobs(limit: number = 20, includeCompleted: boolean = true): Promise<BatchJobListResponse> {
   return fetchAPI<BatchJobListResponse>(`/admin/settings/batch-jobs?limit=${limit}&include_completed=${includeCompleted}`);
+}
+
+export async function cancelBatchJob(batchId: string): Promise<{ success: boolean; batch_id: string; status: string }> {
+  return fetchAPI<{ success: boolean; batch_id: string; status: string }>(
+    `/admin/settings/batch-jobs/${batchId}/cancel`,
+    { method: 'POST' }
+  );
+}
+
+export async function deleteBatchJob(jobId: number): Promise<{ success: boolean; job_id: number; batch_id: string }> {
+  return fetchAPI<{ success: boolean; job_id: number; batch_id: string }>(
+    `/admin/settings/batch-jobs/${jobId}`,
+    { method: 'DELETE' }
+  );
 }
 
 // =============================================================================

@@ -193,12 +193,19 @@ async def update_cronjob(
 
     # Log the change before applying
     if existing.cron != payload.cron:
+        # admin.sub can be numeric user_id or string like "admin"
+        changed_by_id = None
+        if admin.sub:
+            try:
+                changed_by_id = int(admin.sub)
+            except (ValueError, TypeError):
+                pass  # Non-numeric sub (e.g., "admin") - leave as None
         await settings_history_repo.log_change(
             setting_type="cronjob",
             setting_key=name,
             old_value=existing.cron,
             new_value=payload.cron,
-            changed_by=int(admin.sub) if admin.sub else None,
+            changed_by=changed_by_id,
             changed_by_username=admin.username,
         )
 

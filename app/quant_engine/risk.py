@@ -55,9 +55,9 @@ def fit_pca_risk_model(
     # Drop assets with insufficient data
     valid_assets = returns.dropna(axis=1, thresh=min_obs).columns.tolist()
 
-    if len(valid_assets) < n_factors + 1:
+    if len(valid_assets) < 2:
         raise ValueError(
-            f"Insufficient valid assets: {len(valid_assets)} < {n_factors + 1}"
+            f"Insufficient valid assets: {len(valid_assets)} < 2"
         )
 
     returns_clean = returns[valid_assets].dropna()
@@ -68,6 +68,7 @@ def fit_pca_risk_model(
         )
 
     n_assets = len(valid_assets)
+    # Dynamically adjust n_factors to fit available assets
     n_factors = min(n_factors, n_assets - 1, len(returns_clean) - 1)
 
     logger.info(f"Fitting PCA risk model: {n_assets} assets, {n_factors} factors")

@@ -51,7 +51,7 @@ async def _get_user_id(user: TokenData) -> int:
 
 async def _fetch_prices_for_symbols(
     symbols: list[str],
-    lookback_days: int = 400,
+    lookback_days: int = 1825,  # Default 5 years for sufficient training data
 ) -> pd.DataFrame:
     """
     Fetch price history for multiple symbols.
@@ -132,6 +132,14 @@ def _holdings_to_weights(
     return weight_arr, assets
 
 
+def _safe_float(value: float, default: float = 0.0) -> float:
+    """Convert a float to JSON-safe value (handle NaN/inf)."""
+    import math
+    if value is None or math.isnan(value) or math.isinf(value):
+        return default
+    return float(value)
+
+
 def _engine_output_to_response(output: Any) -> EngineOutputResponse:
     """Convert EngineOutput dataclass to Pydantic response."""
     recommendations = []
@@ -140,23 +148,27 @@ def _engine_output_to_response(output: Any) -> EngineOutputResponse:
         recommendations.append(RecommendationRowResponse(
             ticker=rec_dict.get("ticker", ""),
             action=rec_dict.get("action", "HOLD"),
-            notional_eur=rec_dict.get("notional_eur", 0.0),
-            delta_weight=rec_dict.get("delta_weight", 0.0),
-            target_weight=rec_dict.get("target_weight", 0.0),
-            mu_hat=rec_dict.get("mu_hat", 0.0),
-            uncertainty=rec_dict.get("mu_hat_uncertainty", {}).get("oos_rmse", 0.0)
-            if isinstance(rec_dict.get("mu_hat_uncertainty"), dict)
-            else 0.0,
-            risk_contribution=rec_dict.get("risk", {}).get("mcr", 0.0)
-            if isinstance(rec_dict.get("risk"), dict)
-            else 0.0,
-            dip_score=rec_dict.get("dip", {}).get("dip_score")
-            if isinstance(rec_dict.get("dip"), dict)
+            notional_eur=_safe_float(rec_dict.get("notional_eur", 0.0)),
+            delta_weight=_safe_float(rec_dict.get("delta_weight", 0.0)),
+            target_weight=_safe_float(rec_dict.get("target_weight", 0.0)),
+            mu_hat=_safe_float(rec_dict.get("mu_hat", 0.0)),
+            uncertainty=_safe_float(
+                rec_dict.get("mu_hat_uncertainty", {}).get("oos_rmse", 0.0)
+                if isinstance(rec_dict.get("mu_hat_uncertainty"), dict)
+                else 0.0
+            ),
+            risk_contribution=_safe_float(
+                rec_dict.get("risk", {}).get("mcr", 0.0)
+                if isinstance(rec_dict.get("risk"), dict)
+                else 0.0
+            ),
+            dip_score=_safe_float(rec_dict.get("dip", {}).get("dip_score"))
+            if isinstance(rec_dict.get("dip"), dict) and rec_dict.get("dip", {}).get("dip_score") is not None
             else None,
             dip_bucket=rec_dict.get("dip", {}).get("bucket")
             if isinstance(rec_dict.get("dip"), dict)
             else None,
-            marginal_utility=rec_dict.get("delta_utility_net", 0.0),
+            marginal_utility=_safe_float(rec_dict.get("delta_utility_net", 0.0)),
         ))
 
     # Build audit block
@@ -175,8 +187,8 @@ def _engine_output_to_response(output: Any) -> EngineOutputResponse:
         if hasattr(output.solver_status, "value")
         else str(output.solver_status),
         constraint_binding=audit_dict.get("constraint_binding", []),
-        turnover_realized=audit_dict.get("turnover", 0.0),
-        regime_state=audit_dict.get("regime", "neutral_medium"),
+        turnover_realized=_safe_float(audit_dict.get("turnover_realized", 0.0)),
+        regime_state=audit_dict.get("regime_state", "neutral_medium"),
         dip_stats=audit_dict.get("dip_stats"),
         error_message=None,
     )
@@ -186,12 +198,12 @@ def _engine_output_to_response(output: Any) -> EngineOutputResponse:
         as_of_date=output.as_of
         if isinstance(output.as_of, datetime)
         else datetime.combine(output.as_of, datetime.min.time()),
-        portfolio_value_eur=output.portfolio_value_eur,
-        inflow_eur=output.inflow_eur,
+        portfolio_value_eur=_safe_float(output.portfolio_value_eur),
+        inflow_eur=_safe_float(output.inflow_eur),
         total_trades=len([r for r in recommendations if r.action != "HOLD"]),
-        total_transaction_cost_eur=output.total_transaction_cost_eur,
-        expected_portfolio_return=output.expected_portfolio_return,
-        expected_portfolio_risk=output.expected_portfolio_risk,
+        total_transaction_cost_eur=_safe_float(output.total_transaction_cost_eur),
+        expected_portfolio_return=_safe_float(output.expected_portfolio_return),
+        expected_portfolio_risk=_safe_float(output.expected_portfolio_risk),
         audit=audit,
     )
 
@@ -561,8 +573,8 @@ async def get_global_recommendations(
 
     symbols = [s.symbol for s in symbols_list]
 
-    # Fetch price history
-    prices = await _fetch_prices_for_symbols(symbols, lookback_days=400)
+    # Fetch price history (5 years for sufficient training data)
+    prices = await _fetch_prices_for_symbols(symbols)
     if prices.empty:
         return EngineOutputResponse(
             recommendations=[],
@@ -658,7 +670,7 @@ async def get_global_recommendations(
             prices=prices,
             market_prices=market_prices,
             w_current=w_current,
-            inflow_weight=inflow_weight,
+            inflow_eur=inflow_eur,
             portfolio_value_eur=assumed_portfolio,
         )
     except Exception as e:

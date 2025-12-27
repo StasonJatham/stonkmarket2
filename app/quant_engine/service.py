@@ -51,13 +51,18 @@ from app.quant_engine.tuner import (
     create_fast_grid,
 )
 from app.quant_engine.types import (
+    ActionType,
     AuditBlock,
+    DipAnnotation,
     DipArtifacts,
     EngineOutput,
+    MomentumCondition,
+    MuHatUncertainty,
     OptimizationResult,
     QuantConfig,
     RecommendationRow,
     RegimeState,
+    RiskInfo,
     RiskModel,
 )
 from app.quant_engine.walk_forward import (
@@ -78,7 +83,7 @@ def get_default_config() -> QuantConfig:
         max_turnover=0.20,
         fixed_cost_eur=1.0,
         min_trade_eur=10.0,
-        train_months=36,
+        train_months=12,  # Reduced from 36 to work with ~1 year of data
         validation_months=6,
         test_months=6,
         ridge_alpha=1.0,
@@ -252,54 +257,57 @@ class QuantEngineService:
         returns = prices_pred.pct_change().dropna()
 
         # Compute features for latest date
-        features = compute_all_features(returns, self.config.history_days)
+        features = compute_all_features(
+            prices=prices_pred,
+            returns=returns,
+            momentum_windows=self.config.momentum_windows,
+            volatility_window=self.config.volatility_window,
+            reversal_window=self.config.reversal_window,
+        )
 
-        # Get feature values for latest date
-        X_latest = features.to_dataframe().iloc[[-1]]
+        # Get feature values for latest date (per asset)
+        feature_df = features.to_dataframe()
+        latest_date = feature_df.index.get_level_values("date").max()
+        X_latest = feature_df.loc[latest_date].dropna()
+
+        if X_latest.empty:
+            raise ValueError("No valid features available for prediction")
 
         # Predict
-        mu_hat, uncertainty = self.alpha_model.predict(X_latest)
+        alpha_result = self.alpha_model.predict(X_latest)
 
         # Convert to Series indexed by asset
-        assets = returns.columns.tolist()
-        mu_hat_series = pd.Series(mu_hat.flatten(), index=assets)
-        uncertainty_series = pd.Series(uncertainty.flatten(), index=assets)
+        mu_hat_series = alpha_result.mu_hat
+        uncertainty_series = alpha_result.uncertainty
 
         # Compute dip scores
         dip_artifacts = None
         if market_prices is not None and len(market_prices) > 0:
             try:
                 market_returns = market_prices.pct_change().dropna()
-                dip_scores, residuals, betas = compute_dip_score(
-                    returns=returns,
-                    market_returns=market_returns,
-                    lookback=self.config.history_days,
-                )
-
-                dip_artifacts = DipArtifacts(
-                    dip_score=dip_scores,
-                    residuals=residuals,
-                    factor_betas=betas,
-                    as_of_date=as_of_date,
+                # Convert market_returns to DataFrame if it's a Series
+                if isinstance(market_returns, pd.Series):
+                    market_returns = market_returns.to_frame(name="market")
+                    
+                dip_artifacts = compute_dip_score(
+                    asset_returns=returns,
+                    factor_returns=market_returns,
+                    resid_vol_window=self.config.dip_resid_vol_window,
+                    min_obs=self.config.dip_min_obs,
                 )
 
                 # Apply dip adjustment to mu_hat
-                if self.config.dip_k > 0:
-                    latest_dip = dip_scores.iloc[-1] if len(dip_scores) > 0 else pd.Series(dtype=float)
+                if self.config.dip_k > 0 and len(dip_artifacts.dip_score) > 0:
+                    latest_dip = dip_artifacts.dip_score.iloc[-1]
                     mu_hat_series = apply_dip_adjustment(
                         mu_hat=mu_hat_series,
                         dip_scores=latest_dip,
-                        k=self.config.dip_k,
+                        dip_k=self.config.dip_k,
                     )
             except Exception as e:
                 logger.warning(f"Failed to compute dip scores: {e}")
 
-        # Apply shrinkage based on uncertainty
-        mu_hat_series = shrink_mu_hat(
-            mu_hat=mu_hat_series,
-            uncertainty=uncertainty_series,
-            shrinkage_factor=self.config.shrinkage_factor,
-        )
+        # Note: Shrinkage is already applied in AlphaModelEnsemble.predict()
 
         return mu_hat_series, uncertainty_series, dip_artifacts
 
@@ -416,15 +424,6 @@ class QuantEngineService:
             inflow_eur=inflow_eur,
         )
 
-        # Generate recommendations from Δw
-        recommendations = self._create_recommendations(
-            opt_result=opt_result,
-            mu_hat=mu_hat,
-            uncertainty=uncertainty,
-            dip_artifacts=dip_artifacts,
-            portfolio_value_eur=portfolio_value_eur,
-        )
-
         # Compute regime
         returns = prices.pct_change().dropna()
         if market_prices is not None and len(market_prices) > 0:
@@ -433,8 +432,18 @@ class QuantEngineService:
             market_returns = returns.mean(axis=1)
 
         regime = compute_regime_state(
-            returns=market_returns,
-            lookback=63,
+            market_returns=market_returns,
+            as_of=as_of_date.date() if isinstance(as_of_date, datetime) else as_of_date,
+        )
+
+        # Generate recommendations from Δw
+        recommendations = self._create_recommendations(
+            opt_result=opt_result,
+            mu_hat=mu_hat,
+            uncertainty=uncertainty,
+            dip_artifacts=dip_artifacts,
+            portfolio_value_eur=portfolio_value_eur,
+            regime=regime,
         )
 
         # Create audit block
@@ -448,12 +457,15 @@ class QuantEngineService:
 
         return EngineOutput(
             recommendations=recommendations,
-            as_of_date=as_of_date,
+            as_of=as_of_date.date() if isinstance(as_of_date, datetime) else as_of_date,
             portfolio_value_eur=portfolio_value_eur,
             inflow_eur=inflow_eur,
-            total_trades=len([r for r in recommendations if r.action != "HOLD"]),
+            solver_status=opt_result.status,
+            total_trades=len([r for r in recommendations if r.action != ActionType.HOLD]),
             total_transaction_cost_eur=opt_result.transaction_cost_eur,
-            expected_portfolio_return=float(mu_hat @ opt_result.w_new),
+            expected_portfolio_return=float(
+                (mu_hat * pd.Series(opt_result.w_new, index=opt_result.assets)).sum()
+            ),
             expected_portfolio_risk=float(np.sqrt(
                 self.risk_model.portfolio_variance(opt_result.w_new)
             )) if self.risk_model else 0.0,
@@ -467,6 +479,7 @@ class QuantEngineService:
         uncertainty: pd.Series,
         dip_artifacts: DipArtifacts | None,
         portfolio_value_eur: float,
+        regime: RegimeState | None = None,
     ) -> list[RecommendationRow]:
         """Create recommendation rows from optimization result."""
         recommendations = []
@@ -485,18 +498,23 @@ class QuantEngineService:
                     dip_scores[asset] = latest_dip[asset]
                     dip_buckets[asset] = get_dip_bucket(latest_dip[asset])
 
+        # Get MCRs once if risk model exists
+        mcrs = None
+        if self.risk_model is not None:
+            mcrs = self.risk_model.marginal_contribution_to_risk(w_new)
+
         for i, asset in enumerate(assets):
             delta_w = dw[i]
             notional_eur = delta_w * portfolio_value_eur
 
             # Determine action
             if abs(notional_eur) < self.config.min_trade_eur:
-                action = "HOLD"
+                action = ActionType.HOLD
                 notional_eur = 0.0
             elif delta_w > 0:
-                action = "BUY"
+                action = ActionType.BUY
             else:
-                action = "SELL"
+                action = ActionType.SELL
                 notional_eur = abs(notional_eur)  # Report as positive
 
             # Get asset-level stats
@@ -507,25 +525,55 @@ class QuantEngineService:
                 else uncertainty[i]
             )
 
-            # Risk contribution (MCR * weight)
-            if self.risk_model is not None:
-                mcr = self.risk_model.marginal_contribution_to_risk(w_new)
-                asset_risk = mcr[i] * w_new[i]
+            # Risk info
+            if mcrs is not None:
+                mcr_val = mcrs[i]
+                marginal_vol = mcr_val / max(self.risk_model.portfolio_volatility(w_new), 1e-8)
             else:
-                asset_risk = 0.0
+                mcr_val = 0.0
+                marginal_vol = 0.0
+
+            risk_info = RiskInfo(
+                marginal_vol=marginal_vol,
+                mcr=mcr_val,
+            )
+
+            # Uncertainty info
+            mu_uncertainty = MuHatUncertainty(
+                ci_low=asset_mu - 1.96 * asset_uncertainty,
+                ci_high=asset_mu + 1.96 * asset_uncertainty,
+                oos_rmse=asset_uncertainty,
+            )
+
+            # Transaction cost
+            trade_cost = self.config.fixed_cost_eur if action != ActionType.HOLD else 0.0
+
+            # Delta utility net of costs
+            delta_utility_net = opt_result.marginal_utilities[i] - trade_cost / max(portfolio_value_eur, 1.0)
+
+            # Dip annotation
+            dip_annotation = None
+            if asset in dip_scores:
+                dip_annotation = DipAnnotation(
+                    dip_score=dip_scores[asset],
+                    bucket=dip_buckets.get(asset, "neutral"),
+                    regime=regime if regime else RegimeState.neutral_medium(),
+                    momentum_12m=MomentumCondition.NEUTRAL,  # TODO: compute from data
+                )
 
             rec = RecommendationRow(
                 ticker=asset,
+                name=None,  # TODO: get from symbol service
                 action=action,
                 notional_eur=notional_eur,
                 delta_weight=delta_w,
-                target_weight=w_new[i],
                 mu_hat=asset_mu,
-                uncertainty=asset_uncertainty,
-                risk_contribution=asset_risk,
-                dip_score=dip_scores.get(asset),
-                dip_bucket=dip_buckets.get(asset),
-                marginal_utility=opt_result.marginal_utilities[i],
+                mu_hat_uncertainty=mu_uncertainty,
+                risk=risk_info,
+                delta_utility_net=delta_utility_net,
+                trade_cost_eur=trade_cost,
+                constraints=[],  # TODO: populate from optimizer
+                dip=dip_annotation,
             )
             recommendations.append(rec)
 
@@ -554,15 +602,15 @@ class QuantEngineService:
             },
             risk_model_summary={
                 "n_factors": self.risk_model.n_factors if self.risk_model else 0,
-                "variance_explained": (
-                    self.risk_model.variance_explained
+                "explained_variance": (
+                    float(self.risk_model.explained_variance.sum())
                     if self.risk_model else 0.0
                 ),
             },
             optimizer_status=opt_result.status.value,
             constraint_binding=opt_result.constraint_status.max_weight_binding,
             turnover_realized=float(np.sum(np.abs(opt_result.dw))),
-            regime_state=f"{regime.trend_regime.value}_{regime.volatility_regime.value}",
+            regime_state=f"{regime.trend.value}_{regime.volatility.value}",
             dip_stats={
                 "n_dipped": sum(
                     1 for r in dip_artifacts.dip_score.iloc[-1].values
@@ -624,9 +672,20 @@ class QuantEngineService:
 
         def model_fn(train_returns: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
             """Create model function for validation."""
-            # Fit on training data
-            features = compute_all_features(train_returns, self.config.history_days)
-            X, y = prepare_alpha_training_data(train_returns, features, 21)
+            # Fit on training data - construct prices from cumulative returns
+            train_prices = (1 + train_returns).cumprod()
+            features = compute_all_features(
+                prices=train_prices,
+                returns=train_returns,
+                momentum_windows=self.config.momentum_windows,
+                volatility_window=self.config.volatility_window,
+                reversal_window=self.config.reversal_window,
+            )
+            X, y = prepare_alpha_training_data(
+                features=features,
+                returns=train_returns,
+                forecast_horizon_months=self.config.forecast_horizon_months,
+            )
 
             if len(X) < 50:
                 # Not enough data, return zeros
@@ -642,13 +701,12 @@ class QuantEngineService:
             model.fit(X, y)
 
             # Predict on latest
-            X_latest = features.to_dataframe().iloc[[-1]]
-            mu, unc = model.predict(X_latest)
+            feature_df = features.to_dataframe()
+            latest_date = feature_df.index.get_level_values("date").max()
+            X_latest = feature_df.loc[latest_date].dropna()
+            alpha_result = model.predict(X_latest)
 
-            return (
-                pd.Series(mu.flatten(), index=train_returns.columns),
-                pd.Series(unc.flatten(), index=train_returns.columns),
-            )
+            return (alpha_result.mu_hat, alpha_result.uncertainty)
 
         def optimize_fn(
             mu_hat: pd.Series,
@@ -719,8 +777,20 @@ class QuantEngineService:
 
         def model_factory(config: QuantConfig) -> callable:
             def model_fn(train_returns: pd.DataFrame):
-                features = compute_all_features(train_returns, config.history_days)
-                X, y = prepare_alpha_training_data(train_returns, features, 21)
+                # Construct prices from cumulative returns
+                train_prices = (1 + train_returns).cumprod()
+                features = compute_all_features(
+                    prices=train_prices,
+                    returns=train_returns,
+                    momentum_windows=config.momentum_windows,
+                    volatility_window=config.volatility_window,
+                    reversal_window=config.reversal_window,
+                )
+                X, y = prepare_alpha_training_data(
+                    features=features,
+                    returns=train_returns,
+                    forecast_horizon_months=config.forecast_horizon_months,
+                )
 
                 if len(X) < 50:
                     return (
@@ -735,13 +805,12 @@ class QuantEngineService:
                 )
                 model.fit(X, y)
 
-                X_latest = features.to_dataframe().iloc[[-1]]
-                mu, unc = model.predict(X_latest)
+                feature_df = features.to_dataframe()
+                latest_date = feature_df.index.get_level_values("date").max()
+                X_latest = feature_df.loc[latest_date].dropna()
+                alpha_result = model.predict(X_latest)
 
-                return (
-                    pd.Series(mu.flatten(), index=train_returns.columns),
-                    pd.Series(unc.flatten(), index=train_returns.columns),
-                )
+                return (alpha_result.mu_hat, alpha_result.uncertainty)
 
             return model_fn
 

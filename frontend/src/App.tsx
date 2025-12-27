@@ -15,7 +15,7 @@ const ENABLE_LEGAL_PAGES = import.meta.env.VITE_ENABLE_LEGAL_PAGES === 'true';
 
 // Lazy load pages for code splitting
 const Dashboard = lazy(() => import('@/pages/Dashboard').then(m => ({ default: m.Dashboard })));
-const Landing3D = lazy(() => import('@/pages/Landing3D').then(m => ({ default: m.Landing3D })));
+const Landing = lazy(() => import('@/pages/Landing').then(m => ({ default: m.Landing })));
 const LoginPage = lazy(() => import('@/pages/Login').then(m => ({ default: m.LoginPage })));
 const AdminPage = lazy(() => import('@/pages/Admin').then(m => ({ default: m.AdminPage })));
 const DipSwipePage = lazy(() => import('@/pages/DipSwipe').then(m => ({ default: m.DipSwipePage })));
@@ -49,7 +49,7 @@ function App() {
                   <Routes>
                     <Route path="/login" element={<LoginPage />} />
                     <Route element={<Layout />}>
-                    <Route path="/" element={<Landing3D />} />
+                    <Route path="/" element={<Landing />} />
                     <Route path="/dashboard" element={<Dashboard />} />
                       <Route path="/swipe" element={<DipSwipePage />} />
                       <Route path="/suggest" element={<SuggestionsPage />} />

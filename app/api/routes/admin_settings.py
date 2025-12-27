@@ -298,6 +298,86 @@ async def get_batch_jobs(
         )
 
 
+@router.post(
+    "/batch-jobs/{batch_id}/cancel",
+    summary="Cancel a batch job",
+    description="Cancel an active batch job. Only in_progress or pending jobs can be cancelled.",
+)
+async def cancel_batch_job(
+    batch_id: str,
+    user: TokenData = Depends(require_admin),
+) -> dict:
+    """Cancel a batch job via OpenAI API and update local status."""
+    import openai
+    from app.core.config import settings as app_settings
+
+    async with get_session() as session:
+        # Find the job
+        stmt = select(BatchJob).where(BatchJob.batch_id == batch_id)
+        result = await session.execute(stmt)
+        job = result.scalar_one_or_none()
+
+        if not job:
+            from app.core.exceptions import NotFoundError
+            raise NotFoundError(f"Batch job {batch_id} not found")
+
+        if job.status in ["completed", "failed", "expired", "cancelled"]:
+            from app.core.exceptions import ValidationError
+            raise ValidationError(f"Cannot cancel batch job with status: {job.status}")
+
+        # Try to cancel on OpenAI
+        try:
+            client = openai.OpenAI(api_key=app_settings.openai_api_key)
+            batch = client.batches.cancel(batch_id)
+            new_status = batch.status
+        except openai.NotFoundError:
+            # Job not found on OpenAI, just mark as cancelled locally
+            new_status = "cancelled"
+        except Exception as e:
+            # If already completed or can't cancel, mark as cancelled locally
+            logger.warning(f"Could not cancel batch on OpenAI: {e}")
+            new_status = "cancelled"
+
+        # Update local status
+        job.status = new_status
+        await session.commit()
+
+        logger.info(f"Batch job {batch_id} cancelled by {user.username}")
+        return {"success": True, "batch_id": batch_id, "status": new_status}
+
+
+@router.delete(
+    "/batch-jobs/{job_id}",
+    summary="Delete a batch job record",
+    description="Delete a batch job record from the database. Only completed, failed, expired, or cancelled jobs can be deleted.",
+)
+async def delete_batch_job(
+    job_id: int,
+    user: TokenData = Depends(require_admin),
+) -> dict:
+    """Delete a batch job record from the database."""
+    async with get_session() as session:
+        # Find the job
+        stmt = select(BatchJob).where(BatchJob.id == job_id)
+        result = await session.execute(stmt)
+        job = result.scalar_one_or_none()
+
+        if not job:
+            from app.core.exceptions import NotFoundError
+            raise NotFoundError(f"Batch job {job_id} not found")
+
+        if job.status in ["pending", "validating", "in_progress", "finalizing"]:
+            from app.core.exceptions import ValidationError
+            raise ValidationError(f"Cannot delete active batch job with status: {job.status}. Cancel it first.")
+
+        batch_id = job.batch_id
+        await session.delete(job)
+        await session.commit()
+
+        logger.info(f"Batch job {job_id} ({batch_id}) deleted by {user.username}")
+        return {"success": True, "job_id": job_id, "batch_id": batch_id}
+
+
 # Settings Change History endpoints
 
 
