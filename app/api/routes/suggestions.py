@@ -179,6 +179,15 @@ async def suggest_stock(
 
     # Validate symbol format
     symbol = _validate_symbol_format(symbol)
+    
+    # Check if symbol is already tracked
+    from app.repositories import symbols_orm as symbols_repo
+    tracked_symbol = await symbols_repo.get_symbol(symbol)
+    if tracked_symbol and tracked_symbol.is_active:
+        raise ValidationError(
+            message="This stock is already being tracked",
+            details={"symbol": symbol, "status": "already_tracked"}
+        )
 
     # Get server-generated fingerprint (not client-provided)
     server_fp = get_server_fingerprint(request)
@@ -409,35 +418,47 @@ async def get_top_suggestions(
 
     Public endpoint - shows what stocks the community wants tracked.
     Uses session-based tracking for exclude_voted filter.
+    Excludes symbols that are already tracked.
     """
+    from app.repositories import symbols_orm as symbols_repo
+    
     # Get voted symbols from Valkey
     voted_symbols = set()
     if exclude_voted:
         voted_symbols = await get_voted_symbols(request)
+    
+    # Get all tracked symbols to filter them out
+    tracked_symbols_list = await symbols_repo.list_symbols()
+    tracked_symbols = {s.symbol for s in tracked_symbols_list if s.is_active}
 
     # Use ORM to get pending suggestions
     suggestions, _ = await suggestions_repo.list_all_suggestions(
         status="pending",
-        limit=limit + len(voted_symbols),
+        limit=limit + len(voted_symbols) + len(tracked_symbols),  # Fetch extra to account for filtering
         offset=0,
     )
 
-    # Filter out voted symbols and convert to response format
+    # Filter out voted symbols and already-tracked symbols
     results = []
     for suggestion in suggestions:
-        if suggestion.symbol not in voted_symbols:
-            results.append({
-                "symbol": suggestion.symbol,
-                "name": suggestion.company_name,
-                "vote_count": suggestion.vote_score,
-                "sector": suggestion.sector,
-                "summary": suggestion.summary,
-                "ipo_year": suggestion.ipo_year,
-                "website": suggestion.website,
-                "fetch_status": suggestion.fetch_status,
-            })
-            if len(results) >= limit:
-                break
+        # Skip if already voted (when exclude_voted is True)
+        if suggestion.symbol in voted_symbols:
+            continue
+        # Skip if already tracked
+        if suggestion.symbol in tracked_symbols:
+            continue
+        results.append({
+            "symbol": suggestion.symbol,
+            "name": suggestion.company_name,
+            "vote_count": suggestion.vote_score,
+            "sector": suggestion.sector,
+            "summary": suggestion.summary,
+            "ipo_year": suggestion.ipo_year,
+            "website": suggestion.website,
+            "fetch_status": suggestion.fetch_status,
+        })
+        if len(results) >= limit:
+            break
 
     return results
 

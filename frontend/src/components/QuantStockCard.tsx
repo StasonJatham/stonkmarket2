@@ -52,6 +52,20 @@ function getActionIcon(action: 'BUY' | 'SELL' | 'HOLD') {
   }
 }
 
+function getDipBucketVariant(bucket: string | null): 'default' | 'secondary' | 'destructive' | 'outline' {
+  if (!bucket) return 'outline';
+  switch (bucket.toLowerCase()) {
+    case 'deep':
+      return 'default'; // Green - good dip opportunity
+    case 'moderate':
+      return 'secondary'; // Neutral
+    case 'shallow':
+      return 'outline'; // Light - minor dip
+    default:
+      return 'outline';
+  }
+}
+
 // Memoize the component to prevent unnecessary re-renders
 export const QuantStockCard = memo(function QuantStockCard({ 
   stock, 
@@ -182,17 +196,22 @@ export const QuantStockCard = memo(function QuantStockCard({
               <span className="text-foreground/60">Risk:</span>{' '}
               <span className="font-medium">{(stock.risk_contribution * 100).toFixed(1)}%</span>
             </div>
+            {stock.dip_bucket && (
+              <Badge variant={getDipBucketVariant(stock.dip_bucket)} className="text-xs h-5">
+                {stock.dip_bucket.charAt(0).toUpperCase() + stock.dip_bucket.slice(1)} Dip
+              </Badge>
+            )}
             {stock.dip_score !== null && (
               <div>
-                <span className="text-foreground/60">DipScore:</span>{' '}
-                <span className={`font-medium ${stock.dip_score > 0 ? 'text-success' : stock.dip_score < 0 ? 'text-danger' : ''}`}>
-                  {stock.dip_score.toFixed(2)}
+                <span className="text-foreground/60">Quality:</span>{' '}
+                <span className={`font-medium ${stock.dip_score > 0.5 ? 'text-success' : stock.dip_score < 0.3 ? 'text-danger' : ''}`}>
+                  {(stock.dip_score * 100).toFixed(0)}
                 </span>
               </div>
             )}
             {stock.legacy_days_in_dip !== null && (
               <div className="hidden sm:block">
-                <span className="text-foreground/60">Days in dip:</span>{' '}
+                <span className="text-foreground/60">Days:</span>{' '}
                 <span className="font-medium">{stock.legacy_days_in_dip}</span>
               </div>
             )}

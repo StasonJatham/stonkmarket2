@@ -126,34 +126,30 @@ async def _store_analysis_version(
         await session.commit()
 
 
-# Agent definitions with their investment philosophy
+# Import all personas from hedge_fund module - the authoritative source
+from app.hedge_fund.agents.investor_persona import PERSONAS
+
+# Build AGENTS dict from PERSONAS for backward compatibility
 AGENTS = {
-    "warren_buffett": {
-        "name": "Warren Buffett",
-        "philosophy": "Value investing focused on companies with strong moats, consistent earnings, and fair valuations",
-        "focus": ["ROE", "debt levels", "profit margins", "consistent earnings", "intrinsic value"],
-    },
-    "peter_lynch": {
-        "name": "Peter Lynch",
-        "philosophy": "Growth at a Reasonable Price (GARP) - finding undervalued growth companies",
-        "focus": ["PEG ratio", "earnings growth", "revenue growth", "market opportunity"],
-    },
-    "cathie_wood": {
-        "name": "Cathie Wood",
-        "philosophy": "Disruptive innovation investing - betting on transformative technologies",
-        "focus": ["innovation potential", "market disruption", "growth trajectory", "technology moat"],
-    },
-    "michael_burry": {
-        "name": "Michael Burry",
-        "philosophy": "Deep value and contrarian investing - finding opportunities others miss",
-        "focus": ["balance sheet strength", "cash flow", "undervaluation", "market sentiment"],
-    },
-    "ben_graham": {
-        "name": "Ben Graham",
-        "philosophy": "Defensive value investing - focus on margin of safety and asset protection",
-        "focus": ["net current assets", "earnings stability", "dividend record", "moderate P/E"],
-    },
+    key: {
+        "name": persona.name,
+        "philosophy": persona.philosophy,
+        "focus": persona.focus_areas,
+        "is_llm": True,  # LLM-based persona agents
+    }
+    for key, persona in PERSONAS.items()
 }
+
+# Calculation agents (non-LLM) - DISABLED for now
+# These need proper data conversion to work with the hedge_fund Fundamentals schema
+# which requires specific fields and numeric values (not formatted strings)
+# TODO: Fix data conversion before re-enabling
+# CALCULATION_AGENTS = {
+#     "fundamentals": {...},
+#     "technicals": {...},
+#     ...
+# }
+# AGENTS.update(CALCULATION_AGENTS)
 
 # Standard 5-value signal taxonomy (matches hedge_fund.schemas.Signal)
 SignalType = Literal["strong_buy", "buy", "hold", "sell", "strong_sell"]
@@ -279,16 +275,122 @@ def _format_metrics_for_prompt(fundamentals: dict[str, Any], stock_data: dict[st
     return "\n".join(lines)
 
 
+async def _run_calculation_agent(
+    agent_id: str,
+    symbol: str,
+    fundamentals: dict[str, Any],
+    stock_data: dict[str, Any],
+) -> AgentVerdict | None:
+    """Run a calculation-based agent from hedge_fund module."""
+    from app.hedge_fund.agents import (
+        get_fundamentals_agent,
+        get_technicals_agent,
+        get_valuation_agent,
+        get_sentiment_agent,
+        get_risk_agent,
+    )
+    from app.hedge_fund.schemas import Fundamentals, MarketData, PriceSeries
+
+    agent_map = {
+        "fundamentals": get_fundamentals_agent,
+        "technicals": get_technicals_agent,
+        "valuation": get_valuation_agent,
+        "sentiment": get_sentiment_agent,
+        "risk": get_risk_agent,
+    }
+
+    agent_factory = agent_map.get(agent_id)
+    if not agent_factory:
+        return None
+
+    try:
+        agent = agent_factory()
+
+        # Build Fundamentals object from dict
+        fund = Fundamentals(
+            pe_ratio=fundamentals.get("pe_ratio"),
+            forward_pe=fundamentals.get("forward_pe"),
+            peg_ratio=fundamentals.get("peg_ratio"),
+            price_to_book=fundamentals.get("price_to_book"),
+            price_to_sales=fundamentals.get("price_to_sales"),
+            ev_to_ebitda=fundamentals.get("ev_to_ebitda"),
+            enterprise_value=fundamentals.get("enterprise_value"),
+            market_cap=fundamentals.get("market_cap"),
+            roe=fundamentals.get("return_on_equity"),
+            roa=fundamentals.get("return_on_assets"),
+            roic=fundamentals.get("roic"),
+            profit_margin=fundamentals.get("profit_margin"),
+            operating_margin=fundamentals.get("operating_margin"),
+            gross_margin=fundamentals.get("gross_margin"),
+            debt_to_equity=fundamentals.get("debt_to_equity"),
+            current_ratio=fundamentals.get("current_ratio"),
+            quick_ratio=fundamentals.get("quick_ratio"),
+            interest_coverage=fundamentals.get("interest_coverage"),
+            revenue_growth=fundamentals.get("revenue_growth"),
+            earnings_growth=fundamentals.get("earnings_growth"),
+            free_cash_flow=fundamentals.get("free_cash_flow"),
+            fcf_yield=fundamentals.get("fcf_yield"),
+            dividend_yield=fundamentals.get("dividend_yield"),
+            payout_ratio=fundamentals.get("payout_ratio"),
+            beta=fundamentals.get("beta"),
+            shares_outstanding=fundamentals.get("shares_outstanding"),
+            float_shares=fundamentals.get("float_shares"),
+            insider_ownership=fundamentals.get("insider_ownership"),
+            institutional_ownership=fundamentals.get("institutional_ownership"),
+            short_ratio=fundamentals.get("short_ratio"),
+            short_percent_of_float=fundamentals.get("short_percent_of_float"),
+            analyst_rating=fundamentals.get("recommendation"),
+            target_mean_price=fundamentals.get("target_mean_price"),
+            target_high_price=fundamentals.get("target_high_price"),
+            target_low_price=fundamentals.get("target_low_price"),
+        )
+
+        # Build MarketData object - minimal for now
+        market_data = MarketData(
+            symbol=symbol,
+            current_price=stock_data.get("current_price") or stock_data.get("regularMarketPrice"),
+            fundamentals=fund,
+            prices=PriceSeries(symbol=symbol, prices=[]),  # Would need price history
+        )
+
+        # Run the calculation agent
+        result = await agent.calculate(symbol, market_data)
+
+        # Convert AgentSignal to AgentVerdict
+        return AgentVerdict(
+            agent_id=agent_id,
+            agent_name=AGENTS[agent_id]["name"],
+            signal=_normalize_signal(result.signal.value if hasattr(result.signal, 'value') else result.signal),
+            confidence=int(result.confidence * 100) if result.confidence <= 1 else int(result.confidence),
+            reasoning=result.reasoning,
+            key_factors=result.key_factors or [],
+        )
+
+    except Exception as e:
+        logger.warning(f"Calculation agent {agent_id} failed for {symbol}: {e}")
+        return None
+
+
 async def _run_single_agent(
     agent_id: str,
     symbol: str,
     metrics_text: str,
+    fundamentals: dict[str, Any] | None = None,
+    stock_data: dict[str, Any] | None = None,
 ) -> AgentVerdict | None:
-    """Run a single agent's analysis using OpenAI."""
+    """Run a single agent's analysis - LLM or calculation based."""
     agent = AGENTS.get(agent_id)
     if not agent:
         return None
 
+    # Check if this is a calculation agent (non-LLM)
+    if not agent.get("is_llm", True):
+        if fundamentals is None or stock_data is None:
+            logger.warning(f"Cannot run calculation agent {agent_id} without fundamentals/stock_data")
+            return None
+        return await _run_calculation_agent(agent_id, symbol, fundamentals, stock_data)
+
+    # LLM-based persona agent
     prompt = f"""You are {agent['name']}, the legendary investor. Analyze this stock using your investment philosophy.
 
 YOUR PHILOSOPHY: {agent['philosophy']}
@@ -468,7 +570,7 @@ async def run_agent_analysis(
     verdicts = []
 
     for agent_id in agent_ids:
-        verdict = await _run_single_agent(agent_id, symbol, metrics_text)
+        verdict = await _run_single_agent(agent_id, symbol, metrics_text, fundamentals, stock_data)
         if verdict:
             verdicts.append(verdict)
 

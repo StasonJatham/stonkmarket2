@@ -690,7 +690,7 @@ class AiAgentAnalysis(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     symbol: Mapped[str] = mapped_column(String(20), unique=True, nullable=False)
     verdicts: Mapped[dict] = mapped_column(JSONB, nullable=False, default=list)
-    overall_signal: Mapped[str] = mapped_column(String(20), nullable=False)  # bullish, bearish, neutral
+    overall_signal: Mapped[str] = mapped_column(String(20), nullable=False)  # strong_buy, buy, hold, sell, strong_sell
     overall_confidence: Mapped[int] = mapped_column(Integer, nullable=False)
     summary: Mapped[str | None] = mapped_column(Text)
     analyzed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -699,11 +699,42 @@ class AiAgentAnalysis(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     __table_args__ = (
-        CheckConstraint("overall_signal IN ('bullish', 'bearish', 'neutral')", name="ck_ai_overall_signal"),
+        CheckConstraint("overall_signal IN ('strong_buy', 'buy', 'hold', 'sell', 'strong_sell')", name="ck_ai_overall_signal"),
         CheckConstraint("overall_confidence >= 0 AND overall_confidence <= 100", name="ck_ai_confidence_range"),
         Index("idx_ai_agent_analysis_symbol", "symbol"),
         Index("idx_ai_agent_analysis_expires", "expires_at"),
         Index("idx_ai_agent_analysis_signal", "overall_signal"),
+    )
+
+
+# =============================================================================
+# AI PERSONA CONFIGURATION
+# =============================================================================
+
+
+class AIPersona(Base):
+    """AI investor persona configuration with avatar images.
+    
+    Stores persona details like Warren Buffett, Peter Lynch, etc.
+    with customizable avatar images for display in the UI.
+    """
+    __tablename__ = "ai_persona"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    key: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)  # e.g., "warren_buffett"
+    name: Mapped[str] = mapped_column(String(100), nullable=False)  # e.g., "Warren Buffett"
+    description: Mapped[str | None] = mapped_column(Text)  # Short bio/description
+    philosophy: Mapped[str | None] = mapped_column(Text)  # Investment philosophy
+    avatar_data: Mapped[bytes | None] = mapped_column(LargeBinary)  # Optimized WebP avatar image
+    avatar_mime_type: Mapped[str | None] = mapped_column(String(50))  # e.g., "image/webp"
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    display_order: Mapped[int] = mapped_column(Integer, default=0)  # For UI ordering
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        Index("idx_ai_persona_key", "key"),
+        Index("idx_ai_persona_active", "is_active", "display_order"),
     )
 
 

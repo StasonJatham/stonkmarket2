@@ -82,6 +82,7 @@ import { UserApiKeyManager } from '@/components/UserApiKeyManager';
 import { SystemSettings } from '@/components/SystemSettings';
 import { SuggestionManager } from '@/components/SuggestionManager';
 import { AIManager } from '@/components/AIManager';
+import { AIPersonasPanel } from '@/components/AIPersonasPanel';
 import { CeleryMonitorPanel } from '@/components/CeleryMonitorPanel';
 import { useSEO } from '@/lib/seo';
 
@@ -271,7 +272,12 @@ export function AdminPage() {
       id: 'ai',
       label: 'AI Content',
       icon: Sparkles,
-      content: <AIManager />,
+      content: (
+        <div className="space-y-6">
+          <AIPersonasPanel />
+          <AIManager />
+        </div>
+      ),
     },
     {
       id: 'system',

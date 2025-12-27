@@ -410,3 +410,39 @@ async def upsert_ai_analysis(
         )
         await session.commit()
         return result
+
+
+async def get_all_ai_analyses() -> list[DipAIAnalysis]:
+    """Get all AI analyses.
+    
+    Returns:
+        List of DipAIAnalysis ORM objects
+    """
+    async with get_session() as session:
+        result = await session.execute(
+            select(DipAIAnalysis).order_by(DipAIAnalysis.symbol)
+        )
+        return list(result.scalars().all())
+
+
+async def delete_ai_analysis(symbol: str) -> bool:
+    """Delete AI analysis for a symbol to force regeneration.
+    
+    Args:
+        symbol: Stock symbol (case-insensitive)
+        
+    Returns:
+        True if deleted, False if not found
+    """
+    from sqlalchemy import delete as sql_delete
+    
+    async with get_session() as session:
+        result = await session.execute(
+            sql_delete(DipAIAnalysis).where(DipAIAnalysis.symbol == symbol.upper())
+        )
+        await session.commit()
+        deleted = result.rowcount > 0
+        if deleted:
+            logger.info(f"Deleted AI analysis for {symbol.upper()}")
+        return deleted
+

@@ -150,6 +150,7 @@ async def get_user(id):
 - **Reuse existing services** - check `app/services/` first
 - **Keep functions short** - single responsibility
 - If you're copying code, you're doing it wrong
+- When refactoring, remove legacy/unused code entirely; do not add wrappers or backward-compatibility layers for old code
 
 ### Code Organization
 
@@ -219,6 +220,7 @@ Before submitting any change:
 ❌ **Don't** edit tests to make them pass - fix the code
 ❌ **Don't** ignore warnings - they're errors
 ❌ **Don't** create custom UI components when shadcn has them
+❌ **Don't** keep legacy or deprecated code around; remove it after refactors
 
 ✅ **Do** store data locally, fetch on schedule
 ✅ **Do** use Alembic autogenerate

@@ -9,6 +9,7 @@ import {
   aggregatePortfolioPerformance,
   getAvailableBenchmarks,
   getDipCard,
+  quantToStockCardData,
 } from '@/services/api';
 import type { 
   DipStock, 
@@ -19,11 +20,12 @@ import type {
   AggregatedPerformance,
   PublicBenchmark,
   DipCard,
+  StockCardData,
 } from '@/services/api';
 import { useDips } from '@/context/DipContext';
 import { useQuant } from '@/context/QuantContext';
 import { useSEO, generateBreadcrumbJsonLd } from '@/lib/seo';
-import { StockCard } from '@/components/StockCard';
+import { StockCardV2 } from '@/components/cards/StockCardV2';
 import { StockDetailsPanel } from '@/components/StockDetailsPanel';
 import { BenchmarkSelector } from '@/components/BenchmarkSelector';
 import { PortfolioChart } from '@/components/PortfolioChart';
@@ -70,7 +72,7 @@ const item = {
 
 export function Dashboard() {
   // Use quant engine for primary stock ranking (sorted by marginal utility)
-  const { stocks: quantStocks, isLoading: isLoadingQuant, asOfDate, error: quantError, portfolioStats } = useQuant();
+  const { stocks: quantStocks, recommendations, isLoading: isLoadingQuant, asOfDate, error: quantError, portfolioStats } = useQuant();
   // Keep dip context for showAllStocks toggle (legacy compatibility)
   const { showAllStocks, setShowAllStocks } = useDips();
   
@@ -79,6 +81,15 @@ export function Dashboard() {
   const isLoadingRanking = isLoadingQuant;
   const lastUpdated = asOfDate;
   const error = quantError;
+  
+  // Convert recommendations to StockCardData for enhanced card display
+  const stockCardDataMap = useMemo(() => {
+    const map = new Map<string, StockCardData>();
+    recommendations.forEach(rec => {
+      map.set(rec.ticker, quantToStockCardData(rec));
+    });
+    return map;
+  }, [recommendations]);
   
   const [searchParams, setSearchParams] = useSearchParams();
   const [selectedStock, setSelectedStock] = useState<DipStock | null>(null);
@@ -673,15 +684,31 @@ export function Dashboard() {
                     : 'space-y-3'
                 }
               >
-                {visibleStocks.map((stock) => (
-                  <motion.div key={stock.symbol} variants={item}>
-                    <StockCard
-                      stock={stock}
-                      isSelected={selectedStock?.symbol === stock.symbol}
-                      onClick={() => handleStockSelect(stock)}
-                    />
-                  </motion.div>
-                ))}
+                {visibleStocks.map((stock) => {
+                  const cardData = stockCardDataMap.get(stock.symbol);
+                  return (
+                    <motion.div key={stock.symbol} variants={item}>
+                      <StockCardV2
+                        stock={cardData || {
+                          symbol: stock.symbol,
+                          name: stock.name,
+                          sector: stock.sector,
+                          last_price: stock.last_price,
+                          change_percent: stock.change_percent,
+                          high_52w: stock.high_52w,
+                          low_52w: stock.low_52w,
+                          market_cap: stock.market_cap,
+                          depth: stock.depth,
+                          days_since_dip: stock.days_since_dip,
+                          dip_bucket: null,
+                        }}
+                        isSelected={selectedStock?.symbol === stock.symbol}
+                        compact={viewMode === 'list'}
+                        onClick={() => handleStockSelect(stock)}
+                      />
+                    </motion.div>
+                  );
+                })}
               </motion.div>
               
               {/* Load more trigger for infinite scroll */}

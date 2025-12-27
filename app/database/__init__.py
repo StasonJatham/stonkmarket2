@@ -33,6 +33,7 @@ from .connection import (
 from .orm import (
     # AI
     AiAgentAnalysis,
+    AIPersona,
     AnalysisVersion,
     # API & Batch
     ApiUsage,
@@ -112,6 +113,7 @@ __all__ = [
     "DipfinderHistory",
     "YfinanceInfoCache",
     "AiAgentAnalysis",
+    "AIPersona",
     "StockFundamentals",
     "SymbolSearchResult",
     "SymbolSearchLog",

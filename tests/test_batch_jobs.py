@@ -220,15 +220,19 @@ class TestJobDefinitions:
         jobs = get_all_jobs()
 
         expected_jobs = [
-            "initial_data_ingest",
-            "data_grab",
+            "symbol_ingest",
+            "prices_daily",
             "cache_warmup",
-            "batch_ai_swipe",
-            "batch_ai_analysis",
-            "batch_poll",
-            "fundamentals_refresh",
-            "ai_agents_analysis",
-            "cleanup",
+            "ai_bios_weekly",
+            "ai_ratings_weekly",
+            "ai_batch_poll",
+            "fundamentals_monthly",
+            "ai_personas_weekly",
+            "cleanup_daily",
+            "portfolio_worker",
+            "signals_daily",
+            "regime_daily",
+            "quant_monthly",
         ]
 
         for job_name in expected_jobs:
@@ -246,13 +250,13 @@ class TestJobDefinitions:
             assert inspect.iscoroutinefunction(job_func), f"Job {job_name} is not async"
 
 
-class TestBatchAISwipeJob:
-    """Test batch AI swipe bio generation job."""
+class TestAIBiosWeeklyJob:
+    """Test AI bios weekly job."""
 
     @pytest.mark.asyncio
-    async def test_batch_swipe_job_with_mocks(self):
-        """Batch swipe job should process correctly."""
-        from app.jobs.definitions import batch_ai_swipe_job
+    async def test_ai_bios_job_with_mocks(self):
+        """AI bios weekly job should process correctly."""
+        from app.jobs.definitions import ai_bios_weekly_job
 
         with patch(
             "app.services.batch_scheduler.schedule_batch_swipe_bios",
@@ -263,18 +267,18 @@ class TestBatchAISwipeJob:
             new_callable=AsyncMock,
             return_value=0,
         ):
-            result = await batch_ai_swipe_job()
+            result = await ai_bios_weekly_job()
 
             assert "batch_123" in result or "none needed" in result.lower()
 
 
-class TestBatchAIAnalysisJob:
-    """Test batch AI dip analysis job."""
+class TestAIRatingsWeeklyJob:
+    """Test AI ratings weekly job."""
 
     @pytest.mark.asyncio
-    async def test_batch_analysis_job_with_mocks(self):
-        """Batch analysis job should process correctly."""
-        from app.jobs.definitions import batch_ai_analysis_job
+    async def test_ai_ratings_job_with_mocks(self):
+        """AI ratings weekly job should process correctly."""
+        from app.jobs.definitions import ai_ratings_weekly_job
 
         with patch(
             "app.services.batch_scheduler.schedule_batch_dip_analysis",
@@ -285,36 +289,36 @@ class TestBatchAIAnalysisJob:
             new_callable=AsyncMock,
             return_value=0,
         ):
-            result = await batch_ai_analysis_job()
+            result = await ai_ratings_weekly_job()
 
             assert "batch_456" in result or "none needed" in result.lower()
 
 
-class TestBatchPollJob:
-    """Test batch polling job."""
+class TestAIBatchPollJob:
+    """Test AI batch polling job."""
 
     @pytest.mark.asyncio
-    async def test_batch_poll_job_with_mocks(self):
-        """Batch poll job should check for completed batches."""
-        from app.jobs.definitions import batch_poll_job
+    async def test_ai_batch_poll_job_with_mocks(self):
+        """AI batch poll job should check for completed batches."""
+        from app.jobs.definitions import ai_batch_poll_job
 
         with patch(
             "app.services.batch_scheduler.process_completed_batch_jobs",
             new_callable=AsyncMock,
             return_value=2,
         ):
-            result = await batch_poll_job()
+            result = await ai_batch_poll_job()
 
             assert "2" in result or "processed" in result.lower()
 
 
-class TestAIAgentsAnalysisJob:
-    """Test AI agents analysis job."""
+class TestAIPersonasWeeklyJob:
+    """Test AI personas weekly job."""
 
     @pytest.mark.asyncio
-    async def test_ai_agents_job_with_mocks(self):
-        """AI agents analysis job should run all agents."""
-        from app.jobs.definitions import ai_agents_analysis_job
+    async def test_ai_personas_job_with_mocks(self):
+        """AI personas weekly job should run all personas."""
+        from app.jobs.definitions import ai_personas_weekly_job
 
         mock_result = {"analyzed": 10, "skipped": 2, "failed": 0}
 
@@ -323,7 +327,7 @@ class TestAIAgentsAnalysisJob:
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
-            result = await ai_agents_analysis_job()
+            result = await ai_personas_weekly_job()
 
             # The result format depends on actual implementation
             assert result is not None
@@ -458,7 +462,7 @@ class TestJobExecutor:
             new_callable=AsyncMock,
             return_value=0,
         ):
-            result = await execute_job("batch_poll")
+            result = await execute_job("ai_batch_poll")
             assert result is not None
 
     @pytest.mark.asyncio
@@ -480,9 +484,9 @@ class TestBatchJobIntegration:
     """Integration tests for batch job workflows."""
 
     @pytest.mark.asyncio
-    async def test_full_batch_swipe_workflow(self):
-        """Test complete batch swipe bio workflow."""
-        from app.jobs.definitions import batch_ai_swipe_job
+    async def test_full_ai_bios_workflow(self):
+        """Test complete AI bios weekly workflow."""
+        from app.jobs.definitions import ai_bios_weekly_job
 
         # Mock all dependencies
         with patch(
@@ -494,7 +498,7 @@ class TestBatchJobIntegration:
             new_callable=AsyncMock,
             return_value=0,
         ):
-            result = await batch_ai_swipe_job()
+            result = await ai_bios_weekly_job()
             assert "batch_test_123" in result or result is not None
 
     @pytest.mark.asyncio

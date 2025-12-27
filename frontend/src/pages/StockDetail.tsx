@@ -16,9 +16,11 @@ import {
   getStockInfo, 
   getStockChart, 
   getDipCard,
+  getAgentAnalysis,
   type StockInfo, 
   type ChartDataPoint,
-  type DipCard 
+  type DipCard,
+  type AgentAnalysis,
 } from '@/services/api';
 import { useSEO, generateBreadcrumbJsonLd } from '@/lib/seo';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -43,6 +45,10 @@ import {
   Globe,
   LineChart,
   Scale,
+  Users,
+  ThumbsUp,
+  ThumbsDown,
+  MinusCircle,
 } from 'lucide-react';
 import { StockLogo } from '@/components/StockLogo';
 
@@ -143,6 +149,7 @@ export function StockDetailPage() {
   const [info, setInfo] = useState<StockInfo | null>(null);
   const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
   const [dipCard, setDipCard] = useState<DipCard | null>(null);
+  const [agentAnalysis, setAgentAnalysis] = useState<AgentAnalysis | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [chartPeriod, setChartPeriod] = useState(365);
@@ -263,10 +270,11 @@ export function StockDetailPage() {
     setError(null);
     
     try {
-      const [infoData, chartResult, dipCardResult] = await Promise.allSettled([
+      const [infoData, chartResult, dipCardResult, agentResult] = await Promise.allSettled([
         getStockInfo(upperSymbol),
         getStockChart(upperSymbol, chartPeriod),
         getDipCard(upperSymbol),
+        getAgentAnalysis(upperSymbol),
       ]);
 
       if (infoData.status === 'fulfilled') {
@@ -279,6 +287,10 @@ export function StockDetailPage() {
       
       if (dipCardResult.status === 'fulfilled') {
         setDipCard(dipCardResult.value);
+      }
+      
+      if (agentResult.status === 'fulfilled' && agentResult.value) {
+        setAgentAnalysis(agentResult.value);
       }
 
       if (infoData.status === 'rejected' && chartResult.status === 'rejected') {
@@ -793,7 +805,7 @@ export function StockDetailPage() {
               </CardTitle>
               {dipCard.ai_confidence && (
                 <CardDescription>
-                  Confidence: {(dipCard.ai_confidence * 100).toFixed(0)}%
+                  Confidence: {dipCard.ai_confidence}%
                 </CardDescription>
               )}
             </CardHeader>
@@ -856,6 +868,73 @@ export function StockDetailPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* AI Agent Personas Analysis */}
+      {agentAnalysis && agentAnalysis.verdicts.length > 0 && (
+        <Card className="bg-gradient-to-br from-violet-500/5 to-purple-500/10 border-violet-500/20">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Users className="h-5 w-5 text-violet-500" />
+              Investment Persona Analyses
+              <Badge 
+                variant={
+                  agentAnalysis.overall_signal === 'bullish' ? 'default' :
+                  agentAnalysis.overall_signal === 'bearish' ? 'destructive' : 'secondary'
+                }
+                className="ml-auto"
+              >
+                {agentAnalysis.bullish_count} Bullish • {agentAnalysis.bearish_count} Bearish • {agentAnalysis.neutral_count} Neutral
+              </Badge>
+            </CardTitle>
+            <CardDescription>
+              What famous investors might think about this stock
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-4 md:grid-cols-2">
+              {agentAnalysis.verdicts.map((verdict) => (
+                <div 
+                  key={verdict.agent_id}
+                  className="p-4 rounded-lg bg-background/50 border"
+                >
+                  <div className="flex items-start justify-between mb-2">
+                    <div>
+                      <h4 className="font-semibold">{verdict.agent_name}</h4>
+                      <p className="text-xs text-muted-foreground">
+                        Confidence: {verdict.confidence}%
+                      </p>
+                    </div>
+                    <Badge 
+                      variant={
+                        verdict.signal === 'bullish' ? 'default' :
+                        verdict.signal === 'bearish' ? 'destructive' : 'secondary'
+                      }
+                      className="flex items-center gap-1"
+                    >
+                      {verdict.signal === 'bullish' && <ThumbsUp className="h-3 w-3" />}
+                      {verdict.signal === 'bearish' && <ThumbsDown className="h-3 w-3" />}
+                      {verdict.signal === 'neutral' && <MinusCircle className="h-3 w-3" />}
+                      {verdict.signal.toUpperCase()}
+                    </Badge>
+                  </div>
+                  <p className="text-sm text-muted-foreground mb-2">
+                    {verdict.reasoning}
+                  </p>
+                  {verdict.key_factors.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {verdict.key_factors.slice(0, 3).map((factor, i) => (
+                        <Badge key={i} variant="outline" className="text-xs">
+                          {factor}
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Disclaimer */}
       <Card className="bg-muted/50 border-dashed">

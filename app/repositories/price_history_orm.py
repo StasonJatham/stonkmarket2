@@ -68,6 +68,26 @@ async def get_latest_price_date(symbol: str) -> date | None:
         return result.scalar_one_or_none()
 
 
+async def has_price_history(symbol: str, min_days: int = 30) -> bool:
+    """Check if a symbol has sufficient price history.
+    
+    Args:
+        symbol: Stock ticker symbol
+        min_days: Minimum number of days required (default 30)
+    
+    Returns:
+        True if symbol has at least min_days of price data
+    """
+    async with get_session() as session:
+        result = await session.execute(
+            select(func.count(PriceHistory.id)).where(
+                PriceHistory.symbol == symbol.upper()
+            )
+        )
+        count = result.scalar_one()
+        return count >= min_days
+
+
 async def get_latest_price_dates(symbols: Sequence[str]) -> dict[str, date]:
     """Get most recent price dates for multiple symbols."""
     normalized = [s.upper() for s in symbols]

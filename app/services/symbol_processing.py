@@ -109,23 +109,31 @@ async def process_new_symbol(symbol: str) -> None:
 
         # Step 4: Fetch price history (5 years for sufficient quant analysis data)
         try:
-            service = get_dipfinder_service()
-            prices = await service.price_provider.get_prices(
-                symbol.upper(),
-                start_date=date.today() - timedelta(days=1825),  # 5 years
-                end_date=date.today(),
-            )
-            if prices is not None and not prices.empty:
-                steps_completed.append("price_history")
-                logger.info(f"[NEW SYMBOL] Step 4: Fetched {len(prices)} days of price history")
+            from app.repositories import price_history_orm as price_history_repo
+
+            has_prices = await price_history_repo.has_price_history(symbol.upper(), min_days=1200)
+            if has_prices:
+                logger.info(f"[NEW SYMBOL] Step 4: Price history already cached for {symbol}")
             else:
-                logger.warning(f"[NEW SYMBOL] Step 4: No price history returned for {symbol}")
+                service = get_dipfinder_service()
+                prices = await service.price_provider.get_prices(
+                    symbol.upper(),
+                    start_date=date.today() - timedelta(days=1825),  # 5 years
+                    end_date=date.today(),
+                )
+                if prices is not None and not prices.empty:
+                    steps_completed.append("price_history")
+                    logger.info(f"[NEW SYMBOL] Step 4: Fetched {len(prices)} days of price history")
+                else:
+                    logger.warning(f"[NEW SYMBOL] Step 4: No price history returned for {symbol}")
         except Exception as exc:
             logger.warning(f"[NEW SYMBOL] Step 4 FAILED: Could not fetch price history for {symbol}: {exc}")
 
-        # Step 5: Generate AI summary
-        ai_summary = None
-        if full_summary and len(full_summary) > 100:
+        # Step 5: Generate AI summary (only if missing)
+        ai_summary = await symbols_repo.get_symbol_summary_ai(symbol.upper())
+        if ai_summary:
+            logger.info(f"[NEW SYMBOL] Step 5: Skipped AI summary (already cached for {symbol})")
+        elif full_summary and len(full_summary) > 100:
             try:
                 ai_summary = await summarize_company(
                     symbol=symbol,
@@ -146,53 +154,67 @@ async def process_new_symbol(symbol: str) -> None:
         else:
             logger.info("[NEW SYMBOL] Step 5: Skipped AI summary (no description or too short)")
 
-        # Step 6: Generate AI bio
-        bio = None
-        try:
-            bio = await generate_bio(
-                symbol=symbol,
-                name=name,
-                sector=sector,
-                summary=full_summary,
-                dip_pct=dip_pct,
-            )
-            if bio:
-                steps_completed.append("ai_bio")
-                logger.info("[NEW SYMBOL] Step 6: Generated AI bio")
-            else:
-                logger.warning("[NEW SYMBOL] Step 6: No AI bio generated (OpenAI not configured?)")
-        except Exception as exc:
-            logger.warning(f"[NEW SYMBOL] Step 6 FAILED: AI bio error for {symbol}: {exc}")
+        # Step 6/7: Generate AI content only if missing
+        existing_ai = await dip_votes_repo.get_ai_analysis(symbol)
+        existing_bio = existing_ai.get("swipe_bio") if existing_ai else None
+        existing_rating = existing_ai.get("ai_rating") if existing_ai else None
+        existing_reasoning = existing_ai.get("ai_reasoning") if existing_ai else None
 
-        # Step 7: Generate AI rating
+        bio = existing_bio
         rating_data = None
-        try:
-            fundamentals = await get_fundamentals_for_analysis(symbol)
-            rating_data = await rate_dip(
-                symbol=symbol,
-                current_price=current_price,
-                ref_high=ath_price,
-                dip_pct=dip_pct,
-                days_below=0,
-                name=name,
-                sector=sector,
-                summary=full_summary,
-                **fundamentals,
-            )
-            if rating_data:
-                steps_completed.append("ai_rating")
-                logger.info("[NEW SYMBOL] Step 7: Generated AI rating")
-        except Exception as exc:
-            logger.warning(f"[NEW SYMBOL] Step 7 FAILED: AI rating error for {symbol}: {exc}")
+        generated_ai = False
 
-        # Step 8: Store AI analysis
-        if bio or rating_data:
+        if not existing_bio:
+            try:
+                bio = await generate_bio(
+                    symbol=symbol,
+                    name=name,
+                    sector=sector,
+                    summary=full_summary,
+                    dip_pct=dip_pct,
+                )
+                if bio:
+                    steps_completed.append("ai_bio")
+                    generated_ai = True
+                    logger.info("[NEW SYMBOL] Step 6: Generated AI bio")
+                else:
+                    logger.warning("[NEW SYMBOL] Step 6: No AI bio generated (OpenAI not configured?)")
+            except Exception as exc:
+                logger.warning(f"[NEW SYMBOL] Step 6 FAILED: AI bio error for {symbol}: {exc}")
+        else:
+            logger.info("[NEW SYMBOL] Step 6: Skipped AI bio (already cached)")
+
+        if not existing_rating:
+            try:
+                fundamentals = await get_fundamentals_for_analysis(symbol)
+                rating_data = await rate_dip(
+                    symbol=symbol,
+                    current_price=current_price,
+                    ref_high=ath_price,
+                    dip_pct=dip_pct,
+                    days_below=0,
+                    name=name,
+                    sector=sector,
+                    summary=full_summary,
+                    **fundamentals,
+                )
+                if rating_data:
+                    steps_completed.append("ai_rating")
+                    generated_ai = True
+                    logger.info("[NEW SYMBOL] Step 7: Generated AI rating")
+            except Exception as exc:
+                logger.warning(f"[NEW SYMBOL] Step 7 FAILED: AI rating error for {symbol}: {exc}")
+        else:
+            logger.info("[NEW SYMBOL] Step 7: Skipped AI rating (already cached)")
+
+        # Step 8: Store AI analysis if we generated anything new
+        if generated_ai:
             try:
                 await dip_votes_repo.upsert_ai_analysis(
                     symbol=symbol.upper(),
                     swipe_bio=bio,
-                    ai_rating=rating_data.get("rating") if rating_data else None,
-                    ai_reasoning=rating_data.get("reasoning") if rating_data else None,
+                    ai_rating=rating_data.get("rating") if rating_data else existing_rating,
+                    ai_reasoning=rating_data.get("reasoning") if rating_data else existing_reasoning,
                     is_batch=False,
                 )
                 steps_completed.append("ai_store")
@@ -346,18 +368,24 @@ async def process_approved_symbol(symbol: str) -> None:
             ath_price=ath_price,
         )
 
-        # Fetch 365 days of price history
+        # Fetch 5 years of price history (skip if already cached)
         try:
-            service = get_dipfinder_service()
-            prices = await service.price_provider.get_prices(
-                symbol.upper(),
-                start_date=date.today() - timedelta(days=1825),  # 5 years
-                end_date=date.today(),
-            )
-            if prices is not None and not prices.empty:
-                logger.info(f"Fetched {len(prices)} days of price history for {symbol}")
+            from app.repositories import price_history_orm as price_history_repo
+
+            has_prices = await price_history_repo.has_price_history(symbol.upper(), min_days=1200)
+            if has_prices:
+                logger.info(f"Price history already cached for {symbol}, skipping fetch")
             else:
-                logger.warning(f"No price history returned for {symbol}")
+                service = get_dipfinder_service()
+                prices = await service.price_provider.get_prices(
+                    symbol.upper(),
+                    start_date=date.today() - timedelta(days=1825),  # 5 years
+                    end_date=date.today(),
+                )
+                if prices is not None and not prices.empty:
+                    logger.info(f"Fetched {len(prices)} days of price history for {symbol}")
+                else:
+                    logger.warning(f"No price history returned for {symbol}")
         except Exception as exc:
             logger.warning(f"Failed to fetch price history for {symbol}: {exc}")
 
@@ -370,34 +398,53 @@ async def process_approved_symbol(symbol: str) -> None:
 
         ai_enabled = get_runtime_setting("ai_enrichment_enabled", True)
         if ai_enabled:
-            bio = await generate_bio(
-                symbol=symbol,
-                dip_pct=dip_pct,
-            )
+            existing_ai = await dip_votes_repo.get_ai_analysis(symbol)
+            existing_bio = existing_ai.get("swipe_bio") if existing_ai else None
+            existing_rating = existing_ai.get("ai_rating") if existing_ai else None
+            existing_reasoning = existing_ai.get("ai_reasoning") if existing_ai else None
 
-            rating_data = await rate_dip(
-                symbol=symbol,
-                current_price=current_price,
-                ref_high=ath_price,
-                dip_pct=dip_pct,
-            )
+            bio = existing_bio
+            rating_data = None
+            generated_ai = False
 
-            if bio or rating_data:
+            if not existing_bio:
+                bio = await generate_bio(
+                    symbol=symbol,
+                    dip_pct=dip_pct,
+                )
+                if bio:
+                    generated_ai = True
+            else:
+                logger.info(f"Skipped AI bio for {symbol} (already cached)")
+
+            if not existing_rating:
+                rating_data = await rate_dip(
+                    symbol=symbol,
+                    current_price=current_price,
+                    ref_high=ath_price,
+                    dip_pct=dip_pct,
+                )
+                if rating_data:
+                    generated_ai = True
+            else:
+                logger.info(f"Skipped AI rating for {symbol} (already cached)")
+
+            if generated_ai:
                 await dip_votes_repo.upsert_ai_analysis(
                     symbol=symbol,
                     swipe_bio=bio,
-                    ai_rating=rating_data.get("rating") if rating_data else None,
-                    ai_reasoning=rating_data.get("reasoning") if rating_data else None,
+                    ai_rating=rating_data.get("rating") if rating_data else existing_rating,
+                    ai_reasoning=rating_data.get("reasoning") if rating_data else existing_reasoning,
                     is_batch=False,
                 )
                 logger.info(
                     "Generated AI content for %s: bio=%s, rating=%s",
                     symbol,
                     "yes" if bio else "no",
-                    rating_data.get("rating") if rating_data else "none",
+                    rating_data.get("rating") if rating_data else existing_rating or "none",
                 )
             else:
-                logger.warning(f"No AI content generated for {symbol}")
+                logger.info(f"No AI generation needed for {symbol}")
 
             try:
                 from app.services.ai_agents import run_agent_analysis

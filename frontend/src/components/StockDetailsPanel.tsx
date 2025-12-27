@@ -181,6 +181,11 @@ export function StockDetailsPanel({
   const isPositive = priceChange >= 0;
   const chartColor = isPositive ? 'var(--success)' : 'var(--danger)';
 
+  // Use chart's latest close price if stock.last_price is missing/zero (quant data)
+  const displayPrice = stock?.last_price && stock.last_price > 0 
+    ? stock.last_price 
+    : (chartData.length > 0 ? chartData[chartData.length - 1].close : 0);
+
   if (!stock) {
     return (
       <Card className="h-full flex items-center justify-center">
@@ -212,7 +217,7 @@ export function StockDetailsPanel({
               </div>
               <div className="text-right shrink-0">
                 <div className="text-xl md:text-2xl font-bold font-mono">
-                  ${stock.last_price.toFixed(2)}
+                  ${displayPrice.toFixed(2)}
                 </div>
                 <div className={`flex items-center justify-end gap-1 text-sm ${
                   isPositive ? 'text-success' : 'text-danger'
@@ -495,7 +500,7 @@ export function StockDetailsPanel({
               <StatItem
                 icon={Building2}
                 label="Market Cap"
-                value={formatMarketCap(stock.market_cap)}
+                value={formatMarketCap(stock.market_cap ?? stockInfo?.market_cap ?? null)}
               />
               <StatItem
                 icon={BarChart3}
@@ -627,7 +632,7 @@ export function StockDetailsPanel({
                           icon={Target}
                           label="Price Target"
                           value={`$${stockInfo.target_mean_price.toFixed(2)}`}
-                          valueColor={stockInfo.target_mean_price > stock.last_price ? 'text-success' : 'text-danger'}
+                          valueColor={stockInfo.target_mean_price > displayPrice ? 'text-success' : 'text-danger'}
                         />
                       )}
                       {stockInfo.num_analyst_opinions !== null && stockInfo.num_analyst_opinions !== undefined && (

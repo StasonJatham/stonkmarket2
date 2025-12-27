@@ -1016,7 +1016,8 @@ class YFinanceService:
 
         if save_to_db and results:
             # Save to symbol_search_results for future local search
-            expires_at = datetime.now(UTC) + timedelta(days=30)
+            now = datetime.now(UTC)
+            expires_at = now + timedelta(days=30)
             async with get_session() as session:
                 for r in results:
                     try:
@@ -1032,6 +1033,7 @@ class YFinanceService:
                             confidence_score=r.get("confidence_score") or r.get("relevance_score"),
                             expires_at=expires_at,
                             search_query=query,
+                            last_seen_at=now,
                         )
                         # Use COALESCE for upsert - keep existing non-null values
                         stmt = stmt.on_conflict_do_update(
@@ -1046,6 +1048,8 @@ class YFinanceService:
                                 "relevance_score": stmt.excluded.relevance_score,
                                 "confidence_score": stmt.excluded.confidence_score,
                                 "expires_at": stmt.excluded.expires_at,
+                                "search_query": stmt.excluded.search_query,
+                                "last_seen_at": stmt.excluded.last_seen_at,
                             },
                         )
                         await session.execute(stmt)

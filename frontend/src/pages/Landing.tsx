@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, useMotionValue, useTransform, animate } from 'framer-motion';
 import {
@@ -16,14 +16,23 @@ import { useAuth } from '@/context/AuthContext';
 import {
   getStockChart,
   getQuantRecommendations,
+  getAgentAnalysis,
   type ChartDataPoint,
   type QuantRecommendation,
+  type AgentAnalysis,
 } from '@/services/api';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { StockLogo } from '@/components/StockLogo';
+import { 
+  Tooltip as UITooltip, 
+  TooltipContent, 
+  TooltipTrigger 
+} from '@/components/ui/tooltip';
+import { HelpCircle } from 'lucide-react';
 import {
   ArrowRight,
   Target,
@@ -34,6 +43,11 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   Minus,
+  Users,
+  ThumbsUp,
+  ThumbsDown,
+  MinusCircle,
+  Brain,
 } from 'lucide-react';
 
 // Action icon based on recommendation
@@ -187,19 +201,46 @@ function FeaturedStockCard({
           {/* Quant metrics */}
           <div className="grid grid-cols-3 gap-2 text-sm">
             <div className="text-center">
-              <p className="text-muted-foreground text-xs">μ̂ (E[R])</p>
+              <UITooltip>
+                <TooltipTrigger asChild>
+                  <p className="text-muted-foreground text-xs inline-flex items-center gap-0.5 cursor-help">
+                    μ̂ (E[R]) <HelpCircle className="h-3 w-3" />
+                  </p>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-xs">
+                  <p>Expected return (μ̂) from Bayesian posterior estimation. Higher values indicate higher expected returns.</p>
+                </TooltipContent>
+              </UITooltip>
               <p className={`font-mono font-medium ${rec.mu_hat >= 0 ? 'text-success' : 'text-danger'}`}>
                 {rec.mu_hat > 0 ? '+' : ''}{(rec.mu_hat * 100).toFixed(2)}%
               </p>
             </div>
             <div className="text-center">
-              <p className="text-muted-foreground text-xs">Dip Score</p>
-              <p className={`font-mono font-medium ${(rec.dip_score ?? 0) < 0 ? 'text-success' : 'text-muted-foreground'}`}>
-                {rec.dip_score?.toFixed(2) ?? 'N/A'}
+              <UITooltip>
+                <TooltipTrigger asChild>
+                  <p className="text-muted-foreground text-xs inline-flex items-center gap-0.5 cursor-help">
+                    Dip Score <HelpCircle className="h-3 w-3" />
+                  </p>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-xs">
+                  <p>Dip quality score (0-1). Higher scores indicate deeper, more potentially attractive dips for value investing.</p>
+                </TooltipContent>
+              </UITooltip>
+              <p className={`font-mono font-medium ${(rec.dip_score ?? 0) > 0.5 ? 'text-success' : 'text-muted-foreground'}`}>
+                {rec.dip_score !== null ? (rec.dip_score * 100).toFixed(0) : 'N/A'}
               </p>
             </div>
             <div className="text-center">
-              <p className="text-muted-foreground text-xs">Utility</p>
+              <UITooltip>
+                <TooltipTrigger asChild>
+                  <p className="text-muted-foreground text-xs inline-flex items-center gap-0.5 cursor-help">
+                    Utility <HelpCircle className="h-3 w-3" />
+                  </p>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-xs">
+                  <p>Marginal portfolio utility - the optimizer's ranking signal for risk-adjusted allocation.</p>
+                </TooltipContent>
+              </UITooltip>
               <p className={`font-mono font-medium ${rec.marginal_utility >= 0 ? 'text-success' : 'text-danger'}`}>
                 {(rec.marginal_utility * 1000).toFixed(2)}
               </p>
@@ -208,94 +249,6 @@ function FeaturedStockCard({
         </CardContent>
       </Card>
     </motion.div>
-  );
-}
-
-// Live ticker component - uses quant recommendations
-function LiveTicker({ recommendations, chartDataMap }: { 
-  recommendations: QuantRecommendation[]; 
-  chartDataMap: Record<string, ChartDataPoint[]>;
-}) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const contentRef = useRef<HTMLDivElement>(null);
-  const [offset, setOffset] = useState(0);
-  const animationRef = useRef<number | null>(null);
-  const lastTimeRef = useRef<number>(0);
-  const { getActiveColors } = useTheme();
-  const colors = getActiveColors();
-
-  const tickerItems = recommendations.slice(0, 30);
-  const speed = 25;
-
-  useEffect(() => {
-    if (tickerItems.length === 0) return;
-
-    const doAnimate = (timestamp: number) => {
-      if (!lastTimeRef.current) lastTimeRef.current = timestamp;
-      const delta = timestamp - lastTimeRef.current;
-      lastTimeRef.current = timestamp;
-
-      if (contentRef.current) {
-        const contentWidth = contentRef.current.scrollWidth / 2;
-        setOffset((prev) => {
-          const newOffset = prev + (speed * delta) / 1000;
-          return newOffset >= contentWidth ? 0 : newOffset;
-        });
-      }
-      animationRef.current = requestAnimationFrame(doAnimate);
-    };
-
-    animationRef.current = requestAnimationFrame(doAnimate);
-    return () => {
-      if (animationRef.current) cancelAnimationFrame(animationRef.current);
-    };
-  }, [tickerItems.length]);
-
-  if (tickerItems.length === 0) return null;
-
-  const items = [...tickerItems, ...tickerItems];
-
-  return (
-    <div
-      ref={containerRef}
-      className="w-full overflow-hidden border-y border-border bg-muted/30 py-3"
-    >
-      <div
-        ref={contentRef}
-        className="flex gap-6 whitespace-nowrap"
-        style={{ transform: `translateX(-${offset}px)` }}
-      >
-        {items.map((rec, i) => {
-          // Get chart data for this symbol to calculate price
-          const chart = chartDataMap[rec.ticker] || [];
-          const lastPrice = chart.length > 0 ? chart[chart.length - 1].close : 0;
-          
-          return (
-            <div key={`${rec.ticker}-${i}`} className="flex items-center gap-2 px-3">
-              <span className="font-semibold">{rec.ticker}</span>
-              {lastPrice > 0 && (
-                <span className="font-mono text-sm">${lastPrice.toFixed(2)}</span>
-              )}
-              <span
-                className="flex items-center gap-1 text-sm font-medium"
-                style={{ color: rec.action === 'BUY' ? colors.up : rec.action === 'SELL' ? colors.down : 'inherit' }}
-              >
-                <ActionIcon action={rec.action} />
-                {rec.action}
-              </span>
-              {rec.mu_hat !== 0 && (
-                <span
-                  className="font-mono text-xs"
-                  style={{ color: rec.mu_hat > 0 ? colors.up : colors.down }}
-                >
-                  {rec.mu_hat > 0 ? '+' : ''}{(rec.mu_hat * 100).toFixed(1)}%
-                </span>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
   );
 }
 
@@ -515,6 +468,57 @@ function Stats({ recommendations, portfolioStats }: {
   );
 }
 
+// Cache configuration for landing page
+const LANDING_CACHE_KEY = 'landing_page_cache';
+const LANDING_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+interface LandingCacheData {
+  recommendations: QuantRecommendation[];
+  portfolioStats: {
+    expectedReturn: number;
+    expectedRisk: number;
+    totalTrades: number;
+  };
+  chartDataMap: Record<string, ChartDataPoint[]>;
+  heroChart: ChartDataPoint[];
+  heroSymbol: string;
+  heroRec: QuantRecommendation | null;
+  heroAgentAnalysis: AgentAnalysis | null;
+  cachedAt: number;
+}
+
+function getLandingCache(): LandingCacheData | null {
+  try {
+    const cached = localStorage.getItem(LANDING_CACHE_KEY);
+    if (!cached) return null;
+    
+    const data: LandingCacheData = JSON.parse(cached);
+    const now = Date.now();
+    
+    // Check if cache is still valid
+    if (now - data.cachedAt > LANDING_CACHE_TTL_MS) {
+      return null;
+    }
+    
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function setLandingCache(data: Omit<LandingCacheData, 'cachedAt'>): void {
+  try {
+    const cacheData: LandingCacheData = {
+      ...data,
+      cachedAt: Date.now(),
+    };
+    localStorage.setItem(LANDING_CACHE_KEY, JSON.stringify(cacheData));
+  } catch {
+    // localStorage might be full or disabled
+    console.warn('Failed to cache landing data');
+  }
+}
+
 export function Landing() {
   const navigate = useNavigate();
   const { isAuthenticated } = useAuth();
@@ -527,21 +531,48 @@ export function Landing() {
   const [chartDataMap, setChartDataMap] = useState<Record<string, ChartDataPoint[]>>({});
   const [heroChart, setHeroChart] = useState<ChartDataPoint[]>([]);
   const [heroSymbol, setHeroSymbol] = useState('');
+  const [heroRec, setHeroRec] = useState<QuantRecommendation | null>(null);
+  const [heroAgentAnalysis, setHeroAgentAnalysis] = useState<AgentAnalysis | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingHero, setIsLoadingHero] = useState(true);
 
-  // Fetch quant recommendations data
+  // Fetch quant recommendations data with caching
   useEffect(() => {
-    const loadData = async () => {
+    const loadData = async (skipCache = false) => {
+      // Try to load from cache first for instant render
+      if (!skipCache) {
+        const cached = getLandingCache();
+        if (cached) {
+          setRecommendations(cached.recommendations);
+          setPortfolioStats(cached.portfolioStats);
+          setChartDataMap(cached.chartDataMap);
+          setHeroChart(cached.heroChart);
+          setHeroSymbol(cached.heroSymbol);
+          setHeroRec(cached.heroRec);
+          setHeroAgentAnalysis(cached.heroAgentAnalysis);
+          setIsLoading(false);
+          setIsLoadingHero(false);
+          
+          // Check if cache is stale (> 2 minutes) - refresh in background
+          const cacheAge = Date.now() - cached.cachedAt;
+          if (cacheAge > 2 * 60 * 1000) {
+            // Refresh in background without showing loading state
+            loadData(true);
+          }
+          return;
+        }
+      }
+
       try {
         // Fetch quant engine recommendations
         const data = await getQuantRecommendations(1000, 20);
         setRecommendations(data.recommendations);
-        setPortfolioStats({
+        const newPortfolioStats = {
           expectedReturn: data.expected_portfolio_return,
           expectedRisk: data.expected_portfolio_risk,
           totalTrades: data.total_trades,
-        });
+        };
+        setPortfolioStats(newPortfolioStats);
 
         // Load charts for top recommendations
         const topRecs = data.recommendations.slice(0, 6);
@@ -561,17 +592,43 @@ export function Landing() {
         });
         setChartDataMap(chartMap);
 
-        // Set hero chart to first recommendation with a BUY action, or first overall
+        // Set hero stock to first recommendation with a BUY action, or first overall
         const buyRec = data.recommendations.find(r => r.action === 'BUY') || data.recommendations[0];
+        let newHeroChart: ChartDataPoint[] = [];
+        let newHeroAgentAnalysis: AgentAnalysis | null = null;
+        
         if (buyRec) {
           setHeroSymbol(buyRec.ticker);
+          setHeroRec(buyRec);
+          
+          // Load hero chart
           if (chartMap[buyRec.ticker]) {
-            setHeroChart(chartMap[buyRec.ticker]);
+            newHeroChart = chartMap[buyRec.ticker];
+            setHeroChart(newHeroChart);
           } else {
-            const heroData = await getStockChart(buyRec.ticker, 180);
-            setHeroChart(heroData);
+            newHeroChart = await getStockChart(buyRec.ticker, 180);
+            setHeroChart(newHeroChart);
+          }
+          
+          // Load AI agent analysis for hero stock
+          try {
+            newHeroAgentAnalysis = await getAgentAnalysis(buyRec.ticker);
+            setHeroAgentAnalysis(newHeroAgentAnalysis);
+          } catch (e) {
+            console.warn('Failed to load agent analysis for hero:', e);
           }
         }
+        
+        // Cache the data for next visit
+        setLandingCache({
+          recommendations: data.recommendations,
+          portfolioStats: newPortfolioStats,
+          chartDataMap: chartMap,
+          heroChart: newHeroChart,
+          heroSymbol: buyRec?.ticker ?? '',
+          heroRec: buyRec ?? null,
+          heroAgentAnalysis: newHeroAgentAnalysis,
+        });
       } catch (err) {
         console.error('Failed to load landing data:', err);
       } finally {
@@ -589,7 +646,7 @@ export function Landing() {
 
   const handleStockClick = useCallback(
     (symbol: string) => {
-      navigate(`/dashboard?symbol=${symbol}`);
+      navigate(`/dashboard?stock=${symbol}`);
     },
     [navigate]
   );
@@ -653,20 +710,183 @@ export function Landing() {
               </motion.div>
             </div>
 
-            {/* Right: Hero Chart */}
+            {/* Right: Hero Chart + Analysis */}
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               transition={{ duration: 0.8, delay: 0.2 }}
+              className="space-y-4"
             >
               <HeroChart chartData={heroChart} symbol={heroSymbol} isLoading={isLoadingHero} />
+              
+              {/* Quant Metrics for Hero Stock */}
+              {heroRec && (
+                <Card className="bg-gradient-to-br from-blue-500/5 to-cyan-500/10 border-blue-500/20">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <Brain className="h-4 w-4 text-blue-500" />
+                      Quant Analysis for {heroSymbol}
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-3 gap-4 text-sm">
+                      <div>
+                        <UITooltip>
+                          <TooltipTrigger asChild>
+                            <p className="text-muted-foreground text-xs inline-flex items-center gap-0.5 cursor-help">
+                              Expected Return <HelpCircle className="h-3 w-3" />
+                            </p>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-xs">
+                            <p>Bayesian posterior expected return estimate (μ̂). Higher values indicate higher expected returns.</p>
+                          </TooltipContent>
+                        </UITooltip>
+                        <p className={`font-mono font-bold ${heroRec.mu_hat >= 0 ? 'text-success' : 'text-danger'}`}>
+                          {heroRec.mu_hat > 0 ? '+' : ''}{(heroRec.mu_hat * 100).toFixed(1)}%
+                        </p>
+                      </div>
+                      <div>
+                        <UITooltip>
+                          <TooltipTrigger asChild>
+                            <p className="text-muted-foreground text-xs inline-flex items-center gap-0.5 cursor-help">
+                              Dip Score <HelpCircle className="h-3 w-3" />
+                            </p>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-xs">
+                            <p>Dip quality score (0-100). Higher scores indicate deeper, more attractive dips for value investing.</p>
+                          </TooltipContent>
+                        </UITooltip>
+                        <p className={`font-mono font-bold ${(heroRec.dip_score ?? 0) > 0.5 ? 'text-success' : 'text-muted-foreground'}`}>
+                          {heroRec.dip_score !== null ? (heroRec.dip_score * 100).toFixed(0) : 'N/A'}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground text-xs">Action</p>
+                        <Badge variant={getActionBadgeVariant(heroRec.action)} className="gap-1">
+                          <ActionIcon action={heroRec.action} />
+                          {heroRec.action}
+                        </Badge>
+                      </div>
+                    </div>
+                    {heroRec.ai_summary && (
+                      <p className="text-xs text-muted-foreground mt-3 line-clamp-2">
+                        <span className="font-medium text-foreground">AI: </span>
+                        {heroRec.ai_summary}
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
             </motion.div>
           </div>
+          
+          {/* AI Persona Analysis Section - Full Width Below Hero */}
+          {heroAgentAnalysis && heroAgentAnalysis.verdicts.length > 0 && (() => {
+            // Compute signal counts from verdicts
+            const bullishCount = heroAgentAnalysis.verdicts.filter(v => 
+              v.signal === 'buy' || v.signal === 'strong_buy'
+            ).length;
+            const bearishCount = heroAgentAnalysis.verdicts.filter(v => 
+              v.signal === 'sell' || v.signal === 'strong_sell'
+            ).length;
+            const neutralCount = heroAgentAnalysis.verdicts.filter(v => 
+              v.signal === 'hold'
+            ).length;
+            
+            const isBullish = heroAgentAnalysis.overall_signal === 'buy' || heroAgentAnalysis.overall_signal === 'strong_buy';
+            const isBearish = heroAgentAnalysis.overall_signal === 'sell' || heroAgentAnalysis.overall_signal === 'strong_sell';
+            
+            const isVerdictBullish = (signal: string) => signal === 'buy' || signal === 'strong_buy';
+            const isVerdictBearish = (signal: string) => signal === 'sell' || signal === 'strong_sell';
+            
+            return (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.6, delay: 0.4 }}
+              className="mt-12"
+            >
+              <Card className="bg-gradient-to-br from-violet-500/5 to-purple-500/10 border-violet-500/20">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Users className="h-5 w-5 text-violet-500" />
+                    What Famous Investors Think About {heroSymbol}
+                    <Badge 
+                      variant={
+                        isBullish ? 'default' :
+                        isBearish ? 'destructive' : 'secondary'
+                      }
+                      className="ml-auto"
+                    >
+                      {bullishCount} Bullish • {bearishCount} Bearish • {neutralCount} Neutral
+                    </Badge>
+                  </CardTitle>
+                  <CardDescription>
+                    AI-powered analysis from the perspective of legendary investors
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                    {heroAgentAnalysis.verdicts.map((verdict) => (
+                      <div 
+                        key={verdict.agent_id}
+                        className="p-4 rounded-lg bg-background/50 border"
+                      >
+                        <div className="flex items-start gap-3 mb-2">
+                          <Avatar className="h-10 w-10 border">
+                            <AvatarImage 
+                              src={verdict.avatar_url} 
+                              alt={verdict.agent_name}
+                            />
+                            <AvatarFallback className="bg-primary/10 text-primary text-xs">
+                              {verdict.agent_name.split(' ').map(n => n[0]).join('').slice(0, 2)}
+                            </AvatarFallback>
+                          </Avatar>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between gap-2">
+                              <h4 className="font-semibold text-sm truncate">{verdict.agent_name}</h4>
+                              <Badge 
+                                variant={
+                                  isVerdictBullish(verdict.signal) ? 'default' :
+                                  isVerdictBearish(verdict.signal) ? 'destructive' : 'secondary'
+                                }
+                                className="text-xs h-5 shrink-0"
+                              >
+                                {isVerdictBullish(verdict.signal) && <ThumbsUp className="h-3 w-3 mr-1" />}
+                                {isVerdictBearish(verdict.signal) && <ThumbsDown className="h-3 w-3 mr-1" />}
+                                {verdict.signal === 'hold' && <MinusCircle className="h-3 w-3 mr-1" />}
+                                {verdict.signal.toUpperCase().replace('_', ' ')}
+                              </Badge>
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                              {verdict.confidence}% confident
+                            </p>
+                          </div>
+                        </div>
+                        <p className="text-xs text-muted-foreground line-clamp-3">
+                          {verdict.reasoning}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-4 text-center">
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={() => navigate(`/dashboard?stock=${heroSymbol}`)}
+                      className="gap-1"
+                    >
+                      View Full Analysis
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            </motion.div>
+          );
+          })()}
         </div>
       </section>
-
-      {/* Live Ticker */}
-      <LiveTicker recommendations={recommendations} chartDataMap={chartDataMap} />
 
       {/* Stats Section */}
       <section className="py-12 px-4">

@@ -346,6 +346,255 @@ global_router = APIRouter(prefix="/recommendations", tags=["Quant Engine"])
 
 
 # ============================================================================
+# Main Recommendations Endpoint (Global - for Landing/Dashboard)
+# ============================================================================
+
+from app.schemas.quant_engine import (
+    QuantAuditBlock,
+    QuantEngineResponse,
+    QuantRecommendation,
+)
+
+
+@global_router.get(
+    "",
+    response_model=QuantEngineResponse,
+    summary="Get stock recommendations",
+    description="""
+    Get ranked stock recommendations combining signal analysis with dip metrics.
+    
+    This is the main endpoint for the landing page and dashboard.
+    Returns stocks ranked by buy opportunity, combining:
+    - Technical signal analysis (RSI, MACD, Bollinger, etc.)
+    - Dip metrics (percentage from ATH, days in dip)
+    - AI analysis snippets (if available)
+    
+    Each stock includes:
+    - action: BUY, SELL, or HOLD recommendation
+    - mu_hat: Expected return estimate
+    - dip_score: Z-score based dip signal
+    - marginal_utility: Ranking score
+    - AI summary/rating when available
+    """,
+)
+async def get_recommendations(
+    inflow_eur: float = Query(
+        1000.0,
+        ge=100,
+        le=1000000,
+        description="Notional investment amount in EUR"
+    ),
+    limit: int = Query(
+        40,
+        ge=1,
+        le=100,
+        description="Maximum recommendations to return"
+    ),
+) -> QuantEngineResponse:
+    """Get ranked stock recommendations for landing page and dashboard."""
+    from datetime import date
+    
+    from app.repositories import dip_state_orm as dip_state_repo
+    from app.repositories import dip_votes_orm as dip_votes_repo
+    from app.repositories import symbols_orm as symbols_repo
+    from app.quant_engine.analytics import detect_regime
+    
+    # Get all symbols
+    symbols = await symbols_repo.list_symbols()
+    if not symbols:
+        return QuantEngineResponse(
+            recommendations=[],
+            as_of_date=date.today().isoformat(),
+            portfolio_value_eur=0.0,
+            inflow_eur=inflow_eur,
+            total_trades=0,
+            total_transaction_cost_eur=0.0,
+            expected_portfolio_return=0.0,
+            expected_portfolio_risk=0.0,
+            audit=QuantAuditBlock(
+                timestamp=datetime.now().isoformat(),
+                config_hash=0,
+                optimizer_status="no_data",
+                regime_state="unknown",
+            ),
+        )
+    
+    # Get dip state for all symbols
+    dip_states = await dip_state_repo.get_all_dip_states()
+    dip_state_map = {d.symbol: d for d in dip_states}
+    
+    # Get AI analyses
+    ai_analyses = await dip_votes_repo.get_all_ai_analyses()
+    ai_map = {a.symbol: a for a in ai_analyses}
+    
+    # Build symbol name map
+    symbol_names = {s.symbol: s.name or s.symbol for s in symbols}
+    symbol_list = [s.symbol for s in symbols if s.symbol not in ("SPY", "^GSPC", "URTH")]
+    
+    # Fetch price data for signal analysis
+    prices_df = await _fetch_prices_for_symbols(symbol_list, lookback_days=400)
+    
+    # Run signal scanner if we have price data
+    signal_map: dict[str, dict] = {}
+    regime_state = "unknown"
+    
+    if not prices_df.empty:
+        from app.quant_engine import scan_all_stocks
+        
+        price_data = {col: prices_df[col].dropna() for col in prices_df.columns}
+        holding_days_options = [5, 10, 20, 40, 60]
+        
+        opportunities = scan_all_stocks(price_data, symbol_names, holding_days_options)
+        signal_map = {opp.symbol: opp for opp in opportunities}
+        
+        # Detect market regime
+        returns = _compute_returns(prices_df)
+        # Use SPY as market proxy, or equal-weighted average if not available
+        if "SPY" in returns.columns:
+            market_returns = returns["SPY"]
+        else:
+            market_returns = returns.mean(axis=1)  # Equal-weighted average
+        regime = detect_regime(market_returns, returns)
+        regime_state = regime.regime
+    
+    # Build recommendations
+    recommendations: list[QuantRecommendation] = []
+    
+    for symbol in symbol_list:
+        dip = dip_state_map.get(symbol)
+        signal = signal_map.get(symbol)
+        ai = ai_map.get(symbol)
+        name = symbol_names.get(symbol, symbol)
+        
+        # Calculate metrics - ensure float conversion for Decimal fields
+        dip_pct = float(dip.dip_percentage) if dip and dip.dip_percentage is not None else None
+        current_price = float(dip.current_price) if dip and dip.current_price else (signal.current_price if signal else 0)
+        days_in_dip = None
+        if dip and dip.dip_start_date:
+            days_in_dip = (date.today() - dip.dip_start_date).days
+        
+        # Determine action based on signals and dip
+        action = "HOLD"
+        buy_score = float(signal.buy_score) if signal and signal.buy_score else 0.0
+        
+        if signal:
+            if signal.opportunity_type in ("STRONG_BUY", "BUY"):
+                action = "BUY"
+            elif signal.opportunity_type == "WEAK_BUY" and dip_pct and dip_pct > 20:
+                action = "BUY"
+        
+        # If no signal but deep dip, still consider
+        if action == "HOLD" and dip_pct and dip_pct > 30:
+            action = "BUY"
+            buy_score = max(buy_score, 40.0)
+        
+        # Calculate mu_hat (expected return)
+        mu_hat = 0.0
+        if signal and signal.best_expected_return:
+            mu_hat = float(signal.best_expected_return) / 100
+        elif dip_pct and dip_pct > 10:
+            # Simple mean reversion assumption for dips
+            mu_hat = min(float(dip_pct) / 100 * 0.3, 0.15)  # Cap at 15% expected
+        
+        # Marginal utility = buy_score normalized + dip bonus
+        dip_bonus = min(float(dip_pct or 0) / 50, 1.0) * 20  # Up to 20 points for deep dips
+        marginal_utility = (buy_score + dip_bonus) / 100
+        
+        # Z-score based dip score
+        dip_score = float(signal.zscore_20d) if signal and signal.zscore_20d is not None else None
+        if dip_score is None and dip_pct:
+            dip_score = -float(dip_pct) / 10  # Negative z-score approximation
+        
+        # Get AI analysis snippet
+        ai_summary = None
+        ai_rating = None
+        if ai:
+            ai_rating = ai.ai_rating
+            ai_summary = ai.rating_reasoning  # Full AI reasoning, no truncation
+        
+        recommendations.append(QuantRecommendation(
+            ticker=symbol,
+            name=name,
+            action=action,
+            notional_eur=inflow_eur / len(symbol_list) if action == "BUY" else 0,
+            delta_weight=0.01 if action == "BUY" else 0,
+            target_weight=0.05 if action == "BUY" else 0,
+            last_price=current_price if current_price else None,
+            change_percent=None,  # Will be enriched by frontend or separate call
+            market_cap=None,  # Will be enriched by frontend or separate call
+            mu_hat=mu_hat,
+            uncertainty=1.0 - (buy_score / 100) if signal else 1.0,
+            risk_contribution=0.0,
+            dip_score=dip_score,
+            dip_bucket=_dip_bucket(dip_pct) if dip_pct else None,
+            marginal_utility=marginal_utility,
+            legacy_dip_pct=dip_pct,
+            legacy_days_in_dip=days_in_dip,
+            legacy_domain_score=buy_score,
+            ai_summary=ai_summary,
+            ai_rating=ai_rating,
+        ))
+    
+    # Sort by marginal utility (best opportunities first)
+    recommendations.sort(key=lambda r: r.marginal_utility, reverse=True)
+    recommendations = recommendations[:limit]
+    
+    # Count buys
+    buy_count = sum(1 for r in recommendations if r.action == "BUY")
+    
+    # Calculate portfolio stats
+    avg_mu_hat = sum(r.mu_hat for r in recommendations) / len(recommendations) if recommendations else 0
+    
+    return QuantEngineResponse(
+        recommendations=recommendations,
+        as_of_date=date.today().isoformat(),
+        portfolio_value_eur=10000.0,  # Model portfolio value
+        inflow_eur=inflow_eur,
+        total_trades=buy_count,
+        total_transaction_cost_eur=buy_count * 5.0,  # Assume €5 per trade
+        expected_portfolio_return=avg_mu_hat,
+        expected_portfolio_risk=0.15,  # Placeholder
+        audit=QuantAuditBlock(
+            timestamp=datetime.now().isoformat(),
+            config_hash=hash(f"{inflow_eur}-{limit}"),
+            mu_hat_summary={
+                "mean": avg_mu_hat,
+                "max": max((r.mu_hat for r in recommendations), default=0),
+                "n_positive": sum(1 for r in recommendations if r.mu_hat > 0),
+            },
+            risk_model_summary={
+                "method": "signal_scanner",
+                "lookback_days": 400,
+            },
+            optimizer_status="success",
+            constraint_binding=[],
+            turnover_realized=0.0,
+            regime_state=regime_state,
+            dip_stats={
+                "n_in_dip": sum(1 for r in recommendations if r.legacy_dip_pct and r.legacy_dip_pct > 10),
+                "avg_dip_pct": sum(r.legacy_dip_pct or 0 for r in recommendations) / len(recommendations) if recommendations else 0,
+            },
+            error_message=None,
+        ),
+    )
+
+
+def _dip_bucket(dip_pct: float | None) -> str | None:
+    """Classify dip percentage into buckets."""
+    if dip_pct is None:
+        return None
+    if dip_pct < 10:
+        return "shallow"
+    if dip_pct < 20:
+        return "moderate"
+    if dip_pct < 35:
+        return "deep"
+    if dip_pct < 50:
+        return "very_deep"
+    return "extreme"
+
+
+# ============================================================================
 # Signal Scanner Endpoint (Global - No Auth Required)
 # ============================================================================
 

@@ -94,61 +94,80 @@ async def get_dip_card_with_fresh_ai(symbol: str, force_refresh: bool = False) -
         return None
 
     # If AI analysis already cached and not forcing refresh, return as-is
-    if card.swipe_bio and not force_refresh:
+    if card.swipe_bio and card.ai_rating and not force_refresh:
         return card
 
-    # Fetch stock info for AI generation
-    info = await stock_info.get_stock_info_async(symbol)
+    # Prefer local symbol data to avoid extra yfinance calls
+    info = None
+    name = card.name
+    sector = card.sector
+    summary = card.summary_ai
+    industry = card.industry
+    website = card.website
+    ipo_year = card.ipo_year
 
-    # Generate AI content
-    bio = await generate_bio(
-        symbol=symbol,
-        name=info.get("name") if info else None,
-        sector=info.get("sector") if info else None,
-        summary=info.get("summary") if info else None,
-        dip_pct=card.dip_pct,
-    )
+    if not (name and sector and summary):
+        info = await stock_info.get_stock_info_async(symbol)
+        if info:
+            name = info.get("name") or name
+            sector = info.get("sector") or sector
+            summary = info.get("summary") or summary
+            industry = info.get("industry") or industry
+            website = info.get("website") or website
+            ipo_year = info.get("ipo_year") or ipo_year
 
-    # Get fundamentals for richer AI analysis
-    fundamentals = await get_fundamentals_for_analysis(symbol)
+    # Generate AI content only if missing or forced
+    bio = card.swipe_bio
+    rating_result = None
+    generated_ai = False
 
-    rating_result = await rate_dip(
-        symbol=symbol,
-        current_price=card.current_price,
-        ref_high=card.ref_high,
-        dip_pct=card.dip_pct,
-        days_below=card.days_below,
-        name=info.get("name") if info else None,
-        sector=info.get("sector") if info else None,
-        summary=info.get("summary") if info else None,
-        **fundamentals,  # Include all fundamental metrics
-    )
+    if force_refresh or not card.swipe_bio:
+        bio = await generate_bio(
+            symbol=symbol,
+            name=name,
+            sector=sector,
+            summary=summary,
+            dip_pct=card.dip_pct,
+        )
+        if bio:
+            generated_ai = True
 
-    # Cache the results
-    if bio or rating_result:
+    if force_refresh or not card.ai_rating:
+        fundamentals = await get_fundamentals_for_analysis(symbol)
+        rating_result = await rate_dip(
+            symbol=symbol,
+            current_price=card.current_price,
+            ref_high=card.ref_high,
+            dip_pct=card.dip_pct,
+            days_below=card.days_below,
+            name=name,
+            sector=sector,
+            summary=summary,
+            **fundamentals,
+        )
+        if rating_result:
+            generated_ai = True
+
+    if generated_ai:
         await dip_votes_repo.upsert_ai_analysis(
             symbol=symbol,
             swipe_bio=bio,
-            ai_rating=rating_result.get("rating") if rating_result else None,
-            ai_reasoning=rating_result.get("reasoning") if rating_result else None,
+            ai_rating=rating_result.get("rating") if rating_result else card.ai_rating,
+            ai_reasoning=rating_result.get("reasoning") if rating_result else card.ai_reasoning,
             is_batch=False,
         )
 
     # Update card with fresh data
-    if info:
-        card = card.model_copy(update={
-            "name": info.get("name"),
-            "sector": info.get("sector"),
-            "industry": info.get("industry"),
-            "website": info.get("website"),
-            "ipo_year": info.get("ipo_year"),
-        })
-
     card = card.model_copy(update={
+        "name": name,
+        "sector": sector,
+        "industry": industry,
+        "website": website,
+        "ipo_year": ipo_year,
         "swipe_bio": bio,
-        "ai_rating": rating_result.get("rating") if rating_result else None,
-        "ai_reasoning": rating_result.get("reasoning") if rating_result else None,
-        "ai_confidence": rating_result.get("confidence") if rating_result else None,
+        "ai_rating": rating_result.get("rating") if rating_result else card.ai_rating,
+        "ai_reasoning": rating_result.get("reasoning") if rating_result else card.ai_reasoning,
+        "ai_confidence": rating_result.get("confidence") if rating_result else card.ai_confidence,
     })
 
     return card
@@ -174,27 +193,51 @@ async def regenerate_ai_field(
     if not card:
         return None
 
-    # Fetch stock info for AI generation
-    info = await stock_info.get_stock_info_async(symbol)
+    existing_ai = await dip_votes_repo.get_ai_analysis(symbol)
+    existing_bio = existing_ai.get("swipe_bio") if existing_ai else card.swipe_bio
+    existing_rating = existing_ai.get("ai_rating") if existing_ai else card.ai_rating
+    existing_reasoning = existing_ai.get("ai_reasoning") if existing_ai else card.ai_reasoning
+
+    info = None
+    name = card.name
+    sector = card.sector
+    summary = card.summary_ai
+    industry = card.industry
+    website = card.website
+    ipo_year = card.ipo_year
+
+    if not (name and sector and summary):
+        info = await stock_info.get_stock_info_async(symbol)
+        if info:
+            name = info.get("name") or name
+            sector = info.get("sector") or sector
+            summary = info.get("summary") or summary
+            industry = info.get("industry") or industry
+            website = info.get("website") or website
+            ipo_year = info.get("ipo_year") or ipo_year
 
     if field == "bio":
         # Regenerate Swipe bio
         bio = await generate_bio(
             symbol=symbol,
-            name=info.get("name") if info else None,
-            sector=info.get("sector") if info else None,
-            summary=info.get("summary") if info else None,
+            name=name,
+            sector=sector,
+            summary=summary,
             dip_pct=card.dip_pct,
         )
         if bio:
             await dip_votes_repo.upsert_ai_analysis(
                 symbol=symbol,
                 swipe_bio=bio,
-                ai_rating=None,  # Don't update rating
-                ai_reasoning=None,
+                ai_rating=existing_rating,
+                ai_reasoning=existing_reasoning,
                 is_batch=False,
             )
-            card = card.model_copy(update={"swipe_bio": bio})
+            card = card.model_copy(update={
+                "swipe_bio": bio,
+                "ai_rating": existing_rating,
+                "ai_reasoning": existing_reasoning,
+            })
 
     elif field == "rating":
         # Get fundamentals for richer AI analysis
@@ -207,34 +250,34 @@ async def regenerate_ai_field(
             ref_high=card.ref_high,
             dip_pct=card.dip_pct,
             days_below=card.days_below,
-            name=info.get("name") if info else None,
-            sector=info.get("sector") if info else None,
-            summary=info.get("summary") if info else None,
+            name=name,
+            sector=sector,
+            summary=summary,
             **fundamentals,  # Include all fundamental metrics
         )
         if rating_result:
             await dip_votes_repo.upsert_ai_analysis(
                 symbol=symbol,
-                swipe_bio=None,  # Don't update bio
+                swipe_bio=existing_bio,
                 ai_rating=rating_result.get("rating"),
                 ai_reasoning=rating_result.get("reasoning"),
                 is_batch=False,
             )
             card = card.model_copy(update={
+                "swipe_bio": existing_bio,
                 "ai_rating": rating_result.get("rating"),
                 "ai_reasoning": rating_result.get("reasoning"),
                 "ai_confidence": rating_result.get("confidence"),
             })
 
     # Update card with stock info
-    if info:
-        card = card.model_copy(update={
-            "name": info.get("name"),
-            "sector": info.get("sector"),
-            "industry": info.get("industry"),
-            "website": info.get("website"),
-            "ipo_year": info.get("ipo_year"),
-        })
+    card = card.model_copy(update={
+        "name": name,
+        "sector": sector,
+        "industry": industry,
+        "website": website,
+        "ipo_year": ipo_year,
+    })
 
     return card
 

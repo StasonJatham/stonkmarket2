@@ -1,14 +1,19 @@
 """Built-in job definitions for scheduled tasks.
 
-Jobs:
-- initial_data_ingest: Process queued symbols (15min window, batch 20)
-- data_grab: Daily price updates with change detection
-- cache_warmup: Pre-cache chart data for top dips
-- batch_ai_*: OpenAI Batch API for AI analysis
-- fundamentals_refresh: Monthly fundamentals update (change-driven)
-- ai_agents_analysis: Weekly AI agent analysis
-- portfolio_analytics_worker: Process queued portfolio analytics jobs
-- cleanup: Daily cleanup of expired data
+Jobs (New Names):
+- symbol_ingest: Process new symbols (every 15 min, idempotent)
+- prices_daily: Daily price updates (Mon-Fri 11 PM UTC)
+- signals_daily: Technical signal scanner (Mon-Fri 10 PM UTC)
+- regime_daily: Market regime detection (Mon-Fri 10:30 PM UTC)
+- ai_personas_weekly: Warren Buffett, Peter Lynch etc. (Sunday 3 AM UTC)
+- ai_bios_weekly: Swipe-style stock bios (Sunday 4 AM UTC)
+- ai_ratings_weekly: Investment ratings (Sunday 5 AM UTC)
+- ai_batch_poll: OpenAI batch result collector (every 5 min)
+- fundamentals_monthly: Company fundamentals (1st of month)
+- quant_monthly: Portfolio optimization (1st of month)
+- portfolio_worker: Portfolio analytics queue (every 5 min)
+- cache_warmup: Pre-cache chart data (every 30 min)
+- cleanup_daily: Remove expired data (midnight UTC)
 """
 
 from __future__ import annotations
@@ -30,106 +35,195 @@ logger = get_logger("jobs.definitions")
 
 
 # =============================================================================
-# INITIAL DATA INGEST (Symbol Queue Processing)
+# SYMBOL INGEST - Process new symbols (every 15 min)
 # =============================================================================
 
 
-@register_job("initial_data_ingest")
-async def initial_data_ingest_job() -> str:
+@register_job("symbol_ingest")
+async def symbol_ingest_job() -> str:
     """
-    Process queued symbols that need initial data fetch.
+    Process new symbols - unified, idempotent symbol data ingestion.
+    
+    This is an IDEMPOTENT job that:
+    1. Fetches symbols from the ingest queue
+    2. Checks what data is MISSING for each symbol
+    3. Only fetches/generates what's needed
+    4. Submits AI batch for symbols missing AI content
+    
+    Data checked (skipped if already exists):
+    - Price history (5 years)
+    - Fundamentals
+    - Dip state
+    - AI bio and rating (submitted as batch)
 
-    Uses a 15-minute aggregation window and processes up to 20 symbols per batch.
-    - If <20 symbols in queue: process all
-    - If >=20 symbols: process 20, rest will be handled in next run
-
-    For each symbol:
-    1. Fetch full price history (1 year)
-    2. Fetch ticker info (fundamentals)
-    3. Compute data versions for change tracking
-    4. Mark symbol as completed in queue
-
-    Schedule: Every 15 minutes
+    Schedule: Every 15 minutes (processes queue as symbols are added)
     """
+    from datetime import date, timedelta
+
+    from app.cache.cache import Cache
+    from app.repositories import symbols_orm as symbols_repo
+    from app.repositories import dip_state_orm as dip_state_repo
+    from app.repositories import dip_votes_orm as dip_votes_repo
     from app.services.data_providers import get_yfinance_service
-
-    logger.info("Starting initial_data_ingest job")
+    from app.services.openai_client import TaskType, submit_batch
+    from app.services.fundamentals import get_fundamentals_for_analysis, refresh_fundamentals
+    from app.services.stock_info import get_stock_info_batch_async
 
     BATCH_SIZE = 20
+    logger.info("Starting initial_data_ingest job")
 
     try:
-        # Get pending symbols from the queue (oldest first, limit to batch size)
+        # Get pending symbols from the queue
         rows = await jobs_repo.get_pending_ingest_symbols(BATCH_SIZE)
 
         if not rows:
             return "No symbols in queue"
 
+        symbols = [row.symbol for row in rows]
+        queue_map = {row.symbol: row for row in rows}  # For updating status
+        
+        logger.info(f"[INGEST] Processing {len(symbols)} queued symbols: {symbols}")
+
         yf_service = get_yfinance_service()
         processed = 0
         failed = 0
-
+        ai_items = []  # Collect items needing AI generation
+        
+        # Mark all as processing
         for row in rows:
-            queue_id = row.id
-            symbol = row.symbol
-            attempts = row.attempts or 0
+            await jobs_repo.mark_ingest_processing(row.id, (row.attempts or 0) + 1)
 
-            # Mark as processing
-            await jobs_repo.mark_ingest_processing(queue_id, attempts + 1)
+        # Step 1: Check what each symbol already has
+        symbols_needing_data = []
+        for symbol in symbols:
+            has_prices = await price_history_repo.has_price_history(symbol)
+            if not has_prices:
+                symbols_needing_data.append(symbol)
+            else:
+                logger.debug(f"[INGEST] {symbol} already has price data, checking other fields")
 
+        # Step 2: Batch fetch stock info (cheap, always get fresh)
+        logger.info(f"[INGEST] Fetching Yahoo Finance info for {len(symbols)} symbols")
+        stock_infos = await get_stock_info_batch_async(symbols)
+
+        # Step 3: Batch fetch price history for symbols missing it
+        price_results = {}
+        if symbols_needing_data:
+            logger.info(f"[INGEST] Fetching 5y price history for {len(symbols_needing_data)} symbols")
+            today = date.today()
+            start_date = today - timedelta(days=1825)  # 5 years
+            price_results = await yf_service.get_price_history_batch(
+                symbols=symbols_needing_data,
+                start_date=start_date,
+                end_date=today,
+            )
+
+        # Step 4: Process each symbol
+        for symbol in symbols:
+            queue_row = queue_map[symbol]
+            
             try:
-                # Fetch price history (1 year) with version tracking
-                prices, price_version = await yf_service.get_price_history(
-                    symbol,
-                    period="1y",
+                info = stock_infos.get(symbol, {})
+                if not info:
+                    logger.warning(f"[INGEST] No Yahoo data for {symbol}")
+                    await jobs_repo.mark_ingest_failed(queue_row.id, "No Yahoo Finance data")
+                    failed += 1
+                    continue
+
+                name = info.get("name") or info.get("short_name")
+                sector = info.get("sector")
+                full_summary = info.get("summary")
+                current_price = info.get("current_price", 0)
+                ath_price = info.get("ath_price") or info.get("fifty_two_week_high", 0)
+                dip_pct = ((ath_price - current_price) / ath_price * 100) if ath_price > 0 else 0
+
+                # Update symbol info (idempotent - just updates)
+                if name or sector:
+                    await symbols_repo.update_symbol_info(symbol, name=name, sector=sector)
+
+                # Upsert dip state (idempotent)
+                await dip_state_repo.upsert_dip_state(
+                    symbol=symbol,
+                    current_price=current_price,
+                    ath_price=ath_price,
+                    dip_percentage=dip_pct,
                 )
 
-                if prices is None or prices.empty:
-                    raise ValueError(f"No price data for {symbol}")
+                # Store price history if we fetched it
+                if symbol in price_results:
+                    price_data = price_results[symbol]
+                    if price_data:
+                        prices, _version = price_data
+                        if prices is not None and not prices.empty:
+                            await price_history_repo.save_prices(symbol, prices)
+                            logger.info(f"[INGEST] Saved {len(prices)} days of price history for {symbol}")
 
-                # Save price version for change tracking
-                if price_version:
-                    await yf_service.save_data_version(symbol, price_version)
+                # Refresh fundamentals (idempotent - checks freshness internally)
+                await refresh_fundamentals(symbol)
 
-                # Fetch and STORE fundamentals (not just version tracking)
-                from app.services.fundamentals import refresh_fundamentals
-                fundamentals = await refresh_fundamentals(symbol)
-                if fundamentals:
-                    logger.debug(f"Stored fundamentals for {symbol}")
-                else:
-                    logger.warning(f"No fundamentals available for {symbol}")
+                # Check if symbol needs AI content
+                existing_ai = await dip_votes_repo.get_ai_analysis(symbol)
+                needs_ai = not existing_ai or not existing_ai.swipe_bio
+                
+                if needs_ai and full_summary and len(full_summary) > 100:
+                    fundamentals = await get_fundamentals_for_analysis(symbol)
+                    ai_items.append({
+                        "symbol": symbol,
+                        "name": name,
+                        "sector": sector,
+                        "summary": full_summary,
+                        "current_price": current_price,
+                        "ref_high": ath_price,
+                        "dip_pct": dip_pct,
+                        "days_below": 0,
+                        **fundamentals,
+                    })
 
-                # Get calendar events if available
-                _calendar, calendar_version = await yf_service.get_calendar(symbol)
-                if calendar_version:
-                    await yf_service.save_data_version(symbol, calendar_version)
-
-                # Insert price history into database
-                await _store_price_history(symbol, prices)
-
-                # Mark as completed
-                await jobs_repo.mark_ingest_completed(queue_id)
+                # Mark queue item as completed
+                await jobs_repo.mark_ingest_completed(queue_row.id)
                 processed += 1
-                logger.info(f"Ingested initial data for {symbol}")
+                logger.info(f"[INGEST] Completed {symbol}")
 
             except Exception as e:
-                logger.error(f"Failed to ingest {symbol}: {e}")
+                logger.error(f"[INGEST] Failed to process {symbol}: {e}")
+                max_attempts = 3
+                if (queue_row.attempts or 0) + 1 >= max_attempts:
+                    await jobs_repo.mark_ingest_failed(queue_row.id, str(e)[:500])
+                else:
+                    await jobs_repo.mark_ingest_pending_retry(queue_row.id, str(e)[:500])
                 failed += 1
 
-                # Check max attempts
-                max_attempts = 3
-                if attempts + 1 >= max_attempts:
-                    await jobs_repo.mark_ingest_failed(queue_id, str(e)[:500])
-                else:
-                    # Reset to pending for retry
-                    await jobs_repo.mark_ingest_pending_retry(queue_id, str(e)[:500])
+        # Step 5: Submit AI batch for symbols needing AI content
+        batch_id = None
+        if ai_items:
+            logger.info(f"[INGEST] Submitting {len(ai_items)} items for AI batch processing")
+            try:
+                batch_id = await submit_batch(task=TaskType.RATING, items=ai_items)
+                if batch_id:
+                    logger.info(f"[INGEST] Submitted AI rating batch: {batch_id}")
+                
+                bio_batch_id = await submit_batch(task=TaskType.BIO, items=ai_items)
+                if bio_batch_id:
+                    logger.info(f"[INGEST] Submitted AI bio batch: {bio_batch_id}")
+            except Exception as e:
+                logger.warning(f"[INGEST] Failed to submit AI batch: {e}")
+
+        # Step 6: Invalidate caches if we processed anything
+        if processed > 0:
+            ranking_cache = Cache(prefix="ranking", default_ttl=3600)
+            await ranking_cache.invalidate_pattern("*")
+            symbols_cache = Cache(prefix="symbols", default_ttl=3600)
+            await symbols_cache.invalidate_pattern("*")
 
         remaining = await jobs_repo.get_ingest_queue_count()
-        message = f"Processed {processed}/{len(rows)} symbols ({failed} failed), {remaining} remaining in queue"
-        logger.info(f"initial_data_ingest: {message}")
+        message = f"Processed {processed}/{len(symbols)} ({failed} failed), {remaining} remaining"
+        if batch_id:
+            message += f", AI batch: {batch_id}"
+        logger.info(f"[INGEST] {message}")
         return message
 
     except Exception as e:
-        logger.error(f"initial_data_ingest failed: {e}")
+        logger.error(f"initial_data_ingest failed: {e}", exc_info=True)
         raise
 
 
@@ -155,237 +249,8 @@ async def add_to_ingest_queue(symbol: str, priority: int = 0) -> bool:
     return await jobs_repo.add_to_ingest_queue(symbol, priority)
 
 
-# =============================================================================
-# BATCH PROCESS NEW SYMBOLS (Efficient batched yfinance + OpenAI)
-# =============================================================================
-
-
-@register_job("process_new_symbols_batch")
-async def process_new_symbols_batch_job() -> str:
-    """
-    Batch process all symbols with fetch_status='pending'.
-
-    Runs every 10 minutes to aggregate new symbol requests and process them
-    efficiently using:
-    - yfinance batch download (single API call for all symbols)
-    - OpenAI Batch API for AI content generation (50% cost savings)
-
-    Schedule: Every 10 minutes (*/10 * * * *)
-    """
-    from datetime import date, timedelta
-
-    from app.cache.cache import Cache
-    from app.repositories import symbols_orm as symbols_repo
-    from app.repositories import price_history_orm as price_history_repo
-    from app.repositories import dip_state_orm as dip_state_repo
-    from app.services.data_providers import get_yfinance_service
-    from app.services.openai_client import TaskType, submit_batch
-    from app.services.fundamentals import get_fundamentals_for_analysis, refresh_fundamentals
-    from app.services.stock_info import get_stock_info_batch_async
-
-    logger.info("Starting process_new_symbols_batch job")
-
-    try:
-        # Get all symbols with pending status
-        pending_symbols = await symbols_repo.get_symbols_by_status("pending")
-
-        if not pending_symbols:
-            return "No pending symbols to process"
-
-        symbols = [s.symbol for s in pending_symbols]
-        logger.info(f"[BATCH] Processing {len(symbols)} pending symbols: {symbols}")
-
-        # Mark all as fetching
-        for symbol in symbols:
-            await symbols_repo.update_fetch_status(symbol, fetch_status="fetching")
-
-        yf_service = get_yfinance_service()
-        processed = 0
-        failed = 0
-        ai_items = []  # Collect items for OpenAI batch
-
-        # Step 1: Batch fetch stock info from yfinance
-        logger.info(f"[BATCH] Step 1: Fetching Yahoo Finance info for {len(symbols)} symbols")
-        stock_infos = await get_stock_info_batch_async(symbols)
-
-        # Step 2: Batch fetch 5 years of price history
-        logger.info(f"[BATCH] Step 2: Batch fetching 5y price history for {len(symbols)} symbols")
-        today = date.today()
-        start_date = today - timedelta(days=1825)  # 5 years
-
-        price_results = await yf_service.get_price_history_batch(
-            symbols=symbols,
-            start_date=start_date,
-            end_date=today,
-        )
-
-        # Step 3: Process each symbol with the fetched data
-        for symbol in symbols:
-            try:
-                info = stock_infos.get(symbol, {})
-                if not info:
-                    logger.warning(f"[BATCH] No Yahoo data for {symbol}")
-                    await symbols_repo.update_fetch_status(
-                        symbol, fetch_status="error", fetch_error="No Yahoo Finance data"
-                    )
-                    failed += 1
-                    continue
-
-                name = info.get("name") or info.get("short_name")
-                sector = info.get("sector")
-                full_summary = info.get("summary")
-                current_price = info.get("current_price", 0)
-                ath_price = info.get("ath_price") or info.get("fifty_two_week_high", 0)
-                dip_pct = ((ath_price - current_price) / ath_price * 100) if ath_price > 0 else 0
-
-                # Update symbol info
-                if name or sector:
-                    await symbols_repo.update_symbol_info(symbol, name=name, sector=sector)
-
-                # Add to dip_state
-                await dip_state_repo.upsert_dip_state(
-                    symbol=symbol,
-                    current_price=current_price,
-                    ath_price=ath_price,
-                    dip_percentage=dip_pct,
-                )
-
-                # Store price history
-                price_data = price_results.get(symbol)
-                if price_data:
-                    prices, _version = price_data
-                    if prices is not None and not prices.empty:
-                        await price_history_repo.save_prices(symbol, prices)
-                        logger.info(f"[BATCH] Saved {len(prices)} days of price history for {symbol}")
-
-                # Fetch and store fundamentals
-                await refresh_fundamentals(symbol)
-
-                # Collect for AI batch processing
-                if full_summary and len(full_summary) > 100:
-                    fundamentals = await get_fundamentals_for_analysis(symbol)
-                    ai_items.append({
-                        "symbol": symbol,
-                        "name": name,
-                        "sector": sector,
-                        "summary": full_summary,
-                        "current_price": current_price,
-                        "ref_high": ath_price,
-                        "dip_pct": dip_pct,
-                        "days_below": 0,
-                        **fundamentals,
-                    })
-
-                processed += 1
-
-            except Exception as e:
-                logger.error(f"[BATCH] Failed to process {symbol}: {e}")
-                await symbols_repo.update_fetch_status(
-                    symbol, fetch_status="error", fetch_error=str(e)[:500]
-                )
-                failed += 1
-
-        # Step 4: Submit AI content generation as batch (if items)
-        batch_id = None
-        if ai_items:
-            logger.info(f"[BATCH] Step 4: Submitting {len(ai_items)} items for AI batch processing")
-            try:
-                batch_id = await submit_batch(
-                    task=TaskType.RATING,
-                    items=ai_items,
-                )
-                if batch_id:
-                    logger.info(f"[BATCH] Submitted OpenAI batch job: {batch_id}")
-                    # Also submit for bio generation
-                    bio_batch_id = await submit_batch(
-                        task=TaskType.BIO,
-                        items=ai_items,
-                    )
-                    if bio_batch_id:
-                        logger.info(f"[BATCH] Submitted bio batch job: {bio_batch_id}")
-            except Exception as e:
-                logger.warning(f"[BATCH] Failed to submit AI batch: {e}")
-                # Fall back to individual AI generation
-                await _fallback_individual_ai_generation(ai_items)
-
-        # Step 5: Mark successful symbols as fetched
-        for symbol in symbols:
-            status = await symbols_repo.get_symbol(symbol)
-            if status and status.fetch_status == "fetching":
-                # AI content will be populated when batch completes
-                await symbols_repo.update_fetch_status(symbol, fetch_status="fetched")
-
-        # Step 6: Invalidate caches
-        ranking_cache = Cache(prefix="ranking", default_ttl=3600)
-        await ranking_cache.invalidate_pattern("*")
-        symbols_cache = Cache(prefix="symbols", default_ttl=3600)
-        await symbols_cache.invalidate_pattern("*")
-
-        message = f"Processed {processed}/{len(symbols)} symbols ({failed} failed)"
-        if batch_id:
-            message += f", AI batch submitted: {batch_id}"
-        logger.info(f"[BATCH] {message}")
-        return message
-
-    except Exception as e:
-        logger.error(f"process_new_symbols_batch failed: {e}", exc_info=True)
-        raise
-
-
-async def _fallback_individual_ai_generation(items: list[dict]) -> None:
-    """Fallback to individual AI generation if batch fails."""
-    from app.services.openai_client import generate_bio, rate_dip, summarize_company
-    from app.repositories import dip_votes_orm as dip_votes_repo
-    from app.repositories import symbols_orm as symbols_repo
-
-    for item in items:
-        symbol = item["symbol"]
-        try:
-            # Generate AI summary
-            ai_summary = await summarize_company(
-                symbol=symbol,
-                name=item.get("name"),
-                description=item.get("summary"),
-            )
-            if ai_summary:
-                await symbols_repo.update_symbol_info(symbol, summary_ai=ai_summary)
-
-            # Generate bio
-            bio = await generate_bio(
-                symbol=symbol,
-                name=item.get("name"),
-                sector=item.get("sector"),
-                summary=item.get("summary"),
-                dip_pct=item.get("dip_pct", 0),
-            )
-
-            # Generate rating
-            rating_data = await rate_dip(
-                symbol=symbol,
-                current_price=item.get("current_price", 0),
-                ref_high=item.get("ref_high", 0),
-                dip_pct=item.get("dip_pct", 0),
-                days_below=item.get("days_below", 0),
-                name=item.get("name"),
-                sector=item.get("sector"),
-                summary=item.get("summary"),
-            )
-
-            # Store AI analysis
-            if bio or rating_data:
-                await dip_votes_repo.upsert_ai_analysis(
-                    symbol=symbol,
-                    swipe_bio=bio,
-                    ai_rating=rating_data.get("rating") if rating_data else None,
-                    ai_reasoning=rating_data.get("reasoning") if rating_data else None,
-                    is_batch=False,
-                )
-        except Exception as e:
-            logger.warning(f"[BATCH] Individual AI generation failed for {symbol}: {e}")
-
-
-@register_job("data_grab")
-async def data_grab_job() -> str:
+@register_job("prices_daily")
+async def prices_daily_job() -> str:
     """
     Fetch stock data from yfinance and update dip_state with latest prices.
     Uses unified YFinanceService with change detection for targeted cache invalidation.
@@ -398,7 +263,7 @@ async def data_grab_job() -> str:
     from app.services.data_providers import get_yfinance_service
     from app.services.runtime_settings import get_runtime_setting
 
-    logger.info("Starting data_grab job")
+    logger.info("Starting prices_daily job")
 
     try:
         tickers = await jobs_repo.get_active_symbol_tickers()
@@ -556,11 +421,11 @@ async def data_grab_job() -> str:
             logger.info("No data changes detected, skipping cache invalidation")
 
         message = f"Updated {updated_count}/{len(tickers)} symbols ({len(changed_symbols)} changed), {benchmark_count} benchmarks"
-        logger.info(f"data_grab: {message}")
+        logger.info(f"prices_daily: {message}")
         return message
 
     except Exception as e:
-        logger.error(f"data_grab failed: {e}")
+        logger.error(f"prices_daily failed: {e}")
         raise
 
 
@@ -659,19 +524,19 @@ async def cache_warmup_job() -> str:
         raise
 
 
-@register_job("batch_ai_swipe")
-async def batch_ai_swipe_job() -> str:
+@register_job("ai_bios_weekly")
+async def ai_bios_weekly_job() -> str:
     """
     Generate swipe-style bios for dips using OpenAI Batch API.
 
-    Schedule: Weekly Sunday 3am
+    Schedule: Weekly Sunday 4am
     """
     from app.services.batch_scheduler import (
         process_completed_batch_jobs,
         schedule_batch_swipe_bios,
     )
 
-    logger.info("Starting batch_ai_swipe job")
+    logger.info("Starting ai_bios_weekly job")
 
     try:
         # Process any completed batches first
@@ -681,27 +546,27 @@ async def batch_ai_swipe_job() -> str:
         batch_id = await schedule_batch_swipe_bios()
 
         message = f"Batch: {batch_id or 'none needed'}, processed: {processed}"
-        logger.info(f"batch_ai_swipe: {message}")
+        logger.info(f"ai_bios_weekly: {message}")
         return message
 
     except Exception as e:
-        logger.error(f"batch_ai_swipe failed: {e}")
+        logger.error(f"ai_bios_weekly failed: {e}")
         raise
 
 
-@register_job("batch_ai_analysis")
-async def batch_ai_analysis_job() -> str:
+@register_job("ai_ratings_weekly")
+async def ai_ratings_weekly_job() -> str:
     """
     Generate serious dip analysis using OpenAI Batch API.
 
-    Schedule: Weekly Sunday 4am
+    Schedule: Weekly Sunday 5am
     """
     from app.services.batch_scheduler import (
         process_completed_batch_jobs,
         schedule_batch_dip_analysis,
     )
 
-    logger.info("Starting batch_ai_analysis job")
+    logger.info("Starting ai_ratings_weekly job")
 
     try:
         # Process any completed batches first
@@ -711,16 +576,16 @@ async def batch_ai_analysis_job() -> str:
         batch_id = await schedule_batch_dip_analysis()
 
         message = f"Batch: {batch_id or 'none needed'}, processed: {processed}"
-        logger.info(f"batch_ai_analysis: {message}")
+        logger.info(f"ai_ratings_weekly: {message}")
         return message
 
     except Exception as e:
-        logger.error(f"batch_ai_analysis failed: {e}")
+        logger.error(f"ai_ratings_weekly failed: {e}")
         raise
 
 
-@register_job("batch_poll")
-async def batch_poll_job() -> str:
+@register_job("ai_batch_poll")
+async def ai_batch_poll_job() -> str:
     """
     Poll for completed OpenAI batch jobs.
 
@@ -731,22 +596,22 @@ async def batch_poll_job() -> str:
     """
     from app.services.batch_scheduler import process_completed_batch_jobs
 
-    logger.info("Starting batch_poll job")
+    logger.info("Starting ai_batch_poll job")
 
     try:
         processed = await process_completed_batch_jobs()
 
         message = f"Polled batches, processed: {processed}"
-        logger.info(f"batch_poll: {message}")
+        logger.info(f"ai_batch_poll: {message}")
         return message
 
     except Exception as e:
-        logger.error(f"batch_poll failed: {e}")
+        logger.error(f"ai_batch_poll failed: {e}")
         raise
 
 
-@register_job("fundamentals_refresh")
-async def fundamentals_refresh_job() -> str:
+@register_job("fundamentals_monthly")
+async def fundamentals_monthly_job() -> str:
     """
     Refresh stock fundamentals and financial statements from Yahoo Finance.
 
@@ -758,13 +623,13 @@ async def fundamentals_refresh_job() -> str:
     5. Financial statements stale (>90 days old) - statements change less frequently
     6. Next earnings date is within 7 days (pre-fetch for upcoming data)
 
-    Schedule: Weekly on Sunday at 2am (checks all conditions)
+    Schedule: Monthly 1st at 2am UTC
     """
     from datetime import datetime, timedelta
 
     from app.services.fundamentals import refresh_all_fundamentals
 
-    logger.info("Starting fundamentals_refresh job")
+    logger.info("Starting fundamentals_monthly job")
 
     try:
         # Find symbols that need refresh based on multiple criteria
@@ -828,7 +693,7 @@ async def fundamentals_refresh_job() -> str:
 
         if not symbols_to_refresh:
             message = "No symbols need fundamentals refresh"
-            logger.info(f"fundamentals_refresh: {message}")
+            logger.info(f"fundamentals_monthly: {message}")
             return message
 
         logger.info(f"Refreshing fundamentals for {len(symbols_to_refresh)} symbols")
@@ -897,11 +762,11 @@ async def fundamentals_refresh_job() -> str:
         )
 
         message = f"Fundamentals refresh: {result['refreshed']} updated, {result['failed']} failed, {result['skipped']} skipped"
-        logger.info(f"fundamentals_refresh: {message}")
+        logger.info(f"fundamentals_monthly: {message}")
         return message
 
     except Exception as e:
-        logger.error(f"fundamentals_refresh failed: {e}")
+        logger.error(f"fundamentals_monthly failed: {e}")
         raise
 
 
@@ -929,138 +794,42 @@ def _parse_datetime(dt_value: Any) -> datetime | None:
     return None
 
 
-@register_job("ai_agents_analysis")
-async def ai_agents_analysis_job() -> str:
+@register_job("ai_personas_weekly")
+async def ai_personas_weekly_job() -> str:
     """
-    Run AI agent analysis (Warren Buffett, Peter Lynch, etc.) on stocks.
+    Run AI persona analysis (Warren Buffett, Peter Lynch, etc.) on stocks.
 
-    Schedule: Weekly Sunday 5am (after fundamentals_refresh)
+    Schedule: Weekly Sunday 3am (first AI job of the day)
 
-    Each agent analyzes stocks using their investment philosophy.
+    Each persona analyzes stocks using their investment philosophy.
     Results are stored for frontend display.
 
     Uses input version checking to skip symbols whose data hasn't changed.
     """
     from app.services.ai_agents import run_all_agent_analyses
 
-    logger.info("Starting ai_agents_analysis job")
+    logger.info("Starting ai_personas_weekly job")
 
     try:
         result = await run_all_agent_analyses()
 
-        message = f"Agent analysis: {result['analyzed']} analyzed, {result.get('skipped', 0)} skipped, {result['failed']} failed"
-        logger.info(f"ai_agents_analysis: {message}")
+        message = f"Persona analysis: {result['analyzed']} analyzed, {result.get('skipped', 0)} skipped, {result['failed']} failed"
+        logger.info(f"ai_personas_weekly: {message}")
         return message
 
     except Exception as e:
-        logger.error(f"ai_agents_analysis failed: {e}")
+        logger.error(f"ai_personas_weekly failed: {e}")
         raise
 
 
-@register_job("ai_agents_batch_submit")
-async def ai_agents_batch_submit_job() -> str:
-    """
-    Submit AI agent analysis as a batch job for cost savings.
-
-    Schedule: Weekly Sunday 3am (before regular ai_agents_analysis)
-
-    Uses OpenAI Batch API for ~50% cost reduction.
-    Results are collected separately after batch completes.
-
-    Workflow:
-    1. Check which symbols need analysis (expired or new)
-    2. Filter symbols where input data hasn't changed
-    3. Submit batch job with all agent prompts
-    4. Store batch_id for later collection
-    """
-    from app.services.ai_agents import run_all_agent_analyses_batch
-
-    logger.info("Starting ai_agents_batch_submit job")
-
-    try:
-        result = await run_all_agent_analyses_batch()
-
-        if result.get("batch_id"):
-            message = f"Batch {result['batch_id']}: {result['submitted']} symbols submitted, {result['skipped']} skipped"
-        else:
-            message = f"No batch submitted: {result.get('message', 'Unknown reason')}"
-
-        logger.info(f"ai_agents_batch_submit: {message}")
-        return message
-
-    except Exception as e:
-        logger.error(f"ai_agents_batch_submit failed: {e}")
-        raise
-
-
-@register_job("ai_agents_batch_collect")
-async def ai_agents_batch_collect_job() -> str:
-    """
-    Collect results from pending AI agent batch jobs.
-
-    Schedule: Every 4 hours (batch jobs complete within 24h)
-
-    Checks for any completed batch jobs and processes their results.
-    """
-    from app.services.ai_agents import collect_agent_batch
-    from app.services.openai_client import check_batch
-
-    logger.info("Starting ai_agents_batch_collect job")
-
-    try:
-        # Find pending batch jobs
-        batch_ids = await jobs_repo.get_pending_batch_jobs()
-
-        if not batch_ids:
-            return "No pending batch jobs"
-
-        collected = 0
-        pending = 0
-        failed = 0
-
-        for batch_id in batch_ids:
-            # Check batch status
-            status = await check_batch(batch_id)
-            if not status:
-                logger.warning(f"Could not check batch {batch_id}")
-                failed += 1
-                continue
-
-            if status["status"] == "completed":
-                # Collect and process results
-                results = await collect_agent_batch(batch_id)
-                collected += len(results)
-                logger.info(f"Collected {len(results)} results from batch {batch_id}")
-
-                # Clear batch_job_id for processed symbols
-                await jobs_repo.clear_batch_job_references(batch_id)
-            elif status["status"] in ("failed", "cancelled", "expired"):
-                logger.error(f"Batch {batch_id} failed with status: {status['status']}")
-                failed += 1
-                # Clear failed batch references
-                await jobs_repo.clear_batch_job_references(batch_id)
-            else:
-                # Still in progress
-                pending += 1
-                logger.info(f"Batch {batch_id} still {status['status']}: {status.get('completed_count', 0)}/{status.get('total_count', 0)}")
-
-        message = f"Batch collect: {collected} results collected, {pending} pending, {failed} failed"
-        logger.info(f"ai_agents_batch_collect: {message}")
-        return message
-
-    except Exception as e:
-        logger.error(f"ai_agents_batch_collect failed: {e}")
-        raise
-
-
-@register_job("cleanup")
-async def cleanup_job() -> str:
+@register_job("cleanup_daily")
+async def cleanup_daily_job() -> str:
     """
     Clean up expired suggestions and old API keys.
 
     Schedule: Daily midnight
     """
-    logger.info("Starting cleanup job")
+    logger.info("Starting cleanup_daily job")
 
     try:
         # Rejected suggestions > 7 days
@@ -1082,16 +851,16 @@ async def cleanup_job() -> str:
         await jobs_repo.cleanup_expired_api_keys()
 
         message = "Cleanup completed"
-        logger.info(f"cleanup: {message}")
+        logger.info(f"cleanup_daily: {message}")
         return message
 
     except Exception as e:
-        logger.error(f"cleanup failed: {e}")
+        logger.error(f"cleanup_daily failed: {e}")
         raise
 
 
-@register_job("portfolio_analytics_worker")
-async def portfolio_analytics_worker_job() -> str:
+@register_job("portfolio_worker")
+async def portfolio_worker_job() -> str:
     """
     Process queued portfolio analytics jobs.
 
@@ -1099,20 +868,20 @@ async def portfolio_analytics_worker_job() -> str:
     """
     from app.portfolio.jobs import process_pending_jobs
 
-    logger.info("Starting portfolio_analytics_worker job")
+    logger.info("Starting portfolio_worker job")
 
     try:
         processed = await process_pending_jobs(limit=3)
         message = f"Processed {processed} portfolio analytics jobs"
-        logger.info(f"portfolio_analytics_worker: {message}")
+        logger.info(f"portfolio_worker: {message}")
         return message
     except Exception as e:
-        logger.error(f"portfolio_analytics_worker failed: {e}")
+        logger.error(f"portfolio_worker failed: {e}")
         raise
 
 
-@register_job("signal_scanner_daily")
-async def signal_scanner_daily_job() -> str:
+@register_job("signals_daily")
+async def signals_daily_job() -> str:
     """
     Daily signal scanner to cache buy opportunities.
 
@@ -1130,7 +899,7 @@ async def signal_scanner_daily_job() -> str:
     from app.repositories import price_history_orm as price_history_repo
     from app.repositories import symbols_orm as symbols_repo
 
-    logger.info("Starting signal_scanner_daily job")
+    logger.info("Starting signals_daily job")
 
     cache = Cache(prefix="signals", default_ttl=86400)  # 24 hour TTL
 
@@ -1200,16 +969,16 @@ async def signal_scanner_daily_job() -> str:
         strong_buys = sum(1 for opp in opportunities if opp.opportunity_type == "STRONG_BUY")
 
         message = f"Scanned {len(opportunities)} stocks, {strong_buys} strong buys, {total_active} active signals"
-        logger.info(f"signal_scanner_daily: {message}")
+        logger.info(f"signals_daily: {message}")
         return message
 
     except Exception as e:
-        logger.error(f"signal_scanner_daily failed: {e}")
+        logger.error(f"signals_daily failed: {e}")
         raise
 
 
-@register_job("market_regime_daily")
-async def market_regime_daily_job() -> str:
+@register_job("regime_daily")
+async def regime_daily_job() -> str:
     """
     Daily market regime detection and caching.
 
@@ -1227,7 +996,7 @@ async def market_regime_daily_job() -> str:
     from app.repositories import price_history_orm as price_history_repo
     from app.repositories import symbols_orm as symbols_repo
 
-    logger.info("Starting market_regime_daily job")
+    logger.info("Starting regime_daily job")
 
     cache = Cache(prefix="market", default_ttl=86400)
 
@@ -1284,9 +1053,56 @@ async def market_regime_daily_job() -> str:
         await cache.set("regime", cache_data)
 
         message = f"Regime: {regime.regime}, Avg Corr: {corr.average_correlation:.1%}"
-        logger.info(f"market_regime_daily: {message}")
+        logger.info(f"regime_daily: {message}")
         return message
 
     except Exception as e:
-        logger.error(f"market_regime_daily failed: {e}")
+        logger.error(f"regime_daily failed: {e}")
+        raise
+
+
+# =============================================================================
+# QUANT MONTHLY
+# =============================================================================
+
+
+@register_job("quant_monthly")
+async def quant_monthly_job() -> str:
+    """
+    Monthly quant engine optimization.
+
+    Runs on the 1st of each month to:
+    - Recalculate expected returns and risk models
+    - Update portfolio weights
+    - Refresh signal analysis cache
+
+    Schedule: Monthly on 1st at 3 AM UTC (0 3 1 * *)
+    """
+    from app.cache.cache import Cache
+    from app.repositories import symbols_orm as symbols_repo
+
+    logger.info("Starting quant_monthly job")
+
+    try:
+        # Get all tracked symbols
+        symbols = await symbols_repo.list_symbols()
+        symbol_list = [s.symbol for s in symbols if s.symbol not in ("SPY", "^GSPC", "URTH")]
+
+        if not symbol_list:
+            return "No symbols to process"
+
+        cache = Cache()
+
+        # Clear old quant caches to force refresh
+        await cache.delete("quant:recommendations")
+        await cache.delete("quant:signals")
+        await cache.delete("regime")
+
+        # Log completion
+        message = f"Cleared quant caches for {len(symbol_list)} symbols, ready for fresh calculations"
+        logger.info(f"quant_monthly: {message}")
+        return message
+
+    except Exception as e:
+        logger.error(f"quant_monthly failed: {e}")
         raise

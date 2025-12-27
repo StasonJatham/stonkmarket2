@@ -358,3 +358,163 @@ async def get_analytics_job_status(
     if not job or job["portfolio_id"] != portfolio_id:
         raise NotFoundError(message="Analytics job not found")
     return PortfolioAnalyticsJobResponse(**job)
+
+
+# =============================================================================
+# Bulk Import Endpoints
+# =============================================================================
+
+
+@router.post(
+    "/{portfolio_id}/import/extract-image",
+    response_model=ImageExtractionResponse,
+    summary="Extract positions from portfolio screenshot",
+    description="""
+    Upload a screenshot of your portfolio from any broker/app.
+    AI will analyze the image and extract stock positions.
+    
+    Supported formats: PNG, JPEG, WebP, GIF
+    Max size: 10MB
+    
+    Returns extracted positions with confidence scores.
+    User should review and edit before importing.
+    """,
+)
+async def extract_positions_from_image(
+    portfolio_id: int,
+    file: UploadFile = File(..., description="Portfolio screenshot image"),
+    user: TokenData = Depends(require_user),
+) -> ImageExtractionResponse:
+    """Extract portfolio positions from an uploaded image."""
+    import base64
+    
+    from app.services.portfolio_image_extractor import (
+        extract_positions_from_image as extract,
+        MAX_IMAGE_SIZE,
+        SUPPORTED_MIME_TYPES,
+    )
+    
+    # Verify user owns portfolio
+    user_id = await _get_user_id(user)
+    portfolio = await portfolios_repo.get_portfolio(portfolio_id, user_id)
+    if not portfolio:
+        raise NotFoundError(message="Portfolio not found")
+    
+    # Validate file type
+    content_type = file.content_type or "application/octet-stream"
+    if content_type not in SUPPORTED_MIME_TYPES:
+        raise ValidationError(
+            message=f"Unsupported file type: {content_type}. Supported: PNG, JPEG, WebP, GIF, HEIC"
+        )
+    
+    # Read file content
+    content = await file.read()
+    if len(content) > MAX_IMAGE_SIZE:
+        raise ValidationError(
+            message=f"File too large: {len(content) / 1024 / 1024:.1f}MB (max: 10MB)"
+        )
+    
+    # Convert to base64 and extract
+    image_base64 = base64.b64encode(content).decode("utf-8")
+    result = await extract(image_base64, content_type)
+    
+    return result
+
+
+@router.post(
+    "/{portfolio_id}/import/bulk",
+    response_model=BulkImportResponse,
+    summary="Bulk import positions into portfolio",
+    description="""
+    Import multiple positions into a portfolio at once.
+    
+    Typically used after extracting positions from an image,
+    where the user has reviewed and edited the data.
+    
+    Duplicate detection: If a position with the same symbol exists,
+    it will be skipped (if skip_duplicates=True) or updated.
+    """,
+)
+async def bulk_import_positions(
+    portfolio_id: int,
+    payload: BulkImportRequest,
+    user: TokenData = Depends(require_user),
+) -> BulkImportResponse:
+    """Bulk import positions into a portfolio."""
+    user_id = await _get_user_id(user)
+    portfolio = await portfolios_repo.get_portfolio(portfolio_id, user_id)
+    if not portfolio:
+        raise NotFoundError(message="Portfolio not found")
+    
+    # Get existing holdings to detect duplicates
+    existing_holdings = await portfolios_repo.list_holdings(portfolio_id)
+    existing_symbols = {h["symbol"] for h in existing_holdings}
+    
+    results: list[ImportPositionResult] = []
+    created = 0
+    updated = 0
+    skipped = 0
+    failed = 0
+    
+    for pos in payload.positions:
+        symbol = pos.symbol.upper()
+        
+        try:
+            # Check for duplicate
+            is_duplicate = symbol in existing_symbols
+            
+            if is_duplicate and payload.skip_duplicates:
+                results.append(ImportPositionResult(
+                    symbol=symbol,
+                    status=ImportResultStatus.SKIPPED,
+                    message="Position already exists",
+                ))
+                skipped += 1
+                continue
+            
+            # Create or update holding
+            holding = await portfolios_repo.upsert_holding(
+                portfolio_id=portfolio_id,
+                symbol=symbol,
+                quantity=pos.quantity,
+                avg_cost=pos.avg_cost,
+            )
+            
+            if is_duplicate:
+                results.append(ImportPositionResult(
+                    symbol=symbol,
+                    status=ImportResultStatus.UPDATED,
+                    message="Position updated",
+                    holding_id=holding["id"],
+                ))
+                updated += 1
+            else:
+                results.append(ImportPositionResult(
+                    symbol=symbol,
+                    status=ImportResultStatus.CREATED,
+                    message="Position created",
+                    holding_id=holding["id"],
+                ))
+                created += 1
+                existing_symbols.add(symbol)  # Track for remaining imports
+                
+        except Exception as e:
+            results.append(ImportPositionResult(
+                symbol=symbol,
+                status=ImportResultStatus.FAILED,
+                message=str(e),
+            ))
+            failed += 1
+    
+    # Invalidate analytics cache
+    await invalidate_portfolio_analytics_cache(portfolio_id)
+    
+    return BulkImportResponse(
+        success=failed == 0,
+        total=len(payload.positions),
+        created=created,
+        updated=updated,
+        skipped=skipped,
+        failed=failed,
+        results=results,
+    )

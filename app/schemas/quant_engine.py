@@ -179,3 +179,101 @@ class AllocationResponse(BaseModel):
     trades: list[TradeRecommendation] = Field(..., description="Recommended trades")
     warnings: list[str] = Field(default_factory=list, description="Warnings")
 
+
+# ============================================================================
+# Global Recommendations Schemas (for Landing/Dashboard - no auth)
+# ============================================================================
+
+
+class QuantRecommendation(BaseModel):
+    """Individual stock recommendation for the global endpoint.
+    
+    Combines signal scanner data with dip finder state for a unified view.
+    """
+    
+    model_config = ConfigDict(from_attributes=True)
+    
+    ticker: str = Field(..., description="Stock ticker symbol")
+    name: str | None = Field(None, description="Company name")
+    action: str = Field("HOLD", description="BUY, SELL, or HOLD")
+    notional_eur: float = Field(0.0, description="Suggested notional in EUR")
+    delta_weight: float = Field(0.0, description="Change in weight (-1 to 1)")
+    target_weight: float = Field(0.0, description="Target weight in model portfolio")
+    
+    # Price data
+    last_price: float | None = Field(None, description="Latest stock price")
+    change_percent: float | None = Field(None, description="Daily price change percentage")
+    market_cap: float | None = Field(None, description="Market capitalization")
+    
+    # Sector info
+    sector: str | None = Field(None, description="Stock sector")
+    sector_etf: str | None = Field(None, description="Sector benchmark ETF symbol")
+    
+    # Signal-based metrics
+    mu_hat: float = Field(0.0, description="Expected return estimate from signals")
+    uncertainty: float = Field(1.0, description="Uncertainty in return estimate")
+    risk_contribution: float = Field(0.0, description="Contribution to overall risk")
+    
+    # Top technical signal
+    top_signal_name: str | None = Field(None, description="Name of top technical signal")
+    top_signal_is_buy: bool = Field(False, description="Whether top signal is a buy signal")
+    top_signal_strength: float = Field(0.0, description="Strength of top signal (0-1)")
+    top_signal_description: str | None = Field(None, description="Description of top signal")
+    
+    # Opportunity score
+    opportunity_score: float | None = Field(None, description="Composite opportunity score 0-100")
+    opportunity_rating: str | None = Field(None, description="Rating: strong_buy, buy, hold, avoid")
+    
+    # Dip-based metrics
+    dip_score: float | None = Field(None, description="Dip score (z-score or buy_score)")
+    dip_bucket: str | None = Field(None, description="Dip bucket classification")
+    marginal_utility: float = Field(0.0, description="Marginal utility for ranking")
+    
+    # Legacy compatibility fields
+    legacy_dip_pct: float | None = Field(None, description="Percentage below ATH")
+    legacy_days_in_dip: int | None = Field(None, description="Days in current dip")
+    legacy_domain_score: float | None = Field(None, description="Domain-specific score")
+    
+    # AI Analysis (if available)
+    ai_summary: str | None = Field(None, description="AI-generated analysis snippet")
+    ai_rating: str | None = Field(None, description="AI rating: strong_buy, buy, hold, sell, strong_sell")
+
+
+class QuantAuditBlock(BaseModel):
+    """Audit block for transparency in recommendations."""
+    
+    model_config = ConfigDict(from_attributes=True)
+    
+    timestamp: str = Field(..., description="Generation timestamp ISO format")
+    config_hash: int = Field(0, description="Hash of configuration used")
+    mu_hat_summary: dict = Field(default_factory=dict, description="Summary of return estimates")
+    risk_model_summary: dict = Field(default_factory=dict, description="Risk model parameters")
+    optimizer_status: str = Field("success", description="Optimizer status")
+    constraint_binding: list[str] = Field(default_factory=list, description="Active constraints")
+    turnover_realized: float = Field(0.0, description="Turnover fraction")
+    regime_state: str = Field("unknown", description="Current market regime")
+    dip_stats: dict | None = Field(None, description="Dip statistics")
+    error_message: str | None = Field(None, description="Error if any")
+
+
+class QuantEngineResponse(BaseModel):
+    """Response for the global /recommendations endpoint.
+    
+    Used by landing page and dashboard to display ranked stocks.
+    """
+    
+    model_config = ConfigDict(from_attributes=True)
+    
+    recommendations: list[QuantRecommendation] = Field(
+        ..., description="Ranked stock recommendations"
+    )
+    as_of_date: str = Field(..., description="Data as-of date")
+    portfolio_value_eur: float = Field(0.0, description="Model portfolio value")
+    inflow_eur: float = Field(1000.0, description="Inflow amount used")
+    total_trades: int = Field(0, description="Number of trade recommendations")
+    total_transaction_cost_eur: float = Field(0.0, description="Estimated transaction costs")
+    expected_portfolio_return: float = Field(0.0, description="Expected annual return")
+    expected_portfolio_risk: float = Field(0.0, description="Expected annual volatility")
+    audit: QuantAuditBlock = Field(..., description="Audit trail for transparency")
+
+

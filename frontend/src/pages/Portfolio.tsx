@@ -52,7 +52,9 @@ import {
   TrendingUp,
   TrendingDown,
   DollarSign,
+  Upload,
 } from 'lucide-react';
+import { BulkImportModal } from '@/components/BulkImportModal';
 
 const container = {
   hidden: { opacity: 0 },
@@ -84,6 +86,9 @@ export function PortfolioPage() {
   // Holding dialog
   const [holdingDialogOpen, setHoldingDialogOpen] = useState(false);
   const [editingHolding, setEditingHolding] = useState<{ symbol: string; quantity: number; avg_cost?: number | null } | null>(null);
+  
+  // Bulk import dialog
+  const [bulkImportOpen, setBulkImportOpen] = useState(false);
   const [holdingSymbol, setHoldingSymbol] = useState('');
   const [holdingQty, setHoldingQty] = useState('');
   const [holdingAvgCost, setHoldingAvgCost] = useState('');
@@ -556,16 +561,41 @@ export function PortfolioPage() {
               </div>
             </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setHoldingDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleSaveHolding}>
-              {editingHolding ? 'Save Changes' : 'Add Holding'}
-            </Button>
+          <DialogFooter className="flex-col sm:flex-row gap-2">
+            {!editingHolding && (
+              <Button 
+                variant="secondary" 
+                onClick={() => {
+                  setHoldingDialogOpen(false);
+                  setBulkImportOpen(true);
+                }}
+                className="w-full sm:w-auto sm:mr-auto"
+              >
+                <Upload className="h-4 w-4 mr-2" />
+                Import Bulk
+              </Button>
+            )}
+            <div className="flex gap-2 w-full sm:w-auto">
+              <Button variant="outline" onClick={() => setHoldingDialogOpen(false)} className="flex-1 sm:flex-none">
+                Cancel
+              </Button>
+              <Button onClick={handleSaveHolding} className="flex-1 sm:flex-none">
+                {editingHolding ? 'Save Changes' : 'Add Holding'}
+              </Button>
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Bulk Import Modal */}
+      {selectedId && (
+        <BulkImportModal
+          open={bulkImportOpen}
+          onOpenChange={setBulkImportOpen}
+          portfolioId={selectedId}
+          onImportComplete={() => loadDetail(selectedId)}
+        />
+      )}
     </div>
   );
 }

@@ -129,3 +129,16 @@ async def get_dip_states_for_symbols(symbols: list[str]) -> dict[str, DipState]:
         )
         states = result.scalars().all()
         return {state.symbol: state for state in states}
+
+
+async def get_all_dip_states() -> list[DipState]:
+    """Get all dip states.
+    
+    Returns:
+        List of DipState ORM objects
+    """
+    async with get_session() as session:
+        result = await session.execute(
+            select(DipState).order_by(DipState.symbol)
+        )
+        return list(result.scalars().all())

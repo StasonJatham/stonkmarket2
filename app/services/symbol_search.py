@@ -33,6 +33,7 @@ Usage:
 from __future__ import annotations
 
 import base64
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -43,7 +44,7 @@ from sqlalchemy.exc import ProgrammingError
 
 from app.core.logging import get_logger
 from app.database.connection import get_session
-from app.database.orm import StockFundamentals, Symbol, SymbolSearchResult
+from app.database.orm import StockFundamentals, Symbol, SymbolSearchLog, SymbolSearchResult
 from app.services.data_providers import get_yfinance_service
 
 
@@ -87,6 +88,29 @@ class SearchCursor:
 def _normalize_query(query: str) -> str:
     """Normalize query for consistent searching."""
     return query.strip().upper()
+
+
+async def _log_search(
+    query: str,
+    result_count: int,
+    source: str,
+    latency_ms: int | None = None,
+) -> None:
+    """Persist a search query for analytics and future tuning."""
+    try:
+        async with get_session() as session:
+            session.add(
+                SymbolSearchLog(
+                    query=query.strip(),
+                    query_normalized=_normalize_query(query),
+                    result_count=result_count,
+                    source=source,
+                    latency_ms=latency_ms,
+                )
+            )
+            await session.commit()
+    except Exception as exc:
+        logger.warning(f"Failed to log search query: {exc}")
 
 
 async def _search_local_db(
@@ -170,6 +194,7 @@ async def _search_local_db(
         conditions = [
             SymbolSearchResult.symbol.ilike(f"{normalized}%"),
             SymbolSearchResult.name.ilike(f"%{normalized}%"),
+            SymbolSearchResult.search_query.ilike(f"%{normalized}%"),
         ]
         if use_similarity:
             conditions.append(func.similarity(SymbolSearchResult.name, normalized) > 0.3)
@@ -330,12 +355,22 @@ async def search_symbols(
             "next_cursor": None,
         }
 
+    start_time = time.monotonic()
+
     # If force_api, query yfinance directly (no pagination for API search)
     if force_api:
+        api_fetch_limit = max(max_results * 2, 50)
         api_results = await _yf_service.search_tickers(
             query,
-            max_results=max_results * 2,  # Fetch more to filter
+            max_results=api_fetch_limit,  # Fetch more to enrich local cache
             save_to_db=True,  # IMPORTANT: Save all results for future local search
+        )
+        latency_ms = int((time.monotonic() - start_time) * 1000)
+        await _log_search(
+            query=query,
+            result_count=len(api_results),
+            source="api",
+            latency_ms=latency_ms,
         )
 
         return {
@@ -366,6 +401,13 @@ async def search_symbols(
     suggest_fresh = (
         parsed_cursor is None
         and len(local_results) < MIN_LOCAL_RESULTS_THRESHOLD
+    )
+    latency_ms = int((time.monotonic() - start_time) * 1000)
+    await _log_search(
+        query=query,
+        result_count=len(local_results),
+        source="local",
+        latency_ms=latency_ms,
     )
 
     return {

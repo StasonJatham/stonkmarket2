@@ -15,6 +15,7 @@ from app.schemas.common import ErrorResponse
 
 from .routes import (
     admin_settings,
+    ai_personas,
     api_keys,
     auth,
     celery,
@@ -205,5 +206,6 @@ def create_api_app() -> FastAPI:
     app.include_router(quant_engine.router, tags=["Quant Engine"])
     app.include_router(quant_engine.global_router, tags=["Quant Engine"])
     app.include_router(celery.router, tags=["Celery"])
+    app.include_router(ai_personas.router, tags=["AI Personas"])
 
     return app

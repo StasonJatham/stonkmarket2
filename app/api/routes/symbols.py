@@ -659,6 +659,7 @@ class AgentVerdictResponse(BaseModel):
     confidence: int
     reasoning: str
     key_factors: list[str]
+    avatar_url: str | None = None
 
 
 class AgentAnalysisResponse(BaseModel):
@@ -702,7 +703,12 @@ async def get_agent_analysis_endpoint(
     if not force_refresh:
         analysis = await get_agent_analysis(symbol)
         if analysis:
-            return AgentAnalysisResponse(**analysis)
+            # Add avatar URLs to verdicts
+            analysis_resp = dict(analysis)
+            if "verdicts" in analysis_resp:
+                for v in analysis_resp["verdicts"]:
+                    v["avatar_url"] = f"/api/ai-personas/{v.get('agent_id', '')}/avatar"
+            return AgentAnalysisResponse(**analysis_resp)
 
     # Run new analysis
     result = await run_agent_analysis(symbol)
@@ -719,6 +725,7 @@ async def get_agent_analysis_endpoint(
                 confidence=v.confidence,
                 reasoning=v.reasoning,
                 key_factors=v.key_factors,
+                avatar_url=f"/api/ai-personas/{v.agent_id}/avatar",
             )
             for v in result.verdicts
         ],
@@ -764,6 +771,7 @@ async def refresh_agent_analysis_endpoint(
                 confidence=v.confidence,
                 reasoning=v.reasoning,
                 key_factors=v.key_factors,
+                avatar_url=f"/api/ai-personas/{v.agent_id}/avatar",
             )
             for v in result.verdicts
         ],
@@ -786,3 +794,137 @@ async def list_agents() -> list[AgentInfoResponse]:
 
     agents = get_agent_info()
     return [AgentInfoResponse(**a) for a in agents]
+
+
+# =============================================================================
+# Admin Full Refresh Endpoint
+# =============================================================================
+
+
+class FullRefreshRequest(BaseModel):
+    """Request for full symbol refresh."""
+    
+    symbol: str
+    refresh_fundamentals: bool = True
+    refresh_prices: bool = True
+    refresh_logo: bool = True
+    refresh_ai_analysis: bool = True
+    refresh_ai_agents: bool = True
+
+
+class FullRefreshResponse(BaseModel):
+    """Response for full symbol refresh."""
+    
+    symbol: str
+    tasks_triggered: list[str]
+    message: str
+
+
+@router.post(
+    "/admin/refresh/{symbol}",
+    response_model=FullRefreshResponse,
+    summary="Full symbol data refresh (Admin)",
+    description="Trigger complete refresh of all data for a symbol: fundamentals, prices, logo, AI analysis, and AI agents.",
+    dependencies=[Depends(require_admin)],
+)
+async def refresh_symbol_full(
+    symbol: str = Path(..., min_length=1, max_length=10, description="Stock symbol"),
+    request: FullRefreshRequest | None = None,
+) -> FullRefreshResponse:
+    """
+    Admin endpoint to trigger full data refresh for a symbol.
+    
+    This is the nuclear option - refreshes ALL data sources:
+    - Fundamentals (yfinance company data)
+    - Price history (yfinance price data)  
+    - Company logo (Logo.dev or favicon)
+    - AI analysis (swipe bio, rating)
+    - AI agents (Warren Buffett, Peter Lynch, etc.)
+    
+    Use sparingly - triggers multiple API calls and AI generations.
+    """
+    from app.services.logo_service import LogoTheme, get_logo
+    from app.services.ai_agents import run_agent_analysis
+    
+    symbol_upper = symbol.upper().strip()
+    tasks_triggered = []
+    
+    # Check symbol exists
+    existing = await symbol_repo.get_symbol(symbol_upper)
+    if not existing:
+        raise NotFoundError(
+            message=f"Symbol '{symbol_upper}' not found in database",
+            details={"symbol": symbol_upper},
+        )
+    
+    # Use request options or defaults
+    refresh_fundamentals = request.refresh_fundamentals if request else True
+    refresh_prices = request.refresh_prices if request else True
+    refresh_logo = request.refresh_logo if request else True
+    refresh_ai_analysis = request.refresh_ai_analysis if request else True
+    refresh_ai_agents = request.refresh_ai_agents if request else True
+    
+    # 1. Refresh fundamentals via Celery task
+    if refresh_fundamentals:
+        task = celery_app.send_task(
+            "jobs.refresh_fundamentals_symbol", args=[symbol_upper]
+        )
+        tasks_triggered.append(f"fundamentals:{task.id}")
+        logger.info(f"Triggered fundamentals refresh for {symbol_upper}: {task.id}")
+    
+    # 2. Mark symbol for price refresh (will be picked up by next data_grab)
+    if refresh_prices:
+        await symbol_repo.update_fetch_status(symbol_upper, fetch_status="pending")
+        tasks_triggered.append("prices:pending")
+        logger.info(f"Marked {symbol_upper} for price refresh")
+    
+    # 3. Refresh logo (immediate)
+    if refresh_logo:
+        try:
+            # Clear cached logo by fetching fresh
+            from app.database.connection import get_session
+            from app.database.orm import Symbol
+            from sqlalchemy import update
+            
+            async with get_session() as session:
+                await session.execute(
+                    update(Symbol)
+                    .where(Symbol.symbol == symbol_upper)
+                    .values(logo_fetched_at=None)  # Clear cache timestamp
+                )
+                await session.commit()
+            
+            # Fetch fresh logos
+            await get_logo(symbol_upper, LogoTheme.LIGHT)
+            await get_logo(symbol_upper, LogoTheme.DARK)
+            tasks_triggered.append("logo:refreshed")
+            logger.info(f"Refreshed logos for {symbol_upper}")
+        except Exception as e:
+            logger.warning(f"Failed to refresh logo for {symbol_upper}: {e}")
+            tasks_triggered.append(f"logo:failed ({e})")
+    
+    # 4. Trigger AI analysis batch for this symbol
+    if refresh_ai_analysis:
+        # Queue for next batch job
+        from app.repositories import dip_votes_orm
+        
+        # Delete existing AI analysis to force regeneration
+        await dip_votes_orm.delete_ai_analysis(symbol_upper)
+        tasks_triggered.append("ai_analysis:queued")
+        logger.info(f"Queued {symbol_upper} for AI analysis regeneration")
+    
+    # 5. Refresh AI agents (immediate)
+    if refresh_ai_agents:
+        try:
+            result = await run_agent_analysis(symbol_upper)
+            tasks_triggered.append(f"ai_agents:{result.overall_signal}")
+            logger.info(f"Refreshed AI agents for {symbol_upper}: {result.overall_signal}")
+        except Exception as e:
+            logger.warning(f"Failed to refresh AI agents for {symbol_upper}: {e}")
+            tasks_triggered.append(f"ai_agents:failed ({e})")
+    
+    return FullRefreshResponse(
+        symbol=symbol_upper,
+        tasks_triggered=tasks_triggered,
+        message=f"Triggered {len(tasks_triggered)} refresh operations for {symbol_upper}",
+    )

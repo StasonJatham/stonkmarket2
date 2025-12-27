@@ -16,7 +16,6 @@ from app.database.orm import (
     DipfinderSignal,
     DipState,
     StockFundamentals,
-    StockSuggestion,
     Symbol,
 )
 from app.repositories import api_usage_orm as api_usage
@@ -38,23 +37,6 @@ async def get_all_dip_symbols() -> list[str]:
     async with get_session() as session:
         result = await session.execute(select(DipState.symbol))
         return [r[0] for r in result.all()]
-
-
-async def get_pending_suggestions() -> list[dict]:
-    """Get pending stock suggestions that need AI bios."""
-    async with get_session() as session:
-        result = await session.execute(
-            select(
-                StockSuggestion.id,
-                StockSuggestion.symbol,
-                StockSuggestion.company_name,
-                StockSuggestion.reason,
-            ).where(StockSuggestion.status == "pending")
-        )
-        return [
-            {"id": r[0], "symbol": r[1], "company_name": r[2], "reason": r[3]}
-            for r in result.all()
-        ]
 
 
 async def get_dips_needing_analysis() -> list[dict]:
@@ -262,44 +244,15 @@ async def schedule_batch_suggestion_bios() -> str | None:
     """
     Schedule a batch job to generate bios for pending suggestions.
 
+    NOTE: This is intentionally disabled. Pending suggestions don't need AI bios -
+    they get AI content generated when approved and processed via process_approved_symbol.
+    Batch bios for suggestions were creating noise in the batch jobs panel without value.
+
     Returns:
-        Batch job ID if created, None if no suggestions
+        Always None - batch bios for suggestions are disabled
     """
-    suggestions = await get_pending_suggestions()
-
-    if not suggestions:
-        logger.info("No pending suggestions need bios")
-        return None
-
-    logger.info(f"Scheduling batch AI bios for {len(suggestions)} suggestions")
-
-    # Prepare items for batch
-    items = []
-    for suggestion in suggestions:
-        items.append(
-            {
-                "symbol": suggestion["symbol"],
-                "name": suggestion.get("company_name"),
-            }
-        )
-
-    # Submit batch job
-    batch_id = await submit_batch(
-        task=TaskType.BIO,
-        items=items,
-    )
-
-    if batch_id:
-        # Record batch job
-        await api_usage.record_batch_job(
-            batch_id=batch_id,
-            job_type=TaskType.BIO.value,
-            total_requests=len(items),
-        )
-
-        logger.info(f"Created batch job {batch_id} for {len(suggestions)} suggestions")
-
-    return batch_id
+    logger.info("Skipping batch bios for pending suggestions (AI content generated on approval)")
+    return None
 
 
 # Alias for swipe bios
@@ -397,9 +350,8 @@ async def _process_batch_results(
                     logger.warning(f"Skipping failed RATING result for {symbol}: {result.get('error')}")
 
             elif job_type == TaskType.BIO.value:
-                # BIO batch returns text
-                if content and not result.get("failed"):
-                    await _store_suggestion_bio(symbol, content)
+                # BIO batch for suggestions is deprecated - AI content generated on approval
+                logger.debug(f"Skipping BIO result for {symbol} - suggestion bios no longer used")
 
         except Exception as e:
             logger.error(f"Error processing batch result for {custom_id}: {e}")
@@ -445,19 +397,6 @@ async def _store_dip_analysis(symbol: str, content: dict | str, batch_id: str) -
         await session.commit()
 
     logger.debug(f"Stored AI rating for {symbol}: {rating}")
-
-
-async def _store_suggestion_bio(symbol: str, bio: str) -> None:
-    """Store AI bio for a suggestion."""
-    async with get_session() as session:
-        await session.execute(
-            update(StockSuggestion)
-            .where(StockSuggestion.symbol == symbol.upper())
-            .values(ai_bio=bio, updated_at=datetime.now(UTC))
-        )
-        await session.commit()
-
-    logger.debug(f"Stored AI bio for suggestion {symbol}")
 
 
 async def run_realtime_analysis_for_new_stock(

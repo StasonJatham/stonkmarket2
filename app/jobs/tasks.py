@@ -140,14 +140,24 @@ async def _execute_dipfinder_task(
         await lock.release()
 
 
-@celery_app.task(name="jobs.initial_data_ingest")
-def initial_data_ingest_task() -> str:
-    return _run_job("initial_data_ingest")
+@celery_app.task(name="jobs.symbol_ingest")
+def symbol_ingest_task() -> str:
+    return _run_job("symbol_ingest")
 
 
-@celery_app.task(name="jobs.data_grab")
-def data_grab_task() -> str:
-    return _run_job("data_grab")
+@celery_app.task(name="jobs.prices_daily")
+def prices_daily_task() -> str:
+    return _run_job("prices_daily")
+
+
+@celery_app.task(name="jobs.signals_daily")
+def signals_daily_task() -> str:
+    return _run_job("signals_daily")
+
+
+@celery_app.task(name="jobs.regime_daily")
+def regime_daily_task() -> str:
+    return _run_job("regime_daily")
 
 
 @celery_app.task(name="jobs.cache_warmup")
@@ -155,24 +165,24 @@ def cache_warmup_task() -> str:
     return _run_job("cache_warmup")
 
 
-@celery_app.task(name="jobs.batch_ai_swipe")
-def batch_ai_swipe_task() -> str:
-    return _run_job("batch_ai_swipe")
+@celery_app.task(name="jobs.ai_bios_weekly")
+def ai_bios_weekly_task() -> str:
+    return _run_job("ai_bios_weekly")
 
 
-@celery_app.task(name="jobs.batch_ai_analysis")
-def batch_ai_analysis_task() -> str:
-    return _run_job("batch_ai_analysis")
+@celery_app.task(name="jobs.ai_ratings_weekly")
+def ai_ratings_weekly_task() -> str:
+    return _run_job("ai_ratings_weekly")
 
 
-@celery_app.task(name="jobs.batch_poll")
-def batch_poll_task() -> str:
-    return _run_job("batch_poll")
+@celery_app.task(name="jobs.ai_batch_poll")
+def ai_batch_poll_task() -> str:
+    return _run_job("ai_batch_poll")
 
 
-@celery_app.task(name="jobs.fundamentals_refresh")
-def fundamentals_refresh_task() -> str:
-    return _run_job("fundamentals_refresh")
+@celery_app.task(name="jobs.fundamentals_monthly")
+def fundamentals_monthly_task() -> str:
+    return _run_job("fundamentals_monthly")
 
 
 @celery_app.task(name="jobs.refresh_fundamentals_symbol")
@@ -230,29 +240,23 @@ def refresh_fundamentals_symbol_task(symbol: str) -> str:
     return _run_async(_run())
 
 
-@celery_app.task(name="jobs.ai_agents_analysis")
-def ai_agents_analysis_task() -> str:
-    return _run_job("ai_agents_analysis")
+@celery_app.task(name="jobs.ai_personas_weekly")
+def ai_personas_weekly_task() -> str:
+    return _run_job("ai_personas_weekly")
 
 
-@celery_app.task(name="jobs.ai_agents_batch_submit")
-def ai_agents_batch_submit_task() -> str:
-    return _run_job("ai_agents_batch_submit")
+# ai_agents_batch_submit and ai_agents_batch_collect are now merged into
+# ai_personas_weekly and ai_batch_poll respectively. Deleted.
 
 
-@celery_app.task(name="jobs.ai_agents_batch_collect")
-def ai_agents_batch_collect_task() -> str:
-    return _run_job("ai_agents_batch_collect")
+@celery_app.task(name="jobs.cleanup_daily")
+def cleanup_daily_task() -> str:
+    return _run_job("cleanup_daily")
 
 
-@celery_app.task(name="jobs.cleanup")
-def cleanup_task() -> str:
-    return _run_job("cleanup")
-
-
-@celery_app.task(name="jobs.portfolio_analytics_worker")
-def portfolio_analytics_worker_task() -> str:
-    return _run_job("portfolio_analytics_worker")
+@celery_app.task(name="jobs.portfolio_worker")
+def portfolio_worker_task() -> str:
+    return _run_job("portfolio_worker")
 
 
 @celery_app.task(name="jobs.process_new_symbol")
@@ -376,7 +380,7 @@ def dipfinder_refresh_all_task(benchmark: str | None = None) -> str:
     return _run_async(_run())
 
 
-@celery_app.task(name="jobs.quant_engine_monthly")
-def quant_engine_monthly_task() -> str:
+@celery_app.task(name="jobs.quant_monthly")
+def quant_monthly_task() -> str:
     """Run monthly quant engine optimization for all portfolios."""
-    return _run_job("quant_engine_monthly")
+    return _run_job("quant_monthly")

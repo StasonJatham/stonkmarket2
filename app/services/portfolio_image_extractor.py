@@ -47,13 +47,15 @@ logger = get_logger("services.portfolio_image_extractor")
 # Max image size in bytes (10MB)
 MAX_IMAGE_SIZE = 10 * 1024 * 1024
 
-# Supported MIME types
+# Supported MIME types (including HEIC for iPhone)
 SUPPORTED_MIME_TYPES = {
     "image/png",
     "image/jpeg",
     "image/jpg",
     "image/webp",
     "image/gif",
+    "image/heic",
+    "image/heif",
 }
 
 # Vision model to use
@@ -301,6 +303,26 @@ async def extract_positions_from_image(
             error_message=error,
         )
     
+    # Optimize image for vision API (convert to JPEG, resize, compress)
+    from app.services.image_optimizer import optimize_image
+    
+    try:
+        optimization_result = optimize_image(image_data)
+        optimized_data = optimization_result.data
+        optimized_mime = optimization_result.mime_type
+        optimized_base64 = base64.b64encode(optimized_data).decode("utf-8")
+        
+        logger.info(
+            f"Image optimized: {optimization_result.original_format} "
+            f"({len(image_data) / 1024:.0f}KB) -> JPEG ({len(optimized_data) / 1024:.0f}KB), "
+            f"saved {optimization_result.savings_percent:.0f}%"
+        )
+    except Exception as e:
+        # Fall back to original if optimization fails
+        logger.warning(f"Image optimization failed, using original: {e}")
+        optimized_base64 = image_base64
+        optimized_mime = mime_type
+    
     # Get OpenAI API key
     api_key = await api_keys_repo.get_key_value("openai")
     if not api_key:
@@ -330,7 +352,7 @@ async def extract_positions_from_image(
                         {
                             "type": "image_url",
                             "image_url": {
-                                "url": f"data:{mime_type};base64,{image_base64}",
+                                "url": f"data:{optimized_mime};base64,{optimized_base64}",
                                 "detail": "high",
                             },
                         },

@@ -792,12 +792,20 @@ export interface QuantRecommendation {
   notional_eur: number;
   delta_weight: number;
   target_weight: number;
+  // Price data
+  last_price: number | null;
+  change_percent: number | null;
+  market_cap: number | null;
+  // Signal metrics
   mu_hat: number;
   uncertainty: number;
   risk_contribution: number;
   dip_score: number | null;
   dip_bucket: string | null;
   marginal_utility: number;
+  // AI analysis
+  ai_summary: string | null;
+  ai_rating: string | null;
   // Legacy compatibility
   legacy_dip_pct: number | null;
   legacy_days_in_dip: number | null;
@@ -849,24 +857,180 @@ export function quantToDipStock(rec: QuantRecommendation): DipStock {
   return {
     symbol: rec.ticker,
     name: rec.name,
-    // Use legacy dip percentage as depth, or fallback to 0
-    depth: rec.legacy_dip_pct !== null ? rec.legacy_dip_pct : 0,
-    // We don't have price in quant data, use 0 as placeholder
-    // The StockDetailsPanel will load full info separately
-    last_price: 0,
+    // legacy_dip_pct is a percentage (16.7), convert to fraction (0.167) for DipStock.depth
+    depth: rec.legacy_dip_pct !== null ? rec.legacy_dip_pct / 100 : 0,
+    // Use price from backend, fallback to 0
+    last_price: rec.last_price ?? 0,
     previous_close: null,
-    change_percent: null,
+    change_percent: rec.change_percent,
     days_since_dip: rec.legacy_days_in_dip,
     high_52w: null,
     low_52w: null,
-    market_cap: null,
+    market_cap: rec.market_cap,
     sector: null,
     pe_ratio: null,
     volume: null,
-    // Map quant metrics to dip metrics for sorting compatibility
-    // marginal_utility is the optimizer's ranking signal
-    dip_score: rec.marginal_utility,
+    // Use actual dip_score from backend (0-1 range, higher = deeper dip)
+    // Fall back to marginal_utility if dip_score not available
+    dip_score: rec.dip_score ?? rec.marginal_utility,
     recovery_potential: rec.mu_hat,
+  };
+}
+
+// =============================================================================
+// STOCK CARD V2 DATA ADAPTER
+// =============================================================================
+
+/**
+ * StockCardData - Enhanced card data for StockCardV2 component.
+ * Extends DipStock with additional metrics for information-dense display.
+ */
+export interface StockCardData {
+  // Core identity
+  symbol: string;
+  name: string | null;
+  sector: string | null;
+  
+  // Price & performance
+  last_price: number;
+  change_percent: number | null;
+  high_52w: number | null;
+  low_52w: number | null;
+  market_cap: number | null;
+  
+  // Dip metrics
+  depth: number;
+  days_since_dip: number | null;
+  dip_bucket: string | null;
+  
+  // Technical signals
+  top_signal?: {
+    name: string;
+    is_buy: boolean;
+    strength: number;
+    description?: string;
+  } | null;
+  
+  // Sector comparison
+  sector_delta?: number | null;
+  sector_etf?: string | null;
+  
+  // Opportunity rating
+  opportunity_score?: number | null;
+  opportunity_rating?: 'strong_buy' | 'buy' | 'hold' | 'avoid' | null;
+  
+  // AI analysis
+  ai_rating?: string | null;
+  ai_summary?: string | null;
+  domain_analysis?: string | null;
+  
+  // Signal metrics
+  mu_hat?: number;
+  uncertainty?: number;
+  marginal_utility?: number;
+}
+
+/**
+ * Sector ETF mapping for benchmarking.
+ */
+const SECTOR_ETF_MAP: Record<string, string> = {
+  'Technology': 'XLK',
+  'Information Technology': 'XLK',
+  'Healthcare': 'XLV',
+  'Health Care': 'XLV',
+  'Financials': 'XLF',
+  'Financial Services': 'XLF',
+  'Consumer Discretionary': 'XLY',
+  'Consumer Cyclical': 'XLY',
+  'Consumer Staples': 'XLP',
+  'Consumer Defensive': 'XLP',
+  'Energy': 'XLE',
+  'Industrials': 'XLI',
+  'Materials': 'XLB',
+  'Basic Materials': 'XLB',
+  'Real Estate': 'XLRE',
+  'Utilities': 'XLU',
+  'Communication Services': 'XLC',
+  'Communication': 'XLC',
+};
+
+/**
+ * Convert QuantRecommendation to StockCardData for StockCardV2.
+ * Enriches the recommendation with sector info and computed opportunity metrics.
+ */
+export function quantToStockCardData(
+  rec: QuantRecommendation,
+  stockInfo?: StockInfo | null
+): StockCardData {
+  const sector = stockInfo?.sector || null;
+  const sectorEtf = sector ? SECTOR_ETF_MAP[sector] || null : null;
+  
+  // Compute opportunity score from available data
+  let opportunityScore = 50;
+  
+  // Dip contribution (up to 25 points)
+  const dipPct = rec.legacy_dip_pct || 0;
+  if (dipPct > 5) opportunityScore += Math.min(dipPct / 2, 25);
+  
+  // Domain score contribution (up to 20 points)
+  if (rec.legacy_domain_score && rec.legacy_domain_score > 50) {
+    opportunityScore += (rec.legacy_domain_score - 50) * 0.4;
+  }
+  
+  // AI rating contribution (up to 15 points)
+  if (rec.ai_rating) {
+    const ratingBonus: Record<string, number> = {
+      'strong_buy': 15,
+      'buy': 10,
+      'hold': 0,
+      'sell': -10,
+      'strong_sell': -15,
+    };
+    opportunityScore += ratingBonus[rec.ai_rating] || 0;
+  }
+  
+  // Expected return contribution (up to 10 points)
+  if (rec.mu_hat > 0) {
+    opportunityScore += Math.min(rec.mu_hat * 100, 10);
+  }
+  
+  opportunityScore = Math.max(0, Math.min(100, opportunityScore));
+  
+  // Determine rating from score
+  let opportunityRating: 'strong_buy' | 'buy' | 'hold' | 'avoid' = 'hold';
+  if (opportunityScore >= 75) opportunityRating = 'strong_buy';
+  else if (opportunityScore >= 60) opportunityRating = 'buy';
+  else if (opportunityScore < 40) opportunityRating = 'avoid';
+  
+  return {
+    symbol: rec.ticker,
+    name: rec.name,
+    sector,
+    last_price: rec.last_price ?? 0,
+    change_percent: rec.change_percent,
+    high_52w: null,
+    low_52w: null,
+    market_cap: rec.market_cap,
+    depth: rec.legacy_dip_pct !== null ? rec.legacy_dip_pct / 100 : 0,
+    days_since_dip: rec.legacy_days_in_dip,
+    dip_bucket: rec.dip_bucket,
+    // Signal - will be enriched from backend in future
+    top_signal: rec.legacy_domain_score && rec.legacy_domain_score > 60 ? {
+      name: 'Buy Signal',
+      is_buy: true,
+      strength: rec.legacy_domain_score / 100,
+      description: `Domain score: ${rec.legacy_domain_score.toFixed(0)}/100`,
+    } : null,
+    sector_delta: null, // TODO: Will be added when backend provides sector comparison
+    sector_etf: sectorEtf,
+    opportunity_score: opportunityScore,
+    opportunity_rating: opportunityRating,
+    ai_rating: rec.ai_rating,
+    ai_summary: rec.ai_summary,
+    domain_analysis: rec.ai_summary ? rec.ai_summary.substring(0, 100) + '...' : null,
+    mu_hat: rec.mu_hat,
+    uncertainty: rec.uncertainty,
+    marginal_utility: rec.marginal_utility,
   };
 }
 
@@ -1009,21 +1173,21 @@ export async function autocompleteSymbols(partial: string, limit = 5): Promise<A
 export interface AgentVerdict {
   agent_id: string;
   agent_name: string;
-  signal: 'bullish' | 'bearish' | 'neutral';
+  signal: 'strong_buy' | 'buy' | 'hold' | 'sell' | 'strong_sell';
   confidence: number;
   reasoning: string;
   key_factors: string[];
+  avatar_url?: string;
 }
 
 export interface AgentAnalysis {
   symbol: string;
   analyzed_at: string;
   verdicts: AgentVerdict[];
-  overall_signal: 'bullish' | 'bearish' | 'neutral';
+  overall_signal: 'strong_buy' | 'buy' | 'hold' | 'sell' | 'strong_sell';
   overall_confidence: number;
-  bullish_count: number;
-  bearish_count: number;
-  neutral_count: number;
+  summary?: string;
+  expires_at?: string;
 }
 
 export interface AgentInfo {
@@ -1831,4 +1995,185 @@ export async function getPortfolioAnalyticsJob(
   return fetchAPI<PortfolioAnalyticsJob>(
     `/portfolios/${portfolioId}/analytics/jobs/${jobId}`
   );
+}
+
+// =============================================================================
+// BULK IMPORT API
+// =============================================================================
+
+export type ExtractionConfidence = 'high' | 'medium' | 'low';
+
+export interface ExtractedPosition {
+  symbol: string | null;
+  name: string | null;
+  isin: string | null;
+  quantity: number | null;
+  avg_cost: number | null;
+  current_price: number | null;
+  total_value: number | null;
+  currency: string;
+  exchange: string | null;
+  confidence: ExtractionConfidence;
+  raw_text: string | null;
+  notes: string | null;
+  skip: boolean;
+}
+
+export interface ImageExtractionResponse {
+  success: boolean;
+  positions: ExtractedPosition[];
+  image_quality: string | null;
+  detected_broker: string | null;
+  currency_hint: string | null;
+  processing_time_ms: number | null;
+  error_message: string | null;
+  warnings: string[];
+}
+
+export interface BulkImportPosition {
+  symbol: string;
+  quantity: number;
+  avg_cost?: number;
+  currency?: string;
+}
+
+export interface BulkImportRequest {
+  positions: BulkImportPosition[];
+  skip_duplicates?: boolean;
+}
+
+export type ImportResultStatus = 'created' | 'updated' | 'skipped' | 'failed';
+
+export interface ImportPositionResult {
+  symbol: string;
+  status: ImportResultStatus;
+  message: string | null;
+  holding_id: number | null;
+}
+
+export interface BulkImportResponse {
+  success: boolean;
+  total: number;
+  created: number;
+  updated: number;
+  skipped: number;
+  failed: number;
+  results: ImportPositionResult[];
+}
+
+export async function extractPositionsFromImage(
+  portfolioId: number,
+  file: File
+): Promise<ImageExtractionResponse> {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await fetch(
+    `${API_BASE}/portfolios/${portfolioId}/import/extract-image`,
+    {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: formData,
+    }
+  );
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Upload failed' }));
+    throw new Error(error.message || error.detail || `HTTP ${response.status}`);
+  }
+
+  return response.json();
+}
+
+export async function bulkImportPositions(
+  portfolioId: number,
+  payload: BulkImportRequest
+): Promise<BulkImportResponse> {
+  const result = await fetchAPI<BulkImportResponse>(
+    `/portfolios/${portfolioId}/import/bulk`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }
+  );
+  invalidateEtagCache(new RegExp(`/portfolios/${portfolioId}`));
+  return result;
+}
+
+// =============================================================================
+// AI PERSONAS API
+// =============================================================================
+
+export interface AIPersona {
+  id: number;
+  key: string;
+  name: string;
+  description: string | null;
+  philosophy: string | null;
+  has_avatar: boolean;
+  avatar_url: string | null;
+  is_active: boolean;
+  display_order: number;
+}
+
+export interface AIPersonaUpdate {
+  name?: string;
+  description?: string;
+  philosophy?: string;
+  is_active?: boolean;
+  display_order?: number;
+}
+
+/**
+ * Get all AI personas
+ */
+export async function getAIPersonas(activeOnly = true): Promise<AIPersona[]> {
+  return fetchAPI<AIPersona[]>(`/ai-personas?active_only=${activeOnly}`);
+}
+
+/**
+ * Update an AI persona
+ */
+export async function updateAIPersona(personaKey: string, updates: AIPersonaUpdate): Promise<AIPersona> {
+  return fetchAPI<AIPersona>(`/ai-personas/${personaKey}`, {
+    method: 'PUT',
+    body: JSON.stringify(updates),
+  });
+}
+
+/**
+ * Upload avatar for an AI persona
+ */
+export async function uploadAIPersonaAvatar(
+  personaKey: string,
+  file: File,
+  size = 128
+): Promise<{ message: string; persona_key: string; size: number }> {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await fetch(
+    `${API_BASE}/ai-personas/${personaKey}/avatar?size=${size}`,
+    {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: formData,
+    }
+  );
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Upload failed' }));
+    throw new Error(error.message || error.detail || `HTTP ${response.status}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Delete avatar for an AI persona
+ */
+export async function deleteAIPersonaAvatar(personaKey: string): Promise<{ message: string }> {
+  return fetchAPI<{ message: string }>(`/ai-personas/${personaKey}/avatar`, {
+    method: 'DELETE',
+  });
 }

@@ -21,7 +21,7 @@ const FAQS = [
   },
   {
     question: 'How does StonkMarket calculate dip scores?',
-    answer: 'Our dip score combines multiple factors: the percentage drop from 52-week high, recent recovery momentum, trading volume patterns, and AI-generated sentiment analysis. Higher scores indicate stocks with stronger recovery potential.',
+    answer: 'Our dip score (0-100) measures the quality and depth of a dip. Higher scores indicate deeper, potentially more attractive dips. We also classify dips into buckets: shallow (<10%), moderate (10-20%), and deep (>20%). The ranking combines expected return estimates with risk-adjusted utility optimization.',
   },
   {
     question: 'Is StonkMarket financial advice?',
@@ -146,20 +146,26 @@ export function AboutPage() {
         </h2>
         <div className="space-y-4 text-sm text-muted-foreground">
           <div className="bg-muted/50 p-4 rounded-lg space-y-3">
-            <h3 className="font-semibold text-foreground">Dip Score Calculation</h3>
+            <h3 className="font-semibold text-foreground">Quantitative Scoring</h3>
             <p>
-              Our proprietary dip score (0-100) combines multiple factors:
+              Our scoring system combines statistical analysis with dip detection:
             </p>
             <ul className="list-disc pl-6 space-y-1">
-              <li><strong>Dip Depth (40%)</strong> - How far the stock has fallen from its 52-week high</li>
-              <li><strong>Recovery Momentum (30%)</strong> - Recent price action showing upward movement</li>
-              <li><strong>Volume Analysis (15%)</strong> - Trading volume patterns indicating accumulation</li>
-              <li><strong>AI Sentiment (15%)</strong> - AI-generated analysis of news and fundamentals</li>
+              <li><strong>Expected Return (μ̂)</strong> - Bayesian posterior estimate of future returns based on historical patterns</li>
+              <li><strong>Dip Score (0-100)</strong> - Quality score measuring dip depth and potential. Higher = deeper, more attractive dip</li>
+              <li><strong>Dip Bucket</strong> - Classification: shallow (&lt;10%), moderate (10-20%), or deep (&gt;20%)</li>
+              <li><strong>Marginal Utility</strong> - Risk-adjusted portfolio optimization signal for allocation</li>
             </ul>
           </div>
+          <div className="bg-muted/50 p-4 rounded-lg space-y-3">
+            <h3 className="font-semibold text-foreground">AI Persona Analysis</h3>
+            <p>
+              Famous investor personas (Warren Buffett, Peter Lynch, etc.) analyze each stock through their investment philosophy lens, providing buy/sell/hold signals with confidence levels and reasoning.
+            </p>
+          </div>
           <p>
-            Stocks are ranked by their composite score, with higher scores indicating 
-            what our algorithm considers stronger recovery potential. This is a quantitative 
+            Stocks are ranked by marginal utility from our mean-variance optimizer, 
+            with higher values indicating stronger risk-adjusted opportunity. This is a quantitative 
             assessment only and should not be interpreted as investment advice.
           </p>
         </div>

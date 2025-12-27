@@ -65,6 +65,7 @@ pathspec==0.12.1
 patsy==1.0.2
 peewee==3.18.3
 pillow==12.0.0
+pillow_heif==1.1.1
 platformdirs==4.5.1
 pluggy==1.6.0
 prometheus_client==0.23.1

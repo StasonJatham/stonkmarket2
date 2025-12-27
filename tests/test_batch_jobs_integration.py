@@ -1647,14 +1647,14 @@ class TestRealDBDataUnifiedBatch:
         
         Simulates the scheduled job behavior:
         1. Add 5 stocks to ingest queue
-        2. Run the initial_data_ingest_job
+        2. Run the symbol_ingest_job
         3. Verify all stocks have fundamentals and price history
         
         This mirrors what happens when user adds stocks via API
         and the 15-min scheduled job picks them up.
         """
         from app.database.connection import execute, fetch_all, fetch_val
-        from app.jobs.definitions import initial_data_ingest_job, add_to_ingest_queue
+        from app.jobs.definitions import symbol_ingest_job, add_to_ingest_queue
         
         # Test stocks (popular, liquid stocks with good data)
         test_symbols = ["MSFT", "GOOGL", "AMZN", "META", "TSLA"]
@@ -1684,8 +1684,8 @@ class TestRealDBDataUnifiedBatch:
         assert queue_count >= len(test_symbols), f"Expected at least {len(test_symbols)} in queue"
         
         # Step 2: Run the ingest job (simulates 15-min cron)
-        print(f"\n⚙️  STEP 2: Running initial_data_ingest_job (simulates 15-min cron)...")
-        result = await initial_data_ingest_job()
+        print(f"\n⚙️  STEP 2: Running symbol_ingest_job (simulates 15-min cron)...")
+        result = await symbol_ingest_job()
         print(f"   Result: {result}")
         
         # Step 3: Verify all stocks have data
@@ -1728,7 +1728,7 @@ class TestRealDBDataUnifiedBatch:
         print(f"\n" + "=" * 70)
         print("✅ BATCH INGEST TEST PASSED")
         print(f"   - {len(test_symbols)} stocks queued")
-        print(f"   - All processed by initial_data_ingest_job")
+        print(f"   - All processed by symbol_ingest_job")
         print(f"   - Fundamentals and price history stored")
         print(f"   - This mimics the scheduled 15-min job behavior")
         print("=" * 70)
@@ -1743,25 +1743,25 @@ class TestRealDBDataUnifiedBatch:
         print("\n📋 Scheduled Job Configuration:")
         print("=" * 50)
         
-        # Default schedules are defined in scheduler.py
+        # Default schedules with new naming convention
         default_schedules = {
-            "initial_data_ingest": ("*/15 * * * *", "Process queued symbols every 15 min"),
-            "data_grab": ("0 23 * * 1-5", "Fetch stock data Mon-Fri 11pm"),
+            "symbol_ingest": ("*/15 * * * *", "Process queued symbols every 15 min"),
+            "prices_daily": ("0 23 * * 1-5", "Fetch stock data Mon-Fri 11pm"),
             "cache_warmup": ("*/30 * * * *", "Pre-cache chart data every 30 min"),
-            "batch_ai_swipe": ("0 3 * * 0", "Generate swipe bios weekly Sunday 3am"),
-            "batch_ai_analysis": ("0 4 * * 0", "Generate dip analysis weekly Sunday 4am"),
-            "batch_poll": ("*/5 * * * *", "Poll for completed batch jobs every 5 min"),
-            "fundamentals_refresh": ("0 2 1 * *", "Refresh stock fundamentals monthly 1st at 2am"),
-            "ai_agents_analysis": ("0 5 * * 0", "AI agent analysis weekly Sunday 5am"),
-            "cleanup": ("0 0 * * *", "Clean up expired data daily midnight"),
+            "ai_bios_weekly": ("0 4 * * 0", "Generate swipe bios weekly Sunday 4am"),
+            "ai_ratings_weekly": ("0 5 * * 0", "Generate dip analysis weekly Sunday 5am"),
+            "ai_batch_poll": ("*/5 * * * *", "Poll for completed batch jobs every 5 min"),
+            "fundamentals_monthly": ("0 2 1 * *", "Refresh stock fundamentals monthly 1st at 2am"),
+            "ai_personas_weekly": ("0 3 * * 0", "AI persona analysis weekly Sunday 3am"),
+            "cleanup_daily": ("0 0 * * *", "Clean up expired data daily midnight"),
         }
         
-        # Check initial_data_ingest job exists in registry
+        # Check symbol_ingest job exists in registry
         registered_jobs = get_all_jobs()
-        assert "initial_data_ingest" in registered_jobs, "initial_data_ingest job must be registered"
+        assert "symbol_ingest" in registered_jobs, "symbol_ingest job must be registered"
         
-        cron, description = default_schedules["initial_data_ingest"]
-        print(f"\n   Job: initial_data_ingest")
+        cron, description = default_schedules["symbol_ingest"]
+        print(f"\n   Job: symbol_ingest")
         print(f"   Schedule: {cron}")
         print(f"   Description: {description}")
         
