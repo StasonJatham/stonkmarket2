@@ -95,6 +95,34 @@ class RuntimeSettingsResponse(BaseModel):
     benchmarks: list[BenchmarkConfig] = Field(
         default_factory=list, description="Configured benchmark indices"
     )
+    # Trading/Backtest Configuration
+    trading_initial_capital: float = Field(
+        default=50000.0, ge=1000, le=10_000_000, description="Initial capital for backtesting (€)"
+    )
+    trading_flat_cost_per_trade: float = Field(
+        default=1.0, ge=0, le=100, description="Flat cost per trade (€)"
+    )
+    trading_slippage_bps: float = Field(
+        default=5.0, ge=0, le=100, description="Slippage in basis points per side"
+    )
+    trading_stop_loss_pct: float = Field(
+        default=15.0, ge=1, le=50, description="Stop loss percentage"
+    )
+    trading_take_profit_pct: float = Field(
+        default=30.0, ge=5, le=100, description="Take profit percentage"
+    )
+    trading_max_holding_days: int = Field(
+        default=120, ge=5, le=365, description="Maximum holding period in days"
+    )
+    trading_min_trades_required: int = Field(
+        default=30, ge=10, le=200, description="Minimum trades for statistical significance"
+    )
+    trading_walk_forward_folds: int = Field(
+        default=5, ge=2, le=10, description="Number of walk-forward folds for validation"
+    )
+    trading_train_ratio: float = Field(
+        default=0.70, ge=0.50, le=0.90, description="Train/test split ratio"
+    )
 
 
 class RuntimeSettingsUpdate(BaseModel):
@@ -115,6 +143,16 @@ class RuntimeSettingsUpdate(BaseModel):
     cache_ttl_ranking: int | None = Field(default=None, ge=0, le=7200)
     cache_ttl_charts: int | None = Field(default=None, ge=0, le=7200)
     benchmarks: list[BenchmarkConfig] | None = None
+    # Trading/Backtest Configuration
+    trading_initial_capital: float | None = Field(default=None, ge=1000, le=10_000_000)
+    trading_flat_cost_per_trade: float | None = Field(default=None, ge=0, le=100)
+    trading_slippage_bps: float | None = Field(default=None, ge=0, le=100)
+    trading_stop_loss_pct: float | None = Field(default=None, ge=1, le=50)
+    trading_take_profit_pct: float | None = Field(default=None, ge=5, le=100)
+    trading_max_holding_days: int | None = Field(default=None, ge=5, le=365)
+    trading_min_trades_required: int | None = Field(default=None, ge=10, le=200)
+    trading_walk_forward_folds: int | None = Field(default=None, ge=2, le=10)
+    trading_train_ratio: float | None = Field(default=None, ge=0.50, le=0.90)
 
 
 class CronJobSummary(BaseModel):

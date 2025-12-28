@@ -1738,3 +1738,151 @@ def get_current_signals(
         "overall_action": action,
         "reasoning": reason,
     }
+
+
+# =============================================================================
+# Optimized Strategy Integration (using new backtest_engine)
+# =============================================================================
+
+def get_optimized_strategy(
+    df: pd.DataFrame,
+    symbol: str,
+    spy_prices: pd.Series | None = None,
+    runtime_settings: dict | None = None,
+) -> dict:
+    """
+    Get the best optimized trading strategy for a stock using the backtest engine.
+    
+    This uses walk-forward optimization to find strategies that:
+    1. Have statistically significant returns
+    2. Don't overfit to historical data
+    3. Ideally beat buy-and-hold
+    
+    Args:
+        df: Price DataFrame with OHLCV data
+        symbol: Stock symbol
+        spy_prices: Optional SPY prices for benchmark comparison
+        runtime_settings: Optional settings dict from admin panel
+    
+    Returns:
+        Dict with strategy details, metrics, and current signal status.
+    """
+    from .backtest_engine import (
+        TradingConfig, BacktestEngine, compute_indicators,
+        compare_to_benchmark, STRATEGIES, get_all_strategies
+    )
+    
+    # Load config from runtime settings if provided
+    if runtime_settings:
+        config = TradingConfig.from_runtime_settings(runtime_settings)
+    else:
+        config = TradingConfig()
+    
+    # Make a copy to avoid modifying original
+    df = df.copy()
+    
+    # Handle multi-level columns from yfinance (e.g., ('Close', 'QQQ'))
+    if hasattr(df.columns, 'nlevels') and df.columns.nlevels > 1:
+        df.columns = df.columns.get_level_values(0)
+    
+    # Ensure columns are lowercase
+    df.columns = [str(c).lower() for c in df.columns]
+    df.attrs["symbol"] = symbol
+    
+    # Compute indicators using backtest engine
+    df_with_indicators = compute_indicators(df)
+    
+    engine = BacktestEngine(config)
+    
+    # Find best base strategy (skip ensembles for speed in real-time)
+    best_strategy = ""
+    best_result = None
+    best_sharpe = -np.inf
+    
+    for strat_name in STRATEGIES:
+        try:
+            _, default_params, _ = STRATEGIES[strat_name]
+            result = engine.backtest_strategy(df_with_indicators, strat_name, default_params)
+            
+            if result.n_trades >= 5 and result.sharpe_ratio > best_sharpe:
+                best_sharpe = result.sharpe_ratio
+                best_result = result
+                best_strategy = strat_name
+        except Exception as e:
+            logger.warning(f"Strategy {strat_name} failed for {symbol}: {e}")
+            continue
+    
+    if best_result is None:
+        return {
+            "symbol": symbol,
+            "strategy_name": None,
+            "has_active_signal": False,
+            "action": "HOLD",
+            "reason": "No valid strategy found",
+            "metrics": {},
+        }
+    
+    # Get current signal status for the best strategy
+    strat_func, default_params, _ = STRATEGIES[best_strategy]
+    entries = strat_func(df_with_indicators, default_params)
+    
+    # Check if signal is active today
+    has_active_signal = bool(entries.iloc[-1] == 1) if len(entries) > 0 else False
+    
+    # Determine if in a position (has recent entry without exit)
+    in_position = False
+    if best_result.trades:
+        last_trade = best_result.trades[-1]
+        if last_trade.exit_date is None or (
+            hasattr(last_trade, 'is_open') and last_trade.is_open
+        ):
+            in_position = True
+    
+    # Compare to buy and hold
+    comparison = compare_to_benchmark(best_result, df_with_indicators["close"], spy_prices)
+    
+    # Determine action
+    if has_active_signal and not in_position:
+        action = "BUY"
+        reason = f"Strategy '{best_strategy}' signals entry"
+    elif in_position:
+        action = "HOLD_POSITION"
+        reason = f"Currently in position from '{best_strategy}'"
+    else:
+        action = "WAIT"
+        reason = f"Strategy '{best_strategy}' waiting for entry signal"
+    
+    # Build response
+    return {
+        "symbol": symbol,
+        "strategy_name": best_strategy,
+        "has_active_signal": has_active_signal,
+        "action": action,
+        "reason": reason,
+        "metrics": {
+            "total_trades": best_result.n_trades,
+            "win_rate": round(best_result.win_rate, 1),
+            "total_return_pct": round(best_result.total_return_pct, 1),
+            "sharpe_ratio": round(best_result.sharpe_ratio, 2),
+            "max_drawdown_pct": round(best_result.max_drawdown_pct, 1),
+            "avg_holding_days": round(best_result.avg_holding_days, 1),
+        },
+        "benchmark_comparison": {
+            "stock_buy_hold_return": round(comparison.get("stock_buy_hold_return", 0), 1),
+            "beats_stock": comparison.get("beats_stock", False),
+            "excess_vs_stock": round(comparison.get("excess_vs_stock", 0), 1),
+            "spy_buy_hold_return": round(comparison.get("spy_buy_hold_return", 0), 1) if "spy_buy_hold_return" in comparison else None,
+            "beats_spy": comparison.get("beats_spy", None),
+        },
+        "recent_trades": [
+            {
+                "entry_date": str(t.entry_date.date()),
+                "exit_date": str(t.exit_date.date()) if t.exit_date else None,
+                "entry_price": round(t.entry_price, 2),
+                "exit_price": round(t.exit_price, 2) if t.exit_price else None,
+                "pnl_pct": round(t.pnl_pct, 1),  # Already stored as percentage
+                "exit_reason": t.exit_reason,
+            }
+            for t in (best_result.trades[-5:] if best_result.trades else [])
+        ],
+    }
