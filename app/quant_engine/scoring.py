@@ -174,6 +174,120 @@ class ScoringResult:
 
 
 # =============================================================================
+# HISTORICAL STRATEGY WEIGHTS GENERATOR
+# =============================================================================
+
+def generate_historical_weights(
+    prices: pd.Series,
+    holding_days: int = 20,
+) -> pd.Series:
+    """
+    Generate historical strategy weights based on the best signal.
+    
+    This recomputes signal triggers at each point using only past data
+    to avoid look-ahead bias, then converts to position weights.
+    
+    Args:
+        prices: Price series (close prices)
+        holding_days: Days to hold each position
+        
+    Returns:
+        Series of weights (0.0 = no position, 1.0 = fully invested)
+    """
+    from app.quant_engine.signals import SIGNAL_CONFIGS, optimize_signal_params, apply_cooldown_to_triggers
+    from app.quant_engine.indicators import compute_drawdown, compute_rsi, compute_zscore
+    
+    weights = pd.Series(0.0, index=prices.index)
+    
+    if len(prices) < 252:
+        return weights
+    
+    # Build price data dict for signal computation
+    price_data = {
+        "close": prices,
+        "high": prices,  # Use close as proxy if we don't have OHLC
+        "low": prices,
+        "open": prices,
+    }
+    
+    # Find best signal for this stock
+    best_config = None
+    best_score = -float("inf")
+    best_threshold = None
+    best_holding = holding_days
+    
+    for config in SIGNAL_CONFIGS:
+        try:
+            signal_values = config["compute"](price_data)
+            if signal_values is None or signal_values.isna().all():
+                continue
+            
+            # Optimize on training data (first 80%)
+            train_end = int(len(prices) * 0.8)
+            train_prices = prices.iloc[:train_end]
+            train_signal = signal_values.iloc[:train_end]
+            
+            opt_threshold, opt_holding, opt_results = optimize_signal_params(
+                train_prices,
+                train_signal,
+                config["direction"],
+                config["threshold_range"],
+                holding_days_options=[10, 20, 40, 60],
+            )
+            
+            if opt_results.get("n_signals", 0) < 3:
+                continue
+            
+            # Score by vs_buy_hold
+            vs_bh = opt_results.get("vs_buy_hold", 0.0)
+            score = vs_bh * 100 + opt_results.get("win_rate", 0.0) * 10
+            
+            if score > best_score:
+                best_score = score
+                best_config = config
+                best_threshold = opt_threshold
+                best_holding = opt_holding
+                
+        except Exception as e:
+            logger.debug(f"Signal {config['name']} failed: {e}")
+            continue
+    
+    if best_config is None:
+        return weights
+    
+    # Generate signals using best config
+    try:
+        signal_values = best_config["compute"](price_data)
+        direction = best_config["direction"]
+        threshold = best_threshold
+        
+        # Detect trigger points (edge detection)
+        if direction == "below":
+            is_triggered = (signal_values < threshold) & (signal_values.shift(1) >= threshold)
+        elif direction == "above":
+            is_triggered = (signal_values > threshold) & (signal_values.shift(1) <= threshold)
+        else:
+            is_triggered = (signal_values < threshold) & (signal_values.shift(1) >= threshold)
+        
+        # Apply cooldown
+        is_triggered = apply_cooldown_to_triggers(is_triggered, best_holding)
+        
+        # Convert triggers to weights
+        for trigger_date in is_triggered[is_triggered].index:
+            try:
+                start_idx = prices.index.get_loc(trigger_date)
+                end_idx = min(start_idx + best_holding, len(prices))
+                weights.iloc[start_idx:end_idx] = 1.0
+            except (KeyError, TypeError):
+                continue
+                
+    except Exception as e:
+        logger.warning(f"Failed to generate weights: {e}")
+    
+    return weights
+
+
+# =============================================================================
 # STATIONARY BOOTSTRAP (Politis & Romano, 1994)
 # =============================================================================
 
@@ -235,7 +349,7 @@ def compute_bootstrap_stats(
     Returns:
         Tuple of (p_outperf, ci_low, ci_high, cvar_5)
     """
-    if len(edge_values) < 10:
+    if len(edge_values) < 3:  # Need at least 3 OOS periods for meaningful bootstrap
         return 0.0, 0.0, 0.0, 0.0
     
     bootstrap_means = stationary_bootstrap(
@@ -1076,13 +1190,20 @@ def compute_symbol_score(
     
     evidence.sector_relative = sector_relative
     
-    # Event risk
+    # Event risk - only trigger for FUTURE events within window
     event_risk = False
     today = date.today()
-    if earnings_date and (earnings_date - today).days <= config.event_window_days:
-        event_risk = True
-    if dividend_date and (dividend_date - today).days <= config.event_window_days:
-        event_risk = True
+    # Convert datetime to date if needed
+    earnings_dt = earnings_date.date() if hasattr(earnings_date, 'date') else earnings_date
+    dividend_dt = dividend_date.date() if hasattr(dividend_date, 'date') else dividend_date
+    if earnings_dt:
+        days_until = (earnings_dt - today).days
+        if 0 <= days_until <= config.event_window_days:
+            event_risk = True
+    if dividend_dt:
+        days_until = (dividend_dt - today).days
+        if 0 <= days_until <= config.event_window_days:
+            event_risk = True
     
     evidence.event_risk = event_risk
     

@@ -1416,8 +1416,8 @@ async def quant_scoring_daily_job() -> str:
                     # Get strategy signal for weights
                     strategy = strategy_map.get(symbol)
                     
-                    # Build strategy weights from signal
-                    # Simple: 1.0 when has_active_signal and signal is BUY, else 0
+                    # Build strategy weights from HISTORICAL signal triggers
+                    # This computes actual backtested positions, not just current signal
                     if df is not None and len(df) > 0:
                         if "close" in df.columns:
                             prices_series = df["close"]
@@ -1426,10 +1426,9 @@ async def quant_scoring_daily_job() -> str:
                         else:
                             prices_series = df.iloc[:, 0]
                         
-                        strategy_weights = pd.Series(0.0, index=prices_series.index)
-                        if strategy and strategy.has_active_signal and strategy.signal_type == "BUY":
-                            # Assume weight = 1 for last 20 days when signal active
-                            strategy_weights.iloc[-20:] = 1.0
+                        # Generate historical weights from best signal
+                        from app.quant_engine.scoring import generate_historical_weights
+                        strategy_weights = generate_historical_weights(prices_series, holding_days=20)
                     else:
                         strategy_weights = pd.Series()
                     

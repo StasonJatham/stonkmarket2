@@ -34,6 +34,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Drawer, DrawerContent, DrawerTitle } from '@/components/ui/drawer';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
@@ -44,7 +45,8 @@ import {
   List,
   SlidersHorizontal,
   X,
-  BarChart3
+  BarChart3,
+  AlertCircle
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -77,7 +79,7 @@ const item = {
 
 export function Dashboard() {
   // Use quant engine for primary stock ranking (sorted by marginal utility)
-  const { stocks: quantStocks, recommendations, isLoading: isLoadingQuant, asOfDate, error: quantError, portfolioStats } = useQuant();
+  const { stocks: quantStocks, recommendations, isLoading: isLoadingQuant, asOfDate, marketMessage, error: quantError, portfolioStats } = useQuant();
   // Keep dip context for showAllStocks toggle (legacy compatibility)
   const { showAllStocks, setShowAllStocks } = useDips();
   
@@ -558,6 +560,14 @@ export function Dashboard() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Market Message Alert */}
+      {marketMessage && !error && (
+        <Alert variant={marketMessage.includes('No certified') ? 'destructive' : 'default'}>
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>{marketMessage}</AlertDescription>
+        </Alert>
+      )}
 
       {/* Filters & View Toggle */}
       <motion.div

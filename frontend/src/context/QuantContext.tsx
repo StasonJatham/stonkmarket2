@@ -9,6 +9,7 @@ interface QuantContextType {
   stocks: DipStock[];
   audit: QuantAuditBlock | null;
   asOfDate: string | null;
+  marketMessage: string | null;
   portfolioStats: {
     expectedReturn: number;
     expectedRisk: number;
@@ -28,6 +29,7 @@ export function QuantProvider({ children }: { children: ReactNode }) {
   const [recommendations, setRecommendations] = useState<QuantRecommendation[]>([]);
   const [audit, setAudit] = useState<QuantAuditBlock | null>(null);
   const [asOfDate, setAsOfDate] = useState<string | null>(null);
+  const [marketMessage, setMarketMessage] = useState<string | null>(null);
   const [portfolioStats, setPortfolioStats] = useState<QuantContextType['portfolioStats']>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -46,6 +48,7 @@ export function QuantProvider({ children }: { children: ReactNode }) {
       setRecommendations(data.recommendations);
       setAudit(data.audit);
       setAsOfDate(data.as_of_date);
+      setMarketMessage(data.market_message);
       setPortfolioStats({
         expectedReturn: data.expected_portfolio_return,
         expectedRisk: data.expected_portfolio_risk,
@@ -74,6 +77,7 @@ export function QuantProvider({ children }: { children: ReactNode }) {
       stocks,
       audit,
       asOfDate,
+      marketMessage,
       portfolioStats,
       isLoading,
       error,

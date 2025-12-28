@@ -659,7 +659,7 @@ export function SystemSettings({ defaultTab = 'ai', showTabs = true }: SystemSet
     </>
   );
 
-  const sectionContent: Record<SectionKey, JSX.Element> = {
+  const sectionContent: Record<SectionKey, React.JSX.Element> = {
     ai: aiContent,
     trading: tradingContent,
     benchmarks: benchmarksContent,

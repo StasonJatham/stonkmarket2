@@ -29,6 +29,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { StockLogo } from '@/components/StockLogo';
 import { 
   Tooltip as UITooltip, 
@@ -53,6 +54,7 @@ import {
   Brain,
   Zap,
   CircleArrowUp,
+  AlertCircle,
 } from 'lucide-react';
 
 // Action icon based on recommendation
@@ -635,6 +637,7 @@ export function Landing() {
   const navigate = useNavigate();
   const { isAuthenticated } = useAuth();
   const [recommendations, setRecommendations] = useState<QuantRecommendation[]>([]);
+  const [marketMessage, setMarketMessage] = useState<string | null>(null);
   const [portfolioStats, setPortfolioStats] = useState({
     expectedReturn: 0,
     expectedRisk: 0,
@@ -681,6 +684,7 @@ export function Landing() {
         // Fetch quant engine recommendations
         const data = await getQuantRecommendations(1000, 20);
         setRecommendations(data.recommendations);
+        setMarketMessage(data.market_message);
         const newPortfolioStats = {
           expectedReturn: data.expected_portfolio_return,
           expectedRisk: data.expected_portfolio_risk,
@@ -1033,6 +1037,14 @@ export function Landing() {
               <ChevronRight className="h-4 w-4" />
             </Button>
           </div>
+
+          {/* Market Message Alert */}
+          {marketMessage && (
+            <Alert variant={marketMessage.includes('No certified') ? 'destructive' : 'default'} className="mb-6">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>{marketMessage}</AlertDescription>
+            </Alert>
+          )}
 
           {isLoading ? (
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
