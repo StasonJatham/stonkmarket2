@@ -308,11 +308,25 @@ async def get_active_symbols() -> Sequence[Symbol]:
 async def get_active_symbol_tickers() -> list[str]:
     """Get list of active symbol tickers.
     
+    Includes:
+    - All active symbols from the database
+    - Sector ETF symbols from runtime settings
+    
     Returns:
         List of symbol tickers
     """
+    from app.services.runtime_settings import get_runtime_setting
+    
     symbols = await get_active_symbols()
-    return [s.symbol for s in symbols]
+    tickers = {s.symbol for s in symbols}  # Use set for deduplication
+    
+    # Add sector ETFs from runtime settings
+    sector_etfs = get_runtime_setting("sector_etfs", [])
+    for etf in sector_etfs:
+        if isinstance(etf, dict) and "symbol" in etf:
+            tickers.add(etf["symbol"])
+    
+    return list(tickers)
 
 
 async def get_symbol_dip_thresholds() -> dict[str, float]:

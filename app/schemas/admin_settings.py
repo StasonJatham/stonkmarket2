@@ -17,6 +17,14 @@ class BenchmarkConfig(BaseModel):
     description: str | None = Field(None, description="Description of the benchmark")
 
 
+class SectorETFConfig(BaseModel):
+    """Sector ETF configuration."""
+
+    sector: str = Field(..., description="Sector name (e.g., 'Technology', 'Healthcare')")
+    symbol: str = Field(..., description="ETF symbol (e.g., 'XLK', 'XLV')")
+    name: str = Field(..., description="Display name for the ETF")
+
+
 class AppSettingsResponse(BaseModel):
     """Application settings response (read-only from env/config)."""
 
@@ -95,6 +103,9 @@ class RuntimeSettingsResponse(BaseModel):
     benchmarks: list[BenchmarkConfig] = Field(
         default_factory=list, description="Configured benchmark indices"
     )
+    sector_etfs: list[SectorETFConfig] = Field(
+        default_factory=list, description="Sector ETF mappings for comparison"
+    )
     # Trading/Backtest Configuration
     trading_initial_capital: float = Field(
         default=50000.0, ge=1000, le=10_000_000, description="Initial capital for backtesting (€)"
@@ -143,6 +154,7 @@ class RuntimeSettingsUpdate(BaseModel):
     cache_ttl_ranking: int | None = Field(default=None, ge=0, le=7200)
     cache_ttl_charts: int | None = Field(default=None, ge=0, le=7200)
     benchmarks: list[BenchmarkConfig] | None = None
+    sector_etfs: list[SectorETFConfig] | None = None
     # Trading/Backtest Configuration
     trading_initial_capital: float | None = Field(default=None, ge=1000, le=10_000_000)
     trading_flat_cost_per_trade: float | None = Field(default=None, ge=0, le=100)

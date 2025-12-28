@@ -13,7 +13,7 @@ from app.repositories import dip_votes_orm as dip_votes_repo
 from app.schemas.swipe import DipCard, DipStats, VoteCounts
 from app.services import stock_info
 from app.services.fundamentals import get_fundamentals_for_analysis
-from app.services.openai_client import generate_bio
+from app.services.openai_client import generate_bio, rate_dip
 from app.services.statistical_rating import calculate_rating
 
 

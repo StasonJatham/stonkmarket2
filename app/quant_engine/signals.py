@@ -184,6 +184,9 @@ def compute_price_vs_sma(prices: pd.Series, window: int) -> pd.Series:
 def compute_stochastic(high: pd.Series, low: pd.Series, close: pd.Series, window: int = 14) -> pd.Series:
     """Stochastic Oscillator %K."""
     lowest_low = low.rolling(window).min()
+    highest_high = high.rolling(window).max()
+    k = 100 * (close - lowest_low) / (highest_high - lowest_low).replace(0, np.nan)
+    return k
 
 
 def apply_cooldown_to_triggers(triggers: pd.Series, cooldown_days: int) -> pd.Series:
@@ -219,9 +222,6 @@ def apply_cooldown_to_triggers(triggers: pd.Series, cooldown_days: int) -> pd.Se
         last_trigger_date = date
     
     return result
-    highest_high = high.rolling(window).max()
-    k = 100 * (close - lowest_low) / (highest_high - lowest_low).replace(0, np.nan)
-    return k
 
 
 def _compute_volume_dip_signal(p: dict) -> pd.Series:

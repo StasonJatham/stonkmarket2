@@ -159,7 +159,7 @@ async def get_system_status(
                         name=row.name,
                         cron=row.cron,
                         description=row.description,
-                        last_run=row.last_run,
+                        last_run=row.last_run.isoformat() if row.last_run else None,
                         last_status=row.last_status,
                     )
                 )

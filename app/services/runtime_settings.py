@@ -59,6 +59,21 @@ DEFAULT_SETTINGS: dict[str, Any] = {
             "description": "Global Developed Markets",
         },
     ],
+    # Sector ETF mappings - editable via admin UI
+    "sector_etfs": [
+        {"sector": "Technology", "symbol": "XLK", "name": "Technology Select Sector SPDR"},
+        {"sector": "Information Technology", "symbol": "XLK", "name": "Technology Select Sector SPDR"},
+        {"sector": "Healthcare", "symbol": "XLV", "name": "Health Care Select Sector SPDR"},
+        {"sector": "Financials", "symbol": "XLF", "name": "Financial Select Sector SPDR"},
+        {"sector": "Consumer Discretionary", "symbol": "XLY", "name": "Consumer Discretionary Select Sector SPDR"},
+        {"sector": "Consumer Staples", "symbol": "XLP", "name": "Consumer Staples Select Sector SPDR"},
+        {"sector": "Energy", "symbol": "XLE", "name": "Energy Select Sector SPDR"},
+        {"sector": "Industrials", "symbol": "XLI", "name": "Industrial Select Sector SPDR"},
+        {"sector": "Materials", "symbol": "XLB", "name": "Materials Select Sector SPDR"},
+        {"sector": "Real Estate", "symbol": "XLRE", "name": "Real Estate Select Sector SPDR"},
+        {"sector": "Utilities", "symbol": "XLU", "name": "Utilities Select Sector SPDR"},
+        {"sector": "Communication Services", "symbol": "XLC", "name": "Communication Services Select Sector SPDR"},
+    ],
 }
 
 # In-memory cache of settings

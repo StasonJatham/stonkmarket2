@@ -1166,12 +1166,12 @@ async def strategy_optimize_nightly_job() -> str:
     logger.info("Starting strategy_optimize_nightly job")
     
     try:
-        # Get all tracked symbols
+        # Get all active symbols
         all_symbols = await symbols_repo.list_symbols()
         symbol_list = [
             s.symbol for s in all_symbols 
             if s.symbol not in ("SPY", "^GSPC", "URTH", "^VIX")
-            and s.is_tracked
+            and s.is_active
         ]
         
         if not symbol_list:
@@ -1180,7 +1180,10 @@ async def strategy_optimize_nightly_job() -> str:
         logger.info(f"[STRATEGY] Optimizing strategies for {len(symbol_list)} symbols")
         
         # Get SPY for benchmark comparison
-        spy_df = await price_history_repo.get_price_history("SPY", days=1260)  # 5 years
+        from datetime import date, timedelta
+        end_date = date.today()
+        start_date = end_date - timedelta(days=1260)  # 5 years
+        spy_df = await price_history_repo.get_prices_as_dataframe("SPY", start_date, end_date)
         spy_prices = None
         if spy_df is not None and len(spy_df) > 0:
             if "close" in spy_df.columns:
@@ -1212,7 +1215,7 @@ async def strategy_optimize_nightly_job() -> str:
             for symbol in symbol_list:
                 try:
                     # Get price history
-                    df = await price_history_repo.get_price_history(symbol, days=1260)
+                    df = await price_history_repo.get_prices_as_dataframe(symbol, start_date, end_date)
                     
                     if df is None or len(df) < 200:
                         logger.warning(f"[STRATEGY] Insufficient data for {symbol}, skipping")

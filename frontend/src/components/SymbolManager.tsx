@@ -29,7 +29,6 @@ import {
   Loader2, 
   CheckCircle, 
   XCircle, 
-  Search,
   TrendingDown
 } from 'lucide-react';
 import { 
@@ -43,6 +42,7 @@ import {
   type Symbol,
   type TaskStatus,
 } from '@/services/api';
+import { DataTableControls } from '@/components/ui/data-table-controls';
 
 interface SymbolManagerProps {
   onError?: (error: string) => void;
@@ -52,6 +52,8 @@ export function SymbolManager({ onError }: SymbolManagerProps) {
   const [symbols, setSymbols] = useState<Symbol[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   const [nextIngestRun, setNextIngestRun] = useState<string | null>(null);
   const [taskStatuses, setTaskStatuses] = useState<Record<string, TaskStatus>>({});
   
@@ -252,9 +254,26 @@ export function SymbolManager({ onError }: SymbolManagerProps) {
     setValidationResult(null);
   }
 
-  const filteredSymbols = symbols.filter(s => 
-    s.symbol.toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredSymbols = useMemo(() => {
+    if (!search.trim()) return symbols;
+    const searchLower = search.toLowerCase();
+    return symbols.filter(s => 
+      s.symbol.toLowerCase().includes(searchLower) ||
+      s.name?.toLowerCase().includes(searchLower)
+    );
+  }, [symbols, search]);
+
+  const totalPages = Math.ceil(filteredSymbols.length / pageSize);
+  const paginatedSymbols = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return filteredSymbols.slice(start, start + pageSize);
+  }, [filteredSymbols, currentPage, pageSize]);
+
+  // Reset page when search changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search]);
+
   const hasPending = symbols.some(
     (s) => s.fetch_status === 'fetching' || s.fetch_status === 'pending'
   );
@@ -323,26 +342,29 @@ export function SymbolManager({ onError }: SymbolManagerProps) {
         </div>
       </CardHeader>
       <CardContent>
-        {/* Search */}
-        <div className="relative mb-4">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Search symbols..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-9"
-          />
-        </div>
+        {/* Search and Pagination Controls */}
+        <DataTableControls
+          searchValue={search}
+          onSearchChange={setSearch}
+          searchPlaceholder="Search symbols, names..."
+          currentPage={currentPage}
+          totalPages={totalPages}
+          totalItems={filteredSymbols.length}
+          pageSize={pageSize}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={setPageSize}
+          itemName="symbols"
+        />
 
         {hasPending && (
-          <div className="text-xs text-muted-foreground mb-3">
+          <div className="text-xs text-muted-foreground mt-3">
             {ingestHint}
           </div>
         )}
 
         {/* Table */}
         {isLoading ? (
-          <div className="space-y-2">
+          <div className="space-y-2 mt-4">
             {[...Array(5)].map((_, i) => (
               <Skeleton key={i} className="h-12 w-full" />
             ))}
@@ -352,7 +374,7 @@ export function SymbolManager({ onError }: SymbolManagerProps) {
             {search ? 'No symbols match your search' : 'No symbols configured'}
           </div>
         ) : (
-          <Table>
+          <Table className="mt-4">
             <TableHeader>
               <TableRow>
                 <TableHead>Symbol</TableHead>
@@ -365,7 +387,7 @@ export function SymbolManager({ onError }: SymbolManagerProps) {
             </TableHeader>
             <TableBody>
               <AnimatePresence>
-                {filteredSymbols.map((symbol) => (
+                {paginatedSymbols.map((symbol) => (
                   <motion.tr
                     key={symbol.symbol}
                     initial={{ opacity: 0 }}

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, useMemo } from 'react';
 import {
   getCeleryBroker,
   getCeleryQueues,
@@ -34,6 +34,7 @@ import {
   Zap,
   Activity,
 } from 'lucide-react';
+import { DataTableControls } from '@/components/ui/data-table-controls';
 
 function getActiveCount(info: CeleryWorkerInfo): number | null {
   if (Array.isArray(info.active)) return info.active.length;
@@ -182,6 +183,11 @@ export function CeleryMonitorPanel() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Pagination and search for tasks
+  const [taskSearch, setTaskSearch] = useState('');
+  const [taskPage, setTaskPage] = useState(1);
+  const [taskPageSize, setTaskPageSize] = useState(10);
+
   const loadStats = useCallback(async (showRefreshIndicator = false) => {
     if (showRefreshIndicator) {
       setIsRefreshing(true);
@@ -192,7 +198,7 @@ export function CeleryMonitorPanel() {
       getCeleryWorkers(),
       getCeleryQueues(),
       getCeleryBroker(),
-      getCeleryTasks(30),
+      getCeleryTasks(100),
     ]);
 
     if (workersResult.status === 'fulfilled') {
@@ -237,6 +243,29 @@ export function CeleryMonitorPanel() {
     const count = getProcessedCount(info);
     return sum + (count || 0);
   }, 0);
+
+  // Filter and paginate tasks
+  const filteredTasks = useMemo(() => {
+    if (!taskSearch.trim()) return tasks;
+    const search = taskSearch.toLowerCase();
+    return tasks.filter(task => 
+      task.name?.toLowerCase().includes(search) ||
+      task.state?.toLowerCase().includes(search) ||
+      task.worker?.toLowerCase().includes(search) ||
+      task.uuid?.toLowerCase().includes(search)
+    );
+  }, [tasks, taskSearch]);
+
+  const taskTotalPages = Math.ceil(filteredTasks.length / taskPageSize);
+  const paginatedTasks = useMemo(() => {
+    const start = (taskPage - 1) * taskPageSize;
+    return filteredTasks.slice(start, start + taskPageSize);
+  }, [filteredTasks, taskPage, taskPageSize]);
+
+  // Reset page when search changes
+  useEffect(() => {
+    setTaskPage(1);
+  }, [taskSearch]);
 
   return (
     <Card className="mt-6">
@@ -418,18 +447,30 @@ export function CeleryMonitorPanel() {
               <div className="flex items-center gap-2 mb-3 text-sm font-medium">
                 <Activity className="h-4 w-4 text-muted-foreground" />
                 Recent Tasks
-                <Badge variant="outline" className="text-muted-foreground">
-                  {tasks.length}
-                </Badge>
               </div>
-              {tasks.length === 0 ? (
-                <div className="flex items-center gap-2 p-4 bg-muted/30 rounded-lg">
+              
+              {/* Search and Pagination for Tasks */}
+              <DataTableControls
+                searchValue={taskSearch}
+                onSearchChange={setTaskSearch}
+                searchPlaceholder="Search tasks, workers, status..."
+                currentPage={taskPage}
+                totalPages={taskTotalPages}
+                totalItems={filteredTasks.length}
+                pageSize={taskPageSize}
+                onPageChange={setTaskPage}
+                onPageSizeChange={setTaskPageSize}
+                itemName="tasks"
+              />
+
+              {filteredTasks.length === 0 ? (
+                <div className="flex items-center gap-2 p-4 bg-muted/30 rounded-lg mt-4">
                   <span className="text-sm text-muted-foreground">
-                    No recent tasks. Tasks will appear here when Flower is available.
+                    {taskSearch ? 'No tasks match your search' : 'No recent tasks. Tasks will appear here when Flower is available.'}
                   </span>
                 </div>
               ) : (
-                <div className="overflow-x-auto max-h-64 overflow-y-auto">
+                <div className="overflow-x-auto mt-4">
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -441,7 +482,7 @@ export function CeleryMonitorPanel() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {tasks.slice(0, 20).map((task) => (
+                      {paginatedTasks.map((task) => (
                         <TableRow key={task.uuid}>
                           <TableCell className="font-mono text-xs">
                             {task.name?.split('.').pop() || task.uuid.slice(0, 8)}

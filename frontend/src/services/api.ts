@@ -1817,6 +1817,12 @@ export interface BenchmarkConfig {
   description?: string | null;
 }
 
+export interface SectorETFConfig {
+  sector: string;
+  symbol: string;
+  name: string;
+}
+
 export interface RuntimeSettings {
   signal_threshold_strong_buy: number;
   signal_threshold_buy: number;
@@ -1833,6 +1839,7 @@ export interface RuntimeSettings {
   cache_ttl_ranking: number;
   cache_ttl_charts: number;
   benchmarks: BenchmarkConfig[];
+  sector_etfs: SectorETFConfig[];
   // Trading/Backtest Configuration
   trading_initial_capital: number;
   trading_flat_cost_per_trade: number;

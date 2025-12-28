@@ -7,7 +7,8 @@ import {
   checkOpenAIStatus,
   type RuntimeSettings,
   type AppSettings,
-  type BenchmarkConfig
+  type BenchmarkConfig,
+  type SectorETFConfig
 } from '@/services/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -26,6 +27,7 @@ import {
 import { Slider } from '@/components/ui/slider';
 import { Separator } from '@/components/ui/separator';
 import { BenchmarkManager } from '@/components/BenchmarkManager';
+import { SectorETFManager } from '@/components/SectorETFManager';
 import { 
   Sparkles, 
   Save, 
@@ -39,7 +41,6 @@ import {
   TrendingUp,
   DollarSign,
   Percent,
-  Calendar,
   BarChart2,
 } from 'lucide-react';
 
@@ -67,6 +68,7 @@ export function SystemSettings() {
   const [buyThreshold, setBuyThreshold] = useState(60);
   const [holdThreshold, setHoldThreshold] = useState(40);
   const [benchmarks, setBenchmarks] = useState<BenchmarkConfig[]>([]);
+  const [sectorEtfs, setSectorEtfs] = useState<SectorETFConfig[]>([]);
   const [openaiConfigured, setOpenaiConfigured] = useState(false);
 
   // Trading/Backtest form state
@@ -106,6 +108,7 @@ export function SystemSettings() {
       setBuyThreshold(runtime.signal_threshold_buy);
       setHoldThreshold(runtime.signal_threshold_hold);
       setBenchmarks(runtime.benchmarks || []);
+      setSectorEtfs(runtime.sector_etfs || []);
       
       // Initialize trading/backtest settings
       setInitialCapital(runtime.trading_initial_capital);
@@ -170,6 +173,22 @@ export function SystemSettings() {
       setTimeout(() => setSuccess(null), 2000);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save benchmark');
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  // Save sector ETFs immediately when edited in SectorETFManager
+  async function saveSectorEtfs(newSectorEtfs: SectorETFConfig[]) {
+    setIsSaving(true);
+    setError(null);
+    try {
+      const updated = await updateRuntimeSettings({ sector_etfs: newSectorEtfs });
+      setRuntimeSettings(updated);
+      setSuccess('Sector ETF saved!');
+      setTimeout(() => setSuccess(null), 2000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save sector ETF');
     } finally {
       setIsSaving(false);
     }
@@ -536,6 +555,13 @@ export function SystemSettings() {
         benchmarks={benchmarks} 
         onChange={setBenchmarks}
         onSave={saveBenchmarks}
+      />
+
+      {/* Sector ETF Management */}
+      <SectorETFManager
+        sectorEtfs={sectorEtfs}
+        onChange={setSectorEtfs}
+        onSave={saveSectorEtfs}
       />
 
       {/* App Info (Read-only) */}

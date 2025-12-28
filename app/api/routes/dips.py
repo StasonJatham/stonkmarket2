@@ -50,6 +50,18 @@ class BenchmarkInfo(BaseModel):
     symbol: str
 
 
+class SectorETFInfo(BaseModel):
+    """Public sector ETF information with optional price data."""
+    sector: str
+    symbol: str
+    name: str
+    # Price fields (populated if price history exists)
+    current_price: float | None = None
+    change_1d_pct: float | None = None
+    change_7d_pct: float | None = None
+    ytd_pct: float | None = None
+
+
 class BatchChartRequest(BaseModel):
     """Request model for batch chart data."""
     symbols: list[str]
@@ -177,6 +189,93 @@ async def get_benchmarks() -> CacheableResponse:
         etag=etag,
         max_age=60,  # 1 minute cache
         stale_while_revalidate=60,  # Allow stale for 1 more minute while revalidating
+    )
+
+
+@router.get(
+    "/sector-etfs",
+    response_model=list[SectorETFInfo],
+    summary="Get sector ETF mappings",
+    description="Get list of sector ETF mappings with current prices. Public endpoint.",
+)
+async def get_sector_etfs() -> CacheableResponse:
+    """Get sector ETF mappings from runtime settings with price data.
+    
+    Includes current price and change percentages when price history is available.
+    Returns with short cache headers since prices change but not too frequently.
+    """
+    from datetime import date, timedelta
+    from app.repositories import price_history_orm as price_history_repo
+    
+    sector_etfs = get_runtime_setting("sector_etfs", [])
+    if not sector_etfs:
+        return CacheableResponse([], etag=generate_etag([]), max_age=60)
+    
+    # Get ETF symbols
+    symbols = [etf["symbol"] for etf in sector_etfs if isinstance(etf, dict) and "symbol" in etf]
+    
+    # Fetch price data for all ETFs
+    today = date.today()
+    start_date = date(today.year, 1, 1)  # YTD start
+    seven_days_ago = today - timedelta(days=7)
+    one_day_ago = today - timedelta(days=1)
+    
+    # Build result with price data
+    results = []
+    for etf in sector_etfs:
+        if not isinstance(etf, dict) or "symbol" not in etf:
+            continue
+        
+        symbol = etf["symbol"]
+        info = SectorETFInfo(
+            sector=etf.get("sector", ""),
+            symbol=symbol,
+            name=etf.get("name", ""),
+        )
+        
+        # Try to get price history for calculations
+        try:
+            prices = await price_history_repo.get_price_history(symbol, start_date, today)
+            if prices:
+                # Sort by date descending
+                sorted_prices = sorted(prices, key=lambda p: p.date, reverse=True)
+                
+                # Current price (most recent)
+                if sorted_prices:
+                    info.current_price = float(sorted_prices[0].close) if sorted_prices[0].close else None
+                
+                # YTD return (first price of year vs current)
+                if len(sorted_prices) > 1:
+                    ytd_prices = [p for p in sorted_prices if p.date >= start_date]
+                    if ytd_prices:
+                        oldest_ytd = min(ytd_prices, key=lambda p: p.date)
+                        if oldest_ytd.close and sorted_prices[0].close:
+                            info.ytd_pct = (float(sorted_prices[0].close) - float(oldest_ytd.close)) / float(oldest_ytd.close) * 100
+                
+                # 7-day change
+                week_prices = [p for p in sorted_prices if p.date >= seven_days_ago]
+                if len(week_prices) >= 2:
+                    oldest_week = min(week_prices, key=lambda p: p.date)
+                    if oldest_week.close and sorted_prices[0].close:
+                        info.change_7d_pct = (float(sorted_prices[0].close) - float(oldest_week.close)) / float(oldest_week.close) * 100
+                
+                # 1-day change
+                if len(sorted_prices) >= 2:
+                    prev_day = sorted_prices[1]
+                    if prev_day.close and sorted_prices[0].close:
+                        info.change_1d_pct = (float(sorted_prices[0].close) - float(prev_day.close)) / float(prev_day.close) * 100
+        except Exception:
+            # Price data not available yet - that's OK
+            pass
+        
+        results.append(info.model_dump())
+    
+    etag = generate_etag(results)
+    return CacheableResponse(
+        results,
+        etag=etag,
+        max_age=300,  # 5 minute cache (prices don't change that often)
+        stale_while_revalidate=60,
     )
 
 

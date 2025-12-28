@@ -68,7 +68,11 @@ const container = {
 
 const item = {
   hidden: { opacity: 0, y: 20 },
-  show: { opacity: 1, y: 0 },
+  show: { 
+    opacity: 1, 
+    y: 0,
+    transition: { duration: 0.3 }
+  },
 };
 
 export function Dashboard() {
@@ -753,7 +757,12 @@ export function Dashboard() {
                   const cardData = stockCardDataMap.get(stock.symbol);
                   const miniChartData = cardCharts[stock.symbol];
                   return (
-                    <motion.div key={stock.symbol} variants={item}>
+                    <motion.div 
+                      key={stock.symbol} 
+                      variants={item}
+                      initial="hidden"
+                      animate="show"
+                    >
                       <StockCardV2
                         stock={cardData || {
                           symbol: stock.symbol,

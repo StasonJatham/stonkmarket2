@@ -153,14 +153,8 @@ async def get_dip_entry(
             message=f"Insufficient price history for {symbol} (need at least 1 year)"
         )
     
-    # Get fundamentals if available
+    # Fundamentals are not currently stored in Symbol model
     fundamentals = None
-    if db_symbol.pe_ratio or db_symbol.debt_to_equity:
-        fundamentals = {
-            "pe_ratio": db_symbol.pe_ratio,
-            "debt_to_equity": db_symbol.debt_to_equity,
-            # Add more if available
-        }
     
     # Run analysis
     optimizer = DipEntryOptimizer()

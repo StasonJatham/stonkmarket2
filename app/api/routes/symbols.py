@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Path, Query, status
 from pydantic import BaseModel
+from sqlalchemy import select
 
 from app.api.dependencies import require_admin, require_user
 from app.cache.cache import Cache
@@ -11,12 +12,49 @@ from app.celery_app import celery_app
 from app.core.exceptions import ConflictError, NotFoundError
 from app.core.logging import get_logger
 from app.core.security import TokenData
+from app.database import AIPersona, get_session
 from app.repositories import symbols_orm as symbol_repo
 from app.schemas.symbols import SymbolCreate, SymbolResponse, SymbolUpdate
 from app.services.stock_info import get_stock_info
 
 
 logger = get_logger("api.routes.symbols")
+
+
+# Cache for personas with avatars - 5 minute TTL
+_avatar_cache: dict[str, float] = {}  # persona_key -> expiry timestamp
+_avatar_set: set[str] = set()  # Set of persona keys that have avatars
+_avatar_cache_ttl = 300  # 5 minutes
+
+
+async def get_personas_with_avatars() -> set[str]:
+    """Get set of persona keys that have avatars. Cached for 5 minutes."""
+    import time
+    
+    global _avatar_set, _avatar_cache
+    
+    cache_key = "personas_with_avatars"
+    now = time.time()
+    
+    if cache_key in _avatar_cache and _avatar_cache[cache_key] > now:
+        return _avatar_set
+    
+    # Query for personas with avatars
+    async with get_session() as session:
+        result = await session.execute(
+            select(AIPersona.key).where(AIPersona.avatar_data.isnot(None))
+        )
+        _avatar_set = {row[0] for row in result.fetchall()}
+    
+    _avatar_cache[cache_key] = now + _avatar_cache_ttl
+    return _avatar_set
+
+
+def get_avatar_url(persona_key: str, personas_with_avatars: set[str]) -> str | None:
+    """Get avatar URL for a persona, or None if no avatar exists."""
+    if persona_key in personas_with_avatars:
+        return f"/api/ai-personas/{persona_key}/avatar"
+    return None
 
 router = APIRouter()
 
@@ -745,15 +783,18 @@ async def get_agent_analysis_endpoint(
     if not sym:
         raise NotFoundError(f"Symbol {symbol} not found")
 
+    # Get personas that have avatars
+    personas_with_avatars = await get_personas_with_avatars()
+
     # Get existing analysis
     if not force_refresh:
         analysis = await get_agent_analysis(symbol)
         if analysis:
-            # Add avatar URLs to verdicts
+            # Add avatar URLs to verdicts (only if persona has avatar)
             analysis_resp = dict(analysis)
             if "verdicts" in analysis_resp:
                 for v in analysis_resp["verdicts"]:
-                    v["avatar_url"] = f"/api/ai-personas/{v.get('agent_id', '')}/avatar"
+                    v["avatar_url"] = get_avatar_url(v.get("agent_id", ""), personas_with_avatars)
             return AgentAnalysisResponse(**analysis_resp)
 
     # Run new analysis
@@ -771,7 +812,7 @@ async def get_agent_analysis_endpoint(
                 confidence=v.confidence,
                 reasoning=v.reasoning,
                 key_factors=v.key_factors,
-                avatar_url=f"/api/ai-personas/{v.agent_id}/avatar",
+                avatar_url=get_avatar_url(v.agent_id, personas_with_avatars),
             )
             for v in result.verdicts
         ],
@@ -800,6 +841,9 @@ async def refresh_agent_analysis_endpoint(
     if not sym:
         raise NotFoundError(f"Symbol {symbol} not found")
 
+    # Get personas that have avatars
+    personas_with_avatars = await get_personas_with_avatars()
+
     # Run new analysis
     result = await run_agent_analysis(symbol)
     if not result:
@@ -817,7 +861,7 @@ async def refresh_agent_analysis_endpoint(
                 confidence=v.confidence,
                 reasoning=v.reasoning,
                 key_factors=v.key_factors,
-                avatar_url=f"/api/ai-personas/{v.agent_id}/avatar",
+                avatar_url=get_avatar_url(v.agent_id, personas_with_avatars),
             )
             for v in result.verdicts
         ],

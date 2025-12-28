@@ -16,10 +16,11 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
 from app.api.dependencies import require_user
+from app.cache.cache import Cache
 from app.core.exceptions import NotFoundError, ValidationError
 from app.core.logging import get_logger
 from app.quant_engine import (
@@ -468,8 +469,7 @@ async def get_recommendations(
     # Build lookup maps
     dip_state_map = {d.symbol: d for d in dip_states}
     ai_map = {a.symbol: a for a in ai_analyses}
-    dipfinder_map = {sig.ticker: sig for sig in dipfinder_signals if sig.ticker not in dipfinder_map} if dipfinder_signals else {}
-    # Fix: build dipfinder_map correctly
+    # Build dipfinder_map correctly
     dipfinder_map = {}
     for sig in (dipfinder_signals or []):
         if sig.ticker not in dipfinder_map:
@@ -510,7 +510,8 @@ async def get_recommendations(
         if dip and dip.dip_start_date:
             days_in_dip = (date.today() - dip.dip_start_date).days
         
-        change_percent = float(dip.change_1d) if dip and dip.change_1d else None
+        # Note: DipState doesn't have change_1d, would need to compute from price history
+        change_percent = None
         
         # Extract strategy signal data (pre-computed, NOT computed per-request)
         strategy_beats_bh = False
@@ -520,17 +521,17 @@ async def get_recommendations(
         expected_recovery_days = None
         win_rate = None
         
+        strategy_n_trades = None
         if strategy:
             try:
-                signal_data = strategy.signal_data or {}
-                strategy_signal_type = signal_data.get("type")
-                benchmarks = strategy.benchmark_comparison or {}
-                strategy_vs_bh_pct = benchmarks.get("vs_buy_hold", 0)
-                strategy_beats_bh = benchmarks.get("beats_buy_hold", False)
-                metrics = strategy.backtest_metrics or {}
-                strategy_win_rate_val = metrics.get("win_rate", 0) * 100 if metrics.get("win_rate") else None
-                win_rate = metrics.get("win_rate")
-                expected_recovery_days = metrics.get("optimal_holding_days")
+                # StrategySignal has flat columns, not nested dicts
+                strategy_signal_type = strategy.signal_type
+                strategy_vs_bh_pct = float(strategy.vs_buy_hold_pct) if strategy.vs_buy_hold_pct else None
+                strategy_beats_bh = strategy.beats_buy_hold
+                strategy_win_rate_val = float(strategy.win_rate) if strategy.win_rate else None
+                win_rate = float(strategy.win_rate) / 100 if strategy.win_rate else None  # Convert from pct
+                strategy_n_trades = strategy.n_trades if strategy.n_trades else 0
+                expected_recovery_days = None  # Not stored in StrategySignal
             except Exception:
                 pass
         
@@ -554,45 +555,63 @@ async def get_recommendations(
                 if isinstance(stability, dict) and stability.get("typical_dip_365"):
                     typical_dip_pct = float(stability["typical_dip_365"]) * 100
         
-        # Determine action - simplified, based on pre-computed strategy
+        # Determine action - MUST be backed by proven math (strategy signals)
+        # NO recommendations based on "dip + AI" alone anymore
         action = "HOLD"
         buy_score = 0.0
         
-        if strategy_beats_bh and strategy_signal_type == "BUY":
+        # Minimum trades for statistical validity
+        MIN_TRADES = 5
+        has_enough_trades = strategy_n_trades is not None and strategy_n_trades >= MIN_TRADES
+        
+        # QUALITY GATE: Only BUY if strategy is PROVEN to beat buy-and-hold
+        # AND has enough trades for statistical validity
+        # Removed: win_rate >= 55% without beats_buy_hold - that's not enough evidence
+        if strategy_beats_bh and strategy_signal_type == "BUY" and has_enough_trades:
             action = "BUY"
             buy_score = 80.0
-        elif strategy_signal_type == "BUY":
-            action = "BUY"
-            buy_score = 60.0
-        elif dip_pct and dip_pct > 30:
-            action = "BUY"
-            buy_score = 40.0
+        # Note: We no longer give BUY based on dip_pct or win_rate alone - that's not math-backed
         
-        # Simple expected return estimate
+        # Simple expected return estimate - ONLY from proven strategies
         mu_hat = 0.0
         if strategy_beats_bh and strategy_vs_bh_pct:
             mu_hat = strategy_vs_bh_pct / 100
-        elif dip_pct and dip_pct > 10:
-            mu_hat = min(float(dip_pct) / 100 * 0.3, 0.15)
+        # Note: No longer estimating returns from dip_pct alone - that's not proven
         
-        # AI analysis
+        # AI analysis (informational only, not for ranking)
         ai_summary = ai.rating_reasoning if ai else None
         ai_rating = ai.ai_rating if ai else None
         
-        # Calculate best chance score
-        best_chance_score = 50.0
+        # Calculate best chance score - MATH-BACKED ONLY
+        # Start at 0, only add points for proven factors
+        best_chance_score = 0.0
         best_chance_reasons = []
         
+        # Primary factor: Strategy beats buy-and-hold (proven)
         if strategy_beats_bh:
-            best_chance_score += 25
+            best_chance_score += 40
             best_chance_reasons.append("Strategy beats B&H")
+            if strategy_vs_bh_pct and strategy_vs_bh_pct > 10:
+                best_chance_score += min(strategy_vs_bh_pct / 2, 20)
+                best_chance_reasons.append(f"+{strategy_vs_bh_pct:.0f}% vs B&H")
         
-        if dip_pct and dip_pct > 15:
-            best_chance_score += min(dip_pct / 2, 15)
+        # Secondary factor: Win rate > 55% (proven)
+        if strategy_win_rate_val and strategy_win_rate_val >= 55:
+            best_chance_score += 15
+            best_chance_reasons.append(f"{strategy_win_rate_val:.0f}% win rate")
+        
+        # Tertiary factor: Unusual dip (math-computed)
+        if is_unusual_dip and dip_vs_typical and dip_vs_typical >= 1.5:
+            best_chance_score += 15
+            best_chance_reasons.append(f"{dip_vs_typical:.1f}x typical dip")
+        elif dip_pct and dip_pct > 20:
+            # Significant dip but not compared to typical - small boost
+            best_chance_score += 5
             best_chance_reasons.append(f"{dip_pct:.0f}% dip")
         
-        if ai_rating in ("strong_buy", "buy"):
-            best_chance_score += 10
+        # AI is informational only - minor boost for confirmation
+        if ai_rating in ("strong_buy", "buy") and best_chance_score > 30:
+            best_chance_score += 5
             best_chance_reasons.append(f"AI: {ai_rating}")
         
         best_chance_score = max(0, min(100, best_chance_score))
@@ -670,222 +689,114 @@ async def get_recommendations(
     await cache.set(cache_key, response.model_dump())
     
     return response
-        volatility_regime = None
-        volatility_percentile = None
-        vs_sector_perf = None
-        
-        if symbol in prices_df.columns and sector:
-            try:
-                stock_prices = prices_df[symbol].dropna()
-                sector_etf_for_stock = SECTOR_ETF_MAP.get(sector)
-                sector_prices = None
-                if sector_etf_for_stock and sector_etf_for_stock in sector_etf_prices.columns:
-                    sector_prices = sector_etf_prices[sector_etf_for_stock].dropna()
-                
-                if len(stock_prices) >= 60:
-                    domain_analysis = perform_domain_analysis(
-                        symbol=symbol,
-                        prices=stock_prices,
-                        sector_name=sector,
-                        sector_etf_prices=sector_prices,
-                    )
-                    domain_dict = domain_analysis_to_dict(domain_analysis)
-                    
-                    domain_context = domain_dict.get("dip_context")
-                    domain_adjustment = domain_dict.get("dip_adjustment")
-                    domain_adjustment_reason = domain_dict.get("adjustment_explanation")
-                    domain_risk_level = domain_dict.get("risk_level")
-                    domain_risk_factors = domain_dict.get("primary_risk_factors")
-                    domain_recovery_days = domain_dict.get("typical_recovery_days")
-                    domain_warnings = domain_dict.get("domain_warnings")
-                    volatility_regime = domain_dict.get("volatility_regime")
-                    volatility_percentile = domain_dict.get("volatility_percentile")
-                    vs_sector_perf = domain_dict.get("vs_sector_performance")
-                    
-                    # Apply domain adjustment to opportunity score
-                    if domain_adjustment is not None:
-                        opportunity_score = max(0, min(100, opportunity_score + (domain_adjustment * 10)))
-                        
-                        # Recalculate rating with adjustment
-                        if opportunity_score >= 75:
-                            opportunity_rating = "strong_buy"
-                        elif opportunity_score >= 60:
-                            opportunity_rating = "buy"
-                        elif opportunity_score >= 40:
-                            opportunity_rating = "hold"
-                        else:
-                            opportunity_rating = "avoid"
-            except Exception as e:
-                logger.warning(f"Domain analysis failed for {symbol}: {e}")
-        
-        # =============================================================
-        # BEST CHANCE SCORE - Composite ranking for optimal entries
-        # =============================================================
-        # Priority: 
-        # 1. Strategy signals that beat B&H (timing works)
-        # 2. Dip entry opportunities (optimize B&H)
-        # 3. AI persona consensus BUY
-        # 4. Good fundamentals
-        
-        best_chance_score = 50.0  # Neutral baseline
-        best_chance_reasons = []
-        
-        # Strategy signal contribution (up to 25 points) - only if beats B&H
-        if strategy_beats_bh and strategy_signal_type in ("BUY", "WATCH"):
-            best_chance_score += 20
-            if strategy_signal_type == "BUY":
-                best_chance_score += 5  # Extra for active buy
-                best_chance_reasons.append("Strategy buy signal (beats B&H)")
-            else:
-                best_chance_reasons.append("Strategy outperforms B&H")
-        
-        # Dip entry opportunity (up to 25 points)
-        if dip_entry_is_buy_now:
-            best_chance_score += 15
-            best_chance_reasons.append(f"Dip entry: {dip_pct:.0f}% below high")
-        elif dip_entry_strength and dip_entry_strength > 30:
-            best_chance_score += dip_entry_strength * 0.15  # Up to 15 points
-        
-        # AI persona consensus (up to 20 points)
-        if ai_persona_signal == "BUY":
-            best_chance_score += 15
-            if ai_persona_buy_count >= 3:
-                best_chance_score += 5
-            best_chance_reasons.append(f"AI personas: {ai_persona_buy_count} BUY votes")
-        elif ai_persona_signal == "HOLD":
-            best_chance_score += 5
-        
-        # AI rating contribution (up to 15 points)
-        if ai_rating:
-            ai_bonus = {"strong_buy": 15, "buy": 10, "hold": 5, "sell": -10, "strong_sell": -15}
-            best_chance_score += ai_bonus.get(ai_rating, 0)
-            if ai_rating in ("strong_buy", "buy"):
-                best_chance_reasons.append(f"AI: {ai_rating.replace('_', ' ')}")
-        
-        # Current dip bonus (up to 15 points)
-        if dip_pct and dip_pct > 10:
-            dip_bonus = min(dip_pct / 2, 15)
-            best_chance_score += dip_bonus
-            if dip_pct >= 15 and "Dip entry" not in " ".join(best_chance_reasons):
-                best_chance_reasons.append(f"Significant dip: {dip_pct:.0f}%")
-        
-        # Fundamentals health penalty (penalty for unhealthy)
-        if domain_risk_level == "high":
-            best_chance_score -= 10
-            best_chance_reasons.append("⚠️ High risk")
-        
-        best_chance_score = max(0, min(100, best_chance_score))
-        best_chance_reason = " • ".join(best_chance_reasons[:3]) if best_chance_reasons else None
-        
-        recommendations.append(QuantRecommendation(
-            ticker=symbol,
-            name=name,
-            action=action,
-            notional_eur=inflow_eur / len(symbol_list) if action == "BUY" else 0,
-            delta_weight=0.01 if action == "BUY" else 0,
-            target_weight=0.05 if action == "BUY" else 0,
-            last_price=current_price if current_price else None,
-            change_percent=change_percent,
-            market_cap=float(market_cap) if market_cap else None,
-            sector=sector,
-            sector_etf=sector_etf,
-            mu_hat=mu_hat,
-            uncertainty=1.0 - (buy_score / 100) if signal else 1.0,
-            risk_contribution=0.0,
-            top_signal_name=top_signal_name,
-            top_signal_is_buy=top_signal_is_buy,
-            top_signal_strength=top_signal_strength,
-            top_signal_description=top_signal_description,
-            opportunity_score=opportunity_score,
-            opportunity_rating=opportunity_rating,
-            # Recovery and unusual dip metrics
-            expected_recovery_days=expected_recovery_days,
-            typical_dip_pct=typical_dip_pct,
-            dip_vs_typical=dip_vs_typical,
-            is_unusual_dip=is_unusual_dip,
-            win_rate=win_rate,
-            # Dip-based metrics
-            dip_score=dip_score,
-            dip_bucket=_dip_bucket(dip_pct) if dip_pct else None,
-            marginal_utility=marginal_utility,
-            legacy_dip_pct=dip_pct,
-            legacy_days_in_dip=days_in_dip,
-            legacy_domain_score=buy_score,
-            ai_summary=ai_summary,
-            ai_rating=ai_rating,
-            # AI Persona analysis
-            ai_persona_signal=ai_persona_signal,
-            ai_persona_confidence=ai_persona_confidence,
-            ai_persona_buy_count=ai_persona_buy_count,
-            ai_persona_summary=ai_persona_summary,
-            # Strategy signal
-            strategy_beats_bh=strategy_beats_bh,
-            strategy_signal=strategy_signal_type,
-            strategy_win_rate=strategy_win_rate_val,
-            strategy_vs_bh_pct=strategy_vs_bh_pct,
-            # Dip entry optimizer
-            dip_entry_optimal_pct=dip_entry_optimal_pct,
-            dip_entry_price=dip_entry_price,
-            dip_entry_is_buy_now=dip_entry_is_buy_now,
-            dip_entry_strength=dip_entry_strength,
-            # Best chance score
-            best_chance_score=best_chance_score,
-            best_chance_reason=best_chance_reason,
-            # Domain-specific analysis
-            domain_context=domain_context,
-            domain_adjustment=domain_adjustment,
-            domain_adjustment_reason=domain_adjustment_reason,
-            domain_risk_level=domain_risk_level,
-            domain_risk_factors=domain_risk_factors,
-            domain_recovery_days=domain_recovery_days,
-            domain_warnings=domain_warnings,
-            volatility_regime=volatility_regime,
-            volatility_percentile=volatility_percentile,
-            vs_sector_performance=vs_sector_perf,
-        ))
+
+
+# ============================================================================
+# Hero Stock Endpoint (Rotating featured stock for landing page)
+# ============================================================================
+
+
+class HeroStockResponse(BaseModel):
+    """Hero stock for landing page display."""
+    symbol: str
+    company_name: str | None = None
+    action: str
+    mu_hat: float
+    dip_pct: float | None = None
+    days_in_dip: int | None = None
+    best_chance_score: float = 0.0
+    best_chance_reason: str | None = None
+    ai_summary: str | None = None
+    ai_rating: str | None = None
+    cache_expires_at: str  # ISO timestamp when this hero expires
+
+
+# Cache for hero stock rotation
+_hero_cache = Cache(prefix="hero_stock", default_ttl=900)  # 15 minutes
+
+
+@global_router.get(
+    "/hero",
+    response_model=HeroStockResponse,
+    summary="Get rotating hero stock",
+    description="""
+    Get the current featured stock for landing page hero section.
     
-    # Sort by best_chance_score (best opportunities first)
-    recommendations.sort(key=lambda r: r.best_chance_score, reverse=True)
-    recommendations = recommendations[:limit]
+    This endpoint returns a rotating stock from the top recommendations,
+    cached for 15 minutes. Each rotation picks a different stock from
+    the top 5 BUY recommendations to provide variety.
+    """,
+)
+async def get_hero_stock() -> HeroStockResponse:
+    """Get rotating hero stock for landing page."""
+    import hashlib
+    from datetime import datetime, timezone
     
-    # Count buys
-    buy_count = sum(1 for r in recommendations if r.action == "BUY")
+    # Check cache first
+    cached = await _hero_cache.get("current")
+    if cached:
+        return HeroStockResponse(**cached)
     
-    # Calculate portfolio stats
-    avg_mu_hat = sum(r.mu_hat for r in recommendations) / len(recommendations) if recommendations else 0
+    # Get recommendations (uses its own cache)
+    recommendations_response = await get_recommendations(inflow_eur=1000.0, limit=20)
+    recommendations = recommendations_response.recommendations
     
-    return QuantEngineResponse(
-        recommendations=recommendations,
-        as_of_date=date.today().isoformat(),
-        portfolio_value_eur=10000.0,  # Model portfolio value
-        inflow_eur=inflow_eur,
-        total_trades=buy_count,
-        total_transaction_cost_eur=buy_count * 5.0,  # Assume €5 per trade
-        expected_portfolio_return=avg_mu_hat,
-        expected_portfolio_risk=0.15,  # Placeholder
-        audit=QuantAuditBlock(
-            timestamp=datetime.now().isoformat(),
-            config_hash=hash(f"{inflow_eur}-{limit}"),
-            mu_hat_summary={
-                "mean": avg_mu_hat,
-                "max": max((r.mu_hat for r in recommendations), default=0),
-                "n_positive": sum(1 for r in recommendations if r.mu_hat > 0),
-            },
-            risk_model_summary={
-                "method": "signal_scanner",
-                "lookback_days": 400,
-            },
-            optimizer_status="success",
-            constraint_binding=[],
-            turnover_realized=0.0,
-            regime_state=regime_state,
-            dip_stats={
-                "n_in_dip": sum(1 for r in recommendations if r.legacy_dip_pct and r.legacy_dip_pct > 10),
-                "avg_dip_pct": sum(r.legacy_dip_pct or 0 for r in recommendations) / len(recommendations) if recommendations else 0,
-            },
-            error_message=None,
-        ),
+    # Filter to BUY recommendations with best_chance_score > 50
+    buy_recs = [
+        r for r in recommendations 
+        if r.action == "BUY" and r.best_chance_score >= 50
+    ]
+    
+    if not buy_recs:
+        # Fallback to any BUY, or first recommendation
+        buy_recs = [r for r in recommendations if r.action == "BUY"]
+        if not buy_recs:
+            buy_recs = recommendations[:5] if recommendations else []
+    
+    if not buy_recs:
+        # No recommendations at all - return a sensible error state
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No recommendations available for hero display"
+        )
+    
+    # Rotate among top 5: Use time-based hash to pick a consistent one per 15-min window
+    now = datetime.now(timezone.utc)
+    window_id = int(now.timestamp()) // 900  # 15-minute windows
+    hash_input = f"hero-{window_id}"
+    index = int(hashlib.md5(hash_input.encode()).hexdigest(), 16) % min(len(buy_recs), 5)
+    
+    hero_rec = buy_recs[index]
+    
+    # Calculate when this hero expires (next 15-minute boundary)
+    next_window = (window_id + 1) * 900
+    expires_at = datetime.fromtimestamp(next_window, tz=timezone.utc)
+    
+    # Get company name from stock info
+    from app.repositories import symbols_orm as symbols_repo
+    symbol_data = await symbols_repo.get_symbol(hero_rec.ticker)
+    company_name = symbol_data.name if symbol_data else None
+    
+    response = HeroStockResponse(
+        symbol=hero_rec.ticker,
+        company_name=company_name,
+        action=hero_rec.action,
+        mu_hat=hero_rec.mu_hat,
+        dip_pct=hero_rec.legacy_dip_pct,
+        days_in_dip=hero_rec.legacy_days_in_dip,
+        best_chance_score=hero_rec.best_chance_score,
+        best_chance_reason=hero_rec.best_chance_reason,
+        ai_summary=hero_rec.ai_summary,
+        ai_rating=hero_rec.ai_rating,
+        cache_expires_at=expires_at.isoformat(),
     )
+    
+    # Cache for remaining time in this window
+    remaining_seconds = next_window - int(now.timestamp())
+    if remaining_seconds > 0:
+        await _hero_cache.set("current", response.model_dump(), ttl=remaining_seconds)
+    
+    return response
 
 
 def _dip_bucket(dip_pct: float | None) -> str | None:

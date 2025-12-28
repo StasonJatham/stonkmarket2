@@ -45,6 +45,7 @@ import {
   FileText,
 } from 'lucide-react';
 import { BatchJobsPanel } from '@/components/BatchJobsPanel';
+import { DataTableControls } from '@/components/ui/data-table-controls';
 
 function getRatingBadge(rating: string | null) {
   if (!rating) {
@@ -106,6 +107,11 @@ export function AIManager() {
   const [regeneratingSymbol, setRegeneratingSymbol] = useState<string | null>(null);
   const [regeneratingField, setRegeneratingField] = useState<AiFieldType | null>(null);
   const [summaryTasks, setSummaryTasks] = useState<Record<string, string>>({});
+  
+  // Pagination and search state
+  const [searchValue, setSearchValue] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   
   // Detail dialog
   const [selectedCard, setSelectedCard] = useState<DipCard | null>(null);
@@ -315,6 +321,29 @@ export function AIManager() {
   const summaryQueued = selectedCard ? !!summaryTasks[selectedCard.symbol] : false;
   const swipeQueued = Boolean(selectedCard?.ai_pending && selectedCard?.ai_task_id);
 
+  // Filter and paginate
+  const filteredCards = useMemo(() => {
+    if (!searchValue.trim()) return dipCards;
+    const search = searchValue.toLowerCase();
+    return dipCards.filter(card => 
+      card.symbol.toLowerCase().includes(search) ||
+      card.name?.toLowerCase().includes(search) ||
+      card.ai_rating?.toLowerCase().includes(search) ||
+      card.sector?.toLowerCase().includes(search)
+    );
+  }, [dipCards, searchValue]);
+
+  const totalPages = Math.ceil(filteredCards.length / pageSize);
+  const paginatedCards = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return filteredCards.slice(start, start + pageSize);
+  }, [filteredCards, currentPage, pageSize]);
+
+  // Reset page when search changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchValue]);
+
   return (
     <div className="space-y-6">
       {/* Batch Jobs Panel */}
@@ -360,9 +389,6 @@ export function AIManager() {
 
         {/* Stats */}
         <div className="flex items-center gap-4 mb-4 text-sm">
-          <span className="text-muted-foreground">
-            Total: <strong className="text-foreground">{dipCards.length}</strong> stocks
-          </span>
           <Badge variant="outline" className="bg-chart-4/10">
             <MessageSquare className="h-3 w-3 mr-1" />
             {cardsWithAI} with bio
@@ -373,20 +399,34 @@ export function AIManager() {
           </Badge>
         </div>
 
+        {/* Search and Pagination Controls */}
+        <DataTableControls
+          searchValue={searchValue}
+          onSearchChange={setSearchValue}
+          searchPlaceholder="Search symbols, names, ratings..."
+          currentPage={currentPage}
+          totalPages={totalPages}
+          totalItems={filteredCards.length}
+          pageSize={pageSize}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={setPageSize}
+          itemName="stocks"
+        />
+
         {/* Table */}
         {isLoading ? (
-          <div className="space-y-3">
+          <div className="space-y-3 mt-4">
             {[...Array(5)].map((_, i) => (
               <Skeleton key={i} className="h-12 w-full" />
             ))}
           </div>
-        ) : dipCards.length === 0 ? (
+        ) : filteredCards.length === 0 ? (
           <div className="text-center py-12 text-muted-foreground">
             <Brain className="h-12 w-12 mx-auto mb-4 opacity-30" />
-            <p>No stocks currently in dips</p>
+            <p>{searchValue ? 'No stocks match your search' : 'No stocks currently in dips'}</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto mt-4">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -400,7 +440,7 @@ export function AIManager() {
               </TableHeader>
               <TableBody>
                 <AnimatePresence mode="popLayout">
-                  {dipCards.map((card) => (
+                  {paginatedCards.map((card) => (
                     <motion.tr
                       key={card.symbol}
                       initial={{ opacity: 0, y: 10 }}
