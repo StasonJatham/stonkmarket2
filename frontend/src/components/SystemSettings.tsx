@@ -36,6 +36,11 @@ import {
   AlertCircle,
   CheckCircle,
   KeyRound,
+  TrendingUp,
+  DollarSign,
+  Percent,
+  Calendar,
+  BarChart2,
 } from 'lucide-react';
 
 const AI_MODELS = [
@@ -64,6 +69,17 @@ export function SystemSettings() {
   const [benchmarks, setBenchmarks] = useState<BenchmarkConfig[]>([]);
   const [openaiConfigured, setOpenaiConfigured] = useState(false);
 
+  // Trading/Backtest form state
+  const [initialCapital, setInitialCapital] = useState(50000);
+  const [flatCostPerTrade, setFlatCostPerTrade] = useState(1.0);
+  const [slippageBps, setSlippageBps] = useState(5.0);
+  const [stopLossPct, setStopLossPct] = useState(15.0);
+  const [takeProfitPct, setTakeProfitPct] = useState(30.0);
+  const [maxHoldingDays, setMaxHoldingDays] = useState(120);
+  const [minTradesRequired, setMinTradesRequired] = useState(30);
+  const [walkForwardFolds, setWalkForwardFolds] = useState(5);
+  const [trainRatio, setTrainRatio] = useState(0.70);
+
   useEffect(() => {
     loadSettings();
   }, []);
@@ -90,6 +106,17 @@ export function SystemSettings() {
       setBuyThreshold(runtime.signal_threshold_buy);
       setHoldThreshold(runtime.signal_threshold_hold);
       setBenchmarks(runtime.benchmarks || []);
+      
+      // Initialize trading/backtest settings
+      setInitialCapital(runtime.trading_initial_capital);
+      setFlatCostPerTrade(runtime.trading_flat_cost_per_trade);
+      setSlippageBps(runtime.trading_slippage_bps);
+      setStopLossPct(runtime.trading_stop_loss_pct);
+      setTakeProfitPct(runtime.trading_take_profit_pct);
+      setMaxHoldingDays(runtime.trading_max_holding_days);
+      setMinTradesRequired(runtime.trading_min_trades_required);
+      setWalkForwardFolds(runtime.trading_walk_forward_folds);
+      setTrainRatio(runtime.trading_train_ratio);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load settings');
     } finally {
@@ -111,6 +138,16 @@ export function SystemSettings() {
         signal_threshold_buy: buyThreshold,
         signal_threshold_hold: holdThreshold,
         benchmarks: benchmarks,
+        // Trading/Backtest settings
+        trading_initial_capital: initialCapital,
+        trading_flat_cost_per_trade: flatCostPerTrade,
+        trading_slippage_bps: slippageBps,
+        trading_stop_loss_pct: stopLossPct,
+        trading_take_profit_pct: takeProfitPct,
+        trading_max_holding_days: maxHoldingDays,
+        trading_min_trades_required: minTradesRequired,
+        trading_walk_forward_folds: walkForwardFolds,
+        trading_train_ratio: trainRatio,
       });
       setRuntimeSettings(updated);
       setSuccess('Settings saved successfully!');
@@ -146,7 +183,17 @@ export function SystemSettings() {
     strongBuyThreshold !== runtimeSettings.signal_threshold_strong_buy ||
     buyThreshold !== runtimeSettings.signal_threshold_buy ||
     holdThreshold !== runtimeSettings.signal_threshold_hold ||
-    JSON.stringify(benchmarks) !== JSON.stringify(runtimeSettings.benchmarks || [])
+    JSON.stringify(benchmarks) !== JSON.stringify(runtimeSettings.benchmarks || []) ||
+    // Trading/Backtest settings
+    initialCapital !== runtimeSettings.trading_initial_capital ||
+    flatCostPerTrade !== runtimeSettings.trading_flat_cost_per_trade ||
+    slippageBps !== runtimeSettings.trading_slippage_bps ||
+    stopLossPct !== runtimeSettings.trading_stop_loss_pct ||
+    takeProfitPct !== runtimeSettings.trading_take_profit_pct ||
+    maxHoldingDays !== runtimeSettings.trading_max_holding_days ||
+    minTradesRequired !== runtimeSettings.trading_min_trades_required ||
+    walkForwardFolds !== runtimeSettings.trading_walk_forward_folds ||
+    trainRatio !== runtimeSettings.trading_train_ratio
   );
 
   if (isLoading) {
@@ -314,6 +361,171 @@ export function SystemSettings() {
             />
             <p className="text-xs text-muted-foreground">
               Remove rejected and pending suggestions older than this many days
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Backtest & Trading Settings */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <TrendingUp className="h-5 w-5 text-primary" />
+            Backtest Settings
+          </CardTitle>
+          <CardDescription>
+            Configure parameters for strategy backtesting and signal generation.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {/* Capital & Costs */}
+          <div className="space-y-4">
+            <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+              <DollarSign className="h-4 w-4" />
+              Capital & Trading Costs
+            </div>
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div className="space-y-2">
+                <Label htmlFor="initial-capital">Initial Capital (€)</Label>
+                <Input
+                  id="initial-capital"
+                  type="number"
+                  value={initialCapital}
+                  onChange={(e) => setInitialCapital(parseFloat(e.target.value) || 50000)}
+                  min={1000}
+                  max={10000000}
+                  step={1000}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="flat-cost">Flat Cost (€/trade)</Label>
+                <Input
+                  id="flat-cost"
+                  type="number"
+                  value={flatCostPerTrade}
+                  onChange={(e) => setFlatCostPerTrade(parseFloat(e.target.value) || 1)}
+                  min={0}
+                  max={100}
+                  step={0.5}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="slippage">Slippage (bps)</Label>
+                <Input
+                  id="slippage"
+                  type="number"
+                  value={slippageBps}
+                  onChange={(e) => setSlippageBps(parseFloat(e.target.value) || 5)}
+                  min={0}
+                  max={100}
+                  step={1}
+                />
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Flat cost per trade in euros. Slippage is additional per-side cost in basis points (1 bp = 0.01%).
+            </p>
+          </div>
+
+          <Separator />
+
+          {/* Risk Management */}
+          <div className="space-y-4">
+            <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+              <Percent className="h-4 w-4" />
+              Risk Management
+            </div>
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div className="space-y-2">
+                <Label htmlFor="stop-loss">Stop Loss (%)</Label>
+                <Input
+                  id="stop-loss"
+                  type="number"
+                  value={stopLossPct}
+                  onChange={(e) => setStopLossPct(parseFloat(e.target.value) || 15)}
+                  min={1}
+                  max={50}
+                  step={1}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="take-profit">Take Profit (%)</Label>
+                <Input
+                  id="take-profit"
+                  type="number"
+                  value={takeProfitPct}
+                  onChange={(e) => setTakeProfitPct(parseFloat(e.target.value) || 30)}
+                  min={5}
+                  max={100}
+                  step={1}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="max-holding">Max Holding (days)</Label>
+                <Input
+                  id="max-holding"
+                  type="number"
+                  value={maxHoldingDays}
+                  onChange={(e) => setMaxHoldingDays(parseInt(e.target.value) || 120)}
+                  min={5}
+                  max={365}
+                  step={5}
+                />
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Exit rules: Stop loss when price drops by %, take profit when it rises by %, or force exit after max holding days.
+            </p>
+          </div>
+
+          <Separator />
+
+          {/* Statistical Settings */}
+          <div className="space-y-4">
+            <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+              <BarChart2 className="h-4 w-4" />
+              Statistical Settings
+            </div>
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div className="space-y-2">
+                <Label htmlFor="min-trades">Min Trades Required</Label>
+                <Input
+                  id="min-trades"
+                  type="number"
+                  value={minTradesRequired}
+                  onChange={(e) => setMinTradesRequired(parseInt(e.target.value) || 30)}
+                  min={10}
+                  max={200}
+                  step={5}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="walk-forward">Walk-Forward Folds</Label>
+                <Input
+                  id="walk-forward"
+                  type="number"
+                  value={walkForwardFolds}
+                  onChange={(e) => setWalkForwardFolds(parseInt(e.target.value) || 5)}
+                  min={2}
+                  max={10}
+                  step={1}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="train-ratio">Train Ratio</Label>
+                <Input
+                  id="train-ratio"
+                  type="number"
+                  value={trainRatio}
+                  onChange={(e) => setTrainRatio(parseFloat(e.target.value) || 0.70)}
+                  min={0.50}
+                  max={0.90}
+                  step={0.05}
+                />
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Minimum trades for statistical significance. Walk-forward validation uses rolling train/test windows with the specified train ratio.
             </p>
           </div>
         </CardContent>

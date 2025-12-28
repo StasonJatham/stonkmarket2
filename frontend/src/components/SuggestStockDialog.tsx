@@ -74,6 +74,7 @@ export function SuggestStockDialog({
   const [isSearchingStored, setIsSearchingStored] = useState(false);
   const [isSearchingExternal, setIsSearchingExternal] = useState(false);
   const [showSearchMore, setShowSearchMore] = useState(false);
+  const [hasSearchedExternal, setHasSearchedExternal] = useState(false);
   const [isValidating, setIsValidating] = useState(false);
   const [stockPreview, setStockPreview] = useState<StockPreview | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -82,7 +83,6 @@ export function SuggestStockDialog({
   const [submitMessage, setSubmitMessage] = useState<string | null>(null);
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-
   const colors = getActiveColors();
 
   // Search local database first (fast)
@@ -97,8 +97,9 @@ export function SuggestStockDialog({
     try {
       const results = await searchStoredSuggestions(query, 8);
       setStoredResults(results);
-      // Show "search more" button if no local results and query is long enough
-      setShowSearchMore(results.length === 0 && query.length >= 2);
+      // Always show "search more" button when query is long enough
+      // This allows searching for alternatives even when local matches exist
+      setShowSearchMore(query.length >= 2);
     } catch {
       setStoredResults([]);
       setShowSearchMore(query.length >= 2);
@@ -120,6 +121,7 @@ export function SuggestStockDialog({
       setExternalResults([]);
     } finally {
       setIsSearchingExternal(false);
+      setHasSearchedExternal(true);
     }
   }, [searchQuery]);
 
@@ -131,6 +133,7 @@ export function SuggestStockDialog({
 
     // Reset external results when query changes
     setExternalResults([]);
+    setHasSearchedExternal(false);
 
     if (searchQuery.length >= 1) {
       // Very fast debounce for local search
@@ -154,6 +157,7 @@ export function SuggestStockDialog({
     setStoredResults([]);
     setExternalResults([]);
     setShowSearchMore(false);
+    setHasSearchedExternal(false);
     setStockPreview(null);
     setValidationError(null);
     setIsSubmitting(false);
@@ -265,7 +269,8 @@ export function SuggestStockDialog({
 
   const isLoading = isSearchingStored || isSearchingExternal;
   const hasResults = combinedResults.length > 0;
-  const showEmptyState = searchQuery.length >= 2 && !isLoading && !hasResults && !showSearchMore;
+  // Show empty state only after external search completed AND returned nothing
+  const showEmptyState = hasSearchedExternal && !hasResults && !isLoading;
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -275,7 +280,7 @@ export function SuggestStockDialog({
           <span className={showLabel ? '' : 'hidden sm:inline'}>Suggest</span>
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Lightbulb className="h-5 w-5 text-primary" />
@@ -354,7 +359,7 @@ export function SuggestStockDialog({
                   {/* Results list - stable height container */}
                   <div className="min-h-[100px]">
                     {hasResults && (
-                      <ScrollArea className="h-[250px] rounded-md border">
+                      <ScrollArea className="max-h-[200px] sm:max-h-[250px] rounded-md border overflow-auto">
                         <div className="p-2 space-y-1">
                           {combinedResults.map((result) => (
                             <button
@@ -397,12 +402,14 @@ export function SuggestStockDialog({
                       </ScrollArea>
                     )}
                     
-                    {/* Search more button - shown when no local results */}
-                    {showSearchMore && !isSearchingExternal && (
-                      <div className="text-center py-6">
-                        <p className="text-sm text-muted-foreground mb-3">
-                          Not found locally
-                        </p>
+                    {/* Search more button - always shown when query >= 2 chars and no external results yet */}
+                    {showSearchMore && !isSearchingExternal && externalResults.length === 0 && (
+                      <div className={`text-center ${hasResults ? 'py-3 border-t mt-2' : 'py-6'}`}>
+                        {!hasResults && (
+                          <p className="text-sm text-muted-foreground mb-3">
+                            Not found locally
+                          </p>
+                        )}
                         <Button
                           variant="outline"
                           size="sm"
@@ -410,7 +417,7 @@ export function SuggestStockDialog({
                           className="gap-2"
                         >
                           <Search className="h-4 w-4" />
-                          Search All Stocks
+                          {hasResults ? 'Search for more stocks' : 'Search All Stocks'}
                         </Button>
                       </div>
                     )}

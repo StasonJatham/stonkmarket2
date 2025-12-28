@@ -26,6 +26,14 @@ You are an expert in:
 - Check container logs for runtime errors
 - After tests and API calls, continuously review `docker compose -f docker-compose.dev.yml logs` for errors/issues, analyze the root cause, and fix them before proceeding
 
+### API Performance Rules
+
+- **SLOW API IS A BUG** - If any API endpoint is slow (>2s), it is a critical bug that MUST be fixed immediately
+- **NEVER work around slow APIs** - Do not switch to reading code/frontend when API is slow. Investigate and fix the root cause.
+- Check Docker logs for performance issues: `docker compose -f docker-compose.dev.yml logs api --tail=50`
+- Profile slow endpoints and optimize database queries, caching, and async operations
+- API response times should be <500ms for most endpoints, <2s maximum for complex operations
+
 ### Test Execution Rules
 
 ```bash

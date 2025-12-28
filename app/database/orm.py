@@ -1107,6 +1107,74 @@ class AnalysisVersion(Base):
 
 
 # =============================================================================
+# STRATEGY SIGNALS
+# =============================================================================
+
+
+class StrategySignal(Base):
+    """Optimized trading strategy signals computed nightly.
+    
+    Stores the best strategy for each symbol with performance metrics.
+    Updated by the strategy_optimize_nightly job.
+    """
+    __tablename__ = "strategy_signals"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(20), unique=True, nullable=False)
+    
+    # Strategy info
+    strategy_name: Mapped[str] = mapped_column(String(50), nullable=False)
+    strategy_params: Mapped[dict] = mapped_column(JSONB, default=dict)
+    
+    # Current signal
+    signal_type: Mapped[str] = mapped_column(String(20), nullable=False)  # BUY, SELL, HOLD, WAIT, WATCH
+    signal_reason: Mapped[str] = mapped_column(Text)
+    has_active_signal: Mapped[bool] = mapped_column(Boolean, default=False)
+    
+    # Performance metrics
+    total_return_pct: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    sharpe_ratio: Mapped[Decimal | None] = mapped_column(Numeric(8, 4))
+    win_rate: Mapped[Decimal | None] = mapped_column(Numeric(8, 2))
+    max_drawdown_pct: Mapped[Decimal | None] = mapped_column(Numeric(8, 2))
+    n_trades: Mapped[int] = mapped_column(Integer, default=0)
+    
+    # Recency-weighted metrics (prioritize recent performance)
+    recency_weighted_return: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+    current_year_return_pct: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    current_year_win_rate: Mapped[Decimal | None] = mapped_column(Numeric(8, 2))
+    current_year_trades: Mapped[int] = mapped_column(Integer, default=0)
+    
+    # Benchmark comparison
+    vs_buy_hold_pct: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))  # Excess return
+    vs_spy_pct: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    beats_buy_hold: Mapped[bool] = mapped_column(Boolean, default=False)
+    
+    # Fundamental status
+    fundamentals_healthy: Mapped[bool] = mapped_column(Boolean, default=False)
+    fundamental_concerns: Mapped[list] = mapped_column(JSONB, default=list)
+    
+    # Validation
+    is_statistically_valid: Mapped[bool] = mapped_column(Boolean, default=False)
+    
+    # Recent trades (last 5)
+    recent_trades: Mapped[list] = mapped_column(JSONB, default=list)
+    
+    # Indicators used
+    indicators_used: Mapped[list] = mapped_column(JSONB, default=list)
+    
+    # Timestamps
+    optimized_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        Index("idx_strategy_signals_symbol", "symbol"),
+        Index("idx_strategy_signals_signal", "signal_type"),
+        Index("idx_strategy_signals_active", "has_active_signal", postgresql_where=text("has_active_signal = TRUE")),
+        Index("idx_strategy_signals_beats", "beats_buy_hold", postgresql_where=text("beats_buy_hold = TRUE")),
+    )
+
+
+# =============================================================================
 # SYMBOL INGEST QUEUE
 # =============================================================================
 

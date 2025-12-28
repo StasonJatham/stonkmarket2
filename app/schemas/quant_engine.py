@@ -245,6 +245,28 @@ class QuantRecommendation(BaseModel):
     ai_summary: str | None = Field(None, description="AI-generated analysis snippet")
     ai_rating: str | None = Field(None, description="AI rating: strong_buy, buy, hold, sell, strong_sell")
     
+    # AI Persona Analysis (aggregate of all persona verdicts)
+    ai_persona_signal: str | None = Field(None, description="Overall AI persona signal: BUY, HOLD, SELL")
+    ai_persona_confidence: int | None = Field(None, description="AI persona confidence 0-100")
+    ai_persona_buy_count: int = Field(0, description="Number of AI personas saying BUY")
+    ai_persona_summary: str | None = Field(None, description="Summary of AI persona verdicts")
+    
+    # Strategy Signal (optimized timing strategy)
+    strategy_beats_bh: bool = Field(False, description="Whether strategy beats buy-and-hold")
+    strategy_signal: str | None = Field(None, description="Strategy signal: BUY, SELL, HOLD, WAIT")
+    strategy_win_rate: float | None = Field(None, description="Strategy historical win rate 0-100")
+    strategy_vs_bh_pct: float | None = Field(None, description="Excess return vs buy-and-hold")
+    
+    # Dip Entry Optimizer
+    dip_entry_optimal_pct: float | None = Field(None, description="Optimal dip threshold to buy")
+    dip_entry_price: float | None = Field(None, description="Recommended limit order price")
+    dip_entry_is_buy_now: bool = Field(False, description="Whether current dip is a buy opportunity")
+    dip_entry_strength: float | None = Field(None, description="Dip entry signal strength 0-100")
+    
+    # Best Chance Score (composite ranking score)
+    best_chance_score: float = Field(0.0, description="Composite best chance score 0-100")
+    best_chance_reason: str | None = Field(None, description="Primary reason for the score")
+    
     # Domain-specific analysis (sector-aware analysis)
     domain_context: str | None = Field(None, description="Domain-specific interpretation of the dip")
     domain_adjustment: float | None = Field(None, description="Score adjustment from domain analysis (-1 to +1)")

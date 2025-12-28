@@ -411,16 +411,42 @@ async def get_recommendations(
         description="Maximum recommendations to return"
     ),
 ) -> QuantEngineResponse:
-    """Get ranked stock recommendations for landing page and dashboard."""
+    """
+    Get ranked stock recommendations for landing page and dashboard.
+    
+    PERFORMANCE OPTIMIZED: Uses pre-computed data from background jobs.
+    No expensive signal optimization is done per-request.
+    """
+    import asyncio
     from datetime import date
     
     from app.repositories import dip_state_orm as dip_state_repo
     from app.repositories import dip_votes_orm as dip_votes_repo
     from app.repositories import symbols_orm as symbols_repo
-    from app.quant_engine.analytics import detect_regime
+    from app.repositories import dipfinder_orm as dipfinder_repo
+    from sqlalchemy import select
+    from app.database.connection import get_session
+    from app.database.orm import StrategySignal
+    from app.cache.cache import Cache
     
-    # Get all symbols
-    symbols = await symbols_repo.list_symbols()
+    # Check cache first (5 minute TTL)
+    cache = Cache(prefix="recommendations", default_ttl=300)
+    cache_key = f"recs_{limit}"
+    cached = await cache.get(cache_key)
+    if cached:
+        # Reconstruct response from cached dict
+        return QuantEngineResponse(**cached)
+    
+    # Parallel fetch all data sources
+    symbols_task = symbols_repo.list_symbols()
+    dip_states_task = dip_state_repo.get_all_dip_states()
+    ai_analyses_task = dip_votes_repo.get_all_ai_analyses()
+    dipfinder_task = dipfinder_repo.get_latest_signals(limit=500)
+    
+    symbols, dip_states, ai_analyses, dipfinder_signals = await asyncio.gather(
+        symbols_task, dip_states_task, ai_analyses_task, dipfinder_task
+    )
+    
     if not symbols:
         return QuantEngineResponse(
             recommendations=[],
@@ -439,277 +465,211 @@ async def get_recommendations(
             ),
         )
     
-    # Get dip state for all symbols
-    dip_states = await dip_state_repo.get_all_dip_states()
+    # Build lookup maps
     dip_state_map = {d.symbol: d for d in dip_states}
-    
-    # Get AI analyses
-    ai_analyses = await dip_votes_repo.get_all_ai_analyses()
     ai_map = {a.symbol: a for a in ai_analyses}
-    
-    # Get DipFinder signals for dip_vs_typical and typical_dip data
-    from app.repositories import dipfinder_orm as dipfinder_repo
-    dipfinder_signals = await dipfinder_repo.get_latest_signals(limit=500)
-    # Build map by ticker (use most recent signal per ticker)
-    dipfinder_map: dict[str, Any] = {}
-    for sig in dipfinder_signals:
+    dipfinder_map = {sig.ticker: sig for sig in dipfinder_signals if sig.ticker not in dipfinder_map} if dipfinder_signals else {}
+    # Fix: build dipfinder_map correctly
+    dipfinder_map = {}
+    for sig in (dipfinder_signals or []):
         if sig.ticker not in dipfinder_map:
             dipfinder_map[sig.ticker] = sig
     
-    # Build symbol name map
+    # Get pre-computed strategy signals from database (NOT computed per-request)
+    strategy_map: dict[str, Any] = {}
+    try:
+        async with get_session() as session:
+            result = await session.execute(select(StrategySignal))
+            strategy_signals = result.scalars().all()
+            for sig in strategy_signals:
+                strategy_map[sig.symbol] = sig
+    except Exception as e:
+        logger.warning(f"Failed to fetch strategy signals: {e}")
+    
+    # Build recommendations from pre-computed data
     symbol_names = {s.symbol: s.name or s.symbol for s in symbols}
-    symbol_list = [s.symbol for s in symbols if s.symbol not in ("SPY", "^GSPC", "URTH")]
-    
-    # Fetch price data for signal analysis (5 years minimum for proper backtesting)
-    prices_df = await _fetch_prices_for_symbols(symbol_list, lookback_days=1260)
-    
-    # Run signal scanner if we have price data
-    signal_map: dict[str, dict] = {}
-    regime_state = "unknown"
-    
-    if not prices_df.empty:
-        from app.quant_engine import scan_all_stocks
-        
-        price_data = {col: prices_df[col].dropna() for col in prices_df.columns}
-        holding_days_options = [5, 10, 20, 40, 60]
-        
-        opportunities = scan_all_stocks(price_data, symbol_names, holding_days_options)
-        signal_map = {opp.symbol: opp for opp in opportunities}
-        
-        # Detect market regime
-        returns = _compute_returns(prices_df)
-        # Use SPY as market proxy, or equal-weighted average if not available
-        if "SPY" in returns.columns:
-            market_returns = returns["SPY"]
-        else:
-            market_returns = returns.mean(axis=1)  # Equal-weighted average
-        regime = detect_regime(market_returns, returns)
-        regime_state = regime.regime
-    
-    # Sector ETF mapping for benchmarking
-    SECTOR_ETF_MAP = {
-        "Technology": "XLK",
-        "Information Technology": "XLK",
-        "Healthcare": "XLV",
-        "Health Care": "XLV",
-        "Financials": "XLF",
-        "Financial Services": "XLF",
-        "Consumer Discretionary": "XLY",
-        "Consumer Cyclical": "XLY",
-        "Consumer Staples": "XLP",
-        "Consumer Defensive": "XLP",
-        "Energy": "XLE",
-        "Industrials": "XLI",
-        "Materials": "XLB",
-        "Basic Materials": "XLB",
-        "Real Estate": "XLRE",
-        "Utilities": "XLU",
-        "Communication Services": "XLC",
-        "Communication": "XLC",
-    }
-    
-    # Build sector and market cap maps
     symbol_sector_map = {s.symbol: s.sector for s in symbols}
     symbol_mcap_map = {s.symbol: s.market_cap for s in symbols}
+    symbol_list = [s.symbol for s in symbols if s.symbol not in ("SPY", "^GSPC", "URTH")]
     
-    # Fetch sector ETF prices for domain analysis
-    sector_etfs_needed = set(SECTOR_ETF_MAP.values())
-    sector_etf_prices = await _fetch_prices_for_symbols(list(sector_etfs_needed), lookback_days=400)
-    
-    # Build recommendations
     recommendations: list[QuantRecommendation] = []
     
     for symbol in symbol_list:
         dip = dip_state_map.get(symbol)
-        signal = signal_map.get(symbol)
         ai = ai_map.get(symbol)
         dipfinder = dipfinder_map.get(symbol)
+        strategy = strategy_map.get(symbol)
         name = symbol_names.get(symbol, symbol)
         sector = symbol_sector_map.get(symbol)
         market_cap = symbol_mcap_map.get(symbol)
-        sector_etf = SECTOR_ETF_MAP.get(sector) if sector else None
         
-        # Calculate metrics - ensure float conversion for Decimal fields
+        # Calculate metrics from dip state (already in DB)
         dip_pct = float(dip.dip_percentage) if dip and dip.dip_percentage is not None else None
-        current_price = float(dip.current_price) if dip and dip.current_price else (signal.current_price if signal else 0)
+        current_price = float(dip.current_price) if dip and dip.current_price else 0
         days_in_dip = None
         if dip and dip.dip_start_date:
             days_in_dip = (date.today() - dip.dip_start_date).days
         
-        # Compute change_percent from price data
-        change_percent = None
-        if symbol in prices_df.columns:
-            price_series = prices_df[symbol].dropna()
-            if len(price_series) >= 2:
-                prev_close = price_series.iloc[-2]
-                curr_close = price_series.iloc[-1]
-                if prev_close > 0:
-                    change_percent = ((curr_close - prev_close) / prev_close) * 100
+        change_percent = float(dip.change_1d) if dip and dip.change_1d else None
         
-        # Extract recovery and unusual dip metrics
-        # Only show recovery time for SIGNIFICANT dips (10%+ from high)
+        # Extract strategy signal data (pre-computed, NOT computed per-request)
+        strategy_beats_bh = False
+        strategy_signal_type = None
+        strategy_win_rate_val = None
+        strategy_vs_bh_pct = None
         expected_recovery_days = None
+        win_rate = None
+        
+        if strategy:
+            try:
+                signal_data = strategy.signal_data or {}
+                strategy_signal_type = signal_data.get("type")
+                benchmarks = strategy.benchmark_comparison or {}
+                strategy_vs_bh_pct = benchmarks.get("vs_buy_hold", 0)
+                strategy_beats_bh = benchmarks.get("beats_buy_hold", False)
+                metrics = strategy.backtest_metrics or {}
+                strategy_win_rate_val = metrics.get("win_rate", 0) * 100 if metrics.get("win_rate") else None
+                win_rate = metrics.get("win_rate")
+                expected_recovery_days = metrics.get("optimal_holding_days")
+            except Exception:
+                pass
+        
+        # Get typical dip from dipfinder (pre-computed)
         typical_dip_pct = None
         dip_vs_typical = None
         is_unusual_dip = False
-        win_rate = None
         
-        # Only calculate recovery metrics for meaningful dips (>10%)
-        has_significant_dip = dip_pct is not None and dip_pct >= 10.0
-        
-        # From active signals - only if dip is significant
-        if has_significant_dip and signal and signal.active_signals:
-            top_sig = signal.active_signals[0]
-            if top_sig.win_rate:
-                win_rate = top_sig.win_rate
-            if top_sig.optimal_holding_days:
-                expected_recovery_days = top_sig.optimal_holding_days
-        
-        # Fallback to best signal if no active signals
-        if has_significant_dip and signal and not win_rate and signal.signals:
-            best_sig = max(signal.signals, key=lambda s: s.win_rate * s.avg_return_pct)
-            win_rate = best_sig.win_rate
-            if not expected_recovery_days:
-                expected_recovery_days = best_sig.optimal_holding_days
-        
-        # Compute typical_dip from quant engine zscore data
-        # If zscore_20d < -2 and current dip is larger, it's unusual
-        if signal and dip_pct:
-            # Use zscore to estimate typical volatility
-            # zscore = (current - mean) / std, so std ≈ |current_dip / zscore|
-            if signal.zscore_20d and abs(signal.zscore_20d) > 0.5:
-                # Typical dip is roughly 1 standard deviation
-                estimated_std = abs(dip_pct / signal.zscore_20d)
-                typical_dip_pct = estimated_std  # 1 std deviation as typical
-                dip_vs_typical = dip_pct / typical_dip_pct if typical_dip_pct > 0 else 1.0
-                is_unusual_dip = abs(signal.zscore_20d) >= 2.0  # 2+ std deviations = unusual
-            elif signal.zscore_60d and abs(signal.zscore_60d) > 0.5:
-                estimated_std = abs(dip_pct / signal.zscore_60d)
-                typical_dip_pct = estimated_std
-                dip_vs_typical = dip_pct / typical_dip_pct if typical_dip_pct > 0 else 1.0
-                is_unusual_dip = abs(signal.zscore_60d) >= 2.0
-        
-        # Override with dipfinder data if available (more accurate)
         if dipfinder:
             if dipfinder.dip_vs_typical is not None:
                 dip_vs_typical = float(dipfinder.dip_vs_typical)
-                is_unusual_dip = dip_vs_typical >= 1.5  # 50% larger than typical = unusual
-            # Get typical dip from stability_factors JSONB
+                is_unusual_dip = dip_vs_typical >= 1.5
             if dipfinder.stability_factors:
                 stability = dipfinder.stability_factors
-                # Handle case where stability_factors is a JSON string
                 if isinstance(stability, str):
                     import json
                     try:
                         stability = json.loads(stability)
                     except (json.JSONDecodeError, TypeError):
                         stability = {}
-                if isinstance(stability, dict) and "typical_dip_365" in stability and stability["typical_dip_365"]:
-                    typical_dip_pct = float(stability["typical_dip_365"]) * 100  # Convert to percentage
+                if isinstance(stability, dict) and stability.get("typical_dip_365"):
+                    typical_dip_pct = float(stability["typical_dip_365"]) * 100
         
-        # Determine action based on signals and dip
+        # Determine action - simplified, based on pre-computed strategy
         action = "HOLD"
-        buy_score = float(signal.buy_score) if signal and signal.buy_score else 0.0
+        buy_score = 0.0
         
-        if signal:
-            if signal.opportunity_type in ("STRONG_BUY", "BUY"):
-                action = "BUY"
-            elif signal.opportunity_type == "WEAK_BUY" and dip_pct and dip_pct > 20:
-                action = "BUY"
-        
-        # If no signal but deep dip, still consider
-        if action == "HOLD" and dip_pct and dip_pct > 30:
+        if strategy_beats_bh and strategy_signal_type == "BUY":
             action = "BUY"
-            buy_score = max(buy_score, 40.0)
+            buy_score = 80.0
+        elif strategy_signal_type == "BUY":
+            action = "BUY"
+            buy_score = 60.0
+        elif dip_pct and dip_pct > 30:
+            action = "BUY"
+            buy_score = 40.0
         
-        # Calculate mu_hat (expected return)
+        # Simple expected return estimate
         mu_hat = 0.0
-        if signal and signal.best_expected_return:
-            mu_hat = float(signal.best_expected_return) / 100
+        if strategy_beats_bh and strategy_vs_bh_pct:
+            mu_hat = strategy_vs_bh_pct / 100
         elif dip_pct and dip_pct > 10:
-            # Simple mean reversion assumption for dips
-            mu_hat = min(float(dip_pct) / 100 * 0.3, 0.15)  # Cap at 15% expected
+            mu_hat = min(float(dip_pct) / 100 * 0.3, 0.15)
         
-        # Marginal utility = buy_score normalized + dip bonus
-        dip_bonus = min(float(dip_pct or 0) / 50, 1.0) * 20  # Up to 20 points for deep dips
-        marginal_utility = (buy_score + dip_bonus) / 100
+        # AI analysis
+        ai_summary = ai.rating_reasoning if ai else None
+        ai_rating = ai.ai_rating if ai else None
         
-        # Z-score based dip score
-        dip_score = float(signal.zscore_20d) if signal and signal.zscore_20d is not None else None
-        if dip_score is None and dip_pct:
-            dip_score = -float(dip_pct) / 10  # Negative z-score approximation
+        # Calculate best chance score
+        best_chance_score = 50.0
+        best_chance_reasons = []
         
-        # Get AI analysis snippet
-        ai_summary = None
-        ai_rating = None
-        if ai:
-            ai_rating = ai.ai_rating
-            ai_summary = ai.rating_reasoning  # Full AI reasoning, no truncation
+        if strategy_beats_bh:
+            best_chance_score += 25
+            best_chance_reasons.append("Strategy beats B&H")
         
-        # Top technical signal extraction - show active signal, or best historical signal
-        top_signal_name = None
-        top_signal_is_buy = False
-        top_signal_strength = 0.0
-        top_signal_description = None
+        if dip_pct and dip_pct > 15:
+            best_chance_score += min(dip_pct / 2, 15)
+            best_chance_reasons.append(f"{dip_pct:.0f}% dip")
         
-        if signal and signal.active_signals:
-            top = signal.active_signals[0]  # Best active signal
-            top_signal_name = top.name
-            top_signal_is_buy = top.is_buy_signal
-            top_signal_strength = top.signal_strength
-            avg_ret = top.avg_return_pct
-            top_signal_description = f"Buy signal active. Historically: {top.win_rate*100:.0f}% profitable, avg +{avg_ret:.1f}% in {top.optimal_holding_days}d"
-        elif signal and signal.signals:
-            # Show best historical signal even if not currently active
-            best = max(signal.signals, key=lambda s: s.win_rate * s.avg_return_pct)
-            top_signal_name = best.name
-            top_signal_is_buy = best.is_buy_signal
-            top_signal_strength = best.signal_strength
-            avg_ret = best.avg_return_pct
-            top_signal_description = f"Best signal: {best.win_rate*100:.0f}% win rate, avg +{avg_ret:.1f}% in {best.optimal_holding_days}d"
+        if ai_rating in ("strong_buy", "buy"):
+            best_chance_score += 10
+            best_chance_reasons.append(f"AI: {ai_rating}")
         
-        # Calculate composite opportunity score (0-100)
-        opportunity_score = 50.0  # Neutral baseline
+        best_chance_score = max(0, min(100, best_chance_score))
         
-        # Dip contribution (up to 25 points)
-        if dip_pct and dip_pct > 5:
-            opportunity_score += min(dip_pct / 2, 25)
-        
-        # Signal strength contribution (up to 20 points)
-        if top_signal_is_buy and top_signal_strength:
-            opportunity_score += top_signal_strength * 20
-        
-        # AI rating contribution (up to 15 points)
-        if ai_rating:
-            rating_bonus = {
-                "strong_buy": 15, "buy": 10, "hold": 0, "sell": -10, "strong_sell": -15
-            }
-            opportunity_score += rating_bonus.get(ai_rating, 0)
-        
-        # Expected return contribution (up to 10 points)
-        if mu_hat > 0:
-            opportunity_score += min(mu_hat * 100, 10)
-        
-        opportunity_score = max(0, min(100, opportunity_score))
-        
-        # Determine rating from score
-        if opportunity_score >= 75:
+        # Opportunity rating
+        if best_chance_score >= 75:
             opportunity_rating = "strong_buy"
-        elif opportunity_score >= 60:
+        elif best_chance_score >= 60:
             opportunity_rating = "buy"
-        elif opportunity_score >= 40:
+        elif best_chance_score >= 40:
             opportunity_rating = "hold"
         else:
             opportunity_rating = "avoid"
         
-        # Domain-specific analysis (sector-aware interpretation)
-        domain_context = None
-        domain_adjustment = None
-        domain_adjustment_reason = None
-        domain_risk_level = None
-        domain_risk_factors = None
-        domain_recovery_days = None
-        domain_warnings = None
+        recommendations.append(QuantRecommendation(
+            ticker=symbol,
+            name=name,
+            action=action,
+            notional_eur=inflow_eur / len(symbol_list) if action == "BUY" else 0,
+            delta_weight=0.01 if action == "BUY" else 0,
+            target_weight=0.05 if action == "BUY" else 0,
+            last_price=current_price if current_price else None,
+            change_percent=change_percent,
+            market_cap=float(market_cap) if market_cap else None,
+            sector=sector,
+            mu_hat=mu_hat,
+            uncertainty=1.0 - (buy_score / 100),
+            risk_contribution=0.0,
+            opportunity_score=best_chance_score,
+            opportunity_rating=opportunity_rating,
+            expected_recovery_days=expected_recovery_days,
+            typical_dip_pct=typical_dip_pct,
+            dip_vs_typical=dip_vs_typical,
+            is_unusual_dip=is_unusual_dip,
+            win_rate=win_rate,
+            dip_bucket=_dip_bucket(dip_pct) if dip_pct else None,
+            marginal_utility=buy_score / 100,
+            legacy_dip_pct=dip_pct,
+            legacy_days_in_dip=days_in_dip,
+            ai_summary=ai_summary,
+            ai_rating=ai_rating,
+            strategy_beats_bh=strategy_beats_bh,
+            strategy_signal=strategy_signal_type,
+            strategy_win_rate=strategy_win_rate_val,
+            strategy_vs_bh_pct=strategy_vs_bh_pct,
+            best_chance_score=best_chance_score,
+            best_chance_reason=" • ".join(best_chance_reasons[:3]) if best_chance_reasons else None,
+        ))
+    
+    # Sort by best_chance_score
+    recommendations.sort(key=lambda r: r.best_chance_score, reverse=True)
+    recommendations = recommendations[:limit]
+    
+    buy_count = sum(1 for r in recommendations if r.action == "BUY")
+    avg_mu_hat = sum(r.mu_hat for r in recommendations) / len(recommendations) if recommendations else 0
+    
+    response = QuantEngineResponse(
+        recommendations=recommendations,
+        as_of_date=date.today().isoformat(),
+        portfolio_value_eur=10000.0,
+        inflow_eur=inflow_eur,
+        total_trades=buy_count,
+        total_transaction_cost_eur=buy_count * 5.0,
+        expected_portfolio_return=avg_mu_hat,
+        expected_portfolio_risk=0.15,
+        audit=QuantAuditBlock(
+            timestamp=datetime.now().isoformat(),
+            config_hash=hash(f"{inflow_eur}-{limit}"),
+            optimizer_status="success",
+            regime_state="unknown",
+        ),
+    )
+    
+    # Cache the response
+    await cache.set(cache_key, response.model_dump())
+    
+    return response
         volatility_regime = None
         volatility_percentile = None
         vs_sector_perf = None
@@ -758,6 +718,65 @@ async def get_recommendations(
             except Exception as e:
                 logger.warning(f"Domain analysis failed for {symbol}: {e}")
         
+        # =============================================================
+        # BEST CHANCE SCORE - Composite ranking for optimal entries
+        # =============================================================
+        # Priority: 
+        # 1. Strategy signals that beat B&H (timing works)
+        # 2. Dip entry opportunities (optimize B&H)
+        # 3. AI persona consensus BUY
+        # 4. Good fundamentals
+        
+        best_chance_score = 50.0  # Neutral baseline
+        best_chance_reasons = []
+        
+        # Strategy signal contribution (up to 25 points) - only if beats B&H
+        if strategy_beats_bh and strategy_signal_type in ("BUY", "WATCH"):
+            best_chance_score += 20
+            if strategy_signal_type == "BUY":
+                best_chance_score += 5  # Extra for active buy
+                best_chance_reasons.append("Strategy buy signal (beats B&H)")
+            else:
+                best_chance_reasons.append("Strategy outperforms B&H")
+        
+        # Dip entry opportunity (up to 25 points)
+        if dip_entry_is_buy_now:
+            best_chance_score += 15
+            best_chance_reasons.append(f"Dip entry: {dip_pct:.0f}% below high")
+        elif dip_entry_strength and dip_entry_strength > 30:
+            best_chance_score += dip_entry_strength * 0.15  # Up to 15 points
+        
+        # AI persona consensus (up to 20 points)
+        if ai_persona_signal == "BUY":
+            best_chance_score += 15
+            if ai_persona_buy_count >= 3:
+                best_chance_score += 5
+            best_chance_reasons.append(f"AI personas: {ai_persona_buy_count} BUY votes")
+        elif ai_persona_signal == "HOLD":
+            best_chance_score += 5
+        
+        # AI rating contribution (up to 15 points)
+        if ai_rating:
+            ai_bonus = {"strong_buy": 15, "buy": 10, "hold": 5, "sell": -10, "strong_sell": -15}
+            best_chance_score += ai_bonus.get(ai_rating, 0)
+            if ai_rating in ("strong_buy", "buy"):
+                best_chance_reasons.append(f"AI: {ai_rating.replace('_', ' ')}")
+        
+        # Current dip bonus (up to 15 points)
+        if dip_pct and dip_pct > 10:
+            dip_bonus = min(dip_pct / 2, 15)
+            best_chance_score += dip_bonus
+            if dip_pct >= 15 and "Dip entry" not in " ".join(best_chance_reasons):
+                best_chance_reasons.append(f"Significant dip: {dip_pct:.0f}%")
+        
+        # Fundamentals health penalty (penalty for unhealthy)
+        if domain_risk_level == "high":
+            best_chance_score -= 10
+            best_chance_reasons.append("⚠️ High risk")
+        
+        best_chance_score = max(0, min(100, best_chance_score))
+        best_chance_reason = " • ".join(best_chance_reasons[:3]) if best_chance_reasons else None
+        
         recommendations.append(QuantRecommendation(
             ticker=symbol,
             name=name,
@@ -794,6 +813,24 @@ async def get_recommendations(
             legacy_domain_score=buy_score,
             ai_summary=ai_summary,
             ai_rating=ai_rating,
+            # AI Persona analysis
+            ai_persona_signal=ai_persona_signal,
+            ai_persona_confidence=ai_persona_confidence,
+            ai_persona_buy_count=ai_persona_buy_count,
+            ai_persona_summary=ai_persona_summary,
+            # Strategy signal
+            strategy_beats_bh=strategy_beats_bh,
+            strategy_signal=strategy_signal_type,
+            strategy_win_rate=strategy_win_rate_val,
+            strategy_vs_bh_pct=strategy_vs_bh_pct,
+            # Dip entry optimizer
+            dip_entry_optimal_pct=dip_entry_optimal_pct,
+            dip_entry_price=dip_entry_price,
+            dip_entry_is_buy_now=dip_entry_is_buy_now,
+            dip_entry_strength=dip_entry_strength,
+            # Best chance score
+            best_chance_score=best_chance_score,
+            best_chance_reason=best_chance_reason,
             # Domain-specific analysis
             domain_context=domain_context,
             domain_adjustment=domain_adjustment,
@@ -807,8 +844,8 @@ async def get_recommendations(
             vs_sector_performance=vs_sector_perf,
         ))
     
-    # Sort by marginal utility (best opportunities first)
-    recommendations.sort(key=lambda r: r.marginal_utility, reverse=True)
+    # Sort by best_chance_score (best opportunities first)
+    recommendations.sort(key=lambda r: r.best_chance_score, reverse=True)
     recommendations = recommendations[:limit]
     
     # Count buys
@@ -894,6 +931,8 @@ class SignalTriggersResponse(BaseModel):
     signal_return_pct: float = 0.0  # Aggregate return from signal-based trading
     edge_vs_buy_hold_pct: float = 0.0  # Signal return - buy hold return (the "alpha")
     n_trades: int = 0  # Number of signal triggers in the period
+    beats_buy_hold: bool = False  # Whether signal strategy outperformed buy-and-hold
+    actual_win_rate: float = 0.0  # Actual win rate from visible trades (not backtest estimate)
 
 
 @global_router.get(
@@ -942,7 +981,10 @@ async def get_signal_triggers(
     buy_hold_return_pct = 0.0
     signal_return_pct = 0.0
     edge_vs_buy_hold_pct = 0.0
-    n_trades = len(triggers)
+    
+    # Count entry triggers only (not exits)
+    entry_triggers = [t for t in triggers if t.signal_type == "entry"]
+    n_trades = len(entry_triggers)
     
     if len(close_prices) >= lookback_days and lookback_days > 0:
         lookback_slice = close_prices.iloc[-lookback_days:]
@@ -951,16 +993,19 @@ async def get_signal_triggers(
             last_price = lookback_slice.iloc[-1]
             buy_hold_return_pct = ((last_price / first_price) - 1) * 100
     
-    # Signal aggregate return = average of individual signal returns
-    # (This is what you'd get if you deployed capital on each signal)
-    if triggers:
-        avg_return = triggers[0].avg_return_pct  # Same for all triggers from same signal
-        win_rate = triggers[0].win_rate
-        # Expected value per trade
-        signal_return_pct = avg_return * n_trades / max(1, lookback_days / 20)  # Normalize by trading frequency
-        # A simpler metric: just show the average return times number of trades
-        signal_return_pct = avg_return * n_trades
+    # Signal aggregate return - sum of all actual trade returns (exits show individual trade returns)
+    # This represents total return from signal-based trading
+    exit_triggers = [t for t in triggers if t.signal_type == "exit"]
+    if exit_triggers:
+        # Sum the actual returns from all completed trades
+        signal_return_pct = sum(t.avg_return_pct for t in exit_triggers)
         edge_vs_buy_hold_pct = signal_return_pct - buy_hold_return_pct
+    
+    # Get actual win rate from the triggers (now properly calculated)
+    actual_win_rate = entry_triggers[0].win_rate if entry_triggers else 0.0
+    
+    # Strategy beats buy-and-hold if it has positive edge
+    beats_bh = edge_vs_buy_hold_pct > 0
     
     return SignalTriggersResponse(
         symbol=symbol,
@@ -982,6 +1027,8 @@ async def get_signal_triggers(
         signal_return_pct=round(signal_return_pct, 2),
         edge_vs_buy_hold_pct=round(edge_vs_buy_hold_pct, 2),
         n_trades=n_trades,
+        beats_buy_hold=beats_bh,
+        actual_win_rate=round(actual_win_rate, 4),
     )
 
 

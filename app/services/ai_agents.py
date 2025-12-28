@@ -84,8 +84,24 @@ def _compute_input_hash(fundamentals: dict[str, Any], stock_data: dict[str, Any]
 
 
 async def _get_stored_input_hash(symbol: str) -> str | None:
-    """Get the stored input hash for a symbol's agent analysis."""
+    """Get the stored input hash for a symbol's agent analysis.
+    
+    Only returns the hash if the symbol actually has valid (non-expired)
+    analysis in ai_agent_analysis. This prevents skipping symbols where
+    a batch was submitted but never completed.
+    """
     async with get_session() as session:
+        # First check if symbol has valid analysis
+        has_analysis = await session.execute(
+            select(AiAgentAnalysis.symbol).where(
+                AiAgentAnalysis.symbol == symbol,
+                AiAgentAnalysis.expires_at > datetime.now(UTC),
+            )
+        )
+        if not has_analysis.scalar_one_or_none():
+            # No valid analysis - don't trust stored hash
+            return None
+            
         result = await session.execute(
             select(AnalysisVersion.input_version_hash).where(
                 AnalysisVersion.symbol == symbol,

@@ -53,6 +53,12 @@ class OptimizedSignal:
     min_return_pct: float
     n_signals: int
     
+    # CRITICAL: Buy-and-hold comparison
+    cumulative_return_pct: float = 0.0  # Total strategy return (compounded)
+    buy_hold_return_pct: float = 0.0  # Buy-and-hold return for same period
+    vs_buy_hold_pct: float = 0.0  # Edge over buy-and-hold (positive = beats B&H)
+    beats_buy_hold: bool = False  # True if strategy beats buy-and-hold
+    
     # Comparison to default params
     default_win_rate: float = 0.0
     improvement_pct: float = 0.0  # How much better is optimized vs default
@@ -384,11 +390,15 @@ def _compute_bollinger_pct(prices: pd.Series) -> pd.Series:
     return (prices - lower) / lower
 
 
-def _compute_stochastic_safe(p: dict) -> pd.Series:
+def _compute_stochastic_safe(p: dict) -> pd.Series | None:
     """Compute stochastic with fallback to RSI if no high/low data."""
-    close = p["close"]
-    if "high" in p and "low" in p:
-        return compute_stochastic(p["high"], p["low"], close, 14)
+    close = p.get("close")
+    if close is None:
+        return None
+    high = p.get("high")
+    low = p.get("low")
+    if high is not None and low is not None and len(high) > 0 and len(low) > 0:
+        return compute_stochastic(high, low, close, 14)
     # Fallback: use close as proxy for high/low
     return compute_stochastic(close, close, close, 14)
 
@@ -577,7 +587,11 @@ def backtest_signal(
     - For signal on day t, return is (price[t+holding_days] - price[t]) / price[t]
     - We exclude the last `holding_days` signals since we can't know future returns
     
-    Returns dict with win_rate, avg_return, max_return, min_return, n_signals.
+    CRITICAL: Now compares cumulative strategy return vs buy-and-hold.
+    A signal is only valuable if it BEATS buy-and-hold.
+    
+    Returns dict with win_rate, avg_return, cumulative_return, buy_hold_return, 
+    vs_buy_hold (edge), n_signals.
     """
     # Identify signal triggers using EDGE detection
     # CRITICAL: Only trigger on the FIRST day a condition becomes true.
@@ -633,7 +647,36 @@ def backtest_signal(
             "max_return": 0.0,
             "min_return": 0.0,
             "n_signals": 0,
+            "cumulative_return": 0.0,
+            "buy_hold_return": 0.0,
+            "vs_buy_hold": 0.0,
+            "beats_buy_hold": False,
         }
+    
+    # Calculate CUMULATIVE strategy return (compounding trades)
+    # Each trade: start_capital * (1 + trade_return)
+    cumulative_return = float(np.prod(1 + signal_returns) - 1)
+    
+    # Calculate buy-and-hold return for the SAME PERIOD
+    # Period is from first trigger to last trigger exit
+    trigger_dates = signal_returns.index.tolist()
+    if trigger_dates:
+        first_entry = trigger_dates[0]
+        # Last exit is last trigger + holding_days
+        last_trigger_idx = prices.index.get_loc(trigger_dates[-1])
+        last_exit_idx = min(last_trigger_idx + holding_days, len(prices) - 1)
+        last_exit_date = prices.index[last_exit_idx]
+        
+        # Buy-and-hold: buy at first entry, sell at last exit
+        bh_entry_price = float(prices.loc[first_entry]) * (1 + DEFAULT_SLIPPAGE_BPS / 10000)
+        bh_exit_price = float(prices.loc[last_exit_date]) * (1 - DEFAULT_SLIPPAGE_BPS / 10000)
+        buy_hold_return = (bh_exit_price / bh_entry_price) - 1
+    else:
+        buy_hold_return = 0.0
+    
+    # Edge vs buy-and-hold (positive = signal beats buy-and-hold)
+    vs_buy_hold = cumulative_return - buy_hold_return
+    beats_buy_hold = cumulative_return > buy_hold_return
     
     return {
         "win_rate": float((signal_returns > 0).mean()),
@@ -641,6 +684,10 @@ def backtest_signal(
         "max_return": float(signal_returns.max()),
         "min_return": float(signal_returns.min()),
         "n_signals": len(signal_returns),
+        "cumulative_return": cumulative_return,
+        "buy_hold_return": buy_hold_return,
+        "vs_buy_hold": vs_buy_hold,
+        "beats_buy_hold": beats_buy_hold,
     }
 
 
@@ -654,6 +701,9 @@ def _grid_search_params(
 ) -> tuple[float, int, dict]:
     """
     Internal grid search for optimal parameters on a single data window.
+    
+    CRITICAL: Primary scoring is vs_buy_hold (edge over buy-and-hold).
+    A strategy that doesn't beat buy-and-hold is worthless.
     """
     best_score = -np.inf
     best_threshold = threshold_range[0]
@@ -670,11 +720,15 @@ def _grid_search_params(
             if results["n_signals"] < min_signals:
                 continue
             
-            # Score by Expected Value (EV) = win_rate × avg_return
-            # REMOVED: signal_penalty that biased toward more frequent (lower quality) signals
-            # The min_signals requirement already ensures statistical significance.
-            # We want quality trades, not quantity of trades.
-            score = results["win_rate"] * results["avg_return"] * 100
+            # CRITICAL FIX: Score by edge over buy-and-hold
+            # A signal that doesn't beat buy-and-hold is USELESS
+            # Score = vs_buy_hold * 100 (positive = beats B&H, negative = loses)
+            # Secondary: win_rate as tiebreaker for risk-adjusted confidence
+            vs_bh = results.get("vs_buy_hold", 0.0)
+            win_rate = results.get("win_rate", 0.0)
+            
+            # Primary: beat buy-and-hold. Secondary: higher win rate for confidence
+            score = vs_bh * 100 + win_rate * 10
             
             if score > best_score:
                 best_score = score
@@ -757,10 +811,28 @@ def optimize_signal_params_walkforward(
     if len(oos_returns) < 3:
         return threshold_range[0], 20, {
             "win_rate": 0.0, "avg_return": 0.0, "max_return": 0.0,
-            "min_return": 0.0, "n_signals": 0, "is_oos": True
+            "min_return": 0.0, "n_signals": 0, "is_oos": True,
+            "cumulative_return": 0.0, "buy_hold_return": 0.0,
+            "vs_buy_hold": 0.0, "beats_buy_hold": False,
         }, {"is_stable": False}
     
     oos_returns_arr = np.array(oos_returns)
+    
+    # Calculate CUMULATIVE strategy return from OOS trades
+    cumulative_return = float(np.prod(1 + oos_returns_arr) - 1)
+    
+    # For B&H comparison in walkforward, use full data period with final params
+    # This gives a fair comparison of what the strategy achieved vs simply holding
+    if fold_params:
+        final_thresh, final_hold = fold_params[-1]
+        full_backtest = backtest_signal(prices, signal, final_thresh, direction, final_hold)
+        buy_hold_return = full_backtest.get("buy_hold_return", 0.0)
+    else:
+        buy_hold_return = 0.0
+    
+    vs_buy_hold = cumulative_return - buy_hold_return
+    beats_buy_hold = cumulative_return > buy_hold_return
+    
     oos_results = {
         "win_rate": float((oos_returns_arr > 0).mean()),
         "avg_return": float(oos_returns_arr.mean()),
@@ -768,6 +840,10 @@ def optimize_signal_params_walkforward(
         "min_return": float(oos_returns_arr.min()),
         "n_signals": len(oos_returns),
         "is_oos": True,  # Flag that this is out-of-sample
+        "cumulative_return": cumulative_return,
+        "buy_hold_return": buy_hold_return,
+        "vs_buy_hold": vs_buy_hold,
+        "beats_buy_hold": beats_buy_hold,
     }
     
     # Parameter stability analysis
@@ -842,7 +918,7 @@ def evaluate_signal_for_stock(
         # Compute signal values
         signal_values = signal_config["compute"](price_data)
         
-        if signal_values.isna().all():
+        if signal_values is None or signal_values.isna().all():
             return None
         
         current_value = signal_values.iloc[-1]
@@ -903,6 +979,12 @@ def evaluate_signal_for_stock(
         opt_ev = opt_results["win_rate"] * opt_results["avg_return"] * 100
         improvement = ((opt_ev - default_ev) / abs(default_ev) * 100) if default_ev != 0 else 0
         
+        # Get buy-and-hold comparison metrics
+        cumulative_return = opt_results.get("cumulative_return", 0.0)
+        buy_hold_return = opt_results.get("buy_hold_return", 0.0)
+        vs_buy_hold = opt_results.get("vs_buy_hold", 0.0)
+        beats_buy_hold = opt_results.get("beats_buy_hold", False)
+        
         return OptimizedSignal(
             name=signal_config["name"],
             description=signal_config["description"],
@@ -916,6 +998,10 @@ def evaluate_signal_for_stock(
             max_return_pct=opt_results["max_return"] * 100,
             min_return_pct=opt_results["min_return"] * 100,
             n_signals=opt_results["n_signals"],
+            cumulative_return_pct=cumulative_return * 100,
+            buy_hold_return_pct=buy_hold_return * 100,
+            vs_buy_hold_pct=vs_buy_hold * 100,
+            beats_buy_hold=beats_buy_hold,
             default_win_rate=default_results.get("win_rate", 0),
             improvement_pct=improvement,
         )
@@ -1057,14 +1143,22 @@ def analyze_stock(
         if result is not None:
             signals.append(result)
     
-    # Sort by expected value (win_rate * avg_return)
+    # CRITICAL FIX: Sort by vs_buy_hold (edge over buy-and-hold)
+    # A signal that doesn't beat buy-and-hold is USELESS
+    # Primary: beats_buy_hold (True first), Secondary: vs_buy_hold_pct (higher is better)
     signals.sort(
-        key=lambda s: s.win_rate * s.avg_return_pct if s.n_signals >= 5 else 0,
+        key=lambda s: (
+            s.beats_buy_hold,  # Signals that beat B&H first
+            s.vs_buy_hold_pct if s.n_signals >= 5 else -999,  # Edge over B&H
+        ),
         reverse=True,
     )
     
-    # Get active signals
-    active_signals = [s for s in signals if s.is_buy_signal and s.n_signals >= 5]
+    # Get active signals - ONLY those that beat buy-and-hold
+    active_signals = [
+        s for s in signals 
+        if s.is_buy_signal and s.n_signals >= 5 and s.beats_buy_hold
+    ]
     
     # FIXED (S3): Correlation-aware buy score calculation
     # Downweight signals that are correlated to avoid double-counting
@@ -1074,40 +1168,53 @@ def analyze_stock(
         signal_weights = _compute_correlation_adjusted_weights(price_data, active_signals)
         
         for i, sig in enumerate(active_signals):
-            # Score contribution = strength * win_rate * avg_return (capped)
-            # Now weighted by independence from other signals
-            raw_contribution = sig.signal_strength * sig.win_rate * min(sig.avg_return_pct, 20) / 20
+            # CRITICAL: Score based on edge over buy-and-hold
+            # Only signals that beat B&H contribute positively
+            vs_bh_contribution = max(0, sig.vs_buy_hold_pct) / 100  # Normalize
+            win_rate_factor = sig.win_rate
             weight = signal_weights.get(sig.name, 1.0)
-            contribution = raw_contribution * weight
-            buy_score += contribution * 25  # Scale to 0-100
+            contribution = vs_bh_contribution * win_rate_factor * weight * sig.signal_strength
+            buy_score += contribution * 50  # Scale to 0-100
         buy_score = min(100, buy_score)
     
-    # Determine opportunity type
-    if buy_score >= 70:
+    # Determine opportunity type - ONLY if signals beat buy-and-hold
+    if active_signals and buy_score >= 70:
         opp_type = "STRONG_BUY"
-        opp_reason = f"{len(active_signals)} strong signals, best: {active_signals[0].name} ({active_signals[0].win_rate*100:.0f}% win rate)"
-    elif buy_score >= 40:
+        best_sig = active_signals[0]
+        opp_reason = f"Signal beats B&H by {best_sig.vs_buy_hold_pct:.1f}%, {best_sig.win_rate*100:.0f}% win rate"
+    elif active_signals and buy_score >= 40:
         opp_type = "BUY"
-        opp_reason = f"{len(active_signals)} buy signals active"
-    elif buy_score > 10:
+        opp_reason = f"{len(active_signals)} signals that beat buy-and-hold"
+    elif active_signals and buy_score > 10:
         opp_type = "WEAK_BUY"
-        opp_reason = "Some signals active, but weak"
+        opp_reason = "Some signals beat B&H, but marginal edge"
     elif rsi_14 > 70:
         opp_type = "OVERBOUGHT"
         opp_reason = f"RSI at {rsi_14:.0f} indicates overbought"
     else:
         opp_type = "NEUTRAL"
-        opp_reason = "No strong buy signals currently"
+        # Check if there were signals but none beat B&H
+        all_signals_lose = all(not s.beats_buy_hold for s in signals if s.n_signals >= 5)
+        if all_signals_lose and signals:
+            opp_reason = "No signal beats buy-and-hold - just hold the stock"
+        else:
+            opp_reason = "No strong buy signals currently"
     
-    # Best recommendation
+    # Best recommendation - ONLY signals that beat B&H
     best_signal_name = ""
     best_holding_days = 0
     best_expected_return = 0.0
-    if signals:
-        best = signals[0]
+    if active_signals:
+        best = active_signals[0]
         best_signal_name = best.name
         best_holding_days = best.optimal_holding_days
-        best_expected_return = best.win_rate * best.avg_return_pct
+        best_expected_return = best.vs_buy_hold_pct  # Edge is the real return
+    elif signals:
+        # Fall back to best overall signal (even if it loses to B&H)
+        best = signals[0]
+        best_signal_name = f"{best.name} (loses to B&H by {abs(best.vs_buy_hold_pct):.1f}%)"
+        best_holding_days = best.optimal_holding_days
+        best_expected_return = best.vs_buy_hold_pct
     
     return StockOpportunity(
         symbol=symbol,
@@ -1219,7 +1326,7 @@ def get_historical_triggers(
     for config in SIGNAL_CONFIGS:
         try:
             signal_values = config["compute"](price_data)
-            if signal_values.isna().all():
+            if signal_values is None or signal_values.isna().all():
                 continue
             
             direction = config["direction"]
@@ -1236,11 +1343,16 @@ def get_historical_triggers(
             if opt_results.get("n_signals", 0) < min_signals:
                 continue
             
-            # Expected value = win_rate * avg_return
-            ev = opt_results["win_rate"] * opt_results["avg_return"] * 100
+            # CRITICAL: Score by vs_buy_hold (edge over buy-and-hold)
+            # A signal that doesn't beat buy-and-hold is USELESS
+            vs_bh = opt_results.get("vs_buy_hold", 0.0)
+            win_rate = opt_results.get("win_rate", 0.0)
             
-            if ev > best_signal_ev:
-                best_signal_ev = ev
+            # Primary: beat buy-and-hold. Secondary: higher win rate
+            score = vs_bh * 100 + win_rate * 10
+            
+            if score > best_signal_ev:
+                best_signal_ev = score
                 best_signal_config = config
                 best_signal_bt = opt_results
                 best_signal_threshold = opt_threshold
@@ -1298,41 +1410,61 @@ def get_historical_triggers(
         trigger_mask = is_triggered.iloc[-lookback_days:]
         trigger_dates = trigger_mask[trigger_mask].index
         
-        # Add entry triggers with historical stats from the best signal's backtest
+        # STEP 1: Calculate actual returns for each trade in the visible period
+        # This gives us the TRUE win rate of the trades shown on the chart
+        trade_returns: list[float] = []
+        trade_data: list[tuple] = []  # (entry_date, entry_price, exit_date, exit_price, return_pct)
+        
         for date_idx in trigger_dates:
             price_at_trigger = float(prices.loc[date_idx])
+            try:
+                exit_idx = date_idx + pd.Timedelta(days=optimal_holding)
+                exit_prices = prices[prices.index >= exit_idx]
+                if len(exit_prices) > 0:
+                    exit_date = exit_prices.index[0]
+                    exit_price = float(exit_prices.iloc[0])
+                    trade_return = ((exit_price / price_at_trigger) - 1) * 100
+                    trade_returns.append(trade_return)
+                    trade_data.append((date_idx, price_at_trigger, exit_date, exit_price, trade_return))
+            except Exception:
+                # Trade still open or data unavailable - don't include in win rate
+                trade_data.append((date_idx, price_at_trigger, None, None, None))
+        
+        # STEP 2: Calculate the TRUE win rate from actual trades in this period
+        completed_trades = [r for r in trade_returns if r is not None]
+        if completed_trades:
+            actual_win_rate = sum(1 for r in completed_trades if r > 0) / len(completed_trades)
+            actual_avg_return = sum(completed_trades) / len(completed_trades)
+        else:
+            # Fall back to backtest stats if no completed trades in view
+            actual_win_rate = best_signal_bt["win_rate"]
+            actual_avg_return = best_signal_bt["avg_return"] * 100
+        
+        # STEP 3: Add entry triggers with ACTUAL stats from visible trades
+        for date_idx, entry_price, exit_date, exit_price, trade_return in trade_data:
             triggers.append(SignalTrigger(
                 date=str(date_idx.date()) if hasattr(date_idx, "date") else str(date_idx),
                 signal_name=best_signal_config["name"],
-                price=price_at_trigger,
-                win_rate=best_signal_bt["win_rate"],
-                avg_return_pct=best_signal_bt["avg_return"] * 100,
+                price=entry_price,
+                win_rate=actual_win_rate,  # TRUE win rate from visible trades
+                avg_return_pct=actual_avg_return,  # TRUE avg return from visible trades
                 holding_days=optimal_holding,
                 drawdown_pct=abs(threshold) if "Drawdown" in best_signal_config["name"] else 0.0,
                 signal_type="entry",
             ))
             
-            # Add corresponding exit trigger based on holding period
-            try:
-                exit_idx = date_idx + pd.Timedelta(days=optimal_holding)
-                # Find the nearest trading day in our price data
-                exit_prices = prices[prices.index >= exit_idx]
-                if len(exit_prices) > 0:
-                    exit_date = exit_prices.index[0]
-                    exit_price = float(exit_prices.iloc[0])
-                    entry_return = ((exit_price / price_at_trigger) - 1) * 100
-                    triggers.append(SignalTrigger(
-                        date=str(exit_date.date()) if hasattr(exit_date, "date") else str(exit_date),
-                        signal_name=f"Exit: {best_signal_config['name']}",
-                        price=exit_price,
-                        win_rate=best_signal_bt["win_rate"],
-                        avg_return_pct=entry_return,  # Actual return for this specific trade
-                        holding_days=optimal_holding,
-                        drawdown_pct=0.0,
-                        signal_type="exit",
-                    ))
-            except Exception:
-                pass  # Skip exits that fall outside available data
+            # Add corresponding exit trigger if we have exit data
+            if exit_date is not None and exit_price is not None and trade_return is not None:
+                triggers.append(SignalTrigger(
+                    date=str(exit_date.date()) if hasattr(exit_date, "date") else str(exit_date),
+                    signal_name=f"Exit: {best_signal_config['name']}",
+                    price=exit_price,
+                    win_rate=actual_win_rate,  # TRUE win rate
+                    avg_return_pct=trade_return,  # Actual return for THIS specific trade
+                    holding_days=optimal_holding,
+                    drawdown_pct=0.0,
+                    signal_type="exit",
+                ))
     except Exception as e:
         logger.warning(f"Error computing triggers for best signal: {e}")
     

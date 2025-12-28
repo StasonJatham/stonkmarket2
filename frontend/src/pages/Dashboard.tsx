@@ -56,7 +56,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 
 type ViewMode = 'grid' | 'list';
-type SortBy = 'utility' | 'return' | 'depth' | 'name';
+type SortBy = 'chance' | 'utility' | 'return' | 'depth' | 'name';
 
 const container = {
   hidden: { opacity: 0 },
@@ -101,7 +101,7 @@ export function Dashboard() {
   const [isLoadingInfo, setIsLoadingInfo] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
-  const [sortBy, setSortBy] = useState<SortBy>('utility');
+  const [sortBy, setSortBy] = useState<SortBy>('chance');
   const [isMobileDetailOpen, setIsMobileDetailOpen] = useState(false);
   
   // Benchmark state
@@ -172,7 +172,7 @@ export function Dashboard() {
     const urlShowAll = searchParams.get('showAll');
     
     if (urlSearch !== null) setSearchQuery(urlSearch);
-    if (urlSort && ['utility', 'return', 'depth', 'name'].includes(urlSort)) setSortBy(urlSort);
+    if (urlSort && ['chance', 'utility', 'return', 'depth', 'name'].includes(urlSort)) setSortBy(urlSort);
     if (urlView && ['grid', 'list'].includes(urlView)) setViewMode(urlView);
     if (urlShowAll === 'true') setShowAllStocks(true);
   }, [searchParams, setShowAllStocks]);
@@ -201,7 +201,7 @@ export function Dashboard() {
   useEffect(() => {
     updateUrlParams({
       search: searchQuery || null,
-      sort: sortBy !== 'utility' ? sortBy : null,
+      sort: sortBy !== 'chance' ? sortBy : null,
       view: viewMode !== 'grid' ? viewMode : null,
       showAll: showAllStocks ? 'true' : null,
     });
@@ -247,6 +247,9 @@ export function Dashboard() {
     // Sort
     result.sort((a, b) => {
       switch (sortBy) {
+        case 'chance':
+          // Sort by best_chance_score from quant engine (or dip_score as fallback)
+          return (b.dip_score ?? 0) - (a.dip_score ?? 0);
         case 'utility':
           // dip_score now contains marginal_utility from quant engine
           return (b.dip_score ?? 0) - (a.dip_score ?? 0);
@@ -293,7 +296,8 @@ export function Dashboard() {
       .filter(sym => !cardCharts[sym]);
     
     if (symbolsNeedingCharts.length > 0) {
-      getBatchCharts(symbolsNeedingCharts, 60)
+      // Use 90 days (3 months) for card background charts
+      getBatchCharts(symbolsNeedingCharts, 90)
         .then(newCharts => {
           setCardCharts(prev => ({
             ...prev,
@@ -611,6 +615,12 @@ export function Dashboard() {
             <DropdownMenuContent align="end">
               <DropdownMenuLabel>Sort by</DropdownMenuLabel>
               <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => setSortBy('chance')}>
+                <Badge variant={sortBy === 'chance' ? 'default' : 'outline'} className="mr-2">
+                  {sortBy === 'chance' && '✓'}
+                </Badge>
+                Best Chance
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setSortBy('utility')}>
                 <Badge variant={sortBy === 'utility' ? 'default' : 'outline'} className="mr-2">
                   {sortBy === 'utility' && '✓'}

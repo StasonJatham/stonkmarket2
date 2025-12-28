@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import re
 import time
 from dataclasses import dataclass
@@ -81,7 +82,17 @@ SYSTEM_PROMPT = """You are a portfolio data extractor. Your ONLY task is to extr
 
 === DATA EXTRACTION RULES ===
 Extract each visible stock/ETF position with these fields:
-- symbol: Stock ticker (e.g., "AAPL", "MSFT"). Set to null if not visible.
+- symbol: Stock ticker symbol (e.g., "AAPL", "MSFT", "NFLX"). IMPORTANT: Even if the symbol is not visible in the image, you MUST infer the correct ticker symbol from the company name. For example:
+  - "Netflix" → "NFLX"
+  - "Crowdstrike Holdings" → "CRWD"
+  - "Novo Nordisk" → "NVO" (for ADR) or "NOVO-B.CO" (for Copenhagen)
+  - "Berkshire Hathaway (B)" → "BRK-B"
+  - "AMD" or "Advanced Micro Devices" → "AMD"
+  - "Rheinmetall" → "RHM.DE"
+  - "PepsiCo" → "PEP"
+  - "Walmart" → "WMT"
+  - "Lotus Bakeries" → "LOTB.BR"
+  Use your knowledge of stock markets to provide the correct ticker. Only set to null if you truly cannot identify the company.
 - name: Company name as shown. Set to null if not visible.
 - isin: ISIN code if visible. Set to null if not visible.
 - quantity: Number of shares. Set to null if not visible.
@@ -89,14 +100,20 @@ Extract each visible stock/ETF position with these fields:
 - current_price: Current market price. Set to null if not visible.
 - total_value: Total position value. Set to null if not visible.
 - currency: Currency code (USD, EUR, GBP, etc.). Default to "USD" if unclear.
-- exchange: Exchange name (NYSE, NASDAQ, XETRA, etc.). Set to null if not visible.
-- confidence: "high", "medium", or "low" based on text clarity
+- exchange: Exchange name (NYSE, NASDAQ, XETRA, etc.). Infer from context if not visible.
+- confidence: "high", "medium", or "low" based on text clarity AND symbol inference confidence
 - raw_text: The original text for this row (for debugging)
 
 Also extract:
 - detected_broker: Name of broker/app if identifiable (e.g., "Robinhood", "IBKR", "Trade Republic")
 - currency_hint: Detected base currency of the portfolio
 - image_quality: "good", "fair", or "poor"
+
+=== IMPORTANT NOTES ===
+1. ALWAYS infer ticker symbols from company names. Use your financial knowledge.
+2. For European stocks, include the exchange suffix (e.g., ".DE" for German, ".BR" for Brussels)
+3. SKIP rows that are clearly bonds, fixed-income, or money market funds (e.g., rows showing maturity dates like "Sept. 2033", "Mai 2054")
+4. For ADRs, use the ADR ticker (e.g., "NVO" for Novo Nordisk ADR, not the local listing)
 
 === OUTPUT FORMAT (STRICT JSON) ===
 {
@@ -324,7 +341,12 @@ async def extract_positions_from_image(
         optimized_mime = mime_type
     
     # Get OpenAI API key
-    api_key = await api_keys_repo.get_key_value("openai")
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        for key_name in ("OPENAI_API_KEY", api_keys_repo.OPENAI_API_KEY, "openai"):
+            api_key = await api_keys_repo.get_decrypted_key(key_name)
+            if api_key:
+                break
     if not api_key:
         return ImageExtractionResponse(
             success=False,

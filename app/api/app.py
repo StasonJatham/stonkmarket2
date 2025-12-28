@@ -21,6 +21,7 @@ from .routes import (
     celery,
     cronjobs,
     dip_changes,
+    dip_entry,
     dipfinder,
     dips,
     health,
@@ -30,6 +31,7 @@ from .routes import (
     portfolios,
     quant_engine,
     seo,
+    strategy,
     suggestions,
     swipe,
     symbols,
@@ -205,6 +207,8 @@ def create_api_app() -> FastAPI:
     app.include_router(portfolios.router, tags=["Portfolios"])
     app.include_router(quant_engine.router, tags=["Quant Engine"])
     app.include_router(quant_engine.global_router, tags=["Quant Engine"])
+    app.include_router(strategy.router, prefix="/signals/strategy", tags=["Strategy Signals"])
+    app.include_router(dip_entry.router, prefix="/signals/dip-entry", tags=["Dip Entry"])
     app.include_router(celery.router, tags=["Celery"])
     app.include_router(ai_personas.router, tags=["AI Personas"])
 

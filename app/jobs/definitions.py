@@ -181,6 +181,10 @@ async def symbol_ingest_job() -> str:
 
                 # Mark queue item as completed
                 await jobs_repo.mark_ingest_completed(queue_row.id)
+                
+                # Update symbol fetch_status to 'fetched' now that data is complete
+                await symbols_repo.update_fetch_status(symbol, fetch_status="fetched")
+                
                 processed += 1
                 logger.info(f"[INGEST] Completed {symbol}")
 
@@ -319,7 +323,11 @@ async def prices_daily_job() -> str:
                     if prices is None or prices.empty:
                         continue
 
-                    current_price = float(prices["Close"].iloc[-1])
+                    # Get last valid (non-NaN) close price
+                    valid_closes = prices["Close"].dropna()
+                    if valid_closes.empty:
+                        continue
+                    current_price = float(valid_closes.iloc[-1])
 
                     # Check if data actually changed
                     data_changed = False
@@ -1115,4 +1123,205 @@ async def quant_monthly_job() -> str:
 
     except Exception as e:
         logger.error(f"quant_monthly failed: {e}")
+        raise
+
+
+# =============================================================================
+# STRATEGY OPTIMIZATION - Nightly after prices
+# =============================================================================
+
+
+@register_job("strategy_optimize_nightly")
+async def strategy_optimize_nightly_job() -> str:
+    """
+    Nightly strategy optimization for all tracked symbols.
+    
+    Runs AFTER prices_daily to:
+    1. Run full backtest optimization with recency weighting
+    2. Find best strategy for each symbol that works NOW (not just historically)
+    3. Check fundamentals for entry/exit signals
+    4. Store results in strategy_signals table for API access
+    
+    Key features:
+    - Recency weighting: Recent trades (last 6mo) matter 3x more
+    - Current year validation: Strategy must be profitable in 2025
+    - Fundamental filters: Only signal entry when financials healthy
+    - Statistically sound: Walk-forward validation, min 30 trades
+    
+    Schedule: Mon-Fri at 11:30 PM UTC (30 min after prices_daily)
+    """
+    import pandas as pd
+    from decimal import Decimal
+    from sqlalchemy.dialects.postgresql import insert
+    
+    from app.cache.cache import Cache
+    from app.database.connection import get_session
+    from app.database.orm import StrategySignal, StockFundamentals
+    from app.repositories import symbols_orm as symbols_repo
+    from app.quant_engine.strategy_optimizer import (
+        StrategyOptimizer, TradingConfig, RecencyConfig, FundamentalFilter,
+        result_to_dict,
+    )
+    
+    logger.info("Starting strategy_optimize_nightly job")
+    
+    try:
+        # Get all tracked symbols
+        all_symbols = await symbols_repo.list_symbols()
+        symbol_list = [
+            s.symbol for s in all_symbols 
+            if s.symbol not in ("SPY", "^GSPC", "URTH", "^VIX")
+            and s.is_tracked
+        ]
+        
+        if not symbol_list:
+            return "No symbols to process"
+        
+        logger.info(f"[STRATEGY] Optimizing strategies for {len(symbol_list)} symbols")
+        
+        # Get SPY for benchmark comparison
+        spy_df = await price_history_repo.get_price_history("SPY", days=1260)  # 5 years
+        spy_prices = None
+        if spy_df is not None and len(spy_df) > 0:
+            if "close" in spy_df.columns:
+                spy_prices = spy_df["close"]
+            elif "Close" in spy_df.columns:
+                spy_prices = spy_df["Close"]
+        
+        # Initialize optimizer
+        optimizer = StrategyOptimizer(
+            config=TradingConfig(),
+            recency_config=RecencyConfig(),
+            fundamental_filter=FundamentalFilter(),
+        )
+        
+        processed = 0
+        failed = 0
+        signals_saved = 0
+        
+        async with get_session() as session:
+            # Load all fundamentals in bulk
+            from sqlalchemy import select
+            result = await session.execute(
+                select(StockFundamentals).where(
+                    StockFundamentals.symbol.in_(symbol_list)
+                )
+            )
+            fundamentals_map = {f.symbol: f for f in result.scalars().all()}
+            
+            for symbol in symbol_list:
+                try:
+                    # Get price history
+                    df = await price_history_repo.get_price_history(symbol, days=1260)
+                    
+                    if df is None or len(df) < 200:
+                        logger.warning(f"[STRATEGY] Insufficient data for {symbol}, skipping")
+                        continue
+                    
+                    # Convert fundamentals to dict
+                    fund_obj = fundamentals_map.get(symbol)
+                    fundamentals = None
+                    if fund_obj:
+                        fundamentals = {
+                            "pe_ratio": float(fund_obj.pe_ratio) if fund_obj.pe_ratio else None,
+                            "forward_pe": float(fund_obj.forward_pe) if fund_obj.forward_pe else None,
+                            "peg_ratio": float(fund_obj.peg_ratio) if fund_obj.peg_ratio else None,
+                            "profit_margin": float(fund_obj.profit_margin) if fund_obj.profit_margin else None,
+                            "free_cash_flow": fund_obj.free_cash_flow,
+                            "market_cap": None,  # Would need from symbol info
+                            "debt_to_equity": float(fund_obj.debt_to_equity) if fund_obj.debt_to_equity else None,
+                            "current_ratio": float(fund_obj.current_ratio) if fund_obj.current_ratio else None,
+                            "revenue_growth": float(fund_obj.revenue_growth) if fund_obj.revenue_growth else None,
+                            "recommendation_mean": float(fund_obj.recommendation_mean) if fund_obj.recommendation_mean else None,
+                            "target_mean_price": float(fund_obj.target_mean_price) if fund_obj.target_mean_price else None,
+                        }
+                    
+                    # Run optimization (use fewer trials for nightly batch)
+                    opt_result = optimizer.optimize_for_symbol(
+                        df=df,
+                        symbol=symbol,
+                        fundamentals=fundamentals,
+                        spy_prices=spy_prices,
+                        n_trials=50,  # Reduced for batch processing
+                    )
+                    
+                    # Upsert to database
+                    stmt = insert(StrategySignal).values(
+                        symbol=symbol,
+                        strategy_name=opt_result.best_strategy_name,
+                        strategy_params=opt_result.best_params,
+                        signal_type=opt_result.signal_type,
+                        signal_reason=opt_result.signal_reason,
+                        has_active_signal=opt_result.has_active_signal,
+                        total_return_pct=Decimal(str(opt_result.total_return_pct)),
+                        sharpe_ratio=Decimal(str(opt_result.sharpe_ratio)),
+                        win_rate=Decimal(str(opt_result.win_rate)),
+                        max_drawdown_pct=Decimal(str(opt_result.max_drawdown_pct)),
+                        n_trades=opt_result.n_trades,
+                        recency_weighted_return=Decimal(str(opt_result.recency_weighted_return)),
+                        current_year_return_pct=Decimal(str(opt_result.current_year_return_pct)),
+                        current_year_win_rate=Decimal(str(opt_result.current_year_win_rate)),
+                        current_year_trades=opt_result.current_year_trades,
+                        vs_buy_hold_pct=Decimal(str(opt_result.vs_buy_hold)),
+                        vs_spy_pct=Decimal(str(opt_result.vs_spy)) if opt_result.vs_spy else None,
+                        beats_buy_hold=opt_result.beats_buy_hold,
+                        fundamentals_healthy=opt_result.fundamentals_healthy,
+                        fundamental_concerns=opt_result.fundamental_concerns,
+                        is_statistically_valid=opt_result.is_statistically_valid,
+                        recent_trades=opt_result.recent_trades,
+                        indicators_used=opt_result.indicators_used,
+                    ).on_conflict_do_update(
+                        index_elements=["symbol"],
+                        set_={
+                            "strategy_name": opt_result.best_strategy_name,
+                            "strategy_params": opt_result.best_params,
+                            "signal_type": opt_result.signal_type,
+                            "signal_reason": opt_result.signal_reason,
+                            "has_active_signal": opt_result.has_active_signal,
+                            "total_return_pct": Decimal(str(opt_result.total_return_pct)),
+                            "sharpe_ratio": Decimal(str(opt_result.sharpe_ratio)),
+                            "win_rate": Decimal(str(opt_result.win_rate)),
+                            "max_drawdown_pct": Decimal(str(opt_result.max_drawdown_pct)),
+                            "n_trades": opt_result.n_trades,
+                            "recency_weighted_return": Decimal(str(opt_result.recency_weighted_return)),
+                            "current_year_return_pct": Decimal(str(opt_result.current_year_return_pct)),
+                            "current_year_win_rate": Decimal(str(opt_result.current_year_win_rate)),
+                            "current_year_trades": opt_result.current_year_trades,
+                            "vs_buy_hold_pct": Decimal(str(opt_result.vs_buy_hold)),
+                            "vs_spy_pct": Decimal(str(opt_result.vs_spy)) if opt_result.vs_spy else None,
+                            "beats_buy_hold": opt_result.beats_buy_hold,
+                            "fundamentals_healthy": opt_result.fundamentals_healthy,
+                            "fundamental_concerns": opt_result.fundamental_concerns,
+                            "is_statistically_valid": opt_result.is_statistically_valid,
+                            "recent_trades": opt_result.recent_trades,
+                            "indicators_used": opt_result.indicators_used,
+                            "optimized_at": datetime.now(UTC),
+                        }
+                    )
+                    await session.execute(stmt)
+                    
+                    processed += 1
+                    signals_saved += 1
+                    
+                    if processed % 10 == 0:
+                        logger.info(f"[STRATEGY] Processed {processed}/{len(symbol_list)} symbols")
+                        await session.commit()
+                    
+                except Exception as e:
+                    logger.exception(f"[STRATEGY] Failed to optimize {symbol}: {e}")
+                    failed += 1
+                    continue
+            
+            await session.commit()
+        
+        # Clear cache
+        cache = Cache()
+        await cache.delete("strategy_signals:*")
+        
+        message = f"Optimized strategies for {processed} symbols ({failed} failed), saved {signals_saved} signals"
+        logger.info(f"strategy_optimize_nightly: {message}")
+        return message
+        
+    except Exception as e:
+        logger.exception(f"strategy_optimize_nightly failed: {e}")
         raise

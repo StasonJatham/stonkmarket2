@@ -437,6 +437,8 @@ export interface SignalTriggersResponse {
   signal_return_pct: number;  // Aggregate return from signal trading
   edge_vs_buy_hold_pct: number;  // Signal return - buy hold (the "alpha")
   n_trades: number;  // Number of signals in the period
+  beats_buy_hold: boolean;  // Whether signal strategy outperformed buy-and-hold
+  actual_win_rate: number;  // True win rate from visible trades (not backtest estimate)
 }
 
 /** Get historical signal triggers for chart markers with benchmark comparison */
@@ -1099,6 +1101,24 @@ export interface QuantRecommendation {
   // AI analysis
   ai_summary: string | null;
   ai_rating: string | null;
+  // AI Persona Analysis
+  ai_persona_signal: string | null;
+  ai_persona_confidence: number | null;
+  ai_persona_buy_count: number;
+  ai_persona_summary: string | null;
+  // Strategy Signal (optimized timing strategy)
+  strategy_beats_bh: boolean;
+  strategy_signal: string | null;
+  strategy_win_rate: number | null;
+  strategy_vs_bh_pct: number | null;
+  // Dip Entry Optimizer
+  dip_entry_optimal_pct: number | null;
+  dip_entry_price: number | null;
+  dip_entry_is_buy_now: boolean;
+  dip_entry_strength: number | null;
+  // Best Chance Score
+  best_chance_score: number;
+  best_chance_reason: string | null;
   // Domain-specific analysis (sector-aware analysis)
   domain_context: string | null;
   domain_adjustment: number | null;
@@ -1174,9 +1194,8 @@ export function quantToDipStock(rec: QuantRecommendation): DipStock {
     sector: null,
     pe_ratio: null,
     volume: null,
-    // Use actual dip_score from backend (0-1 range, higher = deeper dip)
-    // IMPORTANT: Use marginal_utility for sorting, not dip_score (which is z-score)
-    dip_score: rec.marginal_utility ?? rec.dip_score ?? 0,
+    // Use best_chance_score for sorting (higher = better opportunity)
+    dip_score: rec.best_chance_score ?? rec.marginal_utility ?? rec.dip_score ?? 0,
     recovery_potential: rec.mu_hat,
   };
 }
@@ -1814,6 +1833,16 @@ export interface RuntimeSettings {
   cache_ttl_ranking: number;
   cache_ttl_charts: number;
   benchmarks: BenchmarkConfig[];
+  // Trading/Backtest Configuration
+  trading_initial_capital: number;
+  trading_flat_cost_per_trade: number;
+  trading_slippage_bps: number;
+  trading_stop_loss_pct: number;
+  trading_take_profit_pct: number;
+  trading_max_holding_days: number;
+  trading_min_trades_required: number;
+  trading_walk_forward_folds: number;
+  trading_train_ratio: number;
 }
 
 export interface CronJobSummary {
@@ -2519,4 +2548,185 @@ export async function deleteAIPersonaAvatar(personaKey: string): Promise<{ messa
   return fetchAPI<{ message: string }>(`/ai-personas/${personaKey}/avatar`, {
     method: 'DELETE',
   });
+}
+
+
+// =============================================================================
+// STRATEGY SIGNALS (QUANT OPTIMIZATION)
+// =============================================================================
+
+export interface StrategyMetrics {
+  total_return_pct: number;
+  sharpe_ratio: number;
+  win_rate: number;
+  max_drawdown_pct: number;
+  n_trades: number;
+}
+
+export interface RecencyMetrics {
+  weighted_return: number;
+  current_year_return_pct: number;
+  current_year_win_rate: number;
+  current_year_trades: number;
+}
+
+export interface BenchmarkComparison {
+  vs_buy_hold: number;
+  vs_spy: number | null;
+  beats_buy_hold: boolean;
+}
+
+export interface SignalInfo {
+  type: 'BUY' | 'SELL' | 'HOLD' | 'WAIT' | 'WATCH';
+  reason: string;
+  has_active: boolean;
+}
+
+export interface FundamentalStatus {
+  healthy: boolean;
+  concerns: string[];
+}
+
+export interface TradeRecord {
+  entry_date: string;
+  exit_date: string | null;
+  entry_price: number;
+  exit_price: number | null;
+  pnl_pct: number;
+  exit_reason: string;
+  holding_days: number | null;
+}
+
+export interface StrategySignalResponse {
+  symbol: string;
+  strategy_name: string;
+  strategy_params: Record<string, unknown>;
+  signal: SignalInfo;
+  metrics: StrategyMetrics;
+  recency: RecencyMetrics;
+  benchmarks: BenchmarkComparison;
+  fundamentals: FundamentalStatus;
+  is_statistically_valid: boolean;
+  indicators_used: string[];
+  recent_trades: TradeRecord[];
+  optimized_at: string | null;
+}
+
+export interface StrategySignalSummary {
+  symbol: string;
+  strategy_name: string;
+  signal_type: string;
+  has_active_signal: boolean;
+  win_rate: number;
+  current_year_return_pct: number;
+  beats_buy_hold: boolean;
+  fundamentals_healthy: boolean;
+  optimized_at: string | null;
+}
+
+export interface StrategySignalsListResponse {
+  signals: StrategySignalSummary[];
+  total: number;
+  active_buy_signals: number;
+  beating_market: number;
+}
+
+/**
+ * Get optimized strategy signal for a symbol
+ */
+export async function getStrategySignal(symbol: string): Promise<StrategySignalResponse | null> {
+  const cacheKey = `strategy:${symbol}`;
+  
+  try {
+    return await apiCache.fetch(
+      cacheKey,
+      () => fetchAPI<StrategySignalResponse>(`/signals/strategy/${symbol}`),
+      { ttl: CACHE_TTL.STOCK_INFO, staleWhileRevalidate: true }
+    );
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * List all strategy signals with optional filters
+ */
+export async function listStrategySignals(options?: {
+  signalType?: string;
+  activeOnly?: boolean;
+  beatingMarket?: boolean;
+  limit?: number;
+}): Promise<StrategySignalsListResponse | null> {
+  const params = new URLSearchParams();
+  
+  if (options?.signalType) params.append('signal_type', options.signalType);
+  if (options?.activeOnly) params.append('active_only', 'true');
+  if (options?.beatingMarket) params.append('beating_market', 'true');
+  if (options?.limit) params.append('limit', options.limit.toString());
+  
+  const query = params.toString() ? `?${params.toString()}` : '';
+  
+  try {
+    return await fetchAPI<StrategySignalsListResponse>(`/signals/strategy${query}`);
+  } catch {
+    return null;
+  }
+}
+
+// =============================================================================
+// Dip Entry Optimizer Types & API
+// =============================================================================
+
+export interface DipFrequency {
+  '10_pct': number;
+  '15_pct': number;
+  '20_pct': number;
+}
+
+export interface DipThresholdStats {
+  threshold: number;
+  occurrences: number;
+  per_year: number;
+  win_rate_60d: number;
+  avg_return_60d: number;
+  recovery_rate: number;
+  avg_recovery_days: number;
+  entry_score: number;
+}
+
+export interface DipEntryResponse {
+  symbol: string;
+  current_price: number;
+  recent_high: number;
+  current_drawdown_pct: number;
+  volatility_regime: 'low' | 'normal' | 'high';
+  optimal_dip_threshold: number;
+  optimal_entry_price: number;
+  is_buy_now: boolean;
+  buy_signal_strength: number;
+  signal_reason: string;
+  typical_recovery_days: number;
+  avg_dips_per_year: DipFrequency;
+  fundamentals_healthy: boolean;
+  fundamental_notes: string[];
+  threshold_analysis: DipThresholdStats[];
+  analyzed_at: string;
+}
+
+/**
+ * Get dip entry analysis for a symbol
+ * Answers: "How much should this stock drop before I buy more?"
+ */
+export async function getDipEntry(symbol: string): Promise<DipEntryResponse | null> {
+  const cacheKey = `dip-entry:${symbol}`;
+  
+  try {
+    return await apiCache.fetch(
+      cacheKey,
+      () => fetchAPI<DipEntryResponse>(`/signals/dip-entry/${symbol}`),
+      { ttl: CACHE_TTL.STOCK_INFO, staleWhileRevalidate: true }
+    );
+  } catch {
+    return null;
+  }
 }

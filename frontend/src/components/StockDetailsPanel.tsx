@@ -8,12 +8,13 @@ import {
   Line,
   ComposedChart,
   ReferenceDot,
+  ReferenceLine,
   Label as RechartsLabel,
 } from 'recharts';
 import { ChartTooltip, SimpleChartTooltipContent } from '@/components/ui/chart';
 import { CHART_LINE_ANIMATION, CHART_TRENDLINE_ANIMATION, CHART_ANIMATION } from '@/lib/chartConfig';
-import type { DipStock, ChartDataPoint, StockInfo, BenchmarkType, ComparisonChartData, SignalTrigger, SignalTriggersResponse, DipAnalysis, CurrentSignals, AgentAnalysis, SymbolFundamentals } from '@/services/api';
-import { getSignalTriggers, getDipAnalysis, getCurrentSignals, getAgentAnalysis, getSymbolFundamentals } from '@/services/api';
+import type { DipStock, ChartDataPoint, StockInfo, BenchmarkType, ComparisonChartData, SignalTrigger, SignalTriggersResponse, DipAnalysis, CurrentSignals, AgentAnalysis, SymbolFundamentals, StrategySignalResponse, DipEntryResponse } from '@/services/api';
+import { getSignalTriggers, getDipAnalysis, getCurrentSignals, getAgentAnalysis, getSymbolFundamentals, getStrategySignal, getDipEntry } from '@/services/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -106,6 +107,7 @@ const periods = [
   { label: '3M', days: 90 },
   { label: '6M', days: 180 },
   { label: '1Y', days: 365 },
+  { label: '5Y', days: 1825 },
 ];
 
 export function StockDetailsPanel({
@@ -144,6 +146,14 @@ export function StockDetailsPanel({
   const [isLoadingAgents, setIsLoadingAgents] = useState(false);
   const [showAllVerdicts, setShowAllVerdicts] = useState(false);
   const [expandedVerdicts, setExpandedVerdicts] = useState<Set<string>>(new Set());
+  
+  // Strategy signal state (quant optimizer)
+  const [strategySignal, setStrategySignal] = useState<StrategySignalResponse | null>(null);
+  const [isLoadingStrategy, setIsLoadingStrategy] = useState(false);
+  
+  // Dip entry optimizer state
+  const [dipEntry, setDipEntry] = useState<DipEntryResponse | null>(null);
+  const [isLoadingDipEntry, setIsLoadingDipEntry] = useState(false);
   
   // Fetch signal triggers when stock changes
   useEffect(() => {
@@ -194,6 +204,34 @@ export function StockDetailsPanel({
       setFundamentals(funds);
       setIsLoadingAgents(false);
     });
+  }, [stock?.symbol]);
+  
+  // Fetch strategy signal (quant optimizer) when stock changes
+  useEffect(() => {
+    if (!stock?.symbol) {
+      setStrategySignal(null);
+      return;
+    }
+    
+    setIsLoadingStrategy(true);
+    getStrategySignal(stock.symbol)
+      .then(setStrategySignal)
+      .catch(() => setStrategySignal(null))
+      .finally(() => setIsLoadingStrategy(false));
+  }, [stock?.symbol]);
+  
+  // Fetch dip entry analysis when stock changes
+  useEffect(() => {
+    if (!stock?.symbol) {
+      setDipEntry(null);
+      return;
+    }
+    
+    setIsLoadingDipEntry(true);
+    getDipEntry(stock.symbol)
+      .then(setDipEntry)
+      .catch(() => setDipEntry(null))
+      .finally(() => setIsLoadingDipEntry(false));
   }, [stock?.symbol]);
   
   // When chart period or data changes, hide dots and show them after animation completes
@@ -669,6 +707,26 @@ export function StockDetailsPanel({
                         )}
                       </ReferenceDot>
                     );})}
+                    {/* Optimal Entry Price Line - shows where to set buy order */}
+                    {dipEntry && dipEntry.optimal_entry_price > 0 && (
+                      <ReferenceLine
+                        y={dipEntry.optimal_entry_price}
+                        stroke="var(--primary)"
+                        strokeWidth={2}
+                        strokeDasharray="6 4"
+                        strokeOpacity={0.8}
+                      >
+                        <RechartsLabel
+                          value={`Entry $${dipEntry.optimal_entry_price.toFixed(2)}`}
+                          position="right"
+                          style={{
+                            fontSize: 10,
+                            fill: 'var(--primary)',
+                            fontWeight: 600,
+                          }}
+                        />
+                      </ReferenceLine>
+                    )}
                   </ComposedChart>
                 </ResponsiveContainer>
                   ) : (
@@ -748,51 +806,78 @@ export function StockDetailsPanel({
               
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <div className="p-3 rounded-lg bg-muted/50 text-center cursor-help">
+                  <div className={cn(
+                    "p-3 rounded-lg text-center cursor-help",
+                    signalsResponse?.beats_buy_hold === false && signalTriggers.length > 0
+                      ? "bg-amber-500/10 border border-amber-500/30"
+                      : "bg-muted/50"
+                  )}>
                     <p className="text-xs text-muted-foreground">Historical Win</p>
                     <p className={cn(
                       "text-lg font-bold",
-                      signalTriggers.length > 0 && signalTriggers[0].win_rate > 0.6 ? "text-success" : "text-foreground"
+                      signalTriggers.length > 0 && signalsResponse?.actual_win_rate && signalsResponse.actual_win_rate > 0.6 
+                        ? "text-success" 
+                        : signalTriggers.length > 0 && signalsResponse?.actual_win_rate && signalsResponse.actual_win_rate < 0.5
+                        ? "text-danger"
+                        : "text-foreground"
                     )}>
-                      {signalTriggers.length > 0 
-                        ? `${(signalTriggers[0].win_rate * 100).toFixed(0)}%`
+                      {signalsResponse?.actual_win_rate !== undefined && signalTriggers.length > 0
+                        ? `${(signalsResponse.actual_win_rate * 100).toFixed(0)}%`
                         : '—'}
                     </p>
-                    <p className="text-[10px] text-muted-foreground">signals profitable</p>
+                    <p className="text-[10px] text-muted-foreground">
+                      {signalsResponse?.beats_buy_hold === false && signalTriggers.length > 0
+                        ? 'B&H beats signals'
+                        : 'of trades won'}
+                    </p>
                   </div>
                 </TooltipTrigger>
                 <TooltipContent className="max-w-xs">
-                  <p>{signalTriggers.length > 0 
-                    ? `${(signalTriggers[0].win_rate * 100).toFixed(0)}% of similar buy signals historically led to profits. Based on ${signalTriggers.length} signals.`
-                    : 'No historical signal data available'}</p>
+                  {signalTriggers.length > 0 && signalsResponse ? (
+                    <div className="space-y-1">
+                      <p>{(signalsResponse.actual_win_rate * 100).toFixed(0)}% of the {signalsResponse.n_trades} visible trades were profitable.</p>
+                      <p className={signalsResponse.beats_buy_hold ? "text-success" : "text-amber-500"}>
+                        Signal Return: {signalsResponse.signal_return_pct.toFixed(1)}% vs Buy & Hold: {signalsResponse.buy_hold_return_pct.toFixed(1)}%
+                      </p>
+                      {!signalsResponse.beats_buy_hold && (
+                        <p className="text-amber-500 font-medium">⚠️ Buy & hold would have outperformed these signals</p>
+                      )}
+                    </div>
+                  ) : (
+                    <p>No historical signal data available</p>
+                  )}
                 </TooltipContent>
               </Tooltip>
               
               <Tooltip>
                 <TooltipTrigger asChild>
                   <div className="p-3 rounded-lg bg-muted/50 text-center cursor-help">
-                    <p className="text-xs text-muted-foreground">Avg Return</p>
+                    <p className="text-xs text-muted-foreground">Signal Return</p>
                     <p className={cn(
                       "text-lg font-bold",
-                      signalTriggers.length > 0 && signalTriggers[0].avg_return_pct > 0 ? "text-success" : "text-danger"
+                      signalsResponse && signalsResponse.edge_vs_buy_hold_pct > 0 ? "text-success" : "text-danger"
                     )}>
-                      {signalTriggers.length > 0 
-                        ? `+${signalTriggers[0].avg_return_pct.toFixed(0)}%`
+                      {signalsResponse && signalTriggers.length > 0
+                        ? `${signalsResponse.signal_return_pct >= 0 ? '+' : ''}${signalsResponse.signal_return_pct.toFixed(0)}%`
                         : '—'}
                     </p>
-                    <p className="text-[10px] text-muted-foreground">{signalTriggers.length > 0 ? `${signalTriggers[0].holding_days}d hold` : 'expected'}</p>
+                    <p className="text-[10px] text-muted-foreground">
+                      {signalsResponse && signalTriggers.length > 0 
+                        ? `vs ${signalsResponse.buy_hold_return_pct.toFixed(0)}% B&H` 
+                        : 'total'}
+                    </p>
                   </div>
                 </TooltipTrigger>
                 <TooltipContent className="max-w-xs">
-                  <p>{signalTriggers.length > 0 
-                    ? `Average return of +${signalTriggers[0].avg_return_pct.toFixed(1)}% when holding for ${signalTriggers[0].holding_days} days after similar signals`
-                    : 'No historical return data available'}</p>
+                  <p>{signalsResponse && signalTriggers.length > 0 
+                    ? `Total return from ${signalsResponse.n_trades} signal trades: ${signalsResponse.signal_return_pct.toFixed(1)}%. Buy & hold over same period: ${signalsResponse.buy_hold_return_pct.toFixed(1)}%. Edge: ${signalsResponse.edge_vs_buy_hold_pct >= 0 ? '+' : ''}${signalsResponse.edge_vs_buy_hold_pct.toFixed(1)}%`
+                    : 'No signal return data available'}</p>
                 </TooltipContent>
               </Tooltip>
             </div>
 
             {/* Domain-Specific Metrics (Banks, REITs, Insurance) */}
-            {fundamentals && fundamentals.domain !== 'stock' && (
+            {fundamentals && fundamentals.domain && fundamentals.domain !== 'stock' && (
               <div className="p-3 rounded-lg bg-gradient-to-br from-primary/5 to-primary/10 border border-primary/20 mb-4">
                 <div className="flex items-center gap-2 mb-3">
                   {fundamentals.domain === 'bank' && <Landmark className="h-4 w-4 text-primary" />}
@@ -1093,6 +1178,289 @@ export function StockDetailsPanel({
                     </Tooltip>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {/* Quant Strategy Signal - Only show if beats B&H */}
+            {strategySignal && strategySignal.benchmarks.beats_buy_hold && (
+              <div className="mb-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <Zap className="h-4 w-4 text-primary" />
+                  <span className="text-sm font-semibold">Optimized Strategy</span>
+                  <Badge variant="outline" className="text-[10px] border-success/50 text-success bg-success/5">
+                    ✓ Beats B&H
+                  </Badge>
+                </div>
+                
+                {/* Main signal card */}
+                <div className={cn(
+                  "p-3 rounded-lg border mb-3",
+                  strategySignal.signal.type === 'BUY' && strategySignal.signal.has_active && "bg-success/10 border-success/30",
+                  strategySignal.signal.type === 'SELL' && "bg-danger/10 border-danger/30",
+                  strategySignal.signal.type === 'HOLD' && "bg-muted/30 border-border",
+                  strategySignal.signal.type === 'WAIT' && "bg-amber-500/10 border-amber-500/30",
+                  strategySignal.signal.type === 'WATCH' && "bg-blue-500/10 border-blue-500/30",
+                )}>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <Badge 
+                        variant="outline"
+                        className={cn(
+                          "text-xs font-semibold",
+                          strategySignal.signal.type === 'BUY' && "border-success text-success",
+                          strategySignal.signal.type === 'SELL' && "border-danger text-danger",
+                          strategySignal.signal.type === 'HOLD' && "border-muted-foreground text-muted-foreground",
+                          strategySignal.signal.type === 'WAIT' && "border-amber-500 text-amber-600",
+                          strategySignal.signal.type === 'WATCH' && "border-blue-500 text-blue-600",
+                        )}
+                      >
+                        {strategySignal.signal.has_active ? '● ' : ''}{strategySignal.signal.type}
+                      </Badge>
+                      <span className="text-xs text-muted-foreground">
+                        {strategySignal.strategy_name.replace(/_/g, ' ')}
+                      </span>
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
+                    {strategySignal.signal.reason}
+                  </p>
+                </div>
+                
+                {/* Performance metrics */}
+                <div className="grid grid-cols-4 gap-2 mb-3">
+                  <div className="text-center">
+                    <p className="text-xs text-muted-foreground">Win Rate</p>
+                    <p className={cn(
+                      "text-sm font-bold",
+                      strategySignal.metrics.win_rate >= 60 && "text-success",
+                      strategySignal.metrics.win_rate < 50 && "text-danger"
+                    )}>
+                      {strategySignal.metrics.win_rate.toFixed(0)}%
+                    </p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-xs text-muted-foreground">2025 YTD</p>
+                    <p className={cn(
+                      "text-sm font-bold",
+                      strategySignal.recency.current_year_return_pct >= 0 ? "text-success" : "text-danger"
+                    )}>
+                      {strategySignal.recency.current_year_return_pct >= 0 ? '+' : ''}
+                      {strategySignal.recency.current_year_return_pct.toFixed(1)}%
+                    </p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-xs text-muted-foreground">Sharpe</p>
+                    <p className={cn(
+                      "text-sm font-bold",
+                      strategySignal.metrics.sharpe_ratio >= 1.5 && "text-success",
+                      strategySignal.metrics.sharpe_ratio < 0.5 && "text-danger"
+                    )}>
+                      {strategySignal.metrics.sharpe_ratio.toFixed(2)}
+                    </p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-xs text-muted-foreground">vs B&H</p>
+                    <p className={cn(
+                      "text-sm font-bold",
+                      strategySignal.benchmarks.vs_buy_hold >= 0 ? "text-success" : "text-danger"
+                    )}>
+                      {strategySignal.benchmarks.vs_buy_hold >= 0 ? '+' : ''}
+                      {strategySignal.benchmarks.vs_buy_hold.toFixed(0)}%
+                    </p>
+                  </div>
+                </div>
+                
+                {/* Fundamental health */}
+                {!strategySignal.fundamentals.healthy && strategySignal.fundamentals.concerns.length > 0 && (
+                  <div className="flex items-start gap-2 p-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                    <AlertTriangle className="h-3.5 w-3.5 text-amber-600 mt-0.5 shrink-0" />
+                    <div>
+                      <p className="text-xs font-medium text-amber-700 dark:text-amber-500">Fundamental Concerns</p>
+                      <p className="text-[10px] text-muted-foreground">
+                        {strategySignal.fundamentals.concerns.slice(0, 2).join(', ')}
+                        {strategySignal.fundamentals.concerns.length > 2 && ` +${strategySignal.fundamentals.concerns.length - 2} more`}
+                      </p>
+                    </div>
+                  </div>
+                )}
+                
+                {/* Healthy fundamentals badge */}
+                {strategySignal.fundamentals.healthy && (
+                  <div className="flex items-center gap-1.5 text-xs text-success">
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    <span>Fundamentals pass quality filters</span>
+                  </div>
+                )}
+                
+                {/* Stats footer */}
+                <div className="flex items-center justify-between mt-2 pt-2 border-t border-border/50 text-[10px] text-muted-foreground">
+                  <span>{strategySignal.metrics.n_trades} trades • {strategySignal.indicators_used.slice(0, 2).join(', ')}</span>
+                  {strategySignal.optimized_at && (
+                    <span>Updated {new Date(strategySignal.optimized_at).toLocaleDateString()}</span>
+                  )}
+                </div>
+              </div>
+            )}
+            
+            {(isLoadingStrategy || isLoadingDipEntry) && !strategySignal && !dipEntry && (
+              <div className="mb-4 space-y-2">
+                <div className="flex items-center gap-2">
+                  <Skeleton className="h-4 w-4 rounded-full" />
+                  <Skeleton className="h-4 w-32" />
+                </div>
+                <Skeleton className="h-20 w-full" />
+                <Skeleton className="h-12 w-full" />
+              </div>
+            )}
+
+            {/* Dip Entry Optimizer - Show when strategy doesn't beat B&H or no strategy */}
+            {dipEntry && (!strategySignal || !strategySignal.benchmarks.beats_buy_hold) && (
+              <div className="mb-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <Target className="h-4 w-4 text-primary" />
+                  <span className="text-sm font-semibold">Dip Entry Optimizer</span>
+                  {strategySignal && !strategySignal.benchmarks.beats_buy_hold && (
+                    <Badge variant="outline" className="text-[10px] px-1.5 text-muted-foreground">
+                      Strategy doesn't beat B&H
+                    </Badge>
+                  )}
+                  <Tooltip>
+                    <TooltipTrigger>
+                      <Badge variant="outline" className="text-[10px] px-1.5">?</Badge>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="max-w-[280px]">
+                      <p className="text-xs">Analyzes historical dips to find the optimal price to add to your position. Set your limit order at the recommended level.</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
+                
+                {/* Main dip entry card */}
+                <div className={cn(
+                  "p-3 rounded-lg border mb-3",
+                  dipEntry.is_buy_now && "bg-success/10 border-success/30",
+                  !dipEntry.is_buy_now && dipEntry.current_drawdown_pct <= -10 && "bg-amber-500/10 border-amber-500/30",
+                  !dipEntry.is_buy_now && dipEntry.current_drawdown_pct > -10 && "bg-muted/30 border-border",
+                )}>
+                  {/* Current status */}
+                  <div className="flex items-center justify-between mb-3">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Current Drawdown</p>
+                      <p className={cn(
+                        "text-lg font-bold",
+                        dipEntry.current_drawdown_pct <= -15 && "text-success",
+                        dipEntry.current_drawdown_pct > -15 && dipEntry.current_drawdown_pct <= -10 && "text-amber-600",
+                        dipEntry.current_drawdown_pct > -10 && "text-muted-foreground"
+                      )}>
+                        {dipEntry.current_drawdown_pct.toFixed(1)}%
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">from ${dipEntry.recent_high.toFixed(2)} high</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs text-muted-foreground">Set Limit Order</p>
+                      <p className="text-lg font-bold text-primary">${dipEntry.optimal_entry_price.toFixed(2)}</p>
+                      <p className="text-[10px] text-muted-foreground">{dipEntry.optimal_dip_threshold}% dip</p>
+                    </div>
+                  </div>
+                  
+                  {/* Signal message */}
+                  <div className={cn(
+                    "p-2 rounded-md text-xs",
+                    dipEntry.is_buy_now && "bg-success/20 text-success-foreground",
+                    !dipEntry.is_buy_now && "bg-muted/50 text-muted-foreground"
+                  )}>
+                    {dipEntry.is_buy_now ? (
+                      <div className="flex items-center gap-1.5">
+                        <CheckCircle2 className="h-3.5 w-3.5 text-success shrink-0" />
+                        <span className="font-medium text-success">Buy opportunity: {dipEntry.signal_reason}</span>
+                      </div>
+                    ) : (
+                      <span>{dipEntry.signal_reason}</span>
+                    )}
+                  </div>
+                </div>
+                
+                {/* Key metrics */}
+                <div className="grid grid-cols-4 gap-2 mb-3">
+                  <div className="text-center">
+                    <p className="text-xs text-muted-foreground">Volatility</p>
+                    <p className={cn(
+                      "text-sm font-medium capitalize",
+                      dipEntry.volatility_regime === 'low' && "text-success",
+                      dipEntry.volatility_regime === 'high' && "text-danger"
+                    )}>
+                      {dipEntry.volatility_regime}
+                    </p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-xs text-muted-foreground">Recovery</p>
+                    <p className="text-sm font-medium">{Math.round(dipEntry.typical_recovery_days)}d</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-xs text-muted-foreground">10% Dips/Yr</p>
+                    <p className="text-sm font-medium">{dipEntry.avg_dips_per_year['10_pct'].toFixed(1)}</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-xs text-muted-foreground">15% Dips/Yr</p>
+                    <p className="text-sm font-medium">{dipEntry.avg_dips_per_year['15_pct'].toFixed(1)}</p>
+                  </div>
+                </div>
+                
+                {/* Threshold analysis (collapsible) */}
+                {dipEntry.threshold_analysis.length > 0 && (
+                  <details className="group/thresh">
+                    <summary className="flex items-center gap-1 cursor-pointer text-xs text-muted-foreground hover:text-foreground">
+                      <ChevronDown className="h-3 w-3 group-open/thresh:rotate-180 transition-transform" />
+                      Threshold Analysis
+                    </summary>
+                    <div className="mt-2 space-y-1">
+                      {dipEntry.threshold_analysis.slice(0, 5).map((t) => (
+                        <div 
+                          key={t.threshold}
+                          className={cn(
+                            "flex items-center justify-between p-1.5 rounded text-[10px]",
+                            t.threshold === dipEntry.optimal_dip_threshold && "bg-primary/10 border border-primary/20"
+                          )}
+                        >
+                          <span className="font-medium w-12">{t.threshold}%</span>
+                          <span className="text-muted-foreground">{t.occurrences}x</span>
+                          <span className={cn(
+                            t.win_rate_60d >= 70 && "text-success",
+                            t.win_rate_60d < 60 && "text-danger"
+                          )}>WR: {t.win_rate_60d.toFixed(0)}%</span>
+                          <span className={cn(
+                            t.avg_return_60d >= 10 && "text-success",
+                            t.avg_return_60d < 5 && "text-danger"
+                          )}>+{t.avg_return_60d.toFixed(0)}%</span>
+                          <span className="text-muted-foreground">Score: {t.entry_score.toFixed(0)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                )}
+                
+                {/* Fundamentals status */}
+                {!dipEntry.fundamentals_healthy && dipEntry.fundamental_notes.length > 0 && (
+                  <div className="flex items-start gap-2 p-2 mt-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                    <AlertTriangle className="h-3.5 w-3.5 text-amber-600 mt-0.5 shrink-0" />
+                    <div>
+                      <p className="text-xs font-medium text-amber-700 dark:text-amber-500">Caution</p>
+                      <p className="text-[10px] text-muted-foreground">
+                        {dipEntry.fundamental_notes.slice(0, 2).join(', ')}
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+            
+            {isLoadingDipEntry && (
+              <div className="mb-4 space-y-2">
+                <div className="flex items-center gap-2">
+                  <Skeleton className="h-4 w-4 rounded-full" />
+                  <Skeleton className="h-4 w-36" />
+                </div>
+                <Skeleton className="h-24 w-full" />
+                <Skeleton className="h-10 w-full" />
               </div>
             )}
 

@@ -118,6 +118,7 @@ const CHART_PERIODS = [
   { label: '6M', days: 180 },
   { label: '1Y', days: 365 },
   { label: '2Y', days: 730 },
+  { label: '5Y', days: 1825 },
 ];
 
 // Stat item component

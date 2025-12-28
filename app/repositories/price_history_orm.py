@@ -157,7 +157,13 @@ async def save_prices(symbol: str, df: pd.DataFrame) -> int:
 
     async with get_session() as session:
         count = 0
+        skipped = 0
         for idx, row in df.iterrows():
+            # Skip rows with NaN close values - they're not usable
+            if pd.isna(row["Close"]):
+                skipped += 1
+                continue
+                
             dt = idx.date() if hasattr(idx, "date") else idx
 
             stmt = insert(PriceHistory).values(
@@ -166,7 +172,7 @@ async def save_prices(symbol: str, df: pd.DataFrame) -> int:
                 open=Decimal(str(row.get("Open", 0))) if pd.notna(row.get("Open")) else None,
                 high=Decimal(str(row.get("High", 0))) if pd.notna(row.get("High")) else None,
                 low=Decimal(str(row.get("Low", 0))) if pd.notna(row.get("Low")) else None,
-                close=Decimal(str(row["Close"])) if pd.notna(row["Close"]) else None,
+                close=Decimal(str(row["Close"])),
                 adj_close=Decimal(str(row.get("Adj Close", row["Close"]))) if pd.notna(row.get("Adj Close", row["Close"])) else None,
                 volume=int(row.get("Volume", 0)) if pd.notna(row.get("Volume")) else None,
             ).on_conflict_do_update(
@@ -175,7 +181,7 @@ async def save_prices(symbol: str, df: pd.DataFrame) -> int:
                     "open": Decimal(str(row.get("Open", 0))) if pd.notna(row.get("Open")) else None,
                     "high": Decimal(str(row.get("High", 0))) if pd.notna(row.get("High")) else None,
                     "low": Decimal(str(row.get("Low", 0))) if pd.notna(row.get("Low")) else None,
-                    "close": Decimal(str(row["Close"])) if pd.notna(row["Close"]) else None,
+                    "close": Decimal(str(row["Close"])),
                     "adj_close": Decimal(str(row.get("Adj Close", row["Close"]))) if pd.notna(row.get("Adj Close", row["Close"])) else None,
                     "volume": int(row.get("Volume", 0)) if pd.notna(row.get("Volume")) else None,
                 }
@@ -185,5 +191,7 @@ async def save_prices(symbol: str, df: pd.DataFrame) -> int:
             count += 1
 
         await session.commit()
+        if skipped > 0:
+            logger.warning(f"Skipped {skipped} rows with NaN close for {symbol}")
         logger.debug(f"Saved {count} price records for {symbol}")
         return count

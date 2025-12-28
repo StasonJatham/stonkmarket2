@@ -73,6 +73,12 @@ DEFAULT_SCHEDULES: dict[str, tuple[str, str]] = {
         "Market regime detection - identifies bull/bear market and volatility conditions. "
         "Runs Mon-Fri at 10:30 PM UTC."
     ),
+    "strategy_optimize_nightly": (
+        "30 23 * * 1-5",
+        "Strategy optimization - runs full backtest with recency weighting, finds best strategy "
+        "for each symbol that works NOW. Includes fundamental filters. "
+        "Runs Mon-Fri at 11:30 PM UTC (30 min after prices_daily)."
+    ),
     
     # =========================================================================
     # 3. WEEKLY AI ANALYSIS - Sunday morning (batch for cost savings)
@@ -152,6 +158,7 @@ JOB_PRIORITIES: dict[str, dict[str, int | str]] = {
     "symbol_ingest": {"queue": "default", "priority": 7},
     "signals_daily": {"queue": "default", "priority": 7},
     "regime_daily": {"queue": "default", "priority": 6},
+    "strategy_optimize_nightly": {"queue": "batch", "priority": 6},  # Heavy computation
     "fundamentals_monthly": {"queue": "default", "priority": 5},
     "portfolio_worker": {"queue": "default", "priority": 5},
     

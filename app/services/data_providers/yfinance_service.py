@@ -950,9 +950,14 @@ class YFinanceService:
         if df is None or df.empty:
             return None, None
 
-        # Compute version hash
-        last_date = df.index[-1] if len(df) > 0 else None
-        last_close = float(df["Close"].iloc[-1]) if len(df) > 0 else None
+        # Find last non-NaN close value (some markets may have holidays)
+        valid_closes = df["Close"].dropna()
+        if len(valid_closes) > 0:
+            last_date = valid_closes.index[-1]
+            last_close = float(valid_closes.iloc[-1])
+        else:
+            last_date = df.index[-1] if len(df) > 0 else None
+            last_close = None
 
         version = DataVersion(
             hash=_compute_hash(df),
@@ -961,7 +966,7 @@ class YFinanceService:
             metadata={
                 "last_date": str(last_date.date()) if last_date else None,
                 "last_close": last_close,
-                "row_count": len(df),
+                "row_count": len(valid_closes) if len(valid_closes) > 0 else 0,
             },
         )
 
@@ -992,8 +997,14 @@ class YFinanceService:
         results = {}
         for symbol, df in raw_results.items():
             if df is not None and not df.empty:
-                last_date = df.index[-1] if len(df) > 0 else None
-                last_close = float(df["Close"].iloc[-1]) if len(df) > 0 else None
+                # Find last non-NaN close value (some markets may have holidays)
+                valid_closes = df["Close"].dropna()
+                if len(valid_closes) > 0:
+                    last_date = valid_closes.index[-1]
+                    last_close = float(valid_closes.iloc[-1])
+                else:
+                    last_date = df.index[-1] if len(df) > 0 else None
+                    last_close = None
 
                 version = DataVersion(
                     hash=_compute_hash(df),
@@ -1002,7 +1013,7 @@ class YFinanceService:
                     metadata={
                         "last_date": str(last_date.date()) if last_date else None,
                         "last_close": last_close,
-                        "row_count": len(df),
+                        "row_count": len(valid_closes),
                     },
                 )
                 results[symbol] = (df, version)
