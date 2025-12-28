@@ -189,87 +189,102 @@ export function AIPersonasPanel() {
           onChange={handleFileChange}
         />
 
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {personas.map((persona) => (
             <div
               key={persona.key}
-              className={`p-4 rounded-lg border transition-colors ${
-                persona.is_active 
-                  ? 'bg-card border-border' 
-                  : 'bg-muted/30 border-muted opacity-60'
+              className={`rounded-lg border p-4 flex flex-col gap-4 transition-colors ${
+                persona.is_active
+                  ? 'bg-card border-border'
+                  : 'bg-muted/30 border-muted opacity-70'
               }`}
             >
-              <div className="flex items-start gap-3">
-                <div className="relative">
-                  <Avatar className="h-12 w-12">
-                    {persona.avatar_url ? (
-                      <AvatarImage 
-                        src={persona.avatar_url} 
-                        alt={persona.name}
-                      />
-                    ) : null}
-                    <AvatarFallback className="bg-primary/10 text-primary">
-                      {persona.name.split(' ').map(n => n[0]).join('')}
-                    </AvatarFallback>
-                  </Avatar>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className="absolute -bottom-1 -right-1 h-6 w-6 rounded-full bg-background border shadow-sm"
-                    onClick={() => handleUploadClick(persona.key)}
-                    disabled={uploadingKey === persona.key}
-                  >
-                    {uploadingKey === persona.key ? (
-                      <RefreshCw className="h-3 w-3 animate-spin" />
-                    ) : (
-                      <Upload className="h-3 w-3" />
-                    )}
-                  </Button>
-                </div>
-                
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <h4 className="font-medium truncate">{persona.name}</h4>
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-3 min-w-0">
+                  <div className="relative">
+                    <Avatar className="h-12 w-12">
+                      {persona.avatar_url ? (
+                        <AvatarImage
+                          src={persona.avatar_url}
+                          alt={persona.name}
+                        />
+                      ) : null}
+                      <AvatarFallback className="bg-primary/10 text-primary">
+                        {persona.name.split(' ').map(n => n[0]).join('')}
+                      </AvatarFallback>
+                    </Avatar>
                     <Button
                       size="icon"
                       variant="ghost"
-                      className="h-6 w-6 shrink-0"
-                      onClick={() => handleEditClick(persona)}
+                      className="absolute -bottom-1 -right-1 h-6 w-6 rounded-full bg-background border shadow-sm"
+                      onClick={() => handleUploadClick(persona.key)}
+                      disabled={uploadingKey === persona.key}
                     >
-                      <Edit className="h-3 w-3" />
+                      {uploadingKey === persona.key ? (
+                        <RefreshCw className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <Upload className="h-3 w-3" />
+                      )}
                     </Button>
                   </div>
-                  <p className="text-xs text-muted-foreground truncate">
-                    {persona.key}
-                  </p>
-                  {persona.description && (
-                    <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
-                      {persona.description}
-                    </p>
-                  )}
+
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h4 className="font-medium truncate">{persona.name}</h4>
+                      <Badge variant={persona.is_active ? 'default' : 'outline'} className="text-xs">
+                        {persona.is_active ? 'Active' : 'Inactive'}
+                      </Badge>
+                    </div>
+                    <Badge variant="outline" className="mt-1 text-[10px] font-mono">
+                      {persona.key}
+                    </Badge>
+                  </div>
                 </div>
-              </div>
-              
-              <div className="flex items-center justify-between mt-3 pt-3 border-t">
-                <div className="flex items-center gap-2">
+
+                <div className="flex flex-col items-end gap-2">
                   <Switch
                     checked={persona.is_active}
                     onCheckedChange={() => handleToggleActive(persona)}
                     className="data-[state=checked]:bg-success"
                   />
                   <span className="text-xs text-muted-foreground">
-                    {persona.is_active ? 'Active' : 'Disabled'}
+                    {persona.is_active ? 'Enabled' : 'Disabled'}
                   </span>
                 </div>
-                
+              </div>
+
+              <div className="space-y-3 text-sm">
+                <div>
+                  <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Description</p>
+                  <p className="text-sm text-muted-foreground line-clamp-3">
+                    {persona.description || 'No description set.'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Philosophy</p>
+                  <p className="text-sm text-muted-foreground line-clamp-3">
+                    {persona.philosophy || 'No philosophy set.'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-auto flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => handleEditClick(persona)}
+                >
+                  <Edit className="h-4 w-4 mr-2" />
+                  Edit
+                </Button>
                 {persona.has_avatar && (
                   <Button
-                    size="icon"
-                    variant="ghost"
-                    className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                    size="sm"
+                    variant="outline"
                     onClick={() => handleDeleteAvatar(persona)}
                   >
-                    <Trash2 className="h-3 w-3" />
+                    <Trash2 className="h-4 w-4 mr-2 text-danger" />
+                    Remove Avatar
                   </Button>
                 )}
               </div>

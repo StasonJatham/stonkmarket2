@@ -17,6 +17,7 @@ import { Switch } from '@/components/ui/switch';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Select,
   SelectContent,
@@ -28,6 +29,7 @@ import { Slider } from '@/components/ui/slider';
 import { Separator } from '@/components/ui/separator';
 import { BenchmarkManager } from '@/components/BenchmarkManager';
 import { SectorETFManager } from '@/components/SectorETFManager';
+import { ApiKeyManager } from '@/components/ApiKeyManager';
 import { 
   Sparkles, 
   Save, 
@@ -38,7 +40,6 @@ import {
   AlertCircle,
   CheckCircle,
   KeyRound,
-  TrendingUp,
   DollarSign,
   Percent,
   BarChart2,
@@ -51,7 +52,14 @@ const AI_MODELS = [
   { value: 'gpt-4o', label: 'GPT-4o (Legacy)' },
 ];
 
-export function SystemSettings() {
+interface SystemSettingsProps {
+  defaultTab?: 'ai' | 'trading' | 'benchmarks' | 'maintenance' | 'integrations' | 'about';
+  showTabs?: boolean;
+}
+
+type SectionKey = NonNullable<SystemSettingsProps['defaultTab']>;
+
+export function SystemSettings({ defaultTab = 'ai', showTabs = true }: SystemSettingsProps) {
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null);
   const [runtimeSettings, setRuntimeSettings] = useState<RuntimeSettings | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -225,33 +233,8 @@ export function SystemSettings() {
     );
   }
 
-  return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      className="space-y-6"
-    >
-      {/* Alerts */}
-      {error && (
-        <div className="flex items-center gap-2 p-4 rounded-xl bg-danger/10 text-danger border border-danger/20">
-          <AlertCircle className="h-4 w-4 shrink-0" />
-          <span>{error}</span>
-        </div>
-      )}
-      
-      {success && (
-        <motion.div 
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -10 }}
-          className="flex items-center gap-2 p-4 rounded-xl bg-success/10 text-success border border-success/20"
-        >
-          <CheckCircle className="h-4 w-4 shrink-0" />
-          <span>{success}</span>
-        </motion.div>
-      )}
-
-      {/* AI Settings */}
+  const aiContent = (
+    <div className="grid gap-6 lg:grid-cols-2">
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -263,7 +246,6 @@ export function SystemSettings() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
-          {/* OpenAI Key Warning */}
           {!openaiConfigured && (
             <div className="flex items-center gap-2 p-3 rounded-lg bg-warning/10 text-warning border border-warning/20">
               <KeyRound className="h-4 w-4 shrink-0" />
@@ -272,8 +254,7 @@ export function SystemSettings() {
               </span>
             </div>
           )}
-          
-          {/* AI Enable Toggle */}
+
           <div className="flex items-center justify-between">
             <div className="space-y-0.5">
               <Label className="text-base">Enable AI Enrichment</Label>
@@ -290,7 +271,6 @@ export function SystemSettings() {
 
           <Separator />
 
-          {/* AI Model Selection */}
           <div className="space-y-3">
             <Label className="flex items-center gap-2">
               <Bot className="h-4 w-4" />
@@ -312,259 +292,329 @@ export function SystemSettings() {
               Higher quality models cost more but provide better analysis
             </p>
           </div>
-
-          {/* Batch Size */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <Label>Batch Size</Label>
-              <Badge variant="secondary">
-                {aiBatchSize === 0 ? 'All stocks' : `${aiBatchSize} per run`}
-              </Badge>
-            </div>
-            <div className="flex items-center gap-4">
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="batch-all"
-                  checked={aiBatchSize === 0}
-                  onChange={(e) => setAiBatchSize(e.target.checked ? 0 : 5)}
-                  disabled={!aiEnabled}
-                  className="h-4 w-4 rounded border-border"
-                />
-                <Label htmlFor="batch-all" className="text-sm font-normal cursor-pointer">
-                  Process all stocks
-                </Label>
-              </div>
-            </div>
-            {aiBatchSize > 0 && (
-              <Slider
-                value={[aiBatchSize]}
-                onValueChange={([v]) => setAiBatchSize(v)}
-                min={1}
-                max={50}
-                step={1}
-                disabled={!aiEnabled}
-              />
-            )}
-            <p className="text-xs text-muted-foreground">
-              {aiBatchSize === 0 
-                ? "All tracked stocks will be analyzed each run"
-                : "Number of stocks to analyze per scheduled job run"
-              }
-            </p>
-          </div>
         </CardContent>
       </Card>
 
-      {/* Cleanup Settings */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <Trash2 className="h-5 w-5 text-primary" />
-            Cleanup Settings
+            <Sparkles className="h-5 w-5 text-primary" />
+            Batch Processing
           </CardTitle>
           <CardDescription>
-            Configure automatic data cleanup and retention.
+            Control AI batch throughput and workload size.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="space-y-3">
-            <Label>Suggestion Cleanup (days)</Label>
-            <Input
-              type="number"
-              value={cleanupDays}
-              onChange={(e) => setCleanupDays(parseInt(e.target.value) || 30)}
-              min={7}
-              max={365}
-              className="max-w-32"
+          <div className="flex items-center justify-between">
+            <Label>Batch Size</Label>
+            <Badge variant="secondary">
+              {aiBatchSize === 0 ? 'All stocks' : `${aiBatchSize} per run`}
+            </Badge>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="batch-all"
+              checked={aiBatchSize === 0}
+              onChange={(e) => setAiBatchSize(e.target.checked ? 0 : 5)}
+              disabled={!aiEnabled}
+              className="h-4 w-4 rounded border-border"
             />
-            <p className="text-xs text-muted-foreground">
-              Remove rejected and pending suggestions older than this many days
-            </p>
+            <Label htmlFor="batch-all" className="text-sm font-normal cursor-pointer">
+              Process all stocks
+            </Label>
+          </div>
+
+          {aiBatchSize > 0 && (
+            <Slider
+              value={[aiBatchSize]}
+              onValueChange={([v]) => setAiBatchSize(v)}
+              min={1}
+              max={50}
+              step={1}
+              disabled={!aiEnabled}
+            />
+          )}
+
+          <p className="text-xs text-muted-foreground">
+            {aiBatchSize === 0
+              ? 'All tracked stocks will be analyzed each run'
+              : 'Number of stocks to analyze per scheduled job run'}
+          </p>
+        </CardContent>
+      </Card>
+    </div>
+  );
+
+  const tradingContent = (
+    <div className="grid gap-6 lg:grid-cols-2">
+      <Card className="lg:col-span-2">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <BarChart2 className="h-5 w-5 text-primary" />
+            Signal Thresholds
+          </CardTitle>
+          <CardDescription>
+            Adjust score thresholds for recommendations.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4 sm:grid-cols-3">
+          <div className="space-y-2">
+            <Label htmlFor="threshold-strong-buy">Strong Buy</Label>
+            <Input
+              id="threshold-strong-buy"
+              type="number"
+              value={strongBuyThreshold}
+              onChange={(e) => setStrongBuyThreshold(parseInt(e.target.value) || 80)}
+              min={1}
+              max={100}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="threshold-buy">Buy</Label>
+            <Input
+              id="threshold-buy"
+              type="number"
+              value={buyThreshold}
+              onChange={(e) => setBuyThreshold(parseInt(e.target.value) || 60)}
+              min={1}
+              max={100}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="threshold-hold">Hold</Label>
+            <Input
+              id="threshold-hold"
+              type="number"
+              value={holdThreshold}
+              onChange={(e) => setHoldThreshold(parseInt(e.target.value) || 40)}
+              min={1}
+              max={100}
+            />
           </div>
         </CardContent>
       </Card>
 
-      {/* Backtest & Trading Settings */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <TrendingUp className="h-5 w-5 text-primary" />
-            Backtest Settings
+            <DollarSign className="h-5 w-5 text-primary" />
+            Capital & Costs
           </CardTitle>
           <CardDescription>
-            Configure parameters for strategy backtesting and signal generation.
+            Tune capital assumptions and trading costs.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-6">
-          {/* Capital & Costs */}
-          <div className="space-y-4">
-            <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-              <DollarSign className="h-4 w-4" />
-              Capital & Trading Costs
+        <CardContent className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="initial-capital">Initial Capital (€)</Label>
+              <Input
+                id="initial-capital"
+                type="number"
+                value={initialCapital}
+                onChange={(e) => setInitialCapital(parseFloat(e.target.value) || 50000)}
+                min={1000}
+                max={10000000}
+                step={1000}
+              />
             </div>
-            <div className="grid gap-4 sm:grid-cols-3">
-              <div className="space-y-2">
-                <Label htmlFor="initial-capital">Initial Capital (€)</Label>
-                <Input
-                  id="initial-capital"
-                  type="number"
-                  value={initialCapital}
-                  onChange={(e) => setInitialCapital(parseFloat(e.target.value) || 50000)}
-                  min={1000}
-                  max={10000000}
-                  step={1000}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="flat-cost">Flat Cost (€/trade)</Label>
-                <Input
-                  id="flat-cost"
-                  type="number"
-                  value={flatCostPerTrade}
-                  onChange={(e) => setFlatCostPerTrade(parseFloat(e.target.value) || 1)}
-                  min={0}
-                  max={100}
-                  step={0.5}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="slippage">Slippage (bps)</Label>
-                <Input
-                  id="slippage"
-                  type="number"
-                  value={slippageBps}
-                  onChange={(e) => setSlippageBps(parseFloat(e.target.value) || 5)}
-                  min={0}
-                  max={100}
-                  step={1}
-                />
-              </div>
+            <div className="space-y-2">
+              <Label htmlFor="flat-cost">Flat Cost (€/trade)</Label>
+              <Input
+                id="flat-cost"
+                type="number"
+                value={flatCostPerTrade}
+                onChange={(e) => setFlatCostPerTrade(parseFloat(e.target.value) || 1)}
+                min={0}
+                max={100}
+                step={0.5}
+              />
             </div>
-            <p className="text-xs text-muted-foreground">
-              Flat cost per trade in euros. Slippage is additional per-side cost in basis points (1 bp = 0.01%).
-            </p>
+            <div className="space-y-2">
+              <Label htmlFor="slippage">Slippage (bps)</Label>
+              <Input
+                id="slippage"
+                type="number"
+                value={slippageBps}
+                onChange={(e) => setSlippageBps(parseFloat(e.target.value) || 5)}
+                min={0}
+                max={100}
+                step={1}
+              />
+            </div>
           </div>
-
-          <Separator />
-
-          {/* Risk Management */}
-          <div className="space-y-4">
-            <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-              <Percent className="h-4 w-4" />
-              Risk Management
-            </div>
-            <div className="grid gap-4 sm:grid-cols-3">
-              <div className="space-y-2">
-                <Label htmlFor="stop-loss">Stop Loss (%)</Label>
-                <Input
-                  id="stop-loss"
-                  type="number"
-                  value={stopLossPct}
-                  onChange={(e) => setStopLossPct(parseFloat(e.target.value) || 15)}
-                  min={1}
-                  max={50}
-                  step={1}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="take-profit">Take Profit (%)</Label>
-                <Input
-                  id="take-profit"
-                  type="number"
-                  value={takeProfitPct}
-                  onChange={(e) => setTakeProfitPct(parseFloat(e.target.value) || 30)}
-                  min={5}
-                  max={100}
-                  step={1}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="max-holding">Max Holding (days)</Label>
-                <Input
-                  id="max-holding"
-                  type="number"
-                  value={maxHoldingDays}
-                  onChange={(e) => setMaxHoldingDays(parseInt(e.target.value) || 120)}
-                  min={5}
-                  max={365}
-                  step={5}
-                />
-              </div>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Exit rules: Stop loss when price drops by %, take profit when it rises by %, or force exit after max holding days.
-            </p>
-          </div>
-
-          <Separator />
-
-          {/* Statistical Settings */}
-          <div className="space-y-4">
-            <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-              <BarChart2 className="h-4 w-4" />
-              Statistical Settings
-            </div>
-            <div className="grid gap-4 sm:grid-cols-3">
-              <div className="space-y-2">
-                <Label htmlFor="min-trades">Min Trades Required</Label>
-                <Input
-                  id="min-trades"
-                  type="number"
-                  value={minTradesRequired}
-                  onChange={(e) => setMinTradesRequired(parseInt(e.target.value) || 30)}
-                  min={10}
-                  max={200}
-                  step={5}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="walk-forward">Walk-Forward Folds</Label>
-                <Input
-                  id="walk-forward"
-                  type="number"
-                  value={walkForwardFolds}
-                  onChange={(e) => setWalkForwardFolds(parseInt(e.target.value) || 5)}
-                  min={2}
-                  max={10}
-                  step={1}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="train-ratio">Train Ratio</Label>
-                <Input
-                  id="train-ratio"
-                  type="number"
-                  value={trainRatio}
-                  onChange={(e) => setTrainRatio(parseFloat(e.target.value) || 0.70)}
-                  min={0.50}
-                  max={0.90}
-                  step={0.05}
-                />
-              </div>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Minimum trades for statistical significance. Walk-forward validation uses rolling train/test windows with the specified train ratio.
-            </p>
-          </div>
+          <p className="text-xs text-muted-foreground">
+            Flat cost per trade in euros. Slippage is additional per-side cost in basis points (1 bp = 0.01%).
+          </p>
         </CardContent>
       </Card>
 
-      {/* Benchmark Management */}
-      <BenchmarkManager 
-        benchmarks={benchmarks} 
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Percent className="h-5 w-5 text-primary" />
+            Risk Management
+          </CardTitle>
+          <CardDescription>
+            Define exit and risk limits for backtests.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="stop-loss">Stop Loss (%)</Label>
+              <Input
+                id="stop-loss"
+                type="number"
+                value={stopLossPct}
+                onChange={(e) => setStopLossPct(parseFloat(e.target.value) || 15)}
+                min={1}
+                max={50}
+                step={1}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="take-profit">Take Profit (%)</Label>
+              <Input
+                id="take-profit"
+                type="number"
+                value={takeProfitPct}
+                onChange={(e) => setTakeProfitPct(parseFloat(e.target.value) || 30)}
+                min={5}
+                max={100}
+                step={1}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="max-holding">Max Holding (days)</Label>
+              <Input
+                id="max-holding"
+                type="number"
+                value={maxHoldingDays}
+                onChange={(e) => setMaxHoldingDays(parseInt(e.target.value) || 120)}
+                min={5}
+                max={365}
+                step={5}
+              />
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Exit rules: Stop loss when price drops by %, take profit when it rises by %, or force exit after max holding days.
+          </p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <BarChart2 className="h-5 w-5 text-primary" />
+            Validation & Walk-Forward
+          </CardTitle>
+          <CardDescription>
+            Statistical requirements for backtest validity.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="min-trades">Min Trades Required</Label>
+              <Input
+                id="min-trades"
+                type="number"
+                value={minTradesRequired}
+                onChange={(e) => setMinTradesRequired(parseInt(e.target.value) || 30)}
+                min={10}
+                max={200}
+                step={5}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="walk-forward">Walk-Forward Folds</Label>
+              <Input
+                id="walk-forward"
+                type="number"
+                value={walkForwardFolds}
+                onChange={(e) => setWalkForwardFolds(parseInt(e.target.value) || 5)}
+                min={2}
+                max={10}
+                step={1}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="train-ratio">Train Ratio</Label>
+              <Input
+                id="train-ratio"
+                type="number"
+                value={trainRatio}
+                onChange={(e) => setTrainRatio(parseFloat(e.target.value) || 0.70)}
+                min={0.50}
+                max={0.90}
+                step={0.05}
+              />
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Minimum trades for statistical significance. Walk-forward validation uses rolling train/test windows with the specified train ratio.
+          </p>
+        </CardContent>
+      </Card>
+    </div>
+  );
+
+  const benchmarksContent = (
+    <div className="space-y-6">
+      <BenchmarkManager
+        benchmarks={benchmarks}
         onChange={setBenchmarks}
         onSave={saveBenchmarks}
       />
-
-      {/* Sector ETF Management */}
       <SectorETFManager
         sectorEtfs={sectorEtfs}
         onChange={setSectorEtfs}
         onSave={saveSectorEtfs}
       />
+    </div>
+  );
 
-      {/* App Info (Read-only) */}
+  const maintenanceContent = (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Trash2 className="h-5 w-5 text-primary" />
+          Cleanup Settings
+        </CardTitle>
+        <CardDescription>
+          Configure automatic data cleanup and retention.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="space-y-3">
+          <Label>Suggestion Cleanup (days)</Label>
+          <Input
+            type="number"
+            value={cleanupDays}
+            onChange={(e) => setCleanupDays(parseInt(e.target.value) || 30)}
+            min={7}
+            max={365}
+            className="max-w-32"
+          />
+          <p className="text-xs text-muted-foreground">
+            Remove rejected and pending suggestions older than this many days
+          </p>
+        </div>
+      </CardContent>
+    </Card>
+  );
+
+  const integrationsContent = (
+    <ApiKeyManager onError={setError} onSuccess={setSuccess} />
+  );
+
+  const aboutContent = (
+    <>
       {appSettings && (
         <Card>
           <CardHeader>
@@ -605,6 +655,83 @@ export function SystemSettings() {
             </div>
           </CardContent>
         </Card>
+      )}
+    </>
+  );
+
+  const sectionContent: Record<SectionKey, JSX.Element> = {
+    ai: aiContent,
+    trading: tradingContent,
+    benchmarks: benchmarksContent,
+    maintenance: maintenanceContent,
+    integrations: integrationsContent,
+    about: aboutContent,
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      className="space-y-6"
+    >
+      {/* Alerts */}
+      {error && (
+        <div className="flex items-center gap-2 p-4 rounded-xl bg-danger/10 text-danger border border-danger/20">
+          <AlertCircle className="h-4 w-4 shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
+      
+      {success && (
+        <motion.div 
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -10 }}
+          className="flex items-center gap-2 p-4 rounded-xl bg-success/10 text-success border border-success/20"
+        >
+          <CheckCircle className="h-4 w-4 shrink-0" />
+          <span>{success}</span>
+        </motion.div>
+      )}
+
+      {showTabs ? (
+        <Tabs defaultValue={defaultTab} className="space-y-6">
+          <div className="grid gap-6 lg:grid-cols-[220px_1fr]">
+            <TabsList className="flex flex-wrap gap-2 lg:flex-col lg:items-stretch">
+              <TabsTrigger value="ai" className="justify-start">AI</TabsTrigger>
+              <TabsTrigger value="trading" className="justify-start">Trading</TabsTrigger>
+              <TabsTrigger value="benchmarks" className="justify-start">Benchmarks</TabsTrigger>
+              <TabsTrigger value="maintenance" className="justify-start">Maintenance</TabsTrigger>
+              <TabsTrigger value="integrations" className="justify-start">Integrations</TabsTrigger>
+              <TabsTrigger value="about" className="justify-start">About</TabsTrigger>
+            </TabsList>
+
+            <div className="space-y-6">
+              <TabsContent value="ai" className="space-y-6">
+                {sectionContent.ai}
+              </TabsContent>
+              <TabsContent value="trading" className="space-y-6">
+                {sectionContent.trading}
+              </TabsContent>
+              <TabsContent value="benchmarks" className="space-y-6">
+                {sectionContent.benchmarks}
+              </TabsContent>
+              <TabsContent value="maintenance" className="space-y-6">
+                {sectionContent.maintenance}
+              </TabsContent>
+              <TabsContent value="integrations" className="space-y-6">
+                {sectionContent.integrations}
+              </TabsContent>
+              <TabsContent value="about" className="space-y-6">
+                {sectionContent.about}
+              </TabsContent>
+            </div>
+          </div>
+        </Tabs>
+      ) : (
+        <div className="space-y-6">
+          {sectionContent[defaultTab]}
+        </div>
       )}
 
       {/* Save Button */}

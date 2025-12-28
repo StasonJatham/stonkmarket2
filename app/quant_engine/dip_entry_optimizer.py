@@ -57,6 +57,7 @@ class DipEvent:
     # Context
     volatility_percentile: float = 50.0  # Where in vol distribution
     near_earnings: bool = False  # Within 2 weeks of earnings
+    near_dividend: bool = False  # Within 2 weeks of ex-dividend date (opportunity)
 
 
 @dataclass
@@ -174,6 +175,7 @@ class DipEntryOptimizer:
         symbol: str,
         fundamentals: dict | None = None,
         earnings_dates: list[datetime] | None = None,
+        dividend_dates: list[datetime] | None = None,
     ) -> OptimalDipEntry:
         """
         Analyze a stock to find optimal dip entry points.
@@ -183,6 +185,7 @@ class DipEntryOptimizer:
             symbol: Stock ticker
             fundamentals: Dict with PE, FCF, debt ratios, etc.
             earnings_dates: List of earnings announcement dates
+            dividend_dates: List of ex-dividend dates (opportunity windows)
         
         Returns:
             OptimalDipEntry with recommendations and analysis
@@ -193,7 +196,7 @@ class DipEntryOptimizer:
         df = self._prepare_data(df)
         
         # Identify all dip events
-        dip_events = self._find_all_dips(df, earnings_dates)
+        dip_events = self._find_all_dips(df, earnings_dates, dividend_dates)
         
         # Calculate stats for each threshold
         threshold_stats = []
@@ -284,6 +287,7 @@ class DipEntryOptimizer:
         self,
         df: pd.DataFrame,
         earnings_dates: list[datetime] | None = None,
+        dividend_dates: list[datetime] | None = None,
     ) -> list[DipEvent]:
         """Find all significant dip events in the data."""
         dip_events = []
@@ -336,8 +340,11 @@ class DipEntryOptimizer:
                         # Volatility percentile
                         vol_percentile = self._calc_vol_percentile(df, i)
                         
-                        # Near earnings?
-                        near_earnings = self._is_near_earnings(dip_date, earnings_dates)
+                        # Near earnings? (risk - volatility spike around earnings)
+                        near_earnings = self._is_near_event(dip_date, earnings_dates)
+                        
+                        # Near dividend? (opportunity - can capture dividend)
+                        near_dividend = self._is_near_event(dip_date, dividend_dates)
                         
                         event = DipEvent(
                             dip_date=dip_date if isinstance(dip_date, datetime) else datetime.now(),
@@ -353,6 +360,7 @@ class DipEntryOptimizer:
                             max_return=max_return,
                             volatility_percentile=vol_percentile,
                             near_earnings=near_earnings,
+                            near_dividend=near_dividend,
                         )
                         dip_events.append(event)
         
@@ -382,16 +390,17 @@ class DipEntryOptimizer:
             return 50.0
         return float((historical_vol < current_vol).mean() * 100)
     
-    def _is_near_earnings(
+    def _is_near_event(
         self,
         date: datetime,
-        earnings_dates: list[datetime] | None,
+        event_dates: list[datetime] | None,
+        days_window: int = 14,
     ) -> bool:
-        """Check if date is within 2 weeks of earnings."""
-        if not earnings_dates:
+        """Check if date is within N days of any event date."""
+        if not event_dates:
             return False
-        for ed in earnings_dates:
-            if abs((date - ed).days) <= 14:
+        for ed in event_dates:
+            if abs((date - ed).days) <= days_window:
                 return True
         return False
     
@@ -484,6 +493,9 @@ class DipEntryOptimizer:
         fundamentals: dict | None,
     ) -> tuple[bool, float, str]:
         """Evaluate if current price is a buy opportunity."""
+        # Check fundamentals FIRST - they gate the buy decision
+        fund_healthy, fund_notes = self._check_fundamentals(fundamentals)
+        
         # Find stats for current drawdown level
         applicable_stats = [s for s in stats if current_drawdown <= s.threshold_pct]
         
@@ -503,10 +515,21 @@ class DipEntryOptimizer:
         win_score = best_stats.win_rate_60d * 0.4  # Max 40 points for 100% win rate
         return_score = min(best_stats.avg_return_60d / 15, 1.0) * 20  # Max 20 points for 15%+ avg return
         
-        signal_strength = depth_score + win_score + return_score
+        # Fundamentals adjustment: reduce strength if unhealthy
+        fundamentals_score = 0.0
+        if fund_healthy:
+            fundamentals_score = 10.0  # Bonus for healthy fundamentals
+        else:
+            fundamentals_score = -20.0  # Penalty for unhealthy fundamentals
         
-        # Determine if buy
-        is_buy = current_drawdown <= optimal_threshold and signal_strength >= 50
+        signal_strength = depth_score + win_score + return_score + fundamentals_score
+        
+        # Determine if buy - MUST have healthy fundamentals
+        is_buy = (
+            current_drawdown <= optimal_threshold 
+            and signal_strength >= 50 
+            and fund_healthy  # Gate: fundamentals must be healthy
+        )
         
         # Generate reason
         if is_buy:
@@ -514,7 +537,13 @@ class DipEntryOptimizer:
                 f"At {current_drawdown:.1f}% dip (optimal: {optimal_threshold:.0f}%). "
                 f"Historically {best_stats.win_rate_60d:.0f}% win rate, "
                 f"avg {best_stats.avg_return_60d:.1f}% return in 60 days. "
-                f"Recovery in ~{best_stats.avg_recovery_days:.0f} days."
+                f"Recovery in ~{best_stats.avg_recovery_days:.0f} days. "
+                f"Fundamentals: {'✓ healthy' if fund_healthy else '⚠ concerns'}."
+            )
+        elif not fund_healthy:
+            reason = (
+                f"At {current_drawdown:.1f}% dip but fundamentals unhealthy: {'; '.join(fund_notes)}. "
+                f"May be falling knife - wait for clarity."
             )
         else:
             reason = (

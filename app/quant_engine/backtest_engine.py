@@ -30,6 +30,13 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
+# Import shared indicator functions
+from app.quant_engine.indicators import (
+    prepare_price_dataframe,
+    compute_indicators,
+    bootstrap_confidence_interval,
+)
+
 # Suppress quantstats warnings about deprecated features
 warnings.filterwarnings("ignore", category=FutureWarning)
 
@@ -214,6 +221,12 @@ class ValidationReport:
     passes_bootstrap: bool = False
     passes_monte_carlo: bool = False
     
+    # Multiple-testing correction (FDR)
+    raw_p_value: float = 1.0  # Unadjusted p-value from t-test
+    adjusted_p_value: float = 1.0  # After FDR/Bonferroni correction
+    n_strategies_tested: int = 1  # Number of strategies tested
+    passes_fdr_correction: bool = False  # Passes after multiple-testing correction
+    
     # Walk-forward stability
     oos_sharpe: float = 0.0
     is_vs_sharpe: float = 0.0
@@ -229,156 +242,10 @@ class ValidationReport:
 
 
 # =============================================================================
-# Price Data Preparation
+# Price Data Preparation & Technical Indicators
 # =============================================================================
-
-def prepare_price_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Prepare price DataFrame for backtesting.
-    
-    - Converts column names to lowercase
-    - Uses Adj Close as the primary "close" column (for dividends/splits)
-    - Ensures all required columns exist
-    
-    Args:
-        df: Raw price DataFrame (may have mixed case columns)
-        
-    Returns:
-        Cleaned DataFrame with lowercase columns, using adj_close for close
-    """
-    df = df.copy()
-    
-    # Handle multi-level columns from yfinance
-    if hasattr(df.columns, 'nlevels') and df.columns.nlevels > 1:
-        df.columns = df.columns.get_level_values(0)
-    
-    # Convert to lowercase
-    col_map = {str(c): str(c).lower().replace(' ', '_') for c in df.columns}
-    df = df.rename(columns=col_map)
-    
-    # Use Adj Close as the primary close (accounts for dividends/splits)
-    if 'adj_close' in df.columns and df['adj_close'].notna().any():
-        df['close'] = df['adj_close'].combine_first(df.get('close', df['adj_close']))
-    
-    # Ensure required columns exist
-    if 'close' not in df.columns:
-        raise ValueError("DataFrame must have 'close' or 'adj_close' column")
-    
-    # Fill missing OHLV from close if needed
-    if 'open' not in df.columns:
-        df['open'] = df['close']
-    if 'high' not in df.columns:
-        df['high'] = df['close']
-    if 'low' not in df.columns:
-        df['low'] = df['close']
-    if 'volume' not in df.columns:
-        df['volume'] = 1
-    
-    return df
-
-
-# =============================================================================
-# Technical Indicators (using ta library)
-# =============================================================================
-
-def compute_indicators(prices: pd.DataFrame) -> pd.DataFrame:
-    """
-    Compute comprehensive technical indicators.
-    
-    Uses the 'ta' library for standardized, tested implementations.
-    NOTE: Automatically normalizes price data using prepare_price_dataframe.
-    """
-    from ta import add_all_ta_features
-    from ta.momentum import RSIIndicator, StochasticOscillator
-    from ta.trend import MACD, EMAIndicator, SMAIndicator, ADXIndicator
-    from ta.volatility import BollingerBands, AverageTrueRange
-    
-    # Normalize price data (use adj_close, lowercase columns)
-    df = prepare_price_dataframe(prices)
-    close = df["close"]
-    high = df.get("high", close)
-    low = df.get("low", close)
-    volume = df.get("volume", pd.Series(1, index=close.index))
-    
-    # Moving Averages
-    df["sma_5"] = SMAIndicator(close, window=5).sma_indicator()
-    df["sma_10"] = SMAIndicator(close, window=10).sma_indicator()
-    df["sma_20"] = SMAIndicator(close, window=20).sma_indicator()
-    df["sma_50"] = SMAIndicator(close, window=50).sma_indicator()
-    df["sma_200"] = SMAIndicator(close, window=200).sma_indicator()
-    df["ema_12"] = EMAIndicator(close, window=12).ema_indicator()
-    df["ema_26"] = EMAIndicator(close, window=26).ema_indicator()
-    
-    # RSI
-    df["rsi_7"] = RSIIndicator(close, window=7).rsi()
-    df["rsi_14"] = RSIIndicator(close, window=14).rsi()
-    df["rsi_21"] = RSIIndicator(close, window=21).rsi()
-    
-    # MACD
-    macd = MACD(close)
-    df["macd"] = macd.macd()
-    df["macd_signal"] = macd.macd_signal()
-    df["macd_diff"] = macd.macd_diff()
-    
-    # Bollinger Bands
-    bb = BollingerBands(close, window=20, window_dev=2)
-    df["bb_upper"] = bb.bollinger_hband()
-    df["bb_middle"] = bb.bollinger_mavg()
-    df["bb_lower"] = bb.bollinger_lband()
-    df["bb_pct"] = bb.bollinger_pband()  # 0-1, where 0 = lower band, 1 = upper
-    
-    # Stochastic
-    stoch = StochasticOscillator(high, low, close, window=14, smooth_window=3)
-    df["stoch_k"] = stoch.stoch()
-    df["stoch_d"] = stoch.stoch_signal()
-    
-    # ADX (trend strength)
-    adx = ADXIndicator(high, low, close, window=14)
-    df["adx"] = adx.adx()
-    df["adx_pos"] = adx.adx_pos()
-    df["adx_neg"] = adx.adx_neg()
-    
-    # ATR (volatility)
-    atr = AverageTrueRange(high, low, close, window=14)
-    df["atr"] = atr.average_true_range()
-    df["atr_pct"] = df["atr"] / close  # ATR as % of price
-    
-    # Price-based
-    df["returns"] = close.pct_change()
-    df["log_returns"] = np.log(close / close.shift(1))
-    df["volatility_20"] = df["returns"].rolling(20).std() * np.sqrt(252)
-    
-    # Drawdown from peak
-    rolling_max = close.rolling(252, min_periods=1).max()
-    df["drawdown"] = (close - rolling_max) / rolling_max
-    df["drawdown_20"] = (close - close.rolling(20).max()) / close.rolling(20).max()
-    df["drawdown_50"] = (close - close.rolling(50).max()) / close.rolling(50).max()
-    
-    # Z-scores
-    df["zscore_10"] = (close - close.rolling(10).mean()) / close.rolling(10).std()
-    df["zscore_20"] = (close - close.rolling(20).mean()) / close.rolling(20).std()
-    df["zscore_50"] = (close - close.rolling(50).mean()) / close.rolling(50).std()
-    
-    # Momentum
-    df["momentum_5"] = close.pct_change(5)
-    df["momentum_10"] = close.pct_change(10)
-    df["momentum_20"] = close.pct_change(20)
-    
-    # Volume (if available)
-    if volume.sum() > len(volume):  # Not all 1s
-        df["volume_sma_20"] = volume.rolling(20).mean()
-        df["volume_ratio"] = volume / df["volume_sma_20"]
-    
-    # Price relative to MAs
-    df["price_vs_sma_20"] = (close - df["sma_20"]) / df["sma_20"]
-    df["price_vs_sma_50"] = (close - df["sma_50"]) / df["sma_50"]
-    df["price_vs_sma_200"] = (close - df["sma_200"]) / df["sma_200"]
-    
-    # Golden/Death cross signals
-    df["sma_20_above_50"] = (df["sma_20"] > df["sma_50"]).astype(int)
-    df["sma_50_above_200"] = (df["sma_50"] > df["sma_200"]).astype(int)
-    
-    return df
+# NOTE: prepare_price_dataframe, compute_indicators, and bootstrap_confidence_interval
+# are imported from app.quant_engine.indicators (shared module)
 
 
 # =============================================================================
@@ -1432,10 +1299,10 @@ class BacktestEngine:
             if len(pnl_pcts) >= 10:
                 _, p_value = stats.ttest_1samp(pnl_pcts, 0)
                 report.passes_t_test = p_value < 0.05
-                report.p_value = float(p_value)
+                report.raw_p_value = float(p_value)
                 
                 # Bootstrap test: 95% CI of mean return must be > 0
-                from app.quant_engine.trade_engine import bootstrap_confidence_interval
+                # (bootstrap_confidence_interval imported from indicators module)
                 _, ci_lower, _ = bootstrap_confidence_interval(
                     pnl_pcts, n_bootstrap=1000, confidence=0.95, metric="mean"
                 )
@@ -1525,30 +1392,57 @@ class BacktestEngine:
         best_report: ValidationReport | None = None
         best_score = -np.inf
         
+        # Collect all results for FDR correction
+        all_results: list[tuple[str, StrategyResult, ValidationReport]] = []
+        
         for strategy_name in strategies:
             try:
                 result, report = self.walk_forward_optimization(
                     df, strategy_name, n_trials_per_strategy
                 )
                 
-                # Score: prioritize Sharpe, penalize overfitting
-                score = result.sharpe_ratio
-                if report.has_overfitting:
-                    score *= 0.5
-                if not report.passes_t_test:
-                    score *= 0.7
-                if not report.beats_buy_hold:
-                    score *= 0.8
-                
-                if score > best_score and result.n_trades >= 10:
-                    best_score = score
-                    best_strategy = strategy_name
-                    best_result = result
-                    best_report = report
+                # Store the result for FDR correction
+                all_results.append((strategy_name, result, report))
                     
             except Exception as e:
                 logger.warning(f"Strategy {strategy_name} failed: {e}")
                 continue
+        
+        # Apply Benjamini-Hochberg FDR correction to all p-values
+        n_tested = len(all_results)
+        if n_tested > 0:
+            # Extract raw p-values
+            p_values = [(i, r[2].raw_p_value) for i, r in enumerate(all_results)]
+            # Sort by p-value
+            p_values.sort(key=lambda x: x[1])
+            
+            # Benjamini-Hochberg correction
+            alpha = 0.05
+            for rank, (idx, raw_p) in enumerate(p_values, start=1):
+                adjusted_p = raw_p * n_tested / rank
+                adjusted_p = min(adjusted_p, 1.0)  # Cap at 1.0
+                all_results[idx][2].adjusted_p_value = adjusted_p
+                all_results[idx][2].n_strategies_tested = n_tested
+                all_results[idx][2].passes_fdr_correction = adjusted_p < alpha
+        
+        # Now score strategies with FDR-corrected significance
+        for strategy_name, result, report in all_results:
+            # Score: prioritize Sharpe, penalize overfitting and lack of statistical validity
+            score = result.sharpe_ratio
+            if report.has_overfitting:
+                score *= 0.5
+            if not report.passes_fdr_correction:  # Use FDR-corrected test
+                score *= 0.6  # Heavier penalty for failing multiple-testing correction
+            elif not report.passes_t_test:
+                score *= 0.7
+            if not report.beats_buy_hold:
+                score *= 0.8
+            
+            if score > best_score and result.n_trades >= 10:
+                best_score = score
+                best_strategy = strategy_name
+                best_result = result
+                best_report = report
         
         if best_result is None:
             return "", StrategyResult(strategy_name="", symbol=""), ValidationReport(strategy_name="", symbol="", verdict_reason="No valid strategy found")

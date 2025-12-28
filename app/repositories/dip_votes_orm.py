@@ -18,6 +18,7 @@ Usage (advanced - manual session control):
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import and_, func, or_, select
@@ -192,6 +193,43 @@ async def get_all_vote_counts_with_session(session: AsyncSession) -> dict[str, d
             "net_score": (row.buy_weighted or 0) - (row.sell_weighted or 0),
         }
 
+    return counts
+
+
+async def get_vote_counts_for_symbols_with_session(
+    session: AsyncSession,
+    symbols: Sequence[str],
+) -> dict[str, dict]:
+    """Get vote counts for specific symbols with votes."""
+    if not symbols:
+        return {}
+
+    normalized = [symbol.upper() for symbol in symbols]
+    result = await session.execute(
+        select(
+            DipVote.symbol,
+            func.count().filter(DipVote.vote_type == "buy").label("buy_count"),
+            func.count().filter(DipVote.vote_type == "sell").label("sell_count"),
+            func.coalesce(
+                func.sum(DipVote.vote_weight).filter(DipVote.vote_type == "buy"), 0
+            ).label("buy_weighted"),
+            func.coalesce(
+                func.sum(DipVote.vote_weight).filter(DipVote.vote_type == "sell"), 0
+            ).label("sell_weighted"),
+        )
+        .where(DipVote.symbol.in_(normalized))
+        .group_by(DipVote.symbol)
+    )
+
+    counts: dict[str, dict] = {}
+    for row in result.all():
+        counts[row.symbol] = {
+            "buy": row.buy_count or 0,
+            "sell": row.sell_count or 0,
+            "buy_weighted": row.buy_weighted or 0,
+            "sell_weighted": row.sell_weighted or 0,
+            "net_score": (row.buy_weighted or 0) - (row.sell_weighted or 0),
+        }
     return counts
 
 
@@ -376,6 +414,12 @@ async def get_all_vote_counts() -> dict[str, dict]:
         return await get_all_vote_counts_with_session(session)
 
 
+async def get_vote_counts_for_symbols(symbols: Sequence[str]) -> dict[str, dict]:
+    """Get vote counts for a specific list of symbols."""
+    async with get_session() as session:
+        return await get_vote_counts_for_symbols_with_session(session, symbols)
+
+
 async def get_user_votes(fingerprint: str, limit: int = 50) -> list[dict]:
     """Get recent votes by a user."""
     async with get_session() as session:
@@ -445,4 +489,3 @@ async def delete_ai_analysis(symbol: str) -> bool:
         if deleted:
             logger.info(f"Deleted AI analysis for {symbol.upper()}")
         return deleted
-

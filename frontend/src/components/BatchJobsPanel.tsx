@@ -40,6 +40,7 @@ import {
   Trash2,
   StopCircle,
 } from 'lucide-react';
+import { DataTableControls } from '@/components/ui/data-table-controls';
 
 function getStatusBadge(status: BatchJobStatus) {
   switch (status) {
@@ -154,20 +155,24 @@ export function BatchJobsPanel() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [totalJobs, setTotalJobs] = useState(0);
 
   const loadJobs = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     try {
-      const response = await getBatchJobs(20, true);
+      const response = await getBatchJobs(pageSize, (currentPage - 1) * pageSize, true);
       setJobs(response.jobs);
       setActiveCount(response.active_count);
+      setTotalJobs(response.total);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load batch jobs');
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [currentPage, pageSize]);
 
   const handleCancel = useCallback(async (batchId: string) => {
     setActionLoading(batchId);
@@ -207,6 +212,19 @@ export function BatchJobsPanel() {
     
     return () => clearInterval(interval);
   }, [loadJobs, activeCount]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [pageSize]);
+
+  const totalPages = Math.ceil(totalJobs / pageSize);
+
+  useEffect(() => {
+    const maxPage = Math.max(1, Math.ceil(totalJobs / pageSize));
+    if (currentPage > maxPage) {
+      setCurrentPage(1);
+    }
+  }, [currentPage, pageSize, totalJobs]);
 
   return (
     <Card>
@@ -249,6 +267,16 @@ export function BatchJobsPanel() {
           )}
         </AnimatePresence>
 
+        <DataTableControls
+          currentPage={currentPage}
+          totalPages={totalPages}
+          totalItems={totalJobs}
+          pageSize={pageSize}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={setPageSize}
+          itemName="batch jobs"
+        />
+
         {/* Table */}
         {isLoading && jobs.length === 0 ? (
           <div className="space-y-3">
@@ -263,115 +291,219 @@ export function BatchJobsPanel() {
             <p className="text-sm mt-1">Batch jobs are created automatically by scheduled tasks</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Progress</TableHead>
-                  <TableHead>Cost</TableHead>
-                  <TableHead>Created</TableHead>
-                  <TableHead>Completed</TableHead>
-                  <TableHead className="w-[50px]">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                <AnimatePresence mode="popLayout">
-                  {jobs.map((job) => {
-                    const progressPct = job.total_requests > 0
-                      ? Math.round((job.completed_requests / job.total_requests) * 100)
-                      : 0;
-                    const isActive = ['pending', 'validating', 'in_progress', 'finalizing'].includes(job.status);
-                    
-                    return (
-                      <motion.tr
-                        key={job.id}
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0 }}
-                        className="border-b"
-                      >
-                        <TableCell>
-                          {getJobTypeBadge(job.job_type)}
-                        </TableCell>
-                        <TableCell>
-                          {getStatusBadge(job.status)}
-                        </TableCell>
-                        <TableCell className="min-w-[150px]">
-                          <div className="space-y-1">
-                            <Progress 
-                              value={progressPct} 
-                              className={`h-2 ${isActive ? 'animate-pulse' : ''}`}
-                            />
-                            <div className="text-xs text-muted-foreground">
-                              {job.completed_requests}/{job.total_requests}
-                              {job.failed_requests > 0 && (
-                                <span className="text-danger ml-1">
-                                  ({job.failed_requests} failed)
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </TableCell>
-                        <TableCell className="font-mono text-sm">
+          <>
+            <div className="space-y-4 md:hidden">
+              {jobs.map((job) => {
+                const progressPct = job.total_requests > 0
+                  ? Math.round((job.completed_requests / job.total_requests) * 100)
+                  : 0;
+                const isActive = ['pending', 'validating', 'in_progress', 'finalizing'].includes(job.status);
+
+                return (
+                  <motion.div
+                    key={job.id}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0 }}
+                    className="rounded-lg border bg-card p-4 space-y-3"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="space-y-2">
+                        {getJobTypeBadge(job.job_type)}
+                        {getStatusBadge(job.status)}
+                      </div>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button 
+                            variant="ghost" 
+                            size="sm"
+                            disabled={actionLoading === job.batch_id}
+                          >
+                            {actionLoading === job.batch_id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <MoreHorizontal className="h-4 w-4" />
+                            )}
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          {isActive && (
+                            <DropdownMenuItem 
+                              onClick={() => handleCancel(job.batch_id)}
+                              className="text-destructive focus:text-destructive"
+                            >
+                              <StopCircle className="h-4 w-4 mr-2" />
+                              Cancel Job
+                            </DropdownMenuItem>
+                          )}
+                          {!isActive && (
+                            <DropdownMenuItem 
+                              onClick={() => handleDelete(job.id, job.batch_id)}
+                              className="text-destructive focus:text-destructive"
+                            >
+                              <Trash2 className="h-4 w-4 mr-2" />
+                              Delete Job
+                            </DropdownMenuItem>
+                          )}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Progress 
+                        value={progressPct} 
+                        className={`h-2 ${isActive ? 'animate-pulse' : ''}`}
+                      />
+                      <div className="text-xs text-muted-foreground">
+                        {job.completed_requests}/{job.total_requests}
+                        {job.failed_requests > 0 && (
+                          <span className="text-danger ml-1">
+                            ({job.failed_requests} failed)
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+                      <div>
+                        <p className="uppercase tracking-wide text-[10px]">Cost</p>
+                        <p className="text-sm font-mono text-foreground">
                           {job.actual_cost_usd !== null 
                             ? formatCost(job.actual_cost_usd)
                             : job.estimated_cost_usd !== null 
-                              ? <span className="text-muted-foreground">~{formatCost(job.estimated_cost_usd)}</span>
+                              ? `~${formatCost(job.estimated_cost_usd)}`
                               : '—'
                           }
-                        </TableCell>
-                        <TableCell className="text-sm text-muted-foreground">
-                          {formatDate(job.created_at)}
-                        </TableCell>
-                        <TableCell className="text-sm text-muted-foreground">
-                          {formatDate(job.completed_at)}
-                        </TableCell>
-                        <TableCell>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button 
-                                variant="ghost" 
-                                size="sm"
-                                disabled={actionLoading === job.batch_id}
-                              >
-                                {actionLoading === job.batch_id ? (
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                ) : (
-                                  <MoreHorizontal className="h-4 w-4" />
+                        </p>
+                      </div>
+                      <div>
+                        <p className="uppercase tracking-wide text-[10px]">Created</p>
+                        <p className="text-sm text-foreground">{formatDate(job.created_at)}</p>
+                      </div>
+                      <div>
+                        <p className="uppercase tracking-wide text-[10px]">Completed</p>
+                        <p className="text-sm text-foreground">{formatDate(job.completed_at)}</p>
+                      </div>
+                      <div>
+                        <p className="uppercase tracking-wide text-[10px]">Requests</p>
+                        <p className="text-sm text-foreground">{job.total_requests}</p>
+                      </div>
+                    </div>
+                  </motion.div>
+                );
+              })}
+            </div>
+
+            <div className="hidden md:block overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Type</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Progress</TableHead>
+                    <TableHead>Cost</TableHead>
+                    <TableHead>Created</TableHead>
+                    <TableHead>Completed</TableHead>
+                    <TableHead className="w-[50px]">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  <AnimatePresence mode="popLayout">
+                    {jobs.map((job) => {
+                      const progressPct = job.total_requests > 0
+                        ? Math.round((job.completed_requests / job.total_requests) * 100)
+                        : 0;
+                      const isActive = ['pending', 'validating', 'in_progress', 'finalizing'].includes(job.status);
+                      
+                      return (
+                        <motion.tr
+                          key={job.id}
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0 }}
+                          className="border-b"
+                        >
+                          <TableCell>
+                            {getJobTypeBadge(job.job_type)}
+                          </TableCell>
+                          <TableCell>
+                            {getStatusBadge(job.status)}
+                          </TableCell>
+                          <TableCell className="min-w-[150px]">
+                            <div className="space-y-1">
+                              <Progress 
+                                value={progressPct} 
+                                className={`h-2 ${isActive ? 'animate-pulse' : ''}`}
+                              />
+                              <div className="text-xs text-muted-foreground">
+                                {job.completed_requests}/{job.total_requests}
+                                {job.failed_requests > 0 && (
+                                  <span className="text-danger ml-1">
+                                    ({job.failed_requests} failed)
+                                  </span>
                                 )}
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              {isActive && (
-                                <DropdownMenuItem 
-                                  onClick={() => handleCancel(job.batch_id)}
-                                  className="text-destructive focus:text-destructive"
+                              </div>
+                            </div>
+                          </TableCell>
+                          <TableCell className="font-mono text-sm">
+                            {job.actual_cost_usd !== null 
+                              ? formatCost(job.actual_cost_usd)
+                              : job.estimated_cost_usd !== null 
+                                ? <span className="text-muted-foreground">~{formatCost(job.estimated_cost_usd)}</span>
+                                : '—'
+                            }
+                          </TableCell>
+                          <TableCell className="text-sm text-muted-foreground">
+                            {formatDate(job.created_at)}
+                          </TableCell>
+                          <TableCell className="text-sm text-muted-foreground">
+                            {formatDate(job.completed_at)}
+                          </TableCell>
+                          <TableCell>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button 
+                                  variant="ghost" 
+                                  size="sm"
+                                  disabled={actionLoading === job.batch_id}
                                 >
-                                  <StopCircle className="h-4 w-4 mr-2" />
-                                  Cancel Job
-                                </DropdownMenuItem>
-                              )}
-                              {!isActive && (
-                                <DropdownMenuItem 
-                                  onClick={() => handleDelete(job.id, job.batch_id)}
-                                  className="text-destructive focus:text-destructive"
-                                >
-                                  <Trash2 className="h-4 w-4 mr-2" />
-                                  Delete Job
-                                </DropdownMenuItem>
-                              )}
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </TableCell>
-                      </motion.tr>
-                    );
-                  })}
-                </AnimatePresence>
-              </TableBody>
-            </Table>
-          </div>
+                                  {actionLoading === job.batch_id ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <MoreHorizontal className="h-4 w-4" />
+                                  )}
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                {isActive && (
+                                  <DropdownMenuItem 
+                                    onClick={() => handleCancel(job.batch_id)}
+                                    className="text-destructive focus:text-destructive"
+                                  >
+                                    <StopCircle className="h-4 w-4 mr-2" />
+                                    Cancel Job
+                                  </DropdownMenuItem>
+                                )}
+                                {!isActive && (
+                                  <DropdownMenuItem 
+                                    onClick={() => handleDelete(job.id, job.batch_id)}
+                                    className="text-destructive focus:text-destructive"
+                                  >
+                                    <Trash2 className="h-4 w-4 mr-2" />
+                                    Delete Job
+                                  </DropdownMenuItem>
+                                )}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </TableCell>
+                        </motion.tr>
+                      );
+                    })}
+                  </AnimatePresence>
+                </TableBody>
+              </Table>
+            </div>
+          </>
         )}
         
         {/* Info */}

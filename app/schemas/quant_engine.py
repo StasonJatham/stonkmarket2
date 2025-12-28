@@ -12,6 +12,56 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 # ============================================================================
+# Evidence Block for APUS + DOUS Scoring
+# ============================================================================
+
+
+class EvidenceBlockResponse(BaseModel):
+    """Complete evidence block for transparency and auditability."""
+    
+    model_config = ConfigDict(from_attributes=True)
+    
+    # Statistical validation
+    p_outperf: float = Field(0.0, description="P(edge > 0) from stationary bootstrap")
+    ci_low: float = Field(0.0, description="95% CI lower bound for edge")
+    ci_high: float = Field(0.0, description="95% CI upper bound for edge")
+    dsr: float = Field(0.0, description="Deflated Sharpe Ratio")
+    psr: float = Field(0.0, description="Probabilistic Sharpe Ratio")
+    
+    # Edge metrics
+    median_edge: float = Field(0.0, description="Median edge over benchmarks")
+    mean_edge: float = Field(0.0, description="Mean edge over benchmarks")
+    edge_vs_stock: float = Field(0.0, description="Edge vs buy-and-hold stock")
+    edge_vs_spy: float = Field(0.0, description="Edge vs SPY benchmark")
+    worst_regime_edge: float = Field(0.0, description="Worst edge across regimes")
+    cvar_5: float = Field(0.0, description="Conditional VaR at 5%")
+    
+    # Sharpe metrics
+    observed_sharpe: float = Field(0.0, description="Observed annualized Sharpe")
+    sr_max: float = Field(0.0, description="Expected max Sharpe under null")
+    n_effective: float = Field(1.0, description="Effective number of strategies")
+    
+    # Regime edges
+    edge_bull: float = Field(0.0, description="Edge in bull regime")
+    edge_bear: float = Field(0.0, description="Edge in bear regime")
+    edge_high_vol: float = Field(0.0, description="Edge in high volatility regime")
+    
+    # Stability
+    sharpe_degradation: float = Field(0.0, description="IS to OOS Sharpe degradation")
+    n_trades: int = Field(0, description="Number of trades")
+    
+    # Fundamental metrics
+    fund_mom: float = Field(0.0, description="Fundamental momentum score")
+    val_z: float = Field(0.0, description="Valuation z-score")
+    event_risk: bool = Field(False, description="Event risk flag (earnings/dividend)")
+    
+    # Dip metrics
+    p_recovery: float = Field(0.0, description="P(recovery within H days)")
+    expected_value: float = Field(0.0, description="Expected value of dip entry")
+    sector_relative: float = Field(0.0, description="Sector relative drawdown")
+
+
+# ============================================================================
 # Signal Scanner Schemas
 # ============================================================================
 
@@ -267,6 +317,13 @@ class QuantRecommendation(BaseModel):
     best_chance_score: float = Field(0.0, description="Composite best chance score 0-100")
     best_chance_reason: str | None = Field(None, description="Primary reason for the score")
     
+    # APUS + DOUS Dual-Mode Scoring
+    quant_mode: str | None = Field(None, description="Scoring mode: CERTIFIED_BUY or DIP_ENTRY")
+    quant_score_a: float | None = Field(None, description="Mode A (APUS) score 0-100")
+    quant_score_b: float | None = Field(None, description="Mode B (DOUS) score 0-100")
+    quant_gate_pass: bool = Field(False, description="Whether Mode A gate criteria passed")
+    quant_evidence: EvidenceBlockResponse | None = Field(None, description="Full evidence block for transparency")
+    
     # Domain-specific analysis (sector-aware analysis)
     domain_context: str | None = Field(None, description="Domain-specific interpretation of the dip")
     domain_adjustment: float | None = Field(None, description="Score adjustment from domain analysis (-1 to +1)")
@@ -317,5 +374,9 @@ class QuantEngineResponse(BaseModel):
     expected_portfolio_return: float = Field(0.0, description="Expected annual return")
     expected_portfolio_risk: float = Field(0.0, description="Expected annual volatility")
     audit: QuantAuditBlock = Field(..., description="Audit trail for transparency")
+    market_message: str | None = Field(
+        None, 
+        description="Market-wide message, e.g. 'No high-conviction opportunities today'"
+    )
 
 

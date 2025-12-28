@@ -242,6 +242,7 @@ async def get_suspicious_votes(
 )
 async def get_batch_jobs(
     limit: int = 20,
+    offset: int = 0,
     include_completed: bool = True,
     user: TokenData = Depends(require_admin),
 ) -> BatchJobListResponse:
@@ -249,18 +250,24 @@ async def get_batch_jobs(
     async with get_session() as session:
         # Build query based on filters
         if include_completed:
-            stmt = (
-                select(BatchJob)
-                .order_by(BatchJob.created_at.desc())
-                .limit(limit)
-            )
+            stmt = select(BatchJob)
+            count_stmt = select(func.count()).select_from(BatchJob)
         else:
-            stmt = (
-                select(BatchJob)
-                .where(BatchJob.status.notin_(["completed", "failed", "expired", "cancelled"]))
-                .order_by(BatchJob.created_at.desc())
-                .limit(limit)
+            stmt = select(BatchJob).where(
+                BatchJob.status.notin_(["completed", "failed", "expired", "cancelled"])
             )
+            count_stmt = select(func.count()).select_from(BatchJob).where(
+                BatchJob.status.notin_(["completed", "failed", "expired", "cancelled"])
+            )
+
+        total_result = await session.execute(count_stmt)
+        total = total_result.scalar() or 0
+
+        stmt = (
+            stmt.order_by(BatchJob.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+        )
 
         result = await session.execute(stmt)
         rows = result.scalars().all()
@@ -293,8 +300,10 @@ async def get_batch_jobs(
 
         return BatchJobListResponse(
             jobs=jobs,
-            total=len(jobs),
+            total=total,
             active_count=active_count,
+            limit=limit,
+            offset=offset,
         )
 
 

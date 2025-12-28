@@ -819,6 +819,10 @@ class StockFundamentals(Base):
     earnings_estimate_low: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
     earnings_estimate_avg: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
     earnings_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # Last earnings date
+    
+    # Dividend Calendar
+    dividend_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # Next dividend pay date
+    ex_dividend_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # Ex-dividend date
 
     # Domain Classification
     domain: Mapped[str | None] = mapped_column(String(20))  # bank, reit, insurer, utility, biotech, etf, stock
@@ -1148,6 +1152,7 @@ class StrategySignal(Base):
     vs_buy_hold_pct: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))  # Excess return
     vs_spy_pct: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     beats_buy_hold: Mapped[bool] = mapped_column(Boolean, default=False)
+    beats_spy: Mapped[bool] = mapped_column(Boolean, default=False)  # Strategy beats SPY benchmark
     
     # Fundamental status
     fundamentals_healthy: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -1198,6 +1203,72 @@ class SymbolIngestQueue(Base):
         CheckConstraint("status IN ('pending', 'processing', 'completed', 'failed')", name="ck_ingest_queue_status"),
         Index("idx_ingest_queue_status", "status"),
         Index("idx_ingest_queue_pending", "status", "queued_at", postgresql_where=text("status = 'pending'")),
+    )
+
+
+# =============================================================================
+# QUANT SCORES (APUS + DOUS Daily Scoring)
+# =============================================================================
+
+
+class QuantScore(Base):
+    """
+    Daily dual-mode scoring results for each symbol.
+    
+    Implements the APUS (Certified Buy) + DOUS (Dip Entry) scoring pipeline.
+    Persisted for auditability and historical tracking.
+    """
+    __tablename__ = "quant_scores"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(20), nullable=False)
+    
+    # Final score and mode
+    best_score: Mapped[Decimal] = mapped_column(Numeric(6, 2), nullable=False)  # 0-100
+    mode: Mapped[str] = mapped_column(String(20), nullable=False)  # CERTIFIED_BUY or DIP_ENTRY
+    score_a: Mapped[Decimal | None] = mapped_column(Numeric(6, 2))  # Mode A score
+    score_b: Mapped[Decimal | None] = mapped_column(Numeric(6, 2))  # Mode B score
+    gate_pass: Mapped[bool] = mapped_column(Boolean, default=False)  # Did Mode A gate pass?
+    
+    # Statistical validation (Mode A)
+    p_outperf: Mapped[Decimal | None] = mapped_column(Numeric(6, 4))  # P(edge > 0)
+    ci_low: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))  # 95% CI lower bound
+    ci_high: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))  # 95% CI upper bound
+    dsr: Mapped[Decimal | None] = mapped_column(Numeric(6, 4))  # Deflated Sharpe Ratio
+    
+    # Edge metrics
+    median_edge: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    edge_vs_stock: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    edge_vs_spy: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    worst_regime_edge: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    cvar_5: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))  # CVaR at 5%
+    
+    # Fundamental metrics (Mode B)
+    fund_mom: Mapped[Decimal | None] = mapped_column(Numeric(6, 4))  # Fundamental momentum z
+    val_z: Mapped[Decimal | None] = mapped_column(Numeric(6, 4))  # Valuation z-score
+    event_risk: Mapped[bool] = mapped_column(Boolean, default=False)  # Earnings/dividend within 7 days
+    
+    # Dip metrics (Mode B)
+    p_recovery: Mapped[Decimal | None] = mapped_column(Numeric(6, 4))  # P(recovery within H days)
+    expected_value: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))  # EV of dip entry
+    sector_relative: Mapped[Decimal | None] = mapped_column(Numeric(6, 4))  # Sector relative drawdown
+    
+    # Metadata
+    config_hash: Mapped[str] = mapped_column(String(64), nullable=False)  # Hash of scoring config
+    scoring_version: Mapped[str] = mapped_column(String(20), nullable=False)  # e.g., "1.0.0"
+    data_start: Mapped[date] = mapped_column(Date, nullable=False)  # Start of data used
+    data_end: Mapped[date] = mapped_column(Date, nullable=False)  # End of data used
+    computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    
+    # Full evidence block (JSONB for flexibility)
+    evidence: Mapped[dict | None] = mapped_column(JSONB)
+
+    __table_args__ = (
+        UniqueConstraint("symbol", name="uq_quant_scores_symbol"),
+        Index("idx_quant_scores_symbol", "symbol"),
+        Index("idx_quant_scores_symbol_date", "symbol", "computed_at"),
+        Index("idx_quant_scores_latest", "symbol", "computed_at", postgresql_using="btree"),
+        Index("idx_quant_scores_best_score", "best_score", postgresql_ops={"best_score": "DESC"}),
     )
 
 

@@ -205,50 +205,96 @@ function FeaturedStockCard({
 
           {/* Quant metrics */}
           <div className="grid grid-cols-3 gap-2 text-sm">
+            {/* Quant Mode & Score */}
             <div className="text-center">
               <UITooltip>
                 <TooltipTrigger asChild>
                   <p className="text-muted-foreground text-xs inline-flex items-center gap-0.5 cursor-help">
-                    μ̂ (E[R]) <HelpCircle className="h-3 w-3" />
+                    {rec.quant_mode === 'CERTIFIED_BUY' ? 'Certified' : rec.quant_mode === 'DIP_ENTRY' ? 'Dip Entry' : 'μ̂ (E[R])'} <HelpCircle className="h-3 w-3" />
                   </p>
                 </TooltipTrigger>
                 <TooltipContent className="max-w-xs">
-                  <p>Expected return (μ̂) from Bayesian posterior estimation. Higher values indicate higher expected returns.</p>
+                  {rec.quant_mode === 'CERTIFIED_BUY' ? (
+                    <p>CERTIFIED BUY (APUS): Passed statistical validation gate. P(outperf) ≥ 75%, CI &gt; 0, DSR ≥ 0.50</p>
+                  ) : rec.quant_mode === 'DIP_ENTRY' ? (
+                    <p>DIP ENTRY (DOUS): Alternative scoring via fundamentals, recovery probability, and valuation.</p>
+                  ) : (
+                    <p>Expected return (μ̂) from Bayesian posterior estimation. Higher values indicate higher expected returns.</p>
+                  )}
                 </TooltipContent>
               </UITooltip>
-              <p className={`font-mono font-medium ${rec.mu_hat >= 0 ? 'text-success' : 'text-danger'}`}>
-                {rec.mu_hat > 0 ? '+' : ''}{(rec.mu_hat * 100).toFixed(2)}%
-              </p>
+              {rec.quant_mode ? (
+                <p className={`font-mono font-bold ${rec.quant_mode === 'CERTIFIED_BUY' ? 'text-success' : 'text-amber-500'}`}>
+                  {((rec.quant_mode === 'CERTIFIED_BUY' ? rec.quant_score_a : rec.quant_score_b) ?? 0).toFixed(0)}
+                </p>
+              ) : (
+                <p className={`font-mono font-medium ${rec.mu_hat >= 0 ? 'text-success' : 'text-danger'}`}>
+                  {rec.mu_hat > 0 ? '+' : ''}{(rec.mu_hat * 100).toFixed(2)}%
+                </p>
+              )}
             </div>
+            {/* P(outperf) or P(recovery) */}
             <div className="text-center">
               <UITooltip>
                 <TooltipTrigger asChild>
                   <p className="text-muted-foreground text-xs inline-flex items-center gap-0.5 cursor-help">
-                    Dip Score <HelpCircle className="h-3 w-3" />
+                    {rec.quant_evidence ? (rec.quant_mode === 'CERTIFIED_BUY' ? 'P(edge)' : 'P(rec)') : 'Dip Score'} <HelpCircle className="h-3 w-3" />
                   </p>
                 </TooltipTrigger>
                 <TooltipContent className="max-w-xs">
-                  <p>Dip quality score (0-1). Higher scores indicate deeper, more potentially attractive dips for value investing.</p>
+                  {rec.quant_evidence ? (
+                    rec.quant_mode === 'CERTIFIED_BUY' ? (
+                      <p>Probability of outperformance from stationary bootstrap. {(rec.quant_evidence.p_outperf * 100).toFixed(0)}% of bootstrap samples beat benchmarks.</p>
+                    ) : (
+                      <p>Probability of recovery within holding period based on historical dip analysis.</p>
+                    )
+                  ) : (
+                    <p>Dip quality score (0-1). Higher scores indicate deeper, more potentially attractive dips for value investing.</p>
+                  )}
                 </TooltipContent>
               </UITooltip>
-              <p className={`font-mono font-medium ${(rec.dip_score ?? 0) > 0.5 ? 'text-success' : 'text-muted-foreground'}`}>
-                {rec.dip_score !== null ? (rec.dip_score * 100).toFixed(0) : 'N/A'}
-              </p>
+              {rec.quant_evidence ? (
+                <p className={`font-mono font-medium ${(rec.quant_mode === 'CERTIFIED_BUY' ? rec.quant_evidence.p_outperf : rec.quant_evidence.p_recovery) >= 0.6 ? 'text-success' : 'text-muted-foreground'}`}>
+                  {((rec.quant_mode === 'CERTIFIED_BUY' ? rec.quant_evidence.p_outperf : rec.quant_evidence.p_recovery) * 100).toFixed(0)}%
+                </p>
+              ) : (
+                <p className={`font-mono font-medium ${(rec.dip_score ?? 0) > 0.5 ? 'text-success' : 'text-muted-foreground'}`}>
+                  {rec.dip_score !== null ? (rec.dip_score * 100).toFixed(0) : 'N/A'}
+                </p>
+              )}
             </div>
+            {/* DSR or EV */}
             <div className="text-center">
               <UITooltip>
                 <TooltipTrigger asChild>
                   <p className="text-muted-foreground text-xs inline-flex items-center gap-0.5 cursor-help">
-                    Utility <HelpCircle className="h-3 w-3" />
+                    {rec.quant_evidence ? (rec.quant_mode === 'CERTIFIED_BUY' ? 'DSR' : 'EV') : 'Utility'} <HelpCircle className="h-3 w-3" />
                   </p>
                 </TooltipTrigger>
                 <TooltipContent className="max-w-xs">
-                  <p>Marginal portfolio utility - the optimizer's ranking signal for risk-adjusted allocation.</p>
+                  {rec.quant_evidence ? (
+                    rec.quant_mode === 'CERTIFIED_BUY' ? (
+                      <p>Deflated Sharpe Ratio - adjusts for multiple testing. DSR ≥ 0.50 required for certification.</p>
+                    ) : (
+                      <p>Expected value of dip entry = P(rec) × avg_up - (1-P(rec)) × avg_down</p>
+                    )
+                  ) : (
+                    <p>Marginal portfolio utility - the optimizer's ranking signal for risk-adjusted allocation.</p>
+                  )}
                 </TooltipContent>
               </UITooltip>
-              <p className={`font-mono font-medium ${rec.marginal_utility >= 0 ? 'text-success' : 'text-danger'}`}>
-                {(rec.marginal_utility * 1000).toFixed(2)}
-              </p>
+              {rec.quant_evidence ? (
+                <p className={`font-mono font-medium ${(rec.quant_mode === 'CERTIFIED_BUY' ? rec.quant_evidence.dsr >= 0.5 : rec.quant_evidence.expected_value > 0) ? 'text-success' : 'text-muted-foreground'}`}>
+                  {rec.quant_mode === 'CERTIFIED_BUY' 
+                    ? rec.quant_evidence.dsr.toFixed(2)
+                    : `${rec.quant_evidence.expected_value > 0 ? '+' : ''}${(rec.quant_evidence.expected_value * 100).toFixed(1)}%`
+                  }
+                </p>
+              ) : (
+                <p className={`font-mono font-medium ${rec.marginal_utility >= 0 ? 'text-success' : 'text-danger'}`}>
+                  {(rec.marginal_utility * 1000).toFixed(2)}
+                </p>
+              )}
             </div>
           </div>
         </CardContent>

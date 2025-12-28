@@ -221,6 +221,8 @@ class BatchJobListResponse(BaseModel):
     jobs: list[BatchJobResponse]
     total: int
     active_count: int = Field(default=0, description="Number of actively processing jobs")
+    limit: int = Field(default=20, description="Items per page")
+    offset: int = Field(default=0, description="Pagination offset")
 
 
 # Settings Change History schemas

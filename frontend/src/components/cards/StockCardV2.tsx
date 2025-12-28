@@ -121,6 +121,26 @@ export interface StockCardData {
   mu_hat?: number; // Expected return
   uncertainty?: number;
   marginal_utility?: number;
+  
+  // APUS + DOUS Dual-Mode Scoring
+  quant_mode?: 'CERTIFIED_BUY' | 'DIP_ENTRY' | null;
+  quant_score_a?: number | null;  // Mode A (APUS) score 0-100
+  quant_score_b?: number | null;  // Mode B (DOUS) score 0-100
+  quant_gate_pass?: boolean;
+  quant_evidence?: {
+    p_outperf: number;
+    ci_low: number;
+    ci_high: number;
+    dsr: number;
+    median_edge: number;
+    worst_regime_edge: number;
+    cvar_5: number;
+    fund_mom: number;
+    val_z: number;
+    event_risk: boolean;
+    p_recovery: number;
+    expected_value: number;
+  } | null;
 }
 
 interface StockCardV2Props {
@@ -379,6 +399,89 @@ interface DipContextProps {
   dipVsTypical?: number | null;
   isUnusualDip?: boolean;
   winRate?: number | null;
+}
+
+// ============================================================================
+// Quant Mode Badge Component
+// ============================================================================
+
+interface QuantModeBadgeProps {
+  mode: 'CERTIFIED_BUY' | 'DIP_ENTRY' | null | undefined;
+  scoreA: number | null | undefined;
+  scoreB: number | null | undefined;
+  gatePass: boolean | undefined;
+  evidence: StockCardData['quant_evidence'];
+}
+
+function QuantModeBadge({ mode, scoreA, scoreB, gatePass, evidence }: QuantModeBadgeProps) {
+  if (!mode) return null;
+  
+  const isCertified = mode === 'CERTIFIED_BUY';
+  const score = isCertified ? scoreA : scoreB;
+  
+  // Build detailed tooltip
+  let tooltipLines: string[] = [];
+  
+  if (isCertified) {
+    tooltipLines.push('✓ Mode A: CERTIFIED BUY (APUS)');
+    tooltipLines.push(gatePass ? 'Statistical validation gate PASSED' : 'Gate check in progress');
+  } else {
+    tooltipLines.push('Mode B: DIP ENTRY (DOUS)');
+    tooltipLines.push(gatePass === false ? 'Mode A gate not passed' : 'Alternative scoring via fundamentals');
+  }
+  
+  if (score !== null && score !== undefined) {
+    tooltipLines.push(`Score: ${score.toFixed(0)}/100`);
+  }
+  
+  if (evidence) {
+    if (isCertified) {
+      tooltipLines.push(`P(outperf): ${(evidence.p_outperf * 100).toFixed(0)}%`);
+      tooltipLines.push(`95% CI: [${(evidence.ci_low * 100).toFixed(1)}%, ${(evidence.ci_high * 100).toFixed(1)}%]`);
+      tooltipLines.push(`DSR: ${evidence.dsr.toFixed(2)}`);
+      if (evidence.median_edge !== 0) {
+        tooltipLines.push(`Median edge: ${(evidence.median_edge * 100).toFixed(2)}%`);
+      }
+    } else {
+      tooltipLines.push(`P(recovery): ${(evidence.p_recovery * 100).toFixed(0)}%`);
+      tooltipLines.push(`Expected value: ${(evidence.expected_value * 100).toFixed(2)}%`);
+      tooltipLines.push(`Fund momentum: ${(evidence.fund_mom * 100).toFixed(0)}%`);
+      if (evidence.event_risk) {
+        tooltipLines.push('⚠️ Event risk (earnings/dividend within 7d)');
+      }
+    }
+  }
+  
+  const tooltipContent = tooltipLines.join('\n');
+  
+  return (
+    <InfoTooltip content={tooltipContent}>
+      <Badge
+        variant={isCertified ? 'default' : 'secondary'}
+        className={cn(
+          'gap-1 text-[10px] px-1.5 py-0 h-5 cursor-help font-semibold',
+          isCertified 
+            ? 'bg-emerald-500/20 text-emerald-600 hover:bg-emerald-500/30 border-emerald-500/30' 
+            : 'bg-amber-500/20 text-amber-600 hover:bg-amber-500/30 border-amber-500/30'
+        )}
+      >
+        {isCertified ? (
+          <>
+            <Target className="h-3 w-3" />
+            CERTIFIED
+          </>
+        ) : (
+          <>
+            <TrendingDown className="h-3 w-3" />
+            DIP ENTRY
+          </>
+        )}
+        {score !== null && score !== undefined && (
+          <span className="ml-0.5 font-mono">{score.toFixed(0)}</span>
+        )}
+      </Badge>
+    </InfoTooltip>
+  );
 }
 
 function DipContext({ 
@@ -640,6 +743,17 @@ export const StockCardV2 = memo(function StockCardV2({
           
           {/* Signals Row - only show unique info not shown elsewhere */}
           <div className="flex items-center gap-2 mt-2">
+            {/* Quant Mode Badge - show CERTIFIED_BUY or DIP_ENTRY */}
+            {stock.quant_mode && (
+              <QuantModeBadge
+                mode={stock.quant_mode}
+                scoreA={stock.quant_score_a}
+                scoreB={stock.quant_score_b}
+                gatePass={stock.quant_gate_pass}
+                evidence={stock.quant_evidence}
+              />
+            )}
+            
             {/* Technical Signal with description */}
             {stock.top_signal && <SignalBadge signal={stock.top_signal} />}
             

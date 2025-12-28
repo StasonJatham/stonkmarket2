@@ -7,7 +7,7 @@ import {
   updateSuggestion,
   refreshSuggestionData,
   retrySuggestionFetch,
-  getTaskStatus,
+  getTaskStatuses,
   getRuntimeSettings,
   updateRuntimeSettings,
   getCronJobs,
@@ -147,6 +147,7 @@ function getFetchStatusBadge(fetchStatus: string | null) {
 export function SuggestionManager() {
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<SuggestionStatus | 'all'>('pending');
   const [page, setPage] = useState(1);
@@ -172,11 +173,16 @@ export function SuggestionManager() {
   const [savedAutoApproveVotes, setSavedAutoApproveVotes] = useState(10);
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const initialLoad = useRef(true);
 
   const pageSize = 15;
 
   const loadSuggestions = useCallback(async () => {
-    setIsLoading(true);
+    if (initialLoad.current) {
+      setIsLoading(true);
+    } else {
+      setIsRefreshing(true);
+    }
     setError(null);
     try {
       const status = statusFilter === 'all' ? undefined : statusFilter;
@@ -187,7 +193,11 @@ export function SuggestionManager() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load suggestions');
     } finally {
-      setIsLoading(false);
+      if (initialLoad.current) {
+        setIsLoading(false);
+        initialLoad.current = false;
+      }
+      setIsRefreshing(false);
     }
   }, [statusFilter, page]);
 
@@ -277,31 +287,25 @@ export function SuggestionManager() {
     let cancelled = false;
 
     const pollTaskStatuses = async () => {
-      const updates = await Promise.all(
-        activeTaskIds.map(async (taskId) => {
-          try {
-            return await getTaskStatus(taskId);
-          } catch {
-            return null;
-          }
-        })
-      );
+      let updates: TaskStatus[] = [];
+      try {
+        updates = await getTaskStatuses(activeTaskIds);
+      } catch {
+        updates = [];
+      }
 
       if (cancelled) return;
 
       setTaskStatuses((prev) => {
         const next = { ...prev };
         updates.forEach((status) => {
-          if (status) {
-            next[status.task_id] = status;
-          }
+          next[status.task_id] = status;
         });
         return next;
       });
 
-      const hasFinished = updates.some(
-        (status) =>
-          status && ['SUCCESS', 'FAILURE', 'REVOKED'].includes(status.status)
+      const hasFinished = updates.some((status) =>
+        ['SUCCESS', 'FAILURE', 'REVOKED'].includes(status.status)
       );
       if (hasFinished) {
         loadSuggestions();
@@ -474,6 +478,12 @@ export function SuggestionManager() {
             </CardDescription>
           </div>
           <div className="flex items-center gap-2">
+            {isRefreshing && (
+              <Badge variant="outline" className="text-muted-foreground">
+                <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                Refreshing
+              </Badge>
+            )}
             <Select 
               value={statusFilter} 
               onValueChange={(v) => setStatusFilter(v as SuggestionStatus | 'all')}
@@ -488,8 +498,8 @@ export function SuggestionManager() {
                 <SelectItem value="rejected">Rejected</SelectItem>
               </SelectContent>
             </Select>
-            <Button variant="outline" size="icon" onClick={loadSuggestions} disabled={isLoading}>
-              <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+            <Button variant="outline" size="icon" onClick={loadSuggestions} disabled={isLoading || isRefreshing}>
+              <RefreshCw className={`h-4 w-4 ${(isLoading || isRefreshing) ? 'animate-spin' : ''}`} />
             </Button>
           </div>
         </div>

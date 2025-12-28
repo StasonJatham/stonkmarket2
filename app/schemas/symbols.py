@@ -66,3 +66,12 @@ class SymbolResponse(BaseModel):
     task_id: str | None = Field(None, description="Celery task id")
 
     model_config = {"from_attributes": True}
+
+
+class SymbolListResponse(BaseModel):
+    """Paginated symbol list response."""
+
+    items: list[SymbolResponse]
+    total: int
+    limit: int
+    offset: int

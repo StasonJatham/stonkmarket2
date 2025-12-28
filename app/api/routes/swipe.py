@@ -62,9 +62,16 @@ async def get_dip_cards(
     exclude_voted: bool = Query(
         False, description="Exclude cards the user has already voted on"
     ),
+    limit: int | None = Query(None, ge=1, le=200, description="Max cards to return"),
+    offset: int = Query(0, ge=0, description="Pagination offset"),
+    search: str | None = Query(None, min_length=1, max_length=50, description="Search by symbol/name/sector"),
 ) -> DipCardList:
     """Get all current dips as swipeable cards."""
-    cards = await swipe.get_all_dip_cards(include_ai=False)
+    cards, total = await swipe.get_dip_cards_page(
+        limit=limit,
+        offset=offset,
+        search=search,
+    )
 
     if include_ai:
         refreshed_cards = []
@@ -87,10 +94,11 @@ async def get_dip_cards(
             if vote:
                 voted_symbols.add(c.symbol)
         cards = [c for c in cards if c.symbol not in voted_symbols]
+        total = len(cards)
 
     return DipCardList(
         cards=cards,
-        total=len(cards),
+        total=total,
     )
 
 

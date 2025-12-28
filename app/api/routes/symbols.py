@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from fastapi import APIRouter, Depends, Path, Query, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 
 from app.api.dependencies import require_admin, require_user
 from app.cache.cache import Cache
@@ -12,9 +13,9 @@ from app.celery_app import celery_app
 from app.core.exceptions import ConflictError, NotFoundError
 from app.core.logging import get_logger
 from app.core.security import TokenData
-from app.database import AIPersona, get_session
+from app.database import AIPersona, Symbol, get_session
 from app.repositories import symbols_orm as symbol_repo
-from app.schemas.symbols import SymbolCreate, SymbolResponse, SymbolUpdate
+from app.schemas.symbols import SymbolCreate, SymbolListResponse, SymbolResponse, SymbolUpdate
 from app.services.stock_info import get_stock_info
 
 
@@ -431,8 +432,6 @@ async def get_symbol_fundamentals(
 async def list_symbols() -> list[SymbolResponse]:
     """List all tracked symbols (public endpoint for signals page)."""
     symbols = await symbol_repo.list_symbols()
-    import asyncio
-
     from app.services.task_tracking import get_symbol_task
     task_ids = await asyncio.gather(
         *(get_symbol_task(s.symbol) for s in symbols)
@@ -449,6 +448,68 @@ async def list_symbols() -> list[SymbolResponse]:
         )
         for index, s in enumerate(symbols)
     ]
+
+
+@router.get(
+    "/paged",
+    response_model=SymbolListResponse,
+    summary="List symbols (paginated)",
+    description="Get tracked symbols with pagination and search (admin-friendly).",
+)
+async def list_symbols_paged(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    search: str | None = Query(None, min_length=1, max_length=50),
+) -> SymbolListResponse:
+    """List tracked symbols with pagination for admin UI."""
+    from app.database.orm import Symbol as SymbolORM
+
+    async with get_session() as session:
+        stmt = select(SymbolORM).where(SymbolORM.is_active == True)
+        if search:
+            term = f"%{search.strip()}%"
+            stmt = stmt.where(
+                or_(
+                    SymbolORM.symbol.ilike(term),
+                    SymbolORM.name.ilike(term),
+                )
+            )
+
+        total_result = await session.execute(
+            select(func.count()).select_from(stmt.subquery())
+        )
+        total = total_result.scalar() or 0
+
+        result = await session.execute(
+            stmt.order_by(SymbolORM.symbol).offset(offset).limit(limit)
+        )
+        symbols = result.scalars().all()
+
+    from app.services.task_tracking import get_symbol_task
+
+    task_ids = await asyncio.gather(
+        *(get_symbol_task(s.symbol) for s in symbols)
+    )
+
+    items = [
+        SymbolResponse(
+            symbol=s.symbol,
+            min_dip_pct=s.min_dip_pct,
+            min_days=s.min_days,
+            name=s.name,
+            fetch_status=s.fetch_status,
+            fetch_error=s.fetch_error,
+            task_id=task_ids[index],
+        )
+        for index, s in enumerate(symbols)
+    ]
+
+    return SymbolListResponse(
+        items=items,
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.get(

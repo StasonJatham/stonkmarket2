@@ -427,8 +427,9 @@ async def get_recommendations(
     from app.repositories import dipfinder_orm as dipfinder_repo
     from sqlalchemy import select
     from app.database.connection import get_session
-    from app.database.orm import StrategySignal
+    from app.database.orm import StrategySignal, QuantScore
     from app.cache.cache import Cache
+    from app.schemas.quant_engine import EvidenceBlockResponse
     
     # Check cache first (5 minute TTL)
     cache = Cache(prefix="recommendations", default_ttl=300)
@@ -475,16 +476,23 @@ async def get_recommendations(
         if sig.ticker not in dipfinder_map:
             dipfinder_map[sig.ticker] = sig
     
-    # Get pre-computed strategy signals from database (NOT computed per-request)
+    # Get pre-computed strategy signals and quant scores from database
     strategy_map: dict[str, Any] = {}
+    quant_score_map: dict[str, Any] = {}
     try:
         async with get_session() as session:
             result = await session.execute(select(StrategySignal))
             strategy_signals = result.scalars().all()
             for sig in strategy_signals:
                 strategy_map[sig.symbol] = sig
+            
+            # Load quant scores (APUS + DOUS)
+            result = await session.execute(select(QuantScore))
+            quant_scores = result.scalars().all()
+            for qs in quant_scores:
+                quant_score_map[qs.symbol] = qs
     except Exception as e:
-        logger.warning(f"Failed to fetch strategy signals: {e}")
+        logger.warning(f"Failed to fetch strategy signals or quant scores: {e}")
     
     # Build recommendations from pre-computed data
     symbol_names = {s.symbol: s.name or s.symbol for s in symbols}
@@ -499,6 +507,7 @@ async def get_recommendations(
         ai = ai_map.get(symbol)
         dipfinder = dipfinder_map.get(symbol)
         strategy = strategy_map.get(symbol)
+        quant_score = quant_score_map.get(symbol)
         name = symbol_names.get(symbol, symbol)
         sector = symbol_sector_map.get(symbol)
         market_cap = symbol_mcap_map.get(symbol)
@@ -515,6 +524,7 @@ async def get_recommendations(
         
         # Extract strategy signal data (pre-computed, NOT computed per-request)
         strategy_beats_bh = False
+        strategy_beats_spy = False
         strategy_signal_type = None
         strategy_win_rate_val = None
         strategy_vs_bh_pct = None
@@ -528,6 +538,7 @@ async def get_recommendations(
                 strategy_signal_type = strategy.signal_type
                 strategy_vs_bh_pct = float(strategy.vs_buy_hold_pct) if strategy.vs_buy_hold_pct else None
                 strategy_beats_bh = strategy.beats_buy_hold
+                strategy_beats_spy = getattr(strategy, 'beats_spy', False) or False
                 strategy_win_rate_val = float(strategy.win_rate) if strategy.win_rate else None
                 win_rate = float(strategy.win_rate) / 100 if strategy.win_rate else None  # Convert from pct
                 strategy_n_trades = strategy.n_trades if strategy.n_trades else 0
@@ -564,17 +575,18 @@ async def get_recommendations(
         MIN_TRADES = 5
         has_enough_trades = strategy_n_trades is not None and strategy_n_trades >= MIN_TRADES
         
-        # QUALITY GATE: Only BUY if strategy is PROVEN to beat buy-and-hold
+        # QUALITY GATE: Only BUY if strategy beats BOTH buy-and-hold AND SPY benchmark
         # AND has enough trades for statistical validity
-        # Removed: win_rate >= 55% without beats_buy_hold - that's not enough evidence
-        if strategy_beats_bh and strategy_signal_type == "BUY" and has_enough_trades:
+        # Must beat SPY because otherwise just buy SPY index fund
+        beats_benchmarks = strategy_beats_bh and strategy_beats_spy
+        if beats_benchmarks and strategy_signal_type == "BUY" and has_enough_trades:
             action = "BUY"
             buy_score = 80.0
         # Note: We no longer give BUY based on dip_pct or win_rate alone - that's not math-backed
         
         # Simple expected return estimate - ONLY from proven strategies
         mu_hat = 0.0
-        if strategy_beats_bh and strategy_vs_bh_pct:
+        if beats_benchmarks and strategy_vs_bh_pct:
             mu_hat = strategy_vs_bh_pct / 100
         # Note: No longer estimating returns from dip_pct alone - that's not proven
         
@@ -587,10 +599,10 @@ async def get_recommendations(
         best_chance_score = 0.0
         best_chance_reasons = []
         
-        # Primary factor: Strategy beats buy-and-hold (proven)
-        if strategy_beats_bh:
+        # Primary factor: Strategy beats BOTH buy-and-hold AND SPY (proven)
+        if beats_benchmarks:
             best_chance_score += 40
-            best_chance_reasons.append("Strategy beats B&H")
+            best_chance_reasons.append("Beats B&H + SPY")
             if strategy_vs_bh_pct and strategy_vs_bh_pct > 10:
                 best_chance_score += min(strategy_vs_bh_pct / 2, 20)
                 best_chance_reasons.append(f"+{strategy_vs_bh_pct:.0f}% vs B&H")
@@ -613,6 +625,60 @@ async def get_recommendations(
         if ai_rating in ("strong_buy", "buy") and best_chance_score > 30:
             best_chance_score += 5
             best_chance_reasons.append(f"AI: {ai_rating}")
+        
+        # NEW: Override best_chance_score with quant_score if available
+        # The quant_score is computed using stationary bootstrap and deflated Sharpe
+        quant_mode = None
+        quant_score_a = None
+        quant_score_b = None
+        quant_gate_pass = False
+        evidence_response = None
+        
+        if quant_score:
+            # Use the pre-computed quant score as the primary ranking metric
+            best_chance_score = float(quant_score.best_score)
+            quant_mode = quant_score.mode
+            quant_score_a = float(quant_score.score_a) if quant_score.score_a else None
+            quant_score_b = float(quant_score.score_b) if quant_score.score_b else None
+            quant_gate_pass = quant_score.gate_pass
+            
+            # Build evidence block from stored data
+            if quant_score.evidence:
+                evidence_response = EvidenceBlockResponse(**quant_score.evidence)
+            else:
+                # Build from individual columns if JSONB is missing
+                evidence_response = EvidenceBlockResponse(
+                    p_outperf=float(quant_score.p_outperf or 0),
+                    ci_low=float(quant_score.ci_low or 0),
+                    ci_high=float(quant_score.ci_high or 0),
+                    dsr=float(quant_score.dsr or 0),
+                    median_edge=float(quant_score.median_edge or 0),
+                    edge_vs_stock=float(quant_score.edge_vs_stock or 0),
+                    edge_vs_spy=float(quant_score.edge_vs_spy or 0),
+                    worst_regime_edge=float(quant_score.worst_regime_edge or 0),
+                    cvar_5=float(quant_score.cvar_5 or 0),
+                    fund_mom=float(quant_score.fund_mom or 0),
+                    val_z=float(quant_score.val_z or 0),
+                    event_risk=quant_score.event_risk or False,
+                    p_recovery=float(quant_score.p_recovery or 0),
+                    expected_value=float(quant_score.expected_value or 0),
+                    sector_relative=float(quant_score.sector_relative or 0),
+                )
+            
+            # Update best_chance_reasons with quant mode
+            if quant_gate_pass:
+                best_chance_reasons = [f"Mode A: {best_chance_score:.0f}"]
+                if evidence_response and evidence_response.p_outperf >= 0.75:
+                    best_chance_reasons.append(f"P(edge>0)={evidence_response.p_outperf:.0%}")
+            else:
+                best_chance_reasons = [f"Mode B: {best_chance_score:.0f}"]
+                if evidence_response and evidence_response.p_recovery > 0.5:
+                    best_chance_reasons.append(f"P(rec)={evidence_response.p_recovery:.0%}")
+            
+            # Upgrade action based on quant gate
+            if quant_gate_pass and quant_score.best_score >= 70:
+                action = "BUY"
+                buy_score = float(quant_score.best_score)
         
         best_chance_score = max(0, min(100, best_chance_score))
         
@@ -659,6 +725,12 @@ async def get_recommendations(
             strategy_vs_bh_pct=strategy_vs_bh_pct,
             best_chance_score=best_chance_score,
             best_chance_reason=" • ".join(best_chance_reasons[:3]) if best_chance_reasons else None,
+            # APUS + DOUS Dual-Mode Scoring
+            quant_mode=quant_mode,
+            quant_score_a=quant_score_a,
+            quant_score_b=quant_score_b,
+            quant_gate_pass=quant_gate_pass,
+            quant_evidence=evidence_response,
         ))
     
     # Sort by best_chance_score
@@ -666,7 +738,30 @@ async def get_recommendations(
     recommendations = recommendations[:limit]
     
     buy_count = sum(1 for r in recommendations if r.action == "BUY")
+    high_conviction_count = sum(1 for r in recommendations if r.best_chance_score >= 60)
     avg_mu_hat = sum(r.mu_hat for r in recommendations) / len(recommendations) if recommendations else 0
+    
+    # Generate market message based on opportunity quality
+    # Count Mode A (certified) vs Mode B (dip entry) recommendations
+    certified_count = sum(1 for r in recommendations if r.quant_gate_pass)
+    dip_entry_count = sum(1 for r in recommendations if r.quant_mode == "DIP_ENTRY")
+    top_score = recommendations[0].best_chance_score if recommendations else 0
+    
+    market_message = None
+    if top_score < 70:
+        # No certified opportunity today
+        market_message = "No certified opportunity today. Top score is {:.0f}/100.".format(top_score)
+    elif certified_count == 0:
+        if dip_entry_count > 0:
+            market_message = f"No certified buys (Mode A), but {dip_entry_count} dip entry opportunities (Mode B) available."
+        else:
+            market_message = "No high-conviction opportunities today. All strategies fail to beat both B&H and SPY benchmarks."
+    elif certified_count < 3:
+        market_message = f"Limited opportunities: {certified_count} certified buy(s) meet all quality criteria."
+    
+    # Legacy fallback for when quant_scores are not yet computed
+    if not quant_score_map and buy_count == 0:
+        market_message = "No BUY signals today. Quant scoring job has not run yet."
     
     response = QuantEngineResponse(
         recommendations=recommendations,
@@ -683,6 +778,7 @@ async def get_recommendations(
             optimizer_status="success",
             regime_state="unknown",
         ),
+        market_message=market_message,
     )
     
     # Cache the response

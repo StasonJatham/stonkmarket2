@@ -1777,9 +1777,10 @@ def get_optimized_strategy(
         Dict with strategy details, metrics, and current signal status.
     """
     from .backtest_engine import (
-        TradingConfig, BacktestEngine, compute_indicators,
+        TradingConfig, BacktestEngine,
         compare_to_benchmark, STRATEGIES, get_all_strategies
     )
+    from .indicators import compute_indicators
     
     # Load config from runtime settings if provided
     if runtime_settings:

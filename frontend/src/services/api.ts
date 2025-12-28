@@ -638,6 +638,15 @@ export async function getTaskStatus(taskId: string): Promise<TaskStatus> {
   return fetchAPI<TaskStatus>(`/cronjobs/tasks/${taskId}`);
 }
 
+export async function getTaskStatuses(taskIds: string[]): Promise<TaskStatus[]> {
+  if (taskIds.length === 0) return [];
+  const response = await fetchAPI<{ tasks: TaskStatus[] }>(`/cronjobs/tasks/batch`, {
+    method: 'POST',
+    body: JSON.stringify({ task_ids: taskIds }),
+  });
+  return response.tasks;
+}
+
 export interface CeleryWorkerInfo {
   status?: string;
   active?: unknown[];
@@ -692,6 +701,29 @@ export async function getCeleryQueues(): Promise<CeleryQueueInfo[]> {
 
 export async function getCeleryBroker(): Promise<CeleryBrokerInfo> {
   return fetchAPI<CeleryBrokerInfo>('/celery/broker');
+}
+
+export interface CelerySnapshotResponse {
+  workers: CeleryWorkersResponse;
+  queues: CeleryQueueInfo[];
+  broker: CeleryBrokerInfo | null;
+  tasks: CeleryTaskInfo[];
+}
+
+export async function getCelerySnapshot(limit = 100): Promise<CelerySnapshotResponse> {
+  const payload = await fetchAPI<{
+    workers: CeleryWorkersResponse;
+    queues: unknown;
+    broker: CeleryBrokerInfo | null;
+    tasks: CeleryTaskInfo[];
+  }>(`/celery/snapshot?limit=${limit}`);
+
+  return {
+    workers: payload.workers || {},
+    queues: normalizeCeleryQueues(payload.queues),
+    broker: payload.broker ?? null,
+    tasks: Array.isArray(payload.tasks) ? payload.tasks : [],
+  };
 }
 
 // Celery task info from Flower
@@ -961,6 +993,15 @@ export interface DipCardList {
   total: number;
 }
 
+export interface DipCardsQuery {
+  includeAi?: boolean;
+  excludeVoted?: boolean;
+  limit?: number;
+  offset?: number;
+  search?: string;
+  skipCache?: boolean;
+}
+
 export interface DipStats {
   symbol: string;
   vote_counts: VoteCounts;
@@ -980,6 +1021,28 @@ export async function getDipCards(includeAi: boolean = false, excludeVoted: bool
     cacheKey,
     () => fetchAPI<DipCardList>(`/swipe/cards?include_ai=${includeAi}&exclude_voted=${excludeVoted}`),
     { ttl: CACHE_TTL.RANKING }
+  );
+}
+
+export async function getDipCardsPaged(query: DipCardsQuery = {}): Promise<DipCardList> {
+  const params = new URLSearchParams();
+  if (query.includeAi) params.append('include_ai', 'true');
+  if (query.excludeVoted) params.append('exclude_voted', 'true');
+  if (query.limit) params.append('limit', String(query.limit));
+  if (query.offset) params.append('offset', String(query.offset));
+  if (query.search) params.append('search', query.search);
+
+  const endpoint = `/swipe/cards?${params.toString()}`;
+  const cacheKey = `swipe:cards:paged:${params.toString()}`;
+
+  if (query.skipCache) {
+    return fetchAPI<DipCardList>(endpoint);
+  }
+
+  return apiCache.fetch(
+    cacheKey,
+    () => fetchAPI<DipCardList>(endpoint),
+    { ttl: CACHE_TTL.RANKING, staleWhileRevalidate: true }
   );
 }
 
@@ -1062,6 +1125,48 @@ export async function regenerateSymbolAiSummary(symbol: string): Promise<AISumma
 // QUANT ENGINE RECOMMENDATIONS
 // =============================================================================
 
+// Evidence block for APUS + DOUS scoring transparency
+export interface EvidenceBlock {
+  // Statistical validation
+  p_outperf: number;      // P(edge > 0) from stationary bootstrap
+  ci_low: number;         // 95% CI lower bound for edge
+  ci_high: number;        // 95% CI upper bound for edge
+  dsr: number;            // Deflated Sharpe Ratio
+  psr: number;            // Probabilistic Sharpe Ratio
+  
+  // Edge metrics
+  median_edge: number;    // Median edge over benchmarks
+  mean_edge: number;      // Mean edge over benchmarks
+  edge_vs_stock: number;  // Edge vs buy-and-hold stock
+  edge_vs_spy: number;    // Edge vs SPY benchmark
+  worst_regime_edge: number;  // Worst edge across regimes
+  cvar_5: number;         // Conditional VaR at 5%
+  
+  // Sharpe metrics
+  observed_sharpe: number;
+  sr_max: number;         // Expected max Sharpe under null
+  n_effective: number;    // Effective number of strategies
+  
+  // Regime edges
+  edge_bull: number;
+  edge_bear: number;
+  edge_high_vol: number;
+  
+  // Stability
+  sharpe_degradation: number;
+  n_trades: number;
+  
+  // Fundamental metrics
+  fund_mom: number;       // Fundamental momentum score
+  val_z: number;          // Valuation z-score
+  event_risk: boolean;    // Event risk flag (earnings/dividend)
+  
+  // Dip metrics
+  p_recovery: number;     // P(recovery within H days)
+  expected_value: number; // Expected value of dip entry
+  sector_relative: number; // Sector relative drawdown
+}
+
 export interface QuantRecommendation {
   ticker: string;
   name: string | null;
@@ -1119,6 +1224,12 @@ export interface QuantRecommendation {
   // Best Chance Score
   best_chance_score: number;
   best_chance_reason: string | null;
+  // APUS + DOUS Dual-Mode Scoring
+  quant_mode: 'CERTIFIED_BUY' | 'DIP_ENTRY' | null;  // Scoring mode
+  quant_score_a: number | null;   // Mode A (APUS) score 0-100
+  quant_score_b: number | null;   // Mode B (DOUS) score 0-100
+  quant_gate_pass: boolean;       // Whether Mode A gate criteria passed
+  quant_evidence: EvidenceBlock | null;  // Full evidence block for transparency
   // Domain-specific analysis (sector-aware analysis)
   domain_context: string | null;
   domain_adjustment: number | null;
@@ -1159,6 +1270,7 @@ export interface QuantEngineResponse {
   expected_portfolio_return: number;
   expected_portfolio_risk: number;
   audit: QuantAuditBlock;
+  market_message: string | null;
 }
 
 export async function getQuantRecommendations(
@@ -1270,6 +1382,13 @@ export interface StockCardData {
   mu_hat?: number;
   uncertainty?: number;
   marginal_utility?: number;
+  
+  // APUS + DOUS Dual-Mode Scoring
+  quant_mode?: 'CERTIFIED_BUY' | 'DIP_ENTRY' | null;
+  quant_score_a?: number | null;  // Mode A (APUS) score 0-100
+  quant_score_b?: number | null;  // Mode B (DOUS) score 0-100
+  quant_gate_pass?: boolean;
+  quant_evidence?: EvidenceBlock | null;
 }
 
 /**
@@ -1390,6 +1509,12 @@ export function quantToStockCardData(
     mu_hat: rec.mu_hat,
     uncertainty: rec.uncertainty,
     marginal_utility: rec.marginal_utility,
+    // APUS + DOUS Dual-Mode Scoring
+    quant_mode: rec.quant_mode,
+    quant_score_a: rec.quant_score_a,
+    quant_score_b: rec.quant_score_b,
+    quant_gate_pass: rec.quant_gate_pass,
+    quant_evidence: rec.quant_evidence,
   };
 }
 
@@ -1407,6 +1532,13 @@ export interface Symbol {
   task_id?: string | null;
 }
 
+export interface SymbolListResponse {
+  items: Symbol[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export async function getSymbols(skipCache = false): Promise<Symbol[]> {
   if (skipCache) {
     return fetchAPI<Symbol[]>('/symbols');
@@ -1415,6 +1547,33 @@ export async function getSymbols(skipCache = false): Promise<Symbol[]> {
     'symbols-list',
     () => fetchAPI<Symbol[]>('/symbols'),
     { ttl: CACHE_TTL.SYMBOLS }
+  );
+}
+
+export async function getSymbolsPaged(
+  limit: number = 50,
+  offset: number = 0,
+  search?: string,
+  skipCache: boolean = false
+): Promise<SymbolListResponse> {
+  const params = new URLSearchParams({
+    limit: String(limit),
+    offset: String(offset),
+  });
+  if (search) {
+    params.append('search', search);
+  }
+  const endpoint = `/symbols/paged?${params.toString()}`;
+  const cacheKey = `symbols-paged:${limit}:${offset}:${search ?? ''}`;
+
+  if (skipCache) {
+    return fetchAPI<SymbolListResponse>(endpoint);
+  }
+
+  return apiCache.fetch(
+    cacheKey,
+    () => fetchAPI<SymbolListResponse>(endpoint),
+    { ttl: CACHE_TTL.SYMBOLS, staleWhileRevalidate: true }
   );
 }
 
@@ -2081,7 +2240,12 @@ export async function getAllSuggestions(
   if (status) params.append('status', status);
   params.append('page', page.toString());
   params.append('page_size', pageSize.toString());
-  return fetchAPI<SuggestionListResponse>(`/suggestions?${params.toString()}`);
+  const cacheKey = `suggestions:${status ?? 'all'}:${page}:${pageSize}`;
+  return apiCache.fetch(
+    cacheKey,
+    () => fetchAPI<SuggestionListResponse>(`/suggestions?${params.toString()}`),
+    { ttl: CACHE_TTL.SUGGESTIONS, staleWhileRevalidate: true }
+  );
 }
 
 export async function approveSuggestion(suggestionId: number): Promise<{ message: string; symbol: string; task_id?: string | null }> {
@@ -2091,43 +2255,52 @@ export async function approveSuggestion(suggestionId: number): Promise<{ message
   // Invalidate symbols and ranking cache so the new stock appears immediately
   apiCache.invalidate(/^symbols/);
   apiCache.invalidate(/^ranking/);
+  apiCache.invalidate(/^suggestions:/);
   invalidateEtagCache(/\/symbols|\/dips\/ranking/);
   return result;
 }
 
 export async function rejectSuggestion(suggestionId: number, reason?: string): Promise<{ message: string }> {
   const params = reason ? `?reason=${encodeURIComponent(reason)}` : '';
-  return fetchAPI<{ message: string }>(`/suggestions/${suggestionId}/reject${params}`, {
+  const result = await fetchAPI<{ message: string }>(`/suggestions/${suggestionId}/reject${params}`, {
     method: 'POST',
   });
+  apiCache.invalidate(/^suggestions:/);
+  return result;
 }
 
 export async function updateSuggestion(
   suggestionId: number, 
   newSymbol: string
 ): Promise<{ message: string; old_symbol: string; new_symbol: string }> {
-  return fetchAPI<{ message: string; old_symbol: string; new_symbol: string }>(
+  const result = await fetchAPI<{ message: string; old_symbol: string; new_symbol: string }>(
     `/suggestions/${suggestionId}?new_symbol=${encodeURIComponent(newSymbol.toUpperCase())}`,
     { method: 'PATCH' }
   );
+  apiCache.invalidate(/^suggestions:/);
+  return result;
 }
 
 export async function refreshSuggestionData(
   suggestionId: number
 ): Promise<{ message: string; symbol: string; task_id?: string | null }> {
-  return fetchAPI<{ message: string; symbol: string; task_id?: string | null }>(
+  const result = await fetchAPI<{ message: string; symbol: string; task_id?: string | null }>(
     `/suggestions/${suggestionId}/refresh`,
     { method: 'POST' }
   );
+  apiCache.invalidate(/^suggestions:/);
+  return result;
 }
 
 export async function retrySuggestionFetch(
   suggestionId: number
 ): Promise<{ message: string; symbol: string; fetch_status: FetchStatus; fetch_error: string | null }> {
-  return fetchAPI<{ message: string; symbol: string; fetch_status: FetchStatus; fetch_error: string | null }>(
+  const result = await fetchAPI<{ message: string; symbol: string; fetch_status: FetchStatus; fetch_error: string | null }>(
     `/suggestions/${suggestionId}/retry`,
     { method: 'POST' }
   );
+  apiCache.invalidate(/^suggestions:/);
+  return result;
 }
 
 export async function backfillSuggestions(
@@ -2163,10 +2336,18 @@ export interface BatchJobListResponse {
   jobs: BatchJob[];
   total: number;
   active_count: number;
+  limit: number;
+  offset: number;
 }
 
-export async function getBatchJobs(limit: number = 20, includeCompleted: boolean = true): Promise<BatchJobListResponse> {
-  return fetchAPI<BatchJobListResponse>(`/admin/settings/batch-jobs?limit=${limit}&include_completed=${includeCompleted}`);
+export async function getBatchJobs(
+  limit: number = 20,
+  offset: number = 0,
+  includeCompleted: boolean = true
+): Promise<BatchJobListResponse> {
+  return fetchAPI<BatchJobListResponse>(
+    `/admin/settings/batch-jobs?limit=${limit}&offset=${offset}&include_completed=${includeCompleted}`
+  );
 }
 
 export async function cancelBatchJob(batchId: string): Promise<{ success: boolean; batch_id: string; status: string }> {

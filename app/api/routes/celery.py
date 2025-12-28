@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Depends, Path, Query
 
 from app.api.dependencies import require_admin
@@ -114,3 +116,44 @@ async def get_broker_status(
 
     # Fallback to Valkey info
     return await celery_inspect.get_broker_info_from_valkey()
+
+
+@router.get(
+    "/snapshot",
+    summary="Get Celery snapshot",
+    description="Fetch workers, queues, broker, and recent tasks in a single request (admin only).",
+)
+async def get_celery_snapshot(
+    limit: int = Query(100, ge=1, le=1000),
+    admin: TokenData = Depends(require_admin),
+) -> dict:
+    """Return a single snapshot payload for the Celery monitor UI."""
+    workers_result, queues_result, broker_result, tasks_result = await asyncio.gather(
+        list_workers(admin=admin),
+        list_queues(admin=admin),
+        get_broker_status(admin=admin),
+        list_tasks(limit=limit, admin=admin),
+        return_exceptions=True,
+    )
+
+    workers = workers_result if not isinstance(workers_result, Exception) else {}
+    queues = queues_result if not isinstance(queues_result, Exception) else []
+    broker = broker_result if not isinstance(broker_result, Exception) else {}
+
+    tasks_payload = tasks_result if not isinstance(tasks_result, Exception) else {}
+    tasks: list[dict] = []
+    if isinstance(tasks_payload, dict):
+        tasks = [
+            {**info, "uuid": uuid}
+            for uuid, info in tasks_payload.items()
+        ]
+        tasks.sort(key=lambda item: item.get("received", 0) or 0, reverse=True)
+    elif isinstance(tasks_payload, list):
+        tasks = tasks_payload
+
+    return {
+        "workers": workers,
+        "queues": queues,
+        "broker": broker,
+        "tasks": tasks,
+    }

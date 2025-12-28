@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 
 from app.core.logging import get_logger
 from app.database.connection import get_session
@@ -283,78 +283,106 @@ async def regenerate_ai_field(
     return card
 
 
+async def get_dip_cards_page(
+    limit: int | None = None,
+    offset: int = 0,
+    search: str | None = None,
+) -> tuple[list[DipCard], int]:
+    """Get dip cards with optional pagination and search."""
+    async with get_session() as session:
+        stmt = (
+            select(DipState, Symbol)
+            .join(Symbol, Symbol.symbol == DipState.symbol)
+            .order_by(DipState.dip_percentage.desc())
+        )
+
+        if search:
+            term = f"%{search.strip()}%"
+            stmt = stmt.where(
+                or_(
+                    Symbol.symbol.ilike(term),
+                    Symbol.name.ilike(term),
+                    Symbol.sector.ilike(term),
+                )
+            )
+
+        total_result = await session.execute(
+            select(func.count()).select_from(stmt.subquery())
+        )
+        total = total_result.scalar() or 0
+
+        page_stmt = stmt.offset(offset)
+        if limit is not None:
+            page_stmt = page_stmt.limit(limit)
+
+        result = await session.execute(page_stmt)
+        dip_rows = result.all()
+
+        symbols = [dip_state.symbol for dip_state, _ in dip_rows]
+        vote_counts_by_symbol = await dip_votes_repo.get_vote_counts_for_symbols_with_session(
+            session, symbols
+        )
+
+        ai_by_symbol: dict[str, DipAIAnalysis] = {}
+        if symbols:
+            ai_result = await session.execute(
+                select(DipAIAnalysis).where(
+                    DipAIAnalysis.symbol.in_(symbols),
+                    (DipAIAnalysis.expires_at == None) | (DipAIAnalysis.expires_at > datetime.now(UTC)),
+                )
+            )
+            ai_by_symbol = {row.symbol: row for row in ai_result.scalars().all()}
+
+        cards: list[DipCard] = []
+        now = datetime.now(UTC)
+        for dip_state, sym in dip_rows:
+            symbol = dip_state.symbol
+
+            days_below = 0
+            if dip_state.first_seen:
+                first_seen = dip_state.first_seen
+                if hasattr(first_seen, "tzinfo") and first_seen.tzinfo is None:
+                    first_seen = first_seen.replace(tzinfo=UTC)
+                days_below = (now - first_seen).days
+
+            vote_counts_dict = vote_counts_by_symbol.get(
+                symbol,
+                {"buy": 0, "sell": 0, "buy_weighted": 0, "sell_weighted": 0, "net_score": 0},
+            )
+            vote_counts = VoteCounts(**vote_counts_dict)
+
+            ai = ai_by_symbol.get(symbol)
+
+            card = DipCard(
+                symbol=symbol,
+                name=sym.name if sym else None,
+                sector=sym.sector if sym else None,
+                current_price=float(dip_state.current_price) if dip_state.current_price else 0,
+                ref_high=float(dip_state.ath_price) if dip_state.ath_price else 0,
+                dip_pct=float(dip_state.dip_percentage) if dip_state.dip_percentage else 0,
+                days_below=days_below,
+                vote_counts=vote_counts,
+                summary_ai=sym.summary_ai if sym else None,
+                swipe_bio=ai.swipe_bio if ai else None,
+                ai_rating=ai.ai_rating if ai else None,
+                ai_reasoning=ai.rating_reasoning if ai else None,
+            )
+            cards.append(card)
+
+        return cards, total
+
+
 async def get_all_dip_cards(include_ai: bool = False) -> list[DipCard]:
     """
     Get all current dips as cards.
 
     Args:
         include_ai: Kept for backward compatibility (AI refresh is queued at API layer)
-        
+
     Returns:
         List of DipCard objects sorted by dip percentage.
     """
-    # Get all dip states with symbol info
-    async with get_session() as session:
-        result = await session.execute(
-            select(DipState, Symbol)
-            .join(Symbol, Symbol.symbol == DipState.symbol)
-            .order_by(DipState.dip_percentage.desc())
-        )
-        dip_rows = result.all()
-
-    # Get all vote counts at once
-    all_vote_counts = await dip_votes_repo.get_all_vote_counts()
-
-    # Get all AI analyses
-    async with get_session() as session:
-        result = await session.execute(
-            select(DipAIAnalysis).where(
-                (DipAIAnalysis.expires_at == None) | (DipAIAnalysis.expires_at > datetime.now(UTC))
-            )
-        )
-        ai_rows = result.scalars().all()
-    ai_by_symbol = {r.symbol: r for r in ai_rows}
-
-    cards: list[DipCard] = []
-    now = datetime.now(UTC)
-    for dip_state, sym in dip_rows:
-        symbol = dip_state.symbol
-
-        # Calculate days in dip from first_seen
-        days_below = 0
-        if dip_state.first_seen:
-            first_seen = dip_state.first_seen
-            if hasattr(first_seen, 'tzinfo') and first_seen.tzinfo is None:
-                first_seen = first_seen.replace(tzinfo=UTC)
-            days_below = (now - first_seen).days
-
-        # Get vote counts for this symbol
-        vote_counts_dict = all_vote_counts.get(
-            symbol,
-            {"buy": 0, "sell": 0, "buy_weighted": 0, "sell_weighted": 0, "net_score": 0},
-        )
-        vote_counts = VoteCounts(**vote_counts_dict)
-
-        # Get AI analysis if available
-        ai = ai_by_symbol.get(symbol)
-
-        card = DipCard(
-            symbol=symbol,
-            name=sym.name if sym else None,
-            sector=sym.sector if sym else None,
-            current_price=float(dip_state.current_price) if dip_state.current_price else 0,
-            ref_high=float(dip_state.ath_price) if dip_state.ath_price else 0,
-            dip_pct=float(dip_state.dip_percentage) if dip_state.dip_percentage else 0,
-            days_below=days_below,
-            vote_counts=vote_counts,
-            summary_ai=sym.summary_ai if sym else None,
-            swipe_bio=ai.swipe_bio if ai else None,
-            ai_rating=ai.ai_rating if ai else None,
-            ai_reasoning=ai.rating_reasoning if ai else None,
-        )
-
-        cards.append(card)
-
+    cards, _ = await get_dip_cards_page()
     return cards
 
 

@@ -1237,6 +1237,7 @@ async def strategy_optimize_nightly_job() -> str:
                         vs_buy_hold_pct=Decimal(str(opt_result.vs_buy_hold)),
                         vs_spy_pct=Decimal(str(opt_result.vs_spy)) if opt_result.vs_spy else None,
                         beats_buy_hold=opt_result.beats_buy_hold,
+                        beats_spy=opt_result.beats_spy,
                         fundamentals_healthy=opt_result.fundamentals_healthy,
                         fundamental_concerns=opt_result.fundamental_concerns,
                         is_statistically_valid=opt_result.is_statistically_valid,
@@ -1262,6 +1263,7 @@ async def strategy_optimize_nightly_job() -> str:
                             "vs_buy_hold_pct": Decimal(str(opt_result.vs_buy_hold)),
                             "vs_spy_pct": Decimal(str(opt_result.vs_spy)) if opt_result.vs_spy else None,
                             "beats_buy_hold": opt_result.beats_buy_hold,
+                            "beats_spy": opt_result.beats_spy,
                             "fundamentals_healthy": opt_result.fundamentals_healthy,
                             "fundamental_concerns": opt_result.fundamental_concerns,
                             "is_statistically_valid": opt_result.is_statistically_valid,
@@ -1297,3 +1299,280 @@ async def strategy_optimize_nightly_job() -> str:
     except Exception as e:
         logger.exception(f"strategy_optimize_nightly failed: {e}")
         raise
+
+# =============================================================================
+# QUANT SCORING - Dual-mode scoring pipeline (daily)
+# =============================================================================
+
+
+@register_job("quant_scoring_daily")
+async def quant_scoring_daily_job() -> str:
+    """
+    Daily dual-mode scoring pipeline (APUS + DOUS).
+    
+    Computes comprehensive scores for all tracked symbols using:
+    - Mode A (APUS): Certified Buy - statistically proven edge over benchmarks
+    - Mode B (DOUS): Dip Entry - fundamental + technical opportunity scoring
+    
+    Key features:
+    - Stationary bootstrap (Politis & Romano) for P(edge > 0) and CI
+    - Deflated Sharpe ratio (Lopez de Prado) for multiple testing correction
+    - Walk-forward OOS with embargo
+    - Regime robustness (bull/bear/high-vol)
+    - Fundamental momentum z-scores
+    - BestScore 0-100 per symbol
+    
+    Schedule: Mon-Fri 11:45 PM UTC (15 min after strategy_optimize_nightly)
+    """
+    from datetime import date, timedelta
+    from decimal import Decimal
+    
+    import pandas as pd
+    from sqlalchemy import select
+    from sqlalchemy.dialects.postgresql import insert
+    
+    from app.cache.cache import Cache
+    from app.database.connection import get_session
+    from app.database.orm import (
+        QuantScore,
+        StrategySignal,
+        StockFundamentals,
+    )
+    from app.repositories import symbols_orm as symbols_repo
+    from app.quant_engine.scoring import (
+        ScoringConfig,
+        compute_symbol_score,
+        SCORING_VERSION,
+    )
+    
+    logger.info("Starting quant_scoring_daily job")
+    
+    try:
+        # Get all active symbols
+        all_symbols = await symbols_repo.list_symbols()
+        symbol_list = [
+            s.symbol for s in all_symbols 
+            if s.symbol not in ("SPY", "^GSPC", "URTH", "^VIX")
+            and s.is_active
+        ]
+        
+        if not symbol_list:
+            return "No symbols to process"
+        
+        logger.info(f"[SCORING] Computing scores for {len(symbol_list)} symbols")
+        
+        # Scoring configuration
+        config = ScoringConfig()
+        
+        # Get SPY prices for benchmark
+        end_date = date.today()
+        start_date = end_date - timedelta(days=1260)  # 5 years
+        spy_df = await price_history_repo.get_prices_as_dataframe("SPY", start_date, end_date)
+        spy_prices = None
+        if spy_df is not None and len(spy_df) > 0:
+            if "close" in spy_df.columns:
+                spy_prices = spy_df["close"]
+            elif "Close" in spy_df.columns:
+                spy_prices = spy_df["Close"]
+            elif "Adj Close" in spy_df.columns:
+                spy_prices = spy_df["Adj Close"]
+        
+        if spy_prices is None:
+            logger.error("[SCORING] No SPY data available")
+            return "No SPY data available"
+        
+        processed = 0
+        failed = 0
+        mode_a_count = 0
+        mode_b_count = 0
+        
+        async with get_session() as session:
+            # Load all strategy signals (for weights)
+            result = await session.execute(select(StrategySignal))
+            strategy_map = {s.symbol: s for s in result.scalars().all()}
+            
+            # Load all fundamentals
+            result = await session.execute(
+                select(StockFundamentals).where(
+                    StockFundamentals.symbol.in_(symbol_list)
+                )
+            )
+            fundamentals_map = {f.symbol: f for f in result.scalars().all()}
+            
+            # Count strategies tested for deflated Sharpe
+            n_strategies_tested = len(strategy_map)
+            
+            for symbol in symbol_list:
+                try:
+                    # Get price history
+                    df = await price_history_repo.get_prices_as_dataframe(
+                        symbol, start_date, end_date
+                    )
+                    
+                    if df is None or len(df) < 252:
+                        logger.warning(f"[SCORING] Insufficient data for {symbol}, skipping")
+                        continue
+                    
+                    # Get strategy signal for weights
+                    strategy = strategy_map.get(symbol)
+                    
+                    # Build strategy weights from signal
+                    # Simple: 1.0 when has_active_signal and signal is BUY, else 0
+                    if df is not None and len(df) > 0:
+                        if "close" in df.columns:
+                            prices_series = df["close"]
+                        elif "Close" in df.columns:
+                            prices_series = df["Close"]
+                        else:
+                            prices_series = df.iloc[:, 0]
+                        
+                        strategy_weights = pd.Series(0.0, index=prices_series.index)
+                        if strategy and strategy.has_active_signal and strategy.signal_type == "BUY":
+                            # Assume weight = 1 for last 20 days when signal active
+                            strategy_weights.iloc[-20:] = 1.0
+                    else:
+                        strategy_weights = pd.Series()
+                    
+                    # Convert fundamentals to z-scores (simplified)
+                    fund_obj = fundamentals_map.get(symbol)
+                    fundamentals_dict = None
+                    if fund_obj:
+                        # Very simplified z-score computation
+                        # In production, compute vs sector/market medians
+                        fundamentals_dict = {
+                            "revenue_z": _to_z(fund_obj.revenue_growth, 0.10, 0.15),
+                            "earnings_z": _to_z(fund_obj.profit_margin, 0.10, 0.10),
+                            "margin_z": _to_z(fund_obj.profit_margin, 0.08, 0.10),
+                            "pe_z": _to_z(fund_obj.pe_ratio, 20, 15, invert=True) if fund_obj.pe_ratio else 0,
+                            "ev_ebitda_z": 0.0,  # Would need EV/EBITDA data
+                            "ps_z": 0.0,  # Would need P/S data
+                        }
+                    
+                    # Get event dates
+                    earnings_date = None
+                    dividend_date = None
+                    if fund_obj:
+                        earnings_date = fund_obj.earnings_date if hasattr(fund_obj, 'earnings_date') else None
+                        dividend_date = fund_obj.dividend_date if hasattr(fund_obj, 'dividend_date') else None
+                    
+                    # Compute score
+                    result = compute_symbol_score(
+                        symbol=symbol,
+                        prices=df,
+                        spy_prices=spy_prices,
+                        strategy_weights=strategy_weights,
+                        fundamentals=fundamentals_dict,
+                        earnings_date=earnings_date,
+                        dividend_date=dividend_date,
+                        n_strategies_tested=max(1, n_strategies_tested),
+                        config=config,
+                    )
+                    
+                    # Track modes
+                    if result.gate_pass:
+                        mode_a_count += 1
+                    else:
+                        mode_b_count += 1
+                    
+                    # Upsert to database
+                    evidence_dict = result.evidence.to_dict() if result.evidence else None
+                    
+                    stmt = insert(QuantScore).values(
+                        symbol=symbol,
+                        best_score=Decimal(str(round(result.best_score, 2))),
+                        mode=result.mode,
+                        score_a=Decimal(str(round(result.score_a, 2))),
+                        score_b=Decimal(str(round(result.score_b, 2))),
+                        gate_pass=result.gate_pass,
+                        p_outperf=Decimal(str(round(result.evidence.p_outperf, 4))),
+                        ci_low=Decimal(str(round(result.evidence.ci_low, 4))),
+                        ci_high=Decimal(str(round(result.evidence.ci_high, 4))),
+                        dsr=Decimal(str(round(result.evidence.dsr, 4))),
+                        median_edge=Decimal(str(round(result.evidence.median_edge, 4))),
+                        edge_vs_stock=Decimal(str(round(result.evidence.edge_vs_stock, 4))),
+                        edge_vs_spy=Decimal(str(round(result.evidence.edge_vs_spy, 4))),
+                        worst_regime_edge=Decimal(str(round(result.evidence.worst_regime_edge, 4))),
+                        cvar_5=Decimal(str(round(result.evidence.cvar_5, 4))),
+                        fund_mom=Decimal(str(round(result.evidence.fund_mom, 4))),
+                        val_z=Decimal(str(round(result.evidence.val_z, 4))),
+                        event_risk=result.evidence.event_risk,
+                        p_recovery=Decimal(str(round(result.evidence.p_recovery, 4))),
+                        expected_value=Decimal(str(round(result.evidence.expected_value, 4))),
+                        sector_relative=Decimal(str(round(result.evidence.sector_relative, 4))),
+                        config_hash=result.config_hash,
+                        scoring_version=result.scoring_version,
+                        data_start=result.data_start,
+                        data_end=result.data_end,
+                        evidence=evidence_dict,
+                    ).on_conflict_do_update(
+                        index_elements=["symbol"],
+                        set_={
+                            "best_score": Decimal(str(round(result.best_score, 2))),
+                            "mode": result.mode,
+                            "score_a": Decimal(str(round(result.score_a, 2))),
+                            "score_b": Decimal(str(round(result.score_b, 2))),
+                            "gate_pass": result.gate_pass,
+                            "p_outperf": Decimal(str(round(result.evidence.p_outperf, 4))),
+                            "ci_low": Decimal(str(round(result.evidence.ci_low, 4))),
+                            "ci_high": Decimal(str(round(result.evidence.ci_high, 4))),
+                            "dsr": Decimal(str(round(result.evidence.dsr, 4))),
+                            "median_edge": Decimal(str(round(result.evidence.median_edge, 4))),
+                            "edge_vs_stock": Decimal(str(round(result.evidence.edge_vs_stock, 4))),
+                            "edge_vs_spy": Decimal(str(round(result.evidence.edge_vs_spy, 4))),
+                            "worst_regime_edge": Decimal(str(round(result.evidence.worst_regime_edge, 4))),
+                            "cvar_5": Decimal(str(round(result.evidence.cvar_5, 4))),
+                            "fund_mom": Decimal(str(round(result.evidence.fund_mom, 4))),
+                            "val_z": Decimal(str(round(result.evidence.val_z, 4))),
+                            "event_risk": result.evidence.event_risk,
+                            "p_recovery": Decimal(str(round(result.evidence.p_recovery, 4))),
+                            "expected_value": Decimal(str(round(result.evidence.expected_value, 4))),
+                            "sector_relative": Decimal(str(round(result.evidence.sector_relative, 4))),
+                            "config_hash": result.config_hash,
+                            "scoring_version": result.scoring_version,
+                            "data_start": result.data_start,
+                            "data_end": result.data_end,
+                            "computed_at": datetime.now(UTC),
+                            "evidence": evidence_dict,
+                        }
+                    )
+                    await session.execute(stmt)
+                    
+                    processed += 1
+                    
+                    if processed % 10 == 0:
+                        logger.info(f"[SCORING] Processed {processed}/{len(symbol_list)} symbols")
+                        await session.commit()
+                    
+                except Exception as e:
+                    logger.exception(f"[SCORING] Failed to score {symbol}: {e}")
+                    failed += 1
+                    continue
+            
+            await session.commit()
+        
+        # Clear cache
+        cache = Cache(prefix="quant_scores", default_ttl=86400)
+        await cache.invalidate_pattern("*")
+        
+        # Also clear recommendations cache
+        recs_cache = Cache(prefix="recommendations", default_ttl=300)
+        await recs_cache.invalidate_pattern("*")
+        
+        message = (
+            f"Scored {processed} symbols ({failed} failed), "
+            f"Mode A (CERTIFIED_BUY): {mode_a_count}, Mode B (DIP_ENTRY): {mode_b_count}"
+        )
+        logger.info(f"quant_scoring_daily: {message}")
+        return message
+        
+    except Exception as e:
+        logger.exception(f"quant_scoring_daily failed: {e}")
+        raise
+
+
+def _to_z(value: float | None, mean: float, std: float, invert: bool = False) -> float:
+    """Convert value to z-score. If invert=True, lower is better."""
+    if value is None:
+        return 0.0
+    z = (float(value) - mean) / std if std != 0 else 0.0
+    return -z if invert else z

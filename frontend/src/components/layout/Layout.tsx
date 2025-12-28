@@ -1,4 +1,4 @@
-import { Outlet, Link, useNavigate } from 'react-router-dom';
+import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
 import { Header } from './Header';
 import { DipTicker } from '@/components/DipTicker';
 import { useDips } from '@/context/DipContext';
@@ -15,6 +15,12 @@ export function Layout() {
   const { tickerStocks, isLoadingTicker } = useDips();
   const { colorblindMode, setColorblindMode, customColors, setCustomColors, resetColors } = useTheme();
   const navigate = useNavigate();
+  const location = useLocation();
+
+  const isAdminRoute = location.pathname.startsWith('/admin');
+  const mainContainerClass = isAdminRoute
+    ? 'mx-auto w-full max-w-screen-2xl px-4 sm:px-6 lg:px-8 py-6 sm:py-8'
+    : 'mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 sm:py-8';
 
   const handleSelectStock = (symbol: string) => {
     // Navigate to dashboard with the stock selected
@@ -31,7 +37,7 @@ export function Layout() {
       />
       <Header />
       <main className="flex-1">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+        <div className={mainContainerClass}>
           <Outlet />
         </div>
       </main>

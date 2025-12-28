@@ -529,6 +529,8 @@ async def _store_fundamentals(
         "earnings_estimate_low": data.get("earnings_estimate_low"),
         "earnings_estimate_avg": data.get("earnings_estimate_avg"),
         "earnings_date": data.get("earnings_date"),
+        "dividend_date": data.get("dividend_date"),
+        "ex_dividend_date": data.get("ex_dividend_date"),
         "income_stmt_quarterly": data.get("income_stmt_quarterly"),
         "income_stmt_annual": data.get("income_stmt_annual"),
         "balance_sheet_quarterly": data.get("balance_sheet_quarterly"),
@@ -582,6 +584,8 @@ async def _store_fundamentals(
             "earnings_estimate_high",
             "earnings_estimate_low",
             "earnings_estimate_avg",
+            "dividend_date",
+            "ex_dividend_date",
         }:
             if update_calendar and value is not None:
                 update_values[key] = value

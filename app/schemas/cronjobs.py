@@ -133,3 +133,20 @@ class TaskStatusResponse(BaseModel):
     result: str | None = Field(None, description="Task result (if completed)")
     error: str | None = Field(None, description="Task error (if failed)")
     traceback: str | None = Field(None, description="Task traceback (if failed)")
+
+
+class TaskStatusBatchRequest(BaseModel):
+    """Request for batch task status lookup."""
+
+    task_ids: list[str] = Field(
+        ...,
+        min_length=1,
+        max_length=100,
+        description="List of Celery task ids",
+    )
+
+
+class TaskStatusBatchResponse(BaseModel):
+    """Batch task status response."""
+
+    tasks: list[TaskStatusResponse]

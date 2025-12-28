@@ -1,27 +1,20 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  getDipCards,
+  getDipCardsPaged,
   getDipCard,
   refreshAiAnalysis,
   refreshAiField,
   regenerateSymbolAiSummary,
-  getTaskStatus,
+  getTaskStatuses,
   type DipCard,
   type AiFieldType,
+  type TaskStatus,
 } from '@/services/api';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import {
   Dialog,
   DialogContent,
@@ -54,29 +47,45 @@ export function AIManager() {
   
   // Pagination and search state
   const [searchValue, setSearchValue] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const [totalCards, setTotalCards] = useState(0);
   
   // Detail dialog
   const [selectedCard, setSelectedCard] = useState<DipCard | null>(null);
   const [detailDialogOpen, setDetailDialogOpen] = useState(false);
 
-  const loadCards = useCallback(async () => {
+  const loadCards = useCallback(async (skipCache = false) => {
     setIsLoading(true);
     setError(null);
     try {
-      const response = await getDipCards(true);
+      const response = await getDipCardsPaged({
+        includeAi: true,
+        limit: pageSize,
+        offset: (currentPage - 1) * pageSize,
+        search: debouncedSearch.trim() || undefined,
+        skipCache,
+      });
       setDipCards(response.cards);
+      setTotalCards(response.total);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load dip cards');
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [currentPage, debouncedSearch, pageSize]);
 
   useEffect(() => {
     loadCards();
   }, [loadCards]);
+
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      setDebouncedSearch(searchValue);
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [searchValue]);
 
   const pendingTasks = useMemo(() => {
     const tasks: { symbol: string; taskId: string; type: 'summary' | 'swipe' }[] = [];
@@ -98,16 +107,17 @@ export function AIManager() {
     let cancelled = false;
 
     const pollTasks = async () => {
-      const results = await Promise.all(
-        pendingTasks.map(async (task) => {
-          try {
-            const status = await getTaskStatus(task.taskId);
-            return { task, status };
-          } catch {
-            return { task, status: null };
-          }
-        })
-      );
+      let results: { task: (typeof pendingTasks)[number]; status: TaskStatus | null }[] = [];
+      try {
+        const statuses = await getTaskStatuses(pendingTasks.map((task) => task.taskId));
+        const statusMap = new Map(statuses.map((status) => [status.task_id, status]));
+        results = pendingTasks.map((task) => ({
+          task,
+          status: statusMap.get(task.taskId) || null,
+        }));
+      } catch {
+        results = pendingTasks.map((task) => ({ task, status: null }));
+      }
 
       if (cancelled) return;
 
@@ -259,34 +269,25 @@ export function AIManager() {
     }
   }
 
-  // Count cards with/without AI
+  // Count cards with/without AI on current page
   const cardsWithAI = dipCards.filter(c => c.swipe_bio).length;
   const cardsWithRating = dipCards.filter(c => c.ai_rating).length;
   const summaryQueued = selectedCard ? !!summaryTasks[selectedCard.symbol] : false;
   const swipeQueued = Boolean(selectedCard?.ai_pending && selectedCard?.ai_task_id);
 
-  // Filter and paginate
-  const filteredCards = useMemo(() => {
-    if (!searchValue.trim()) return dipCards;
-    const search = searchValue.toLowerCase();
-    return dipCards.filter(card => 
-      card.symbol.toLowerCase().includes(search) ||
-      card.name?.toLowerCase().includes(search) ||
-      card.ai_rating?.toLowerCase().includes(search) ||
-      card.sector?.toLowerCase().includes(search)
-    );
-  }, [dipCards, searchValue]);
-
-  const totalPages = Math.ceil(filteredCards.length / pageSize);
-  const paginatedCards = useMemo(() => {
-    const start = (currentPage - 1) * pageSize;
-    return filteredCards.slice(start, start + pageSize);
-  }, [filteredCards, currentPage, pageSize]);
+  const totalPages = Math.ceil(totalCards / pageSize);
 
   // Reset page when search changes
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchValue]);
+  }, [debouncedSearch, pageSize]);
+
+  useEffect(() => {
+    const maxPage = Math.max(1, Math.ceil(totalCards / pageSize));
+    if (currentPage > maxPage) {
+      setCurrentPage(1);
+    }
+  }, [currentPage, pageSize, totalCards]);
 
   return (
     <div className="space-y-6">
@@ -306,7 +307,7 @@ export function AIManager() {
               View and regenerate AI-generated content for stocks in dips
             </CardDescription>
           </div>
-          <Button variant="outline" onClick={loadCards} disabled={isLoading}>
+          <Button variant="outline" onClick={() => loadCards(true)} disabled={isLoading}>
             <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
@@ -335,11 +336,11 @@ export function AIManager() {
         <div className="flex items-center gap-4 mb-4 text-sm">
           <Badge variant="outline" className="bg-chart-4/10">
             <MessageSquare className="h-3 w-3 mr-1" />
-            {cardsWithAI} with bio
+            {cardsWithAI} with bio (page)
           </Badge>
           <Badge variant="outline" className="bg-success/10">
             <Sparkles className="h-3 w-3 mr-1" />
-            {cardsWithRating} with rating
+            {cardsWithRating} with rating (page)
           </Badge>
         </div>
 
@@ -350,104 +351,99 @@ export function AIManager() {
           searchPlaceholder="Search symbols, names, ratings..."
           currentPage={currentPage}
           totalPages={totalPages}
-          totalItems={filteredCards.length}
+          totalItems={totalCards}
           pageSize={pageSize}
           onPageChange={setCurrentPage}
           onPageSizeChange={setPageSize}
           itemName="stocks"
         />
 
-        {/* Table */}
+        {/* Cards */}
         {isLoading ? (
           <div className="space-y-3 mt-4">
             {[...Array(5)].map((_, i) => (
-              <Skeleton key={i} className="h-12 w-full" />
+              <Skeleton key={i} className="h-20 w-full" />
             ))}
           </div>
-        ) : filteredCards.length === 0 ? (
+        ) : dipCards.length === 0 ? (
           <div className="text-center py-12 text-muted-foreground">
             <Brain className="h-12 w-12 mx-auto mb-4 opacity-30" />
             <p>{searchValue ? 'No stocks match your search' : 'No stocks currently in dips'}</p>
           </div>
         ) : (
-          <div className="overflow-x-auto mt-4">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Symbol</TableHead>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Dip %</TableHead>
-                  <TableHead>Swipe Bio</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                <AnimatePresence mode="popLayout">
-                  {paginatedCards.map((card) => (
-                    <motion.tr
-                      key={card.symbol}
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0 }}
-                      className="border-b"
-                    >
-                      <TableCell className="font-semibold">{card.symbol}</TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {card.name || '—'}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="destructive" className="font-mono">
-                          -{card.dip_pct.toFixed(1)}%
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="max-w-[200px]">
-                        {card.swipe_bio ? (
-                          <span className="text-sm text-muted-foreground line-clamp-1">
-                            {card.swipe_bio.replace(/^"|"$/g, '')}
-                          </span>
-                        ) : (
-                          <span className="text-sm text-muted-foreground italic">Not generated</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-8"
-                            onClick={() => openDetailDialog(card)}
-                          >
-                            <Eye className="h-4 w-4 mr-1" />
-                            View
-                          </Button>
-                          {(card.ai_pending || summaryTasks[card.symbol]) && (
+          <div className="space-y-4 mt-4">
+            <AnimatePresence mode="popLayout">
+              {dipCards.map((card) => {
+                const queued = card.ai_pending || summaryTasks[card.symbol];
+                return (
+                  <motion.div
+                    key={card.symbol}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0 }}
+                    className="rounded-lg border bg-card p-4"
+                  >
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="space-y-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-sm font-semibold">{card.symbol}</span>
+                          <Badge variant="destructive" className="font-mono">
+                            -{card.dip_pct.toFixed(1)}%
+                          </Badge>
+                          {card.ai_rating && (
+                            <Badge variant="outline" className="uppercase text-xs">
+                              {card.ai_rating.replace('_', ' ')}
+                            </Badge>
+                          )}
+                          {queued && (
                             <Badge variant="outline" className="text-muted-foreground">
                               Queued
                             </Badge>
                           )}
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-8"
-                            onClick={() => handleRegenerateAI(card.symbol)}
-                            disabled={regeneratingSymbol === card.symbol || card.ai_pending || !!summaryTasks[card.symbol]}
-                          >
-                            {regeneratingSymbol === card.symbol ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                              <>
-                                <Sparkles className="h-4 w-4 mr-1" />
-                                Regenerate
-                              </>
-                            )}
-                          </Button>
                         </div>
-                      </TableCell>
-                    </motion.tr>
-                  ))}
-                </AnimatePresence>
-              </TableBody>
-            </Table>
+                        <p className="text-xs text-muted-foreground">
+                          {card.name || '—'} {card.sector ? `· ${card.sector}` : ''}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => openDetailDialog(card)}
+                        >
+                          <Eye className="h-4 w-4 mr-2" />
+                          View
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleRegenerateAI(card.symbol)}
+                          disabled={regeneratingSymbol === card.symbol || card.ai_pending || !!summaryTasks[card.symbol]}
+                        >
+                          {regeneratingSymbol === card.symbol ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <>
+                              <Sparkles className="h-4 w-4 mr-2" />
+                              Regenerate
+                            </>
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="mt-3 text-xs text-muted-foreground">
+                      {card.swipe_bio ? (
+                        <p className="line-clamp-2">
+                          {card.swipe_bio.replace(/^"|"$/g, '')}
+                        </p>
+                      ) : (
+                        <span className="italic">No swipe bio generated yet.</span>
+                      )}
+                    </div>
+                  </motion.div>
+                );
+              })}
+            </AnimatePresence>
           </div>
         )}
       </CardContent>

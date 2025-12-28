@@ -1,28 +1,27 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, type ReactNode } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useAuth } from '@/context/AuthContext';
-import { 
-  getCronJobs, 
-  getCronLogs, 
-  updateCronJob,
-  runCronJobNow,
-  refreshData 
-} from '@/services/api';
-import type { CronJob, CronLogEntry } from '@/services/api';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import type { LucideIcon } from 'lucide-react';
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import { Skeleton } from '@/components/ui/skeleton';
+  Menu,
+  RefreshCw,
+  ChevronLeft,
+  ChevronRight,
+  TrendingUp,
+  Lightbulb,
+  Sparkles,
+  User,
+  Clock,
+  BarChart2,
+  Trash2,
+  KeyRound,
+  Info,
+  AlertCircle,
+  X,
+} from 'lucide-react';
+import { useAuth } from '@/context/AuthContext';
+import { refreshData } from '@/services/api';
+import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import {
   Sheet,
@@ -32,66 +31,35 @@ import {
   SheetTrigger,
 } from '@/components/ui/sheet';
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { 
-  Play, 
-  RefreshCw, 
-  Clock, 
-  CheckCircle, 
-  XCircle, 
-  AlertCircle,
-  Loader2,
-  Search,
-  Settings,
-  Calendar,
-  Filter,
-  ChevronLeft,
-  ChevronRight,
-  X,
-  Menu,
-  MoreHorizontal,
-  TrendingUp,
-  User,
-  Cog,
-  Lightbulb,
-  Sparkles
-} from 'lucide-react';
-import { CronBuilder, validateCron } from '@/components/CronBuilder';
 import { SymbolManager } from '@/components/SymbolManager';
 import { UserSettings } from '@/components/UserSettings';
 import { MFASetup } from '@/components/MFASetup';
-import { ApiKeyManager } from '@/components/ApiKeyManager';
 import { UserApiKeyManager } from '@/components/UserApiKeyManager';
 import { SystemSettings } from '@/components/SystemSettings';
 import { SuggestionManager } from '@/components/SuggestionManager';
 import { AIManager } from '@/components/AIManager';
 import { AIPersonasPanel } from '@/components/AIPersonasPanel';
-import { CeleryMonitorPanel } from '@/components/CeleryMonitorPanel';
+import { SchedulerPanel } from '@/components/SchedulerPanel';
 import { useSEO } from '@/lib/seo';
 
+type AdminSection = {
+  id: string;
+  label: string;
+  icon: LucideIcon;
+  group: string;
+  description?: string;
+  content: ReactNode;
+};
+
 export function AdminPage() {
-  // SEO - noindex for admin page
   useSEO({
     title: 'Admin Dashboard',
     description: 'StonkMarket administration panel.',
-    noindex: true, // Don't index admin pages
+    noindex: true,
   });
 
   const { user } = useAuth();
@@ -101,87 +69,18 @@ export function AdminPage() {
   });
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const [cronJobs, setCronJobs] = useState<CronJob[]>([]);
-  const [cronLogs, setCronLogs] = useState<CronLogEntry[]>([]);
-  const [totalLogs, setTotalLogs] = useState(0);
-  const [isLoadingJobs, setIsLoadingJobs] = useState(true);
-  const [isLoadingLogs, setIsLoadingLogs] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [runningJob, setRunningJob] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  
-  // Log filters
-  const [logSearch, setLogSearch] = useState('');
-  const [logStatus, setLogStatus] = useState<string | undefined>();
-  const [logPage, setLogPage] = useState(0);
-  const logsPerPage = 20;
-  const [jobSearch, setJobSearch] = useState('');
-
-  // Cron editor
-  const [editingJob, setEditingJob] = useState<CronJob | null>(null);
-  const [newCronValue, setNewCronValue] = useState('');
-  const [isSaving, setIsSaving] = useState(false);
-
-  const loadCronJobs = useCallback(async () => {
-    setIsLoadingJobs(true);
-    try {
-      const jobs = await getCronJobs();
-      setCronJobs(jobs);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load cron jobs');
-    } finally {
-      setIsLoadingJobs(false);
-    }
-  }, []);
-
-  const loadCronLogs = useCallback(async () => {
-    setIsLoadingLogs(true);
-    try {
-      const response = await getCronLogs(
-        logsPerPage, 
-        logPage * logsPerPage,
-        logSearch || undefined,
-        logStatus
-      );
-      setCronLogs(response.logs);
-      setTotalLogs(response.total);
-    } catch (err) {
-      console.error('Failed to load logs:', err);
-    } finally {
-      setIsLoadingLogs(false);
-    }
-  }, [logPage, logSearch, logStatus]);
-
-  useEffect(() => {
-    loadCronJobs();
-  }, [loadCronJobs]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
     localStorage.setItem('admin-section', activeSection);
   }, [activeSection]);
 
-  useEffect(() => {
-    loadCronLogs();
-  }, [loadCronLogs]);
-
-  async function handleRunNow(name: string) {
-    setRunningJob(name);
-    try {
-      await runCronJobNow(name);
-      await loadCronLogs();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to run job');
-    } finally {
-      setRunningJob(null);
-    }
-  }
-
   async function handleRefreshData() {
     setIsRefreshing(true);
     try {
       await refreshData();
-      await loadCronJobs();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to refresh data');
     } finally {
@@ -189,89 +88,29 @@ export function AdminPage() {
     }
   }
 
-  async function handleSaveCron() {
-    if (!editingJob || !newCronValue) return;
-    
-    setIsSaving(true);
-    try {
-      const updated = await updateCronJob(editingJob.name, newCronValue);
-      setCronJobs(jobs => jobs.map(j => j.name === editingJob.name ? updated : j));
-      setEditingJob(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update schedule');
-    } finally {
-      setIsSaving(false);
-    }
-  }
-
-  const openCronEditor = useCallback((job: CronJob) => {
-    setEditingJob(job);
-    setNewCronValue(job.cron);
-  }, []);
-
-  function formatDate(dateStr: string): string {
-    return new Date(dateStr).toLocaleString();
-  }
-
-  function getStatusBadge(status: string) {
-    switch (status) {
-      case 'success':
-        return (
-          <Badge variant="default" className="bg-success/20 text-success hover:bg-success/30">
-            <CheckCircle className="h-3 w-3 mr-1" />
-            Success
-          </Badge>
-        );
-      case 'error':
-        return (
-          <Badge variant="destructive">
-            <XCircle className="h-3 w-3 mr-1" />
-            Error
-          </Badge>
-        );
-      default:
-        return (
-          <Badge variant="secondary">
-            <Clock className="h-3 w-3 mr-1" />
-            {status}
-          </Badge>
-        );
-    }
-  }
-
-  const totalPages = Math.ceil(totalLogs / logsPerPage);
-  const filteredCronJobs = cronJobs.filter((job) => {
-    const query = jobSearch.trim().toLowerCase();
-    if (!query) return true;
-    return (
-      job.name.toLowerCase().includes(query) ||
-      job.cron.toLowerCase().includes(query) ||
-      (job.description || '').toLowerCase().includes(query)
-    );
-  });
-  const sortedCronJobs = [...filteredCronJobs].sort((a, b) => {
-    const timeA = a.next_run ? new Date(a.next_run).getTime() : Infinity;
-    const timeB = b.next_run ? new Date(b.next_run).getTime() : Infinity;
-    return timeA - timeB;
-  });
-
-  const sections = [
+  const sections: AdminSection[] = [
     {
       id: 'symbols',
       label: 'Symbols',
       icon: TrendingUp,
+      group: 'Data',
+      description: 'Manage tracked tickers and ingest settings.',
       content: <SymbolManager onError={(msg) => setError(msg)} />,
     },
     {
       id: 'suggestions',
       label: 'Suggestions',
       icon: Lightbulb,
+      group: 'Data',
+      description: 'Review, approve, and fix incoming stock ideas.',
       content: <SuggestionManager />,
     },
     {
       id: 'ai',
       label: 'AI Content',
       icon: Sparkles,
+      group: 'AI',
+      description: 'Monitor personas, AI bios, ratings, and batch jobs.',
       content: (
         <div className="space-y-6">
           <AIPersonasPanel />
@@ -280,27 +119,66 @@ export function AdminPage() {
       ),
     },
     {
-      id: 'system',
-      label: 'System',
-      icon: Cog,
-      content: (
-        <div className="max-w-2xl space-y-6">
-          <SystemSettings />
-          <ApiKeyManager />
-        </div>
-      ),
+      id: 'settings-ai',
+      label: 'AI Settings',
+      icon: Sparkles,
+      group: 'Settings',
+      description: 'Configure AI models, enrichment, and batch throughput.',
+      content: <SystemSettings defaultTab="ai" showTabs={false} />,
+    },
+    {
+      id: 'settings-trading',
+      label: 'Trading Settings',
+      icon: BarChart2,
+      group: 'Settings',
+      description: 'Tune thresholds, costs, risk rules, and validation.',
+      content: <SystemSettings defaultTab="trading" showTabs={false} />,
+    },
+    {
+      id: 'settings-benchmarks',
+      label: 'Benchmarks',
+      icon: BarChart2,
+      group: 'Settings',
+      description: 'Maintain benchmark and sector ETF references.',
+      content: <SystemSettings defaultTab="benchmarks" showTabs={false} />,
+    },
+    {
+      id: 'settings-maintenance',
+      label: 'Maintenance',
+      icon: Trash2,
+      group: 'Settings',
+      description: 'Control cleanup and retention policies.',
+      content: <SystemSettings defaultTab="maintenance" showTabs={false} />,
+    },
+    {
+      id: 'settings-integrations',
+      label: 'Integrations',
+      icon: KeyRound,
+      group: 'Settings',
+      description: 'Manage API keys and external providers.',
+      content: <SystemSettings defaultTab="integrations" showTabs={false} />,
+    },
+    {
+      id: 'settings-about',
+      label: 'About',
+      icon: Info,
+      group: 'Settings',
+      description: 'Application status and runtime metadata.',
+      content: <SystemSettings defaultTab="about" showTabs={false} />,
     },
     {
       id: 'account',
       label: 'Account',
       icon: User,
+      group: 'Account',
+      description: 'Profile, MFA, and personal API keys.',
       content: (
         <div className="max-w-2xl space-y-6">
           <UserSettings />
           <MFASetup />
-          <UserApiKeyManager 
+          <UserApiKeyManager
             onError={(msg) => setError(msg)}
-            onSuccess={() => { /* Could add toast */ }}
+            onSuccess={() => { /* optional toast */ }}
           />
         </div>
       ),
@@ -309,302 +187,25 @@ export function AdminPage() {
       id: 'scheduler',
       label: 'Scheduler',
       icon: Clock,
-      content: (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          className="grid gap-6"
-        >
-          <Card>
-            <CardHeader className="pb-4">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <CardTitle className="flex items-center gap-2">
-                    <Clock className="h-5 w-5 text-muted-foreground" />
-                    Scheduled Tasks
-                  </CardTitle>
-                  <CardDescription>
-                    Manage recurring jobs and run them on demand
-                  </CardDescription>
-                </div>
-                <div className="relative w-full sm:w-64">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Search jobs..."
-                    value={jobSearch}
-                    onChange={(event) => setJobSearch(event.target.value)}
-                    className="pl-9"
-                  />
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent>
-              {isLoadingJobs ? (
-                <div className="space-y-2">
-                  {[...Array(4)].map((_, i) => (
-                    <Skeleton key={i} className="h-12 w-full" />
-                  ))}
-                </div>
-              ) : filteredCronJobs.length === 0 ? (
-                <div className="text-center py-10 text-muted-foreground">
-                  <Clock className="h-10 w-10 mx-auto mb-3 opacity-20" />
-                  <p>
-                    {cronJobs.length === 0 ? 'No scheduled jobs configured' : 'No jobs match your search'}
-                  </p>
-                </div>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Cron</TableHead>
-                      <TableHead>Next Run</TableHead>
-                      <TableHead className="w-[60px]" />
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    <AnimatePresence mode="popLayout">
-                      {sortedCronJobs.map((job) => {
-                        const nextRuns = job.next_runs && job.next_runs.length > 0
-                          ? job.next_runs
-                          : job.next_run ? [job.next_run] : [];
-                        return (
-                          <motion.tr
-                            key={job.name}
-                            initial={{ opacity: 0, y: 10 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            exit={{ opacity: 0 }}
-                            className="border-b"
-                          >
-                            <TableCell className="font-medium">
-                              {job.description ? (
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <span className="cursor-help underline decoration-dotted">
-                                      {job.name}
-                                    </span>
-                                  </TooltipTrigger>
-                                  <TooltipContent className="max-w-xs">
-                                    {job.description}
-                                  </TooltipContent>
-                                </Tooltip>
-                              ) : (
-                                job.name
-                              )}
-                            </TableCell>
-                            <TableCell>
-                              <Badge variant="outline" className="font-mono text-xs">
-                                {job.cron}
-                              </Badge>
-                            </TableCell>
-                            <TableCell className="text-sm text-muted-foreground">
-                              {job.next_run ? (
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <span className="cursor-help">
-                                      {formatDate(job.next_run)}
-                                    </span>
-                                  </TooltipTrigger>
-                                  <TooltipContent>
-                                    <div className="space-y-1">
-                                      <p className="text-xs font-medium">Next runs</p>
-                                      {nextRuns.map((run, index) => (
-                                        <p key={`${job.name}-next-${index}`} className="text-xs">
-                                          {formatDate(run)}
-                                        </p>
-                                      ))}
-                                    </div>
-                                  </TooltipContent>
-                                </Tooltip>
-                              ) : (
-                                '—'
-                              )}
-                            </TableCell>
-                            <TableCell className="text-right">
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <Button variant="ghost" size="icon" className="h-8 w-8">
-                                    <MoreHorizontal className="h-4 w-4" />
-                                  </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end">
-                                  <DropdownMenuItem
-                                    onClick={() => handleRunNow(job.name)}
-                                    disabled={runningJob === job.name}
-                                  >
-                                    {runningJob === job.name ? (
-                                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                                    ) : (
-                                      <Play className="h-4 w-4 mr-2" />
-                                    )}
-                                    Run now
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem onClick={() => openCronEditor(job)}>
-                                    <Settings className="h-4 w-4 mr-2" />
-                                    Edit schedule
-                                  </DropdownMenuItem>
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            </TableCell>
-                          </motion.tr>
-                        );
-                      })}
-                    </AnimatePresence>
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Logs Section (inline in Scheduler) */}
-          <Card>
-            <CardHeader className="pb-4">
-              <CardTitle className="flex items-center gap-2">
-                <Calendar className="h-5 w-5 text-muted-foreground" />
-                Job Logs
-              </CardTitle>
-              <div className="flex flex-col sm:flex-row gap-4 mt-4">
-                {/* Search */}
-                <div className="relative flex-1">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Search logs..."
-                    value={logSearch}
-                    onChange={(e) => {
-                      setLogSearch(e.target.value);
-                      setLogPage(0);
-                    }}
-                    className="pl-9"
-                  />
-                  {logSearch && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7"
-                      onClick={() => {
-                        setLogSearch('');
-                        setLogPage(0);
-                      }}
-                    >
-                      <X className="h-4 w-4" />
-                    </Button>
-                  )}
-                </div>
-
-                {/* Status Filter */}
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="outline" size="sm">
-                      <Filter className="h-4 w-4 mr-2" />
-                      {logStatus ? `Status: ${logStatus}` : 'All Status'}
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem onClick={() => { setLogStatus(undefined); setLogPage(0); }}>
-                      All Status
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => { setLogStatus('success'); setLogPage(0); }}>
-                      Success
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => { setLogStatus('error'); setLogPage(0); }}>
-                      Error
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-
-                {/* Refresh */}
-                <Button variant="outline" size="sm" onClick={loadCronLogs}>
-                  <RefreshCw className="h-4 w-4" />
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent>
-              {isLoadingLogs ? (
-                <div className="space-y-2">
-                  {[...Array(5)].map((_, i) => (
-                    <Skeleton key={i} className="h-12 w-full" />
-                  ))}
-                </div>
-              ) : cronLogs.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-                  <Calendar className="h-12 w-12 mb-4 opacity-20" />
-                  <p>No logs found</p>
-                  {logSearch && (
-                    <p className="text-sm mt-1">Try adjusting your search</p>
-                  )}
-                </div>
-              ) : (
-                <ScrollArea className="h-[300px]">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Job</TableHead>
-                        <TableHead>Time</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Message</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {cronLogs.map((log, i) => (
-                        <TableRow key={`${log.name}-${log.created_at}-${i}`}>
-                          <TableCell className="font-medium">{log.name}</TableCell>
-                          <TableCell className="text-muted-foreground whitespace-nowrap">
-                            {formatDate(log.created_at)}
-                          </TableCell>
-                          <TableCell>
-                            {getStatusBadge(log.status)}
-                          </TableCell>
-                          <TableCell className="max-w-xs truncate text-sm text-muted-foreground">
-                            {log.message || '—'}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </ScrollArea>
-              )}
-
-              {/* Pagination */}
-              {totalPages > 1 && (
-                <div className="flex items-center justify-between pt-4 border-t mt-4">
-                  <p className="text-sm text-muted-foreground">
-                    Showing {logPage * logsPerPage + 1} - {Math.min((logPage + 1) * logsPerPage, totalLogs)} of {totalLogs}
-                  </p>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      onClick={() => setLogPage(p => p - 1)}
-                      disabled={logPage === 0}
-                    >
-                      <ChevronLeft className="h-4 w-4" />
-                    </Button>
-                    <span className="text-sm text-muted-foreground px-2">
-                      Page {logPage + 1} of {totalPages}
-                    </span>
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      onClick={() => setLogPage(p => p + 1)}
-                      disabled={logPage >= totalPages - 1}
-                    >
-                      <ChevronRight className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-          
-          <CeleryMonitorPanel />
-        </motion.div>
-      ),
+      group: 'Operations',
+      description: 'Cron jobs, Celery workers, and queue health.',
+      content: <SchedulerPanel />,
     },
   ];
 
   const activeItem = sections.find((section) => section.id === activeSection) || sections[0];
 
-  const buildNavButton = (section: (typeof sections)[number], collapsed: boolean) => {
+  const groupedSections = sections.reduce<{ label: string; items: AdminSection[] }[]>((groups, section) => {
+    const existing = groups.find((group) => group.label === section.group);
+    if (existing) {
+      existing.items.push(section);
+    } else {
+      groups.push({ label: section.group, items: [section] });
+    }
+    return groups;
+  }, []);
+
+  const buildNavButton = (section: AdminSection, collapsed: boolean) => {
     const Icon = section.icon;
     const isActive = activeSection === section.id;
     const button = (
@@ -639,16 +240,17 @@ export function AdminPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <motion.div 
+      <motion.div
         initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0 }}
         className="flex flex-col sm:flex-row sm:items-center justify-between gap-4"
       >
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Settings</h1>
+          <h1 className="text-3xl font-bold tracking-tight">
+            {activeItem.label}
+          </h1>
           <p className="text-muted-foreground">
-            Manage your account, symbols, and scheduled jobs
+            {activeItem.description || 'Manage your account, symbols, and scheduled jobs'}
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -662,8 +264,18 @@ export function AdminPage() {
               <SheetHeader className="px-4 pt-4">
                 <SheetTitle>Settings</SheetTitle>
               </SheetHeader>
-              <div className="flex flex-col gap-2 px-2 pb-4">
-                {sections.map((section) => buildNavButton(section, false))}
+              <div className="flex flex-col gap-4 px-4 pb-6">
+                {groupedSections.map((group, index) => (
+                  <div key={group.label} className="space-y-2">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      {group.label}
+                    </span>
+                    <div className="flex flex-col gap-2">
+                      {group.items.map((section) => buildNavButton(section, false))}
+                    </div>
+                    {index < groupedSections.length - 1 && <Separator />}
+                  </div>
+                ))}
               </div>
             </SheetContent>
           </Sheet>
@@ -672,7 +284,7 @@ export function AdminPage() {
           </Badge>
           <Button onClick={handleRefreshData} disabled={isRefreshing} variant="outline">
             {isRefreshing ? (
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
             ) : (
               <RefreshCw className="h-4 w-4 mr-2" />
             )}
@@ -681,7 +293,6 @@ export function AdminPage() {
         </div>
       </motion.div>
 
-      {/* Error Alert */}
       <AnimatePresence>
         {error && (
           <motion.div
@@ -692,8 +303,8 @@ export function AdminPage() {
           >
             <AlertCircle className="h-4 w-4 shrink-0" />
             <span className="flex-1">{error}</span>
-            <Button 
-              variant="ghost" 
+            <Button
+              variant="ghost"
               size="icon"
               className="h-6 w-6"
               onClick={() => setError(null)}
@@ -706,7 +317,7 @@ export function AdminPage() {
 
       <div className="flex gap-6">
         <aside
-          className={`hidden lg:flex flex-col gap-3 rounded-xl border bg-card p-3 ${sidebarCollapsed ? 'w-16' : 'w-60'}`}
+          className={`hidden lg:flex flex-col gap-3 rounded-xl border bg-card p-3 ${sidebarCollapsed ? 'w-16' : 'w-64'}`}
         >
           <div className="flex items-center justify-between px-1">
             {!sidebarCollapsed && (
@@ -728,44 +339,26 @@ export function AdminPage() {
             </Button>
           </div>
           <Separator />
-          <nav className={`flex flex-col gap-2 ${sidebarCollapsed ? 'items-center' : ''}`}>
-            {sections.map((section) => buildNavButton(section, sidebarCollapsed))}
+          <nav className={`flex flex-col gap-3 ${sidebarCollapsed ? 'items-center' : ''}`}>
+            {groupedSections.map((group, index) => (
+              <div key={group.label} className="space-y-2 w-full">
+                {!sidebarCollapsed && (
+                  <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    {group.label}
+                  </span>
+                )}
+                <div className={`flex flex-col gap-2 ${sidebarCollapsed ? 'items-center' : ''}`}>
+                  {group.items.map((section) => buildNavButton(section, sidebarCollapsed))}
+                </div>
+                {index < groupedSections.length - 1 && !sidebarCollapsed && <Separator />}
+              </div>
+            ))}
           </nav>
         </aside>
         <div className="flex-1 min-w-0">
           {activeItem.content}
         </div>
       </div>
-
-      <Dialog open={!!editingJob} onOpenChange={(open) => {
-        if (!open) {
-          setEditingJob(null);
-        }
-      }}>
-        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Edit Schedule</DialogTitle>
-            <DialogDescription>
-              Configure the cron schedule for {editingJob?.name}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="py-4">
-            <CronBuilder
-              value={newCronValue}
-              onChange={setNewCronValue}
-            />
-          </div>
-          <DialogFooter>
-            <Button 
-              onClick={handleSaveCron}
-              disabled={isSaving || !newCronValue || !validateCron(newCronValue).valid}
-            >
-              {isSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              Save Changes
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

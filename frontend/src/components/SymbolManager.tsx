@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -32,12 +32,12 @@ import {
   TrendingDown
 } from 'lucide-react';
 import { 
-  getSymbols, 
+  getSymbolsPaged, 
   createSymbol, 
   updateSymbol, 
   deleteSymbol,
   getCronJobs,
-  getTaskStatus,
+  getTaskStatuses,
   validateSymbol,
   type Symbol,
   type TaskStatus,
@@ -51,9 +51,12 @@ interface SymbolManagerProps {
 export function SymbolManager({ onError }: SymbolManagerProps) {
   const [symbols, setSymbols] = useState<Symbol[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const [totalSymbols, setTotalSymbols] = useState(0);
   const [nextIngestRun, setNextIngestRun] = useState<string | null>(null);
   const [taskStatuses, setTaskStatuses] = useState<Record<string, TaskStatus>>({});
   
@@ -71,22 +74,44 @@ export function SymbolManager({ onError }: SymbolManagerProps) {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deletingSymbol, setDeletingSymbol] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const initialLoad = useRef(true);
 
-  const loadSymbols = useCallback(async () => {
-    setIsLoading(true);
+  const loadSymbols = useCallback(async (skipCache = false) => {
+    if (initialLoad.current) {
+      setIsLoading(true);
+    } else {
+      setIsRefreshing(true);
+    }
     try {
-      const data = await getSymbols();
-      setSymbols(data);
+      const response = await getSymbolsPaged(
+        pageSize,
+        (currentPage - 1) * pageSize,
+        debouncedSearch.trim() || undefined,
+        skipCache
+      );
+      setSymbols(response.items);
+      setTotalSymbols(response.total);
     } catch (err) {
       onError?.(err instanceof Error ? err.message : 'Failed to load symbols');
     } finally {
-      setIsLoading(false);
+      if (initialLoad.current) {
+        setIsLoading(false);
+        initialLoad.current = false;
+      }
+      setIsRefreshing(false);
     }
-  }, [onError]);
+  }, [currentPage, debouncedSearch, onError, pageSize]);
 
   useEffect(() => {
     loadSymbols();
   }, [loadSymbols]);
+
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      setDebouncedSearch(search);
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [search]);
 
   useEffect(() => {
     getCronJobs()
@@ -106,11 +131,11 @@ export function SymbolManager({ onError }: SymbolManagerProps) {
 
     const pollInterval = setInterval(() => {
       // Silently reload without showing loading state, skip cache
-      getSymbols(true).then(setSymbols).catch(() => {});
+      loadSymbols(true);
     }, 2000); // Poll every 2 seconds
 
     return () => clearInterval(pollInterval);
-  }, [symbols]);
+  }, [symbols, loadSymbols]);
 
   const activeTaskIds = useMemo(
     () =>
@@ -129,34 +154,28 @@ export function SymbolManager({ onError }: SymbolManagerProps) {
     let cancelled = false;
 
     const pollTaskStatuses = async () => {
-      const updates = await Promise.all(
-        activeTaskIds.map(async (taskId) => {
-          try {
-            return await getTaskStatus(taskId);
-          } catch {
-            return null;
-          }
-        })
-      );
+      let updates: TaskStatus[] = [];
+      try {
+        updates = await getTaskStatuses(activeTaskIds);
+      } catch {
+        updates = [];
+      }
 
       if (cancelled) return;
 
       setTaskStatuses((prev) => {
         const next = { ...prev };
         updates.forEach((status) => {
-          if (status) {
-            next[status.task_id] = status;
-          }
+          next[status.task_id] = status;
         });
         return next;
       });
 
-      const hasFinished = updates.some(
-        (status) =>
-          status && ['SUCCESS', 'FAILURE', 'REVOKED'].includes(status.status)
+      const hasFinished = updates.some((status) =>
+        ['SUCCESS', 'FAILURE', 'REVOKED'].includes(status.status)
       );
       if (hasFinished) {
-        getSymbols(true).then(setSymbols).catch(() => {});
+        loadSymbols(true);
       }
     };
 
@@ -254,25 +273,18 @@ export function SymbolManager({ onError }: SymbolManagerProps) {
     setValidationResult(null);
   }
 
-  const filteredSymbols = useMemo(() => {
-    if (!search.trim()) return symbols;
-    const searchLower = search.toLowerCase();
-    return symbols.filter(s => 
-      s.symbol.toLowerCase().includes(searchLower) ||
-      s.name?.toLowerCase().includes(searchLower)
-    );
-  }, [symbols, search]);
+  const totalPages = Math.ceil(totalSymbols / pageSize);
 
-  const totalPages = Math.ceil(filteredSymbols.length / pageSize);
-  const paginatedSymbols = useMemo(() => {
-    const start = (currentPage - 1) * pageSize;
-    return filteredSymbols.slice(start, start + pageSize);
-  }, [filteredSymbols, currentPage, pageSize]);
-
-  // Reset page when search changes
   useEffect(() => {
     setCurrentPage(1);
-  }, [search]);
+  }, [debouncedSearch, pageSize]);
+
+  useEffect(() => {
+    const maxPage = Math.max(1, Math.ceil(totalSymbols / pageSize));
+    if (currentPage > maxPage) {
+      setCurrentPage(1);
+    }
+  }, [currentPage, pageSize, totalSymbols]);
 
   const hasPending = symbols.some(
     (s) => s.fetch_status === 'fetching' || s.fetch_status === 'pending'
@@ -335,10 +347,18 @@ export function SymbolManager({ onError }: SymbolManagerProps) {
               Manage which stocks are tracked for dip detection
             </CardDescription>
           </div>
-          <Button onClick={openAddDialog}>
-            <Plus className="h-4 w-4 mr-2" />
-            Add Symbol
-          </Button>
+          <div className="flex items-center gap-2">
+            {isRefreshing && (
+              <Badge variant="outline" className="text-muted-foreground">
+                <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                Refreshing
+              </Badge>
+            )}
+            <Button onClick={openAddDialog}>
+              <Plus className="h-4 w-4 mr-2" />
+              Add Symbol
+            </Button>
+          </div>
         </div>
       </CardHeader>
       <CardContent>
@@ -349,7 +369,7 @@ export function SymbolManager({ onError }: SymbolManagerProps) {
           searchPlaceholder="Search symbols, names..."
           currentPage={currentPage}
           totalPages={totalPages}
-          totalItems={filteredSymbols.length}
+          totalItems={totalSymbols}
           pageSize={pageSize}
           onPageChange={setCurrentPage}
           onPageSizeChange={setPageSize}
@@ -369,7 +389,7 @@ export function SymbolManager({ onError }: SymbolManagerProps) {
               <Skeleton key={i} className="h-12 w-full" />
             ))}
           </div>
-        ) : filteredSymbols.length === 0 ? (
+        ) : symbols.length === 0 ? (
           <div className="text-center py-8 text-muted-foreground">
             {search ? 'No symbols match your search' : 'No symbols configured'}
           </div>
@@ -387,7 +407,7 @@ export function SymbolManager({ onError }: SymbolManagerProps) {
             </TableHeader>
             <TableBody>
               <AnimatePresence>
-                {paginatedSymbols.map((symbol) => (
+                {symbols.map((symbol) => (
                   <motion.tr
                     key={symbol.symbol}
                     initial={{ opacity: 0 }}

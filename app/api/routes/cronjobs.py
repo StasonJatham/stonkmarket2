@@ -20,6 +20,8 @@ from app.schemas.cronjobs import (
     CronJobWithStatsResponse,
     JobStatusResponse,
     TaskStatusResponse,
+    TaskStatusBatchRequest,
+    TaskStatusBatchResponse,
 )
 
 
@@ -277,3 +279,19 @@ async def get_celery_task_status(
     """Get Celery task status for admin monitoring."""
     status = get_task_status(task_id)
     return TaskStatusResponse(**status)
+
+
+@router.post(
+    "/tasks/batch",
+    response_model=TaskStatusBatchResponse,
+    summary="Get Celery task statuses (batch)",
+    description="Fetch multiple Celery task statuses in one request.",
+)
+async def get_celery_task_statuses(
+    payload: TaskStatusBatchRequest,
+    admin: TokenData = Depends(require_admin),
+) -> TaskStatusBatchResponse:
+    """Batch task status lookup for admin monitoring."""
+    unique_task_ids = list(dict.fromkeys(payload.task_ids))
+    tasks = [TaskStatusResponse(**get_task_status(task_id)) for task_id in unique_task_ids]
+    return TaskStatusBatchResponse(tasks=tasks)

@@ -22,6 +22,20 @@ from typing import Any, Callable
 import numpy as np
 import pandas as pd
 
+# Import shared indicator functions from centralized module
+from app.quant_engine.indicators import (
+    compute_sma,
+    compute_ema,
+    compute_rsi,
+    compute_macd,
+    compute_bollinger_bands,
+    compute_zscore,
+    compute_drawdown,
+    compute_volume_ratio,
+    compute_price_vs_sma,
+    compute_stochastic,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -115,78 +129,10 @@ class ScanResult:
 
 # =============================================================================
 # Signal Computation Functions
+# NOTE: compute_sma, compute_ema, compute_rsi, compute_macd, compute_bollinger_bands,
+#       compute_zscore, compute_drawdown, compute_volume_ratio, compute_price_vs_sma,
+#       compute_stochastic are imported from app.quant_engine.indicators
 # =============================================================================
-
-
-def compute_sma(prices: pd.Series, window: int) -> pd.Series:
-    """Simple Moving Average."""
-    return prices.rolling(window).mean()
-
-
-def compute_ema(prices: pd.Series, window: int) -> pd.Series:
-    """Exponential Moving Average."""
-    return prices.ewm(span=window, adjust=False).mean()
-
-
-def compute_rsi(prices: pd.Series, window: int = 14) -> pd.Series:
-    """Relative Strength Index (0-100)."""
-    delta = prices.diff()
-    gain = delta.where(delta > 0, 0).rolling(window).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window).mean()
-    rs = gain / loss.replace(0, np.nan)
-    return 100 - (100 / (1 + rs))
-
-
-def compute_macd(prices: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> tuple[pd.Series, pd.Series, pd.Series]:
-    """MACD, Signal line, and Histogram."""
-    ema_fast = prices.ewm(span=fast, adjust=False).mean()
-    ema_slow = prices.ewm(span=slow, adjust=False).mean()
-    macd = ema_fast - ema_slow
-    signal_line = macd.ewm(span=signal, adjust=False).mean()
-    histogram = macd - signal_line
-    return macd, signal_line, histogram
-
-
-def compute_bollinger_bands(prices: pd.Series, window: int = 20, num_std: float = 2.0) -> tuple[pd.Series, pd.Series, pd.Series]:
-    """Upper, Middle, Lower Bollinger Bands."""
-    middle = prices.rolling(window).mean()
-    std = prices.rolling(window).std()
-    upper = middle + num_std * std
-    lower = middle - num_std * std
-    return upper, middle, lower
-
-
-def compute_zscore(prices: pd.Series, window: int) -> pd.Series:
-    """Rolling Z-score (how many std devs from mean)."""
-    mean = prices.rolling(window).mean()
-    std = prices.rolling(window).std()
-    return (prices - mean) / std.replace(0, np.nan)
-
-
-def compute_drawdown(prices: pd.Series, window: int = 252) -> pd.Series:
-    """Drawdown from rolling peak."""
-    peak = prices.rolling(window, min_periods=1).max()
-    return (prices - peak) / peak
-
-
-def compute_volume_ratio(volume: pd.Series, window: int = 20) -> pd.Series:
-    """Current volume vs average volume."""
-    avg_volume = volume.rolling(window).mean()
-    return volume / avg_volume.replace(0, np.nan)
-
-
-def compute_price_vs_sma(prices: pd.Series, window: int) -> pd.Series:
-    """Price relative to SMA (% above/below)."""
-    sma = prices.rolling(window).mean()
-    return (prices - sma) / sma
-
-
-def compute_stochastic(high: pd.Series, low: pd.Series, close: pd.Series, window: int = 14) -> pd.Series:
-    """Stochastic Oscillator %K."""
-    lowest_low = low.rolling(window).min()
-    highest_high = high.rolling(window).max()
-    k = 100 * (close - lowest_low) / (highest_high - lowest_low).replace(0, np.nan)
-    return k
 
 
 def apply_cooldown_to_triggers(triggers: pd.Series, cooldown_days: int) -> pd.Series:

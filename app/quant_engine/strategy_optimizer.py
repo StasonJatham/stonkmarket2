@@ -149,6 +149,7 @@ class OptimizationResult:
     vs_buy_hold: float  # Excess return
     vs_spy: float | None
     beats_buy_hold: bool
+    beats_spy: bool  # Strategy beats SPY benchmark
     
     # Current signal status
     has_active_signal: bool
@@ -740,6 +741,7 @@ class StrategyOptimizer:
             vs_buy_hold=comparison.get("excess_vs_stock", 0),
             vs_spy=comparison.get("excess_vs_spy"),
             beats_buy_hold=comparison.get("beats_stock", False),
+            beats_spy=comparison.get("beats_spy", False),
             
             # Current signal
             has_active_signal=has_active_signal,
@@ -832,6 +834,7 @@ class StrategyOptimizer:
             vs_buy_hold=0,
             vs_spy=None,
             beats_buy_hold=False,
+            beats_spy=False,
             has_active_signal=False,
             signal_type="HOLD",
             signal_reason=reason,

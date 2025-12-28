@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useState, useMemo } from 'react';
 import {
-  getCeleryBroker,
-  getCeleryQueues,
-  getCeleryTasks,
-  getCeleryWorkers,
+  getCelerySnapshot,
   type CeleryBrokerInfo,
   type CeleryQueueInfo,
   type CeleryTaskInfo,
@@ -194,33 +191,14 @@ export function CeleryMonitorPanel() {
     }
     setError(null);
 
-    const [workersResult, queuesResult, brokerResult, tasksResult] = await Promise.allSettled([
-      getCeleryWorkers(),
-      getCeleryQueues(),
-      getCeleryBroker(),
-      getCeleryTasks(100),
-    ]);
-
-    if (workersResult.status === 'fulfilled') {
-      setWorkers(workersResult.value);
-    } else {
-      console.error('Workers error:', workersResult.reason);
-    }
-
-    if (queuesResult.status === 'fulfilled') {
-      setQueues(queuesResult.value);
-    }
-
-    if (brokerResult.status === 'fulfilled') {
-      setBroker(brokerResult.value);
-    }
-
-    if (tasksResult.status === 'fulfilled') {
-      setTasks(tasksResult.value);
-    }
-
-    // Only show error if all critical calls failed
-    if (workersResult.status === 'rejected' && brokerResult.status === 'rejected') {
+    try {
+      const snapshot = await getCelerySnapshot(100);
+      setWorkers(snapshot.workers);
+      setQueues(snapshot.queues);
+      setBroker(snapshot.broker);
+      setTasks(snapshot.tasks);
+    } catch (err) {
+      console.error('Celery snapshot error:', err);
       setError('Failed to connect to Celery monitoring');
     }
 
