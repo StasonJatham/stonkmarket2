@@ -19,11 +19,15 @@ export default defineConfig({
   /* Opt out of parallel tests on CI */
   workers: process.env.CI ? 1 : undefined,
   
-  /* Reporter to use */
+  /* Reporter to use - JSON for machine parsing, list for console output */
   reporter: [
-    ['html', { open: 'never' }],
+    ['json', { outputFile: 'test-results/results.json' }],
+    ['html', { open: 'never', outputFolder: 'test-results/html' }],
     ['list'],
   ],
+  
+  /* Output folder for test artifacts */
+  outputDir: 'test-results/artifacts',
   
   /* Shared settings for all the projects below */
   use: {

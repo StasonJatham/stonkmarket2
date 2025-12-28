@@ -16,7 +16,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
-import { Zap } from 'lucide-react';
+import { Zap, CircleArrowUp } from 'lucide-react';
 
 interface StockChartProps {
   symbol: string;
@@ -179,8 +179,8 @@ export function StockChart({ symbol, data, isLoading, showSignalMarkers = true }
                     return [
                       <div key="price" className="flex flex-col gap-1">
                         <span>${Number(value).toFixed(2)}</span>
-                        <span className="text-success text-xs font-medium">
-                          🟢 {trigger.signal_name}
+                        <span className="text-success text-xs font-medium flex items-center gap-1">
+                          <CircleArrowUp className="h-3 w-3" /> {trigger.signal_name}
                         </span>
                         <span className="text-muted-foreground text-xs">
                           {Math.round(trigger.win_rate * 100)}% win, {expectedValue >= 0 ? '+' : ''}{expectedValue.toFixed(1)}% EV

@@ -422,13 +422,13 @@ function DipContext({
   }
   
   if (isUnusualDip && dipVsTypical) {
-    tooltipLines.push(`⚠️ UNUSUAL: ${dipVsTypical.toFixed(1)}x larger than typical dip`);
+    tooltipLines.push(`[!] UNUSUAL: ${dipVsTypical.toFixed(1)}x larger than typical dip`);
   } else if (dipVsTypical) {
     tooltipLines.push(`${dipVsTypical.toFixed(1)}x vs typical dip (${typicalDipPct?.toFixed(1) || '?'}%)`);
   }
   
   if (expectedRecoveryDays) {
-    tooltipLines.push(`📈 Expected recovery: ~${expectedRecoveryDays} trading days`);
+    tooltipLines.push(`Expected recovery: ~${expectedRecoveryDays} trading days`);
   }
   
   if (winRate) {
@@ -624,25 +624,8 @@ export const StockCardV2 = memo(function StockCardV2({
               />
             )}
             
-            {/* Domain-specific indicator for banks/REITs/insurance */}
-            {stock.domain_context && (
-              <InfoTooltip content={stock.domain_context}>
-                <Badge 
-                  variant="outline" 
-                  className="text-[9px] px-1.5 py-0 h-4 cursor-help border-blue-500/50 text-blue-600"
-                >
-                  {stock.domain_context.includes('Bank') || stock.domain_context.includes('NIM') ? '🏦' :
-                   stock.domain_context.includes('REIT') || stock.domain_context.includes('FFO') ? '🏢' :
-                   stock.domain_context.includes('Insur') || stock.domain_context.includes('Combined') ? '🛡️' :
-                   stock.domain_context.includes('Utility') ? '⚡' :
-                   stock.domain_context.includes('Biotech') ? '🧬' : '📊'}
-                  Domain
-                </Badge>
-              </InfoTooltip>
-            )}
-            
-            {/* Market Cap */}
-            {!compact && stock.market_cap && !stock.domain_context && (
+            {/* Market Cap - always show if available */}
+            {!compact && stock.market_cap && (
               <div className="text-[10px] text-muted-foreground">
                 <span className="text-foreground/60">MCap:</span>{' '}
                 <span className="font-medium">{formatMarketCap(stock.market_cap)}</span>

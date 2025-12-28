@@ -1,0 +1,119 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - link "StonkMarket" [ref=e6] [cursor=pointer]:
+        - /url: /
+        - img [ref=e7]
+        - generic [ref=e10]: StonkMarket
+      - navigation [ref=e11]:
+        - link "Dashboard" [ref=e12] [cursor=pointer]:
+          - /url: /dashboard
+        - link "DipSwipe" [ref=e13] [cursor=pointer]:
+          - /url: /swipe
+          - img [ref=e14]
+          - text: DipSwipe
+        - link "Methodology" [ref=e16] [cursor=pointer]:
+          - /url: /learn
+      - generic [ref=e17]:
+        - button "Suggest" [ref=e18] [cursor=pointer]:
+          - img
+          - generic [ref=e19]: Suggest
+        - button "Toggle theme" [ref=e20] [cursor=pointer]:
+          - img
+          - generic [ref=e21]: Toggle theme
+        - link "Sign in" [ref=e22] [cursor=pointer]:
+          - /url: /login
+          - button "Sign in" [ref=e23]
+  - main [ref=e24]:
+    - generic [ref=e26]:
+      - generic [ref=e30]:
+        - generic [ref=e32]:
+          - img
+          - text: AI-Powered Analysis
+        - heading "Find the dip. Catch the wave." [level=1] [ref=e33]:
+          - text: Find the dip.
+          - text: Catch the wave.
+        - paragraph [ref=e34]: Quantitative stock analysis identifies oversold conditions before the bounce. Real-time signals powered by mean-variance optimization.
+        - generic [ref=e35]:
+          - button "Get Started Free" [ref=e36] [cursor=pointer]:
+            - text: Get Started Free
+            - img
+          - button "Learn More" [ref=e37] [cursor=pointer]:
+            - text: Learn More
+            - img
+      - generic [ref=e46]:
+        - generic [ref=e48]:
+          - paragraph [ref=e49]: "0"
+          - paragraph [ref=e50]: Assets Analyzed
+        - generic [ref=e52]:
+          - paragraph [ref=e53]: "0"
+          - paragraph [ref=e54]: Buy Signals
+        - generic [ref=e56]:
+          - paragraph [ref=e57]:
+            - generic [ref=e58]: 0%
+          - paragraph [ref=e59]: Portfolio E[R]
+      - generic [ref=e62]:
+        - generic [ref=e63]:
+          - heading "Today's Top Opportunities" [level=2] [ref=e64]
+          - paragraph [ref=e65]: Quant-ranked stocks by expected return
+        - button "View All" [ref=e66] [cursor=pointer]:
+          - text: View All
+          - img
+      - generic [ref=e87]:
+        - generic [ref=e88]:
+          - heading "Built for serious traders" [level=2] [ref=e89]
+          - paragraph [ref=e90]: Professional-grade tools for quantitative stock analysis and portfolio optimization.
+        - generic [ref=e91]:
+          - generic [ref=e93]:
+            - generic [ref=e94]:
+              - img [ref=e96]
+              - generic [ref=e99]: Real-Time Analysis
+            - generic [ref=e101]: Monitor stocks with live momentum signals and technical indicators. Charts update automatically with the latest market data.
+          - generic [ref=e103]:
+            - generic [ref=e104]:
+              - img [ref=e106]
+              - generic [ref=e110]: Dip Detection
+            - generic [ref=e112]: Our algorithms identify oversold conditions using 52-week highs, volume patterns, and AI-powered sentiment analysis.
+          - generic [ref=e114]:
+            - generic [ref=e115]:
+              - img [ref=e117]
+              - generic [ref=e119]: Portfolio Optimization
+            - generic [ref=e121]: Mean-variance optimization calculates risk-adjusted expected returns. Build efficient portfolios with quantitative precision.
+      - generic [ref=e124]:
+        - heading "Ready to find your edge?" [level=2] [ref=e125]
+        - paragraph [ref=e126]: Join traders using StonkMarket to identify market opportunities before they disappear.
+        - button "Start Trading Smarter" [ref=e127] [cursor=pointer]:
+          - text: Start Trading Smarter
+          - img
+  - contentinfo [ref=e128]:
+    - generic [ref=e129]:
+      - generic [ref=e130]:
+        - generic [ref=e132]: StonkMarket • Not financial advice
+        - generic [ref=e133]:
+          - generic [ref=e134]:
+            - generic [ref=e136]:
+              - button "Up color" [ref=e137] [cursor=pointer]:
+                - img [ref=e138]
+              - button "Down color" [ref=e142] [cursor=pointer]:
+                - img [ref=e143]
+              - button "Reset colors" [ref=e147] [cursor=pointer]:
+                - img [ref=e148]
+            - button "Colorblind" [ref=e151] [cursor=pointer]:
+              - img [ref=e152]
+              - generic [ref=e157]: Colorblind
+          - generic [ref=e158]:
+            - link "About" [ref=e159] [cursor=pointer]:
+              - /url: /about
+            - link "Contact" [ref=e160] [cursor=pointer]:
+              - /url: /contact
+              - img [ref=e161]
+              - text: Contact
+          - button "Donate" [ref=e164] [cursor=pointer]:
+            - img [ref=e165]
+            - generic [ref=e167]: Donate
+      - link "Logos provided by Logo.dev" [ref=e169] [cursor=pointer]:
+        - /url: https://logo.dev
+```

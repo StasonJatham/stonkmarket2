@@ -282,6 +282,90 @@ def compute_volatility_regime(
     return regime, float(percentile)
 
 
+def compute_general_health(prices: pd.Series) -> tuple[str, str]:
+    """
+    Compute general price health metrics regardless of sector.
+    
+    Returns:
+        (health_status, health_summary): Brief assessment of general health
+    """
+    if len(prices) < 50:
+        return "unknown", ""
+    
+    # Calculate key metrics
+    returns = prices.pct_change().dropna()
+    
+    # Momentum: 20-day vs 50-day return
+    if len(prices) >= 50:
+        ret_20d = (prices.iloc[-1] / prices.iloc[-20] - 1) * 100
+        ret_50d = (prices.iloc[-1] / prices.iloc[-50] - 1) * 100
+    else:
+        ret_20d = ret_50d = 0
+    
+    # RSI proxy (simplified)
+    if len(returns) >= 14:
+        gains = returns.where(returns > 0, 0).rolling(14).mean()
+        losses = (-returns.where(returns < 0, 0)).rolling(14).mean()
+        rs = gains / losses.replace(0, np.nan)
+        rsi = (100 - (100 / (1 + rs))).iloc[-1]
+        if pd.isna(rsi):
+            rsi = 50
+    else:
+        rsi = 50
+    
+    # Drawdown from peak
+    peak = prices.rolling(min(252, len(prices)), min_periods=1).max()
+    drawdown = ((prices.iloc[-1] - peak.iloc[-1]) / peak.iloc[-1]) * 100
+    
+    # Build health assessment
+    health_parts = []
+    
+    # Momentum assessment
+    if ret_20d > 5:
+        health_parts.append("strong momentum")
+        momentum_health = "good"
+    elif ret_20d > 0:
+        health_parts.append("positive trend")
+        momentum_health = "okay"
+    elif ret_20d > -5:
+        health_parts.append("weak momentum")
+        momentum_health = "weak"
+    else:
+        health_parts.append("downtrend")
+        momentum_health = "poor"
+    
+    # RSI assessment  
+    if rsi < 30:
+        health_parts.append("oversold (RSI {:.0f})".format(rsi))
+    elif rsi > 70:
+        health_parts.append("overbought (RSI {:.0f})".format(rsi))
+    
+    # Drawdown severity
+    if drawdown < -30:
+        health_parts.append("severe drawdown ({:.0f}%)".format(drawdown))
+        dd_health = "critical"
+    elif drawdown < -20:
+        health_parts.append("significant dip ({:.0f}%)".format(drawdown))
+        dd_health = "concerning"
+    elif drawdown < -10:
+        health_parts.append("moderate pullback ({:.0f}%)".format(drawdown))
+        dd_health = "okay"
+    else:
+        dd_health = "healthy"
+    
+    # Overall health
+    if dd_health == "critical" or momentum_health == "poor":
+        overall = "weak"
+    elif momentum_health == "good" and dd_health in ("okay", "healthy"):
+        overall = "strong"
+    else:
+        overall = "mixed"
+    
+    summary = "; ".join(health_parts) if health_parts else "neutral conditions"
+    
+    return overall, summary
+
+
 # =============================================================================
 # Sector-Specific Analysis Functions
 # =============================================================================
@@ -374,13 +458,21 @@ def analyze_bank(
         adjustment = 0.0
         adj_reason = "Neutral sector environment"
     
+    # Add general health to dip interpretation
+    general_health, health_summary = compute_general_health(prices)
+    domain_context = f"Bank dip during {yield_curve_state} yield curve. {yield_curve_impact}"
+    if health_summary:
+        dip_interpretation = f"General: {health_summary}. Sector: {domain_context}"
+    else:
+        dip_interpretation = domain_context
+    
     return BankMetrics(
         sector=Sector.FINANCIALS,
         sector_name="Financials / Banks",
         volatility_regime=vol_regime,
         volatility_percentile=vol_pct,
         correlation_to_sector=correlation,
-        dip_interpretation=f"Bank dip during {yield_curve_state} yield curve. {yield_curve_impact}",
+        dip_interpretation=dip_interpretation,
         typical_recovery_days=40,  # Banks recover slower
         primary_risk_factors=["Interest rates", "Credit quality", "Regulatory", "Systemic"],
         current_risk_level=risk_level,
@@ -489,13 +581,21 @@ def analyze_tech(
         adjustment = 0.0
         adj_reason = "Neutral sector conditions"
     
+    # Add general health to dip interpretation
+    general_health, health_summary = compute_general_health(prices)
+    domain_context = f"Tech dip with {rate_sensitivity} rate sensitivity. {rate_impact}"
+    if health_summary:
+        dip_interpretation = f"General: {health_summary}. Sector: {domain_context}"
+    else:
+        dip_interpretation = domain_context
+    
     return TechMetrics(
         sector=Sector.TECHNOLOGY,
         sector_name="Technology",
         volatility_regime=vol_regime,
         volatility_percentile=vol_pct,
         correlation_to_sector=correlation,
-        dip_interpretation=f"Tech dip with {rate_sensitivity} rate sensitivity. {rate_impact}",
+        dip_interpretation=dip_interpretation,
         typical_recovery_days=25,  # Tech recovers faster
         primary_risk_factors=["Interest rates", "Growth expectations", "Competition", "Regulation"],
         current_risk_level=risk_level,
@@ -600,13 +700,21 @@ def analyze_healthcare(
     else:
         recovery_days = 25
     
+    # Add general health to dip interpretation
+    general_health, health_summary = compute_general_health(prices)
+    domain_context = f"{subsector.title()} dip. {'High binary risk!' if has_binary_catalyst else 'Standard sector dynamics.'}"
+    if health_summary:
+        dip_interpretation = f"General: {health_summary}. Sector: {domain_context}"
+    else:
+        dip_interpretation = domain_context
+    
     return HealthcareMetrics(
         sector=Sector.HEALTHCARE,
         sector_name=f"Healthcare / {subsector.title()}",
         volatility_regime=vol_regime,
         volatility_percentile=vol_pct,
         correlation_to_sector=correlation,
-        dip_interpretation=f"{subsector.title()} dip. {'High binary risk!' if has_binary_catalyst else 'Standard sector dynamics.'}",
+        dip_interpretation=dip_interpretation,
         typical_recovery_days=recovery_days,
         primary_risk_factors=["FDA/Regulatory", "Pipeline", "Reimbursement", "Patent cliffs"],
         current_risk_level=risk_level,
@@ -699,13 +807,21 @@ def analyze_energy(
         adjustment = 0.0
         adj_reason = "Neutral commodity environment"
     
+    # Add general health to dip interpretation
+    general_health, health_summary = compute_general_health(prices)
+    domain_context = f"Energy dip with {commodity_trend} commodity trend."
+    if health_summary:
+        dip_interpretation = f"General: {health_summary}. Sector: {domain_context}"
+    else:
+        dip_interpretation = domain_context
+    
     return EnergyMetrics(
         sector=Sector.ENERGY,
         sector_name="Energy",
         volatility_regime=vol_regime,
         volatility_percentile=vol_pct,
         correlation_to_sector=correlation,
-        dip_interpretation=f"Energy dip with {commodity_trend} commodity trend.",
+        dip_interpretation=dip_interpretation,
         typical_recovery_days=35,
         primary_risk_factors=["Commodity prices", "Geopolitical", "Demand/supply", "Transition risk"],
         current_risk_level=risk_level,
@@ -759,13 +875,21 @@ def analyze_generic(
         Sector.UNKNOWN: "Unknown Sector",
     }
     
+    # Add general health to dip interpretation
+    general_health, health_summary = compute_general_health(prices)
+    sector_display = sector_names.get(sector, 'this sector')
+    if health_summary:
+        dip_interpretation = f"General: {health_summary}. Standard analysis for {sector_display}."
+    else:
+        dip_interpretation = f"Standard dip analysis for {sector_display}."
+    
     return DomainMetrics(
         sector=sector,
         sector_name=sector_names.get(sector, "Unknown"),
         volatility_regime=vol_regime,
         volatility_percentile=vol_pct,
         correlation_to_sector=correlation,
-        dip_interpretation=f"Standard dip analysis for {sector_names.get(sector, 'this sector')}.",
+        dip_interpretation=dip_interpretation,
         typical_recovery_days=30,
         primary_risk_factors=["Market risk", "Sector risk", "Company-specific"],
         current_risk_level=risk_level,

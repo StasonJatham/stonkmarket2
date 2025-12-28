@@ -1,0 +1,395 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e3]:
+  - generic [ref=e5]:
+    - button "NET $202.39 -22.2% -0.1%" [ref=e6] [cursor=pointer]:
+      - generic [ref=e7]: NET
+      - generic [ref=e8]: $202.39
+      - generic [ref=e9]:
+        - img [ref=e10]
+        - generic [ref=e13]: "-22.2%"
+      - generic [ref=e14]:
+        - img [ref=e15]
+        - generic [ref=e18]: "-0.1%"
+    - button "CHLSY $14.12 -17.8% -4.6%" [ref=e19] [cursor=pointer]:
+      - generic [ref=e20]: CHLSY
+      - generic [ref=e21]: $14.12
+      - generic [ref=e22]:
+        - img [ref=e23]
+        - generic [ref=e26]: "-17.8%"
+      - generic [ref=e27]:
+        - img [ref=e28]
+        - generic [ref=e31]: "-4.6%"
+    - button "META $663.29 -16.7% -0.6%" [ref=e32] [cursor=pointer]:
+      - generic [ref=e33]: META
+      - generic [ref=e34]: $663.29
+      - generic [ref=e35]:
+        - img [ref=e36]
+        - generic [ref=e39]: "-16.7%"
+      - generic [ref=e40]:
+        - img [ref=e41]
+        - generic [ref=e44]: "-0.6%"
+    - button "MSFT $487.71 -12.2% -0.1%" [ref=e45] [cursor=pointer]:
+      - generic [ref=e46]: MSFT
+      - generic [ref=e47]: $487.71
+      - generic [ref=e48]:
+        - img [ref=e49]
+        - generic [ref=e52]: "-12.2%"
+      - generic [ref=e53]:
+        - img [ref=e54]
+        - generic [ref=e57]: "-0.1%"
+    - button "AMZN $232.89 -9.9% +0.1%" [ref=e58] [cursor=pointer]:
+      - generic [ref=e59]: AMZN
+      - generic [ref=e60]: $232.89
+      - generic [ref=e61]:
+        - img [ref=e62]
+        - generic [ref=e65]: "-9.9%"
+      - generic [ref=e66]:
+        - img [ref=e67]
+        - generic [ref=e70]: +0.1%
+    - button "NVDA $192.10 -9.5% +1.0%" [ref=e71] [cursor=pointer]:
+      - generic [ref=e72]: NVDA
+      - generic [ref=e73]: $192.10
+      - generic [ref=e74]:
+        - img [ref=e75]
+        - generic [ref=e78]: "-9.5%"
+      - generic [ref=e79]:
+        - img [ref=e80]
+        - generic [ref=e83]: +1.0%
+    - button "SIE.DE $237.80 -5.9% +0.5%" [ref=e84] [cursor=pointer]:
+      - generic [ref=e85]: SIE.DE
+      - generic [ref=e86]: $237.80
+      - generic [ref=e87]:
+        - img [ref=e88]
+        - generic [ref=e91]: "-5.9%"
+      - generic [ref=e92]:
+        - img [ref=e93]
+        - generic [ref=e96]: +0.5%
+    - button "O $56.67 -5.7% +0.0%" [ref=e97] [cursor=pointer]:
+      - generic [ref=e98]: O
+      - generic [ref=e99]: $56.67
+      - generic [ref=e100]:
+        - img [ref=e101]
+        - generic [ref=e104]: "-5.7%"
+      - generic [ref=e105]:
+        - img [ref=e106]
+        - generic [ref=e109]: +0.0%
+    - button "V $355.00 -5.5% -0.0%" [ref=e110] [cursor=pointer]:
+      - generic [ref=e111]: V
+      - generic [ref=e112]: $355.00
+      - generic [ref=e113]:
+        - img [ref=e114]
+        - generic [ref=e117]: "-5.5%"
+      - generic [ref=e118]:
+        - img [ref=e119]
+        - generic [ref=e122]: "-0.0%"
+    - button "AAPL $273.81 -5.1% -0.1%" [ref=e123] [cursor=pointer]:
+      - generic [ref=e124]: AAPL
+      - generic [ref=e125]: $273.81
+      - generic [ref=e126]:
+        - img [ref=e127]
+        - generic [ref=e130]: "-5.1%"
+      - generic [ref=e131]:
+        - img [ref=e132]
+        - generic [ref=e135]: "-0.1%"
+    - button "TSLA $475.19 -4.7% -2.1%" [ref=e136] [cursor=pointer]:
+      - generic [ref=e137]: TSLA
+      - generic [ref=e138]: $475.19
+      - generic [ref=e139]:
+        - img [ref=e140]
+        - generic [ref=e143]: "-4.7%"
+      - generic [ref=e144]:
+        - img [ref=e145]
+        - generic [ref=e148]: "-2.1%"
+    - button "GOOG $314.96 -4.2% -0.2%" [ref=e149] [cursor=pointer]:
+      - generic [ref=e150]: GOOG
+      - generic [ref=e151]: $314.96
+      - generic [ref=e152]:
+        - img [ref=e153]
+        - generic [ref=e156]: "-4.2%"
+      - generic [ref=e157]:
+        - img [ref=e158]
+        - generic [ref=e161]: "-0.2%"
+    - button "MA $579.60 -3.7% +0.0%" [ref=e162] [cursor=pointer]:
+      - generic [ref=e163]: MA
+      - generic [ref=e164]: $579.60
+      - generic [ref=e165]:
+        - img [ref=e166]
+        - generic [ref=e169]: "-3.7%"
+      - generic [ref=e170]:
+        - img [ref=e171]
+        - generic [ref=e174]: +0.0%
+    - button "ENR.DE $120.75 -3.3% +1.3%" [ref=e175] [cursor=pointer]:
+      - generic [ref=e176]: ENR.DE
+      - generic [ref=e177]: $120.75
+      - generic [ref=e178]:
+        - img [ref=e179]
+        - generic [ref=e182]: "-3.3%"
+      - generic [ref=e183]:
+        - img [ref=e184]
+        - generic [ref=e187]: +1.3%
+    - button "QQQ $623.89 -2.1% -0.0%" [ref=e188] [cursor=pointer]:
+      - generic [ref=e189]: QQQ
+      - generic [ref=e190]: $623.89
+      - generic [ref=e191]:
+        - img [ref=e192]
+        - generic [ref=e195]: "-2.1%"
+      - generic [ref=e196]:
+        - img [ref=e197]
+        - generic [ref=e200]: "-0.0%"
+    - button "JPM $327.91 -0.9% -0.4%" [ref=e201] [cursor=pointer]:
+      - generic [ref=e202]: JPM
+      - generic [ref=e203]: $327.91
+      - generic [ref=e204]:
+        - img [ref=e205]
+        - generic [ref=e208]: "-0.9%"
+      - generic [ref=e209]:
+        - img [ref=e210]
+        - generic [ref=e213]: "-0.4%"
+    - button "BAC $56.09 -0.8% -0.1%" [ref=e214] [cursor=pointer]:
+      - generic [ref=e215]: BAC
+      - generic [ref=e216]: $56.09
+      - generic [ref=e217]:
+        - img [ref=e218]
+        - generic [ref=e221]: "-0.8%"
+      - generic [ref=e222]:
+        - img [ref=e223]
+        - generic [ref=e226]: "-0.1%"
+    - button "VTI $339.67 -0.2% -0.1%" [ref=e227] [cursor=pointer]:
+      - generic [ref=e228]: VTI
+      - generic [ref=e229]: $339.67
+      - generic [ref=e230]:
+        - img [ref=e231]
+        - generic [ref=e234]: "-0.2%"
+      - generic [ref=e235]:
+        - img [ref=e236]
+        - generic [ref=e239]: "-0.1%"
+    - button "NET $202.39 -22.2% -0.1%" [ref=e240] [cursor=pointer]:
+      - generic [ref=e241]: NET
+      - generic [ref=e242]: $202.39
+      - generic [ref=e243]:
+        - img [ref=e244]
+        - generic [ref=e247]: "-22.2%"
+      - generic [ref=e248]:
+        - img [ref=e249]
+        - generic [ref=e252]: "-0.1%"
+    - button "CHLSY $14.12 -17.8% -4.6%" [ref=e253] [cursor=pointer]:
+      - generic [ref=e254]: CHLSY
+      - generic [ref=e255]: $14.12
+      - generic [ref=e256]:
+        - img [ref=e257]
+        - generic [ref=e260]: "-17.8%"
+      - generic [ref=e261]:
+        - img [ref=e262]
+        - generic [ref=e265]: "-4.6%"
+    - button "META $663.29 -16.7% -0.6%" [ref=e266] [cursor=pointer]:
+      - generic [ref=e267]: META
+      - generic [ref=e268]: $663.29
+      - generic [ref=e269]:
+        - img [ref=e270]
+        - generic [ref=e273]: "-16.7%"
+      - generic [ref=e274]:
+        - img [ref=e275]
+        - generic [ref=e278]: "-0.6%"
+    - button "MSFT $487.71 -12.2% -0.1%" [ref=e279] [cursor=pointer]:
+      - generic [ref=e280]: MSFT
+      - generic [ref=e281]: $487.71
+      - generic [ref=e282]:
+        - img [ref=e283]
+        - generic [ref=e286]: "-12.2%"
+      - generic [ref=e287]:
+        - img [ref=e288]
+        - generic [ref=e291]: "-0.1%"
+    - button "AMZN $232.89 -9.9% +0.1%" [ref=e292] [cursor=pointer]:
+      - generic [ref=e293]: AMZN
+      - generic [ref=e294]: $232.89
+      - generic [ref=e295]:
+        - img [ref=e296]
+        - generic [ref=e299]: "-9.9%"
+      - generic [ref=e300]:
+        - img [ref=e301]
+        - generic [ref=e304]: +0.1%
+    - button "NVDA $192.10 -9.5% +1.0%" [ref=e305] [cursor=pointer]:
+      - generic [ref=e306]: NVDA
+      - generic [ref=e307]: $192.10
+      - generic [ref=e308]:
+        - img [ref=e309]
+        - generic [ref=e312]: "-9.5%"
+      - generic [ref=e313]:
+        - img [ref=e314]
+        - generic [ref=e317]: +1.0%
+    - button "SIE.DE $237.80 -5.9% +0.5%" [ref=e318] [cursor=pointer]:
+      - generic [ref=e319]: SIE.DE
+      - generic [ref=e320]: $237.80
+      - generic [ref=e321]:
+        - img [ref=e322]
+        - generic [ref=e325]: "-5.9%"
+      - generic [ref=e326]:
+        - img [ref=e327]
+        - generic [ref=e330]: +0.5%
+    - button "O $56.67 -5.7% +0.0%" [ref=e331] [cursor=pointer]:
+      - generic [ref=e332]: O
+      - generic [ref=e333]: $56.67
+      - generic [ref=e334]:
+        - img [ref=e335]
+        - generic [ref=e338]: "-5.7%"
+      - generic [ref=e339]:
+        - img [ref=e340]
+        - generic [ref=e343]: +0.0%
+    - button "V $355.00 -5.5% -0.0%" [ref=e344] [cursor=pointer]:
+      - generic [ref=e345]: V
+      - generic [ref=e346]: $355.00
+      - generic [ref=e347]:
+        - img [ref=e348]
+        - generic [ref=e351]: "-5.5%"
+      - generic [ref=e352]:
+        - img [ref=e353]
+        - generic [ref=e356]: "-0.0%"
+    - button "AAPL $273.81 -5.1% -0.1%" [ref=e357] [cursor=pointer]:
+      - generic [ref=e358]: AAPL
+      - generic [ref=e359]: $273.81
+      - generic [ref=e360]:
+        - img [ref=e361]
+        - generic [ref=e364]: "-5.1%"
+      - generic [ref=e365]:
+        - img [ref=e366]
+        - generic [ref=e369]: "-0.1%"
+    - button "TSLA $475.19 -4.7% -2.1%" [ref=e370] [cursor=pointer]:
+      - generic [ref=e371]: TSLA
+      - generic [ref=e372]: $475.19
+      - generic [ref=e373]:
+        - img [ref=e374]
+        - generic [ref=e377]: "-4.7%"
+      - generic [ref=e378]:
+        - img [ref=e379]
+        - generic [ref=e382]: "-2.1%"
+    - button "GOOG $314.96 -4.2% -0.2%" [ref=e383] [cursor=pointer]:
+      - generic [ref=e384]: GOOG
+      - generic [ref=e385]: $314.96
+      - generic [ref=e386]:
+        - img [ref=e387]
+        - generic [ref=e390]: "-4.2%"
+      - generic [ref=e391]:
+        - img [ref=e392]
+        - generic [ref=e395]: "-0.2%"
+    - button "MA $579.60 -3.7% +0.0%" [ref=e396] [cursor=pointer]:
+      - generic [ref=e397]: MA
+      - generic [ref=e398]: $579.60
+      - generic [ref=e399]:
+        - img [ref=e400]
+        - generic [ref=e403]: "-3.7%"
+      - generic [ref=e404]:
+        - img [ref=e405]
+        - generic [ref=e408]: +0.0%
+    - button "ENR.DE $120.75 -3.3% +1.3%" [ref=e409] [cursor=pointer]:
+      - generic [ref=e410]: ENR.DE
+      - generic [ref=e411]: $120.75
+      - generic [ref=e412]:
+        - img [ref=e413]
+        - generic [ref=e416]: "-3.3%"
+      - generic [ref=e417]:
+        - img [ref=e418]
+        - generic [ref=e421]: +1.3%
+    - button "QQQ $623.89 -2.1% -0.0%" [ref=e422] [cursor=pointer]:
+      - generic [ref=e423]: QQQ
+      - generic [ref=e424]: $623.89
+      - generic [ref=e425]:
+        - img [ref=e426]
+        - generic [ref=e429]: "-2.1%"
+      - generic [ref=e430]:
+        - img [ref=e431]
+        - generic [ref=e434]: "-0.0%"
+    - button "JPM $327.91 -0.9% -0.4%" [ref=e435] [cursor=pointer]:
+      - generic [ref=e436]: JPM
+      - generic [ref=e437]: $327.91
+      - generic [ref=e438]:
+        - img [ref=e439]
+        - generic [ref=e442]: "-0.9%"
+      - generic [ref=e443]:
+        - img [ref=e444]
+        - generic [ref=e447]: "-0.4%"
+    - button "BAC $56.09 -0.8% -0.1%" [ref=e448] [cursor=pointer]:
+      - generic [ref=e449]: BAC
+      - generic [ref=e450]: $56.09
+      - generic [ref=e451]:
+        - img [ref=e452]
+        - generic [ref=e455]: "-0.8%"
+      - generic [ref=e456]:
+        - img [ref=e457]
+        - generic [ref=e460]: "-0.1%"
+    - button "VTI $339.67 -0.2% -0.1%" [ref=e461] [cursor=pointer]:
+      - generic [ref=e462]: VTI
+      - generic [ref=e463]: $339.67
+      - generic [ref=e464]:
+        - img [ref=e465]
+        - generic [ref=e468]: "-0.2%"
+      - generic [ref=e469]:
+        - img [ref=e470]
+        - generic [ref=e473]: "-0.1%"
+  - banner [ref=e474]:
+    - generic [ref=e475]:
+      - link "StonkMarket" [ref=e476] [cursor=pointer]:
+        - /url: /
+        - img [ref=e477]
+        - generic [ref=e480]: StonkMarket
+      - navigation [ref=e481]:
+        - link "Dashboard" [ref=e482] [cursor=pointer]:
+          - /url: /dashboard
+        - link "DipSwipe" [ref=e483] [cursor=pointer]:
+          - /url: /swipe
+          - img [ref=e484]
+          - text: DipSwipe
+        - link "Methodology" [ref=e486] [cursor=pointer]:
+          - /url: /learn
+      - generic [ref=e487]:
+        - button "Suggest" [ref=e488] [cursor=pointer]:
+          - img
+          - generic [ref=e489]: Suggest
+        - button "Toggle theme" [ref=e490] [cursor=pointer]:
+          - img
+          - generic [ref=e491]: Toggle theme
+        - link "Sign in" [ref=e492] [cursor=pointer]:
+          - /url: /login
+          - button "Sign in" [ref=e493]
+  - main [ref=e494]:
+    - generic [ref=e496]:
+      - generic [ref=e497]:
+        - heading "DipSwipe" [level=1] [ref=e498]
+        - paragraph [ref=e499]: Swipe right to buy, left to pass
+      - tablist [ref=e501]:
+        - tab "Buy/Sell Dips" [selected] [ref=e502] [cursor=pointer]:
+          - img
+          - text: Buy/Sell Dips
+        - tab "Vote Suggestions" [ref=e503] [cursor=pointer]:
+          - img
+          - text: Vote Suggestions
+  - contentinfo [ref=e513]:
+    - generic [ref=e514]:
+      - generic [ref=e515]:
+        - generic [ref=e517]: StonkMarket • Not financial advice
+        - generic [ref=e518]:
+          - generic [ref=e519]:
+            - generic [ref=e521]:
+              - button "Up color" [ref=e522] [cursor=pointer]:
+                - img [ref=e523]
+              - button "Down color" [ref=e527] [cursor=pointer]:
+                - img [ref=e528]
+              - button "Reset colors" [ref=e532] [cursor=pointer]:
+                - img [ref=e533]
+            - button "Colorblind" [ref=e536] [cursor=pointer]:
+              - img [ref=e537]
+              - generic [ref=e542]: Colorblind
+          - generic [ref=e543]:
+            - link "About" [ref=e544] [cursor=pointer]:
+              - /url: /about
+            - link "Contact" [ref=e545] [cursor=pointer]:
+              - /url: /contact
+              - img [ref=e546]
+              - text: Contact
+          - button "Donate" [ref=e549] [cursor=pointer]:
+            - img [ref=e550]
+            - generic [ref=e552]: Donate
+      - link "Logos provided by Logo.dev" [ref=e554] [cursor=pointer]:
+        - /url: https://logo.dev
+```

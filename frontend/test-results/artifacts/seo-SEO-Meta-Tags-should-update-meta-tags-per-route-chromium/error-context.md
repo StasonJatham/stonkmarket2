@@ -1,0 +1,70 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - link "StonkMarket" [ref=e6] [cursor=pointer]:
+        - /url: /
+        - img [ref=e7]
+        - generic [ref=e10]: StonkMarket
+      - navigation [ref=e11]:
+        - link "Dashboard" [ref=e12] [cursor=pointer]:
+          - /url: /dashboard
+        - link "DipSwipe" [ref=e13] [cursor=pointer]:
+          - /url: /swipe
+          - img [ref=e14]
+          - text: DipSwipe
+        - link "Methodology" [ref=e16] [cursor=pointer]:
+          - /url: /learn
+      - generic [ref=e17]:
+        - button "Suggest" [ref=e18] [cursor=pointer]:
+          - img
+          - generic [ref=e19]: Suggest
+        - button "Toggle theme" [ref=e20] [cursor=pointer]:
+          - img
+          - generic [ref=e21]: Toggle theme
+        - link "Sign in" [ref=e22] [cursor=pointer]:
+          - /url: /login
+          - button "Sign in" [ref=e23]
+  - main [ref=e24]:
+    - generic [ref=e26]:
+      - generic [ref=e27]:
+        - heading "DipSwipe" [level=1] [ref=e28]
+        - paragraph [ref=e29]: Swipe right to buy, left to pass
+      - tablist [ref=e31]:
+        - tab "Buy/Sell Dips" [selected] [ref=e32] [cursor=pointer]:
+          - img
+          - text: Buy/Sell Dips
+        - tab "Vote Suggestions" [ref=e33] [cursor=pointer]:
+          - img
+          - text: Vote Suggestions
+  - contentinfo [ref=e43]:
+    - generic [ref=e44]:
+      - generic [ref=e45]:
+        - generic [ref=e47]: StonkMarket • Not financial advice
+        - generic [ref=e48]:
+          - generic [ref=e49]:
+            - generic [ref=e51]:
+              - button "Up color" [ref=e52] [cursor=pointer]:
+                - img [ref=e53]
+              - button "Down color" [ref=e57] [cursor=pointer]:
+                - img [ref=e58]
+              - button "Reset colors" [ref=e62] [cursor=pointer]:
+                - img [ref=e63]
+            - button "Colorblind" [ref=e66] [cursor=pointer]:
+              - img [ref=e67]
+              - generic [ref=e72]: Colorblind
+          - generic [ref=e73]:
+            - link "About" [ref=e74] [cursor=pointer]:
+              - /url: /about
+            - link "Contact" [ref=e75] [cursor=pointer]:
+              - /url: /contact
+              - img [ref=e76]
+              - text: Contact
+          - button "Donate" [ref=e79] [cursor=pointer]:
+            - img [ref=e80]
+            - generic [ref=e82]: Donate
+      - link "Logos provided by Logo.dev" [ref=e84] [cursor=pointer]:
+        - /url: https://logo.dev
+```

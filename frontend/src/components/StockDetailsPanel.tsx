@@ -40,6 +40,12 @@ import {
   Shield,
   ChevronDown,
   ChevronUp,
+  ArrowUpCircle,
+  ArrowDownCircle,
+  MinusCircle,
+  CircleCheck,
+  CircleAlert,
+  CircleX,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { StockLogo } from '@/components/StockLogo';
@@ -137,6 +143,7 @@ export function StockDetailsPanel({
   const [fundamentals, setFundamentals] = useState<SymbolFundamentals | null>(null);
   const [isLoadingAgents, setIsLoadingAgents] = useState(false);
   const [showAllVerdicts, setShowAllVerdicts] = useState(false);
+  const [expandedVerdicts, setExpandedVerdicts] = useState<Set<string>>(new Set());
   
   // Fetch signal triggers when stock changes
   useEffect(() => {
@@ -345,10 +352,26 @@ export function StockDetailsPanel({
                 </div>
               </div>
             </div>
-            {/* Second row: Stock name (aligned with logo) */}
-            <p className="text-xs md:text-sm text-muted-foreground">
-              {stock.name || stock.symbol}
-            </p>
+            {/* Second row: Stock name + Earnings badge */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="text-xs md:text-sm text-muted-foreground">
+                {stock.name || stock.symbol}
+              </p>
+              {/* Upcoming Earnings Badge */}
+              {fundamentals?.next_earnings_date && (() => {
+                const earningsDate = new Date(fundamentals.next_earnings_date);
+                const today = new Date();
+                const daysUntil = Math.ceil((earningsDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+                if (daysUntil > 0 && daysUntil <= 7) {
+                  return (
+                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 border-amber-500/50 text-amber-600 bg-amber-50 dark:bg-amber-950/30 flex items-center gap-1">
+                      <Calendar className="h-2.5 w-2.5" /> Earnings in {daysUntil}d
+                    </Badge>
+                  );
+                }
+                return null;
+              })()}
+            </div>
           </div>
         </CardHeader>
 
@@ -591,7 +614,7 @@ export function StockDetailsPanel({
                       const expectedValue = point.signal.win_rate * point.signal.avg_return_pct;
                       const isEntry = point.signal.signal_type === 'entry';
                       const dotColor = isEntry ? 'var(--success)' : 'var(--danger)';
-                      const emoji = isEntry ? '🟢' : '🔴';
+                      const signalIcon = isEntry ? '▲' : '▼';
                       const typeLabel = isEntry ? 'BUY' : 'SELL';
                       
                       return (
@@ -607,13 +630,13 @@ export function StockDetailsPanel({
                           const { cx = 0, cy = 0 } = props;
                           const signal = point.signal;
                           const tooltipText = isEntry 
-                            ? `${emoji} ${typeLabel}: ${signal.signal_name}\n` +
+                            ? `${signalIcon} ${typeLabel}: ${signal.signal_name}\n` +
                               `Win Rate: ${(signal.win_rate * 100).toFixed(0)}%\n` +
                               `Avg Return: ${signal.avg_return_pct >= 0 ? '+' : ''}${signal.avg_return_pct.toFixed(1)}%\n` +
                               `Expected Value: ${expectedValue >= 0 ? '+' : ''}${expectedValue.toFixed(1)}%\n` +
                               `Hold: ${signal.holding_days} days\n` +
                               `Entry Price: $${signal.price.toFixed(2)}`
-                            : `${emoji} ${typeLabel}: ${signal.signal_name}\n` +
+                            : `${signalIcon} ${typeLabel}: ${signal.signal_name}\n` +
                               `Trade Return: ${signal.avg_return_pct >= 0 ? '+' : ''}${signal.avg_return_pct.toFixed(1)}%\n` +
                               `Exit Price: $${signal.price.toFixed(2)}`;
                           return (
@@ -688,10 +711,10 @@ export function StockDetailsPanel({
                     </span>
                   </div>
                   {agentAnalysis && (
-                    <div className="flex gap-1 text-xs">
-                      <span className="text-success">{agentAnalysis.bullish_count || 0} 👍</span>
-                      <span className="text-muted-foreground">{agentAnalysis.neutral_count || 0} —</span>
-                      <span className="text-danger">{agentAnalysis.bearish_count || 0} 👎</span>
+                    <div className="flex gap-2 text-xs items-center">
+                      <span className="text-success flex items-center gap-0.5"><ArrowUpCircle className="h-3 w-3" /> {agentAnalysis.bullish_count || 0}</span>
+                      <span className="text-muted-foreground flex items-center gap-0.5"><MinusCircle className="h-3 w-3" /> {agentAnalysis.neutral_count || 0}</span>
+                      <span className="text-danger flex items-center gap-0.5"><ArrowDownCircle className="h-3 w-3" /> {agentAnalysis.bearish_count || 0}</span>
                     </div>
                   )}
                 </div>
@@ -789,14 +812,14 @@ export function StockDetailsPanel({
                           ? `${(fundamentals.net_interest_margin * 100).toFixed(2)}%`
                           : '—'}
                       </p>
-                      <p className="text-[10px] text-muted-foreground">
+                      <p className="text-[10px] text-muted-foreground flex items-center gap-1">
                         {fundamentals.net_interest_margin && fundamentals.net_interest_margin > 0.03 
-                          ? '✅ Above avg (3%)' 
+                          ? <><CircleCheck className="h-3 w-3 text-success" /> Above avg (3%)</>
                           : fundamentals.net_interest_margin && fundamentals.net_interest_margin > 0.02 
-                            ? '⚠️ Average' 
+                            ? <><CircleAlert className="h-3 w-3 text-warning" /> Average</>
                             : fundamentals.net_interest_margin 
-                              ? '❌ Below avg'
-                              : ''}
+                              ? <><CircleX className="h-3 w-3 text-danger" /> Below avg</>
+                              : null}
                       </p>
                     </div>
                     <div>
@@ -841,12 +864,12 @@ export function StockDetailsPanel({
                           ? fundamentals.p_ffo.toFixed(1)
                           : '—'}
                       </p>
-                      <p className="text-[10px] text-muted-foreground">
+                      <p className="text-[10px] text-muted-foreground flex items-center gap-1">
                         {fundamentals.p_ffo && fundamentals.p_ffo < 15 
-                          ? '✅ Undervalued' 
+                          ? <><CircleCheck className="h-3 w-3 text-success" /> Undervalued</>
                           : fundamentals.p_ffo && fundamentals.p_ffo > 20 
-                            ? '⚠️ Expensive'
-                            : ''}
+                            ? <><CircleAlert className="h-3 w-3 text-warning" /> Expensive</>
+                            : null}
                       </p>
                     </div>
                   </div>
@@ -895,7 +918,20 @@ export function StockDetailsPanel({
             )}
 
             {/* AI Persona Verdicts */}
-            {agentAnalysis && agentAnalysis.verdicts.length > 0 && (
+            {agentAnalysis && agentAnalysis.verdicts.length > 0 && (() => {
+              // Calculate aggregated rating from all verdicts
+              const signalScores: Record<string, number> = {
+                'strong_buy': 2, 'buy': 1, 'bullish': 1,
+                'hold': 0, 'neutral': 0,
+                'sell': -1, 'bearish': -1, 'strong_sell': -2
+              };
+              const totalScore = agentAnalysis.verdicts.reduce((sum, v) => sum + (signalScores[v.signal] || 0), 0);
+              const avgScore = totalScore / agentAnalysis.verdicts.length;
+              const aggregatedSignal = avgScore >= 1.5 ? 'Strong Buy' : avgScore >= 0.5 ? 'Buy' : avgScore >= -0.5 ? 'Hold' : avgScore >= -1.5 ? 'Sell' : 'Strong Sell';
+              const bullishCount = agentAnalysis.verdicts.filter(v => ['strong_buy', 'buy', 'bullish'].includes(v.signal)).length;
+              const bearishCount = agentAnalysis.verdicts.filter(v => ['strong_sell', 'sell', 'bearish'].includes(v.signal)).length;
+              
+              return (
               <div className="mb-4">
                 <div 
                   className="flex items-center justify-between cursor-pointer py-2"
@@ -911,17 +947,60 @@ export function StockDetailsPanel({
                   </div>
                 </div>
                 
+                {/* Aggregated Consensus */}
+                <div className={cn(
+                  "p-3 rounded-lg mb-3 flex items-center justify-between",
+                  avgScore >= 0.5 && "bg-success/10 border border-success/30",
+                  avgScore < 0.5 && avgScore > -0.5 && "bg-muted/30 border border-border",
+                  avgScore <= -0.5 && "bg-danger/10 border border-danger/30",
+                )}>
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1">Consensus Rating</p>
+                    <p className={cn(
+                      "text-lg font-bold",
+                      avgScore >= 0.5 && "text-success",
+                      avgScore < 0.5 && avgScore > -0.5 && "text-muted-foreground",
+                      avgScore <= -0.5 && "text-danger",
+                    )}>
+                      {aggregatedSignal}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <div className="flex items-center gap-3 text-sm">
+                      <span className="flex items-center gap-1 text-success"><ArrowUpCircle className="h-3.5 w-3.5" /> {bullishCount}</span>
+                      <span className="flex items-center gap-1 text-muted-foreground"><MinusCircle className="h-3.5 w-3.5" /> {agentAnalysis.verdicts.length - bullishCount - bearishCount}</span>
+                      <span className="flex items-center gap-1 text-danger"><ArrowDownCircle className="h-3.5 w-3.5" /> {bearishCount}</span>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground mt-1">
+                      Avg confidence: {Math.round(agentAnalysis.verdicts.reduce((s, v) => s + v.confidence, 0) / agentAnalysis.verdicts.length)}%
+                    </p>
+                  </div>
+                </div>
+                
                 {/* Top 3 verdicts always visible */}
                 <div className="space-y-2">
-                  {(showAllVerdicts ? agentAnalysis.verdicts : agentAnalysis.verdicts.slice(0, 3)).map((verdict) => (
+                  {(showAllVerdicts ? agentAnalysis.verdicts : agentAnalysis.verdicts.slice(0, 3)).map((verdict) => {
+                    const isExpanded = expandedVerdicts.has(verdict.agent_id);
+                    return (
                     <div 
                       key={verdict.agent_id}
                       className={cn(
-                        "p-2 rounded-lg border",
+                        "p-2 rounded-lg border cursor-pointer transition-all hover:shadow-sm",
                         ['strong_buy', 'buy', 'bullish'].includes(verdict.signal) && "bg-success/5 border-success/20",
                         ['hold', 'neutral'].includes(verdict.signal) && "bg-muted/30 border-border",
                         ['strong_sell', 'sell', 'bearish'].includes(verdict.signal) && "bg-danger/5 border-danger/20",
                       )}
+                      onClick={() => {
+                        setExpandedVerdicts(prev => {
+                          const next = new Set(prev);
+                          if (next.has(verdict.agent_id)) {
+                            next.delete(verdict.agent_id);
+                          } else {
+                            next.add(verdict.agent_id);
+                          }
+                          return next;
+                        });
+                      }}
                     >
                       <div className="flex items-center justify-between mb-1">
                         <div className="flex items-center gap-2">
@@ -943,13 +1022,20 @@ export function StockDetailsPanel({
                             {verdict.signal.replace('_', ' ')}
                           </Badge>
                           <span className="text-xs text-muted-foreground">{verdict.confidence}%</span>
+                          <ChevronDown className={cn("h-3 w-3 text-muted-foreground transition-transform", isExpanded && "rotate-180")} />
                         </div>
                       </div>
-                      <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
+                      <p className={cn(
+                        "text-xs text-muted-foreground leading-relaxed",
+                        !isExpanded && "line-clamp-2"
+                      )}>
                         {verdict.reasoning}
                       </p>
+                      {!isExpanded && verdict.reasoning.length > 120 && (
+                        <span className="text-[10px] text-primary mt-1 inline-block">Click to expand</span>
+                      )}
                     </div>
-                  ))}
+                  )})}
                 </div>
                 
                 {!showAllVerdicts && agentAnalysis.verdicts.length > 3 && (
@@ -961,7 +1047,8 @@ export function StockDetailsPanel({
                   </button>
                 )}
               </div>
-            )}
+            );
+            })()}
 
             {isLoadingAgents && (
               <div className="mb-4 space-y-2">

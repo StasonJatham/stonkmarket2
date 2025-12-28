@@ -52,6 +52,7 @@ import {
   MinusCircle,
   Brain,
   Zap,
+  CircleArrowUp,
 } from 'lucide-react';
 
 // Action icon based on recommendation
@@ -433,8 +434,8 @@ function HeroChart({
                       <p className="font-mono font-bold">${price?.toFixed(2)}</p>
                       {trigger && (
                         <div className="mt-1 pt-1 border-t border-border/50">
-                          <p className="text-success text-xs font-medium">
-                            🟢 {trigger.signal_name}
+                          <p className="text-success text-xs font-medium flex items-center gap-1">
+                            <CircleArrowUp className="h-3 w-3" /> {trigger.signal_name}
                           </p>
                           <p className="text-muted-foreground text-xs">
                             {Math.round(trigger.win_rate * 100)}% win, {expectedValue >= 0 ? '+' : ''}{expectedValue.toFixed(1)}% EV

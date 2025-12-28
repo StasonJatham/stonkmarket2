@@ -38,6 +38,9 @@ import {
   Calendar,
   Flame,
   TrendingDown,
+  TrendingUp,
+  Building2,
+  BarChart2,
   // Award - currently unused
 } from 'lucide-react';
 import { StockLogo } from '@/components/StockLogo';
@@ -98,10 +101,8 @@ function formatDipPct(value: number): string {
 
 // Format bio text to add paragraph breaks at natural points
 function formatBioText(text: string): string {
-  // Split on emoji followed by space or end of sentence patterns
   return text
     .replace(/([.!?])\s+/g, '$1\n\n')  // Add line break after sentences
-    .replace(/(👋|🚀|📉|💸|🎯|✨)\s*/g, '$1\n\n')  // Add line break after certain emojis
     .replace(/\n{3,}/g, '\n\n')  // Normalize multiple line breaks
     .trim();
 }
@@ -383,20 +384,20 @@ function SwipeableCard({
 
         {/* Key Stats Chips - compact */}
         <div className="shrink-0 px-4 py-2 flex flex-wrap gap-1">
-          <Badge variant="outline" className="rounded-full text-xs px-2 py-0">
-            💰 {formatPrice(card.current_price)}
+          <Badge variant="outline" className="rounded-full text-xs px-2 py-0 flex items-center gap-1">
+            <DollarSign className="h-3 w-3" /> {formatPrice(card.current_price)}
           </Badge>
-          <Badge variant="outline" className="rounded-full text-xs px-2 py-0">
-            📈 Peak: {formatPrice(card.ref_high)}
+          <Badge variant="outline" className="rounded-full text-xs px-2 py-0 flex items-center gap-1">
+            <TrendingUp className="h-3 w-3" /> Peak: {formatPrice(card.ref_high)}
           </Badge>
           {card.sector && (
-            <Badge variant="outline" className="rounded-full text-xs px-2 py-0">
-              🏢 {card.sector}
+            <Badge variant="outline" className="rounded-full text-xs px-2 py-0 flex items-center gap-1">
+              <Building2 className="h-3 w-3" /> {card.sector}
             </Badge>
           )}
           {card.ipo_year && (
-            <Badge variant="outline" className="rounded-full text-xs px-2 py-0">
-              📅 Since {card.ipo_year}
+            <Badge variant="outline" className="rounded-full text-xs px-2 py-0 flex items-center gap-1">
+              <Calendar className="h-3 w-3" /> Since {card.ipo_year}
             </Badge>
           )}
         </div>
@@ -406,7 +407,7 @@ function SwipeableCard({
           <p className="text-base leading-relaxed text-foreground whitespace-pre-wrap">
             {formatBioText(card.swipe_bio 
               ? card.swipe_bio.replace(/^"|"$/g, '')
-              : `Looking for investors who appreciate a good dip. 📉 Currently ${formatDipPct(card.dip_pct)} off my peak. Swipe right if you see my potential! 💸`
+              : `Looking for investors who appreciate a good dip. Currently ${formatDipPct(card.dip_pct)} off my peak. Swipe right if you see my potential!`
             )}
           </p>
           
@@ -414,8 +415,9 @@ function SwipeableCard({
           {card.ai_reasoning && (
             <details className="mt-2 group">
               <summary className="text-xs text-primary cursor-pointer hover:text-primary/80 flex items-center gap-1">
-                <span className="group-open:hidden">📊 View AI Analysis</span>
-                <span className="hidden group-open:inline">📊 Hide AI Analysis</span>
+                <BarChart2 className="h-3 w-3" />
+                <span className="group-open:hidden">View AI Analysis</span>
+                <span className="hidden group-open:inline">Hide AI Analysis</span>
               </summary>
               <div className="mt-2 p-2 bg-muted/50 rounded-md border border-border/30">
                 <p className="text-xs leading-relaxed text-muted-foreground whitespace-pre-wrap">
@@ -443,8 +445,8 @@ function SwipeableCard({
                 {card.vote_counts.sell}
               </span>
             </div>
-            {buyPct > 60 && <span className="text-success font-medium">🐂 Bullish</span>}
-            {sellPct > 60 && <span className="text-danger font-medium">🐻 Bearish</span>}
+            {buyPct > 60 && <span className="text-success font-medium flex items-center gap-1"><TrendingUp className="h-3 w-3" /> Bullish</span>}
+            {sellPct > 60 && <span className="text-danger font-medium flex items-center gap-1"><TrendingDown className="h-3 w-3" /> Bearish</span>}
           </div>
         </div>
       </Card>
@@ -586,10 +588,10 @@ function SuggestionSwipeCard({
             {/* Inline stats */}
             <div className="flex flex-wrap gap-1 mt-1">
               {suggestion.sector && (
-                <span className="text-xs text-muted-foreground">🏢 {suggestion.sector}</span>
+                <span className="text-xs text-muted-foreground flex items-center gap-0.5"><Building2 className="h-3 w-3" /> {suggestion.sector}</span>
               )}
               {suggestion.ipo_year && (
-                <span className="text-xs text-muted-foreground">• 📅 {suggestion.ipo_year}</span>
+                <span className="text-xs text-muted-foreground flex items-center gap-0.5">• <Calendar className="h-3 w-3" /> {suggestion.ipo_year}</span>
               )}
             </div>
           </div>
@@ -600,7 +602,7 @@ function SuggestionSwipeCard({
               <ThumbsUp className="w-3 h-3 text-success mt-0.5" />
             </div>
             {suggestion.vote_count >= 5 && (
-              <span className="text-xs text-orange-500 mt-1">🔥</span>
+              <Flame className="w-3 h-3 text-orange-500 mt-1" />
             )}
           </div>
         </div>
@@ -610,7 +612,7 @@ function SuggestionSwipeCard({
           <p className="text-base leading-relaxed text-foreground whitespace-pre-wrap">
             {formatBioText(suggestion.summary 
               ? suggestion.summary
-              : `Hey there! 👋 I'm ${suggestion.name || suggestion.symbol} and I'm waiting to join the party. Vote for me to get tracked! The community thinks I have potential – be part of the crew that brings me in! 🚀`
+              : `Hey there! I'm ${suggestion.name || suggestion.symbol} and I'm waiting to join the party. Vote for me to get tracked! The community thinks I have potential.`
             )}
           </p>
         </div>
@@ -899,8 +901,8 @@ export function DipSwipePage() {
 
       {/* Progress indicator - shows position in deck */}
       <div className="flex items-center justify-center gap-2 mb-2">
-        <Badge variant="outline" className={isMobile ? 'text-xs' : ''} title="Card position / Total unvoted cards">
-          📊 {currentIndex + 1} of {totalItems} {mode === 'dips' ? 'stocks' : 'suggestions'}
+        <Badge variant="outline" className={`${isMobile ? 'text-xs' : ''} flex items-center gap-1`} title="Card position / Total unvoted cards">
+          <BarChart2 className="h-3 w-3" /> {currentIndex + 1} of {totalItems} {mode === 'dips' ? 'stocks' : 'suggestions'}
         </Badge>
       </div>
 
