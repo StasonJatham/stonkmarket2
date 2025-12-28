@@ -267,6 +267,73 @@ export async function getStockInfo(symbol: string): Promise<StockInfo> {
 }
 
 // =============================================================================
+// FUNDAMENTALS (DOMAIN-SPECIFIC METRICS)
+// =============================================================================
+
+export type DomainType = 'bank' | 'reit' | 'insurer' | 'utility' | 'biotech' | 'stock';
+
+export interface SymbolFundamentals {
+  symbol: string;
+  // Standard metrics
+  pe_ratio: number | null;
+  forward_pe: number | null;
+  peg_ratio: number | null;
+  price_to_book: number | null;
+  profit_margin: string | null;
+  gross_margin: string | null;
+  return_on_equity: string | null;
+  debt_to_equity: number | null;
+  current_ratio: number | null;
+  revenue_growth: string | null;
+  earnings_growth: string | null;
+  free_cash_flow: number | null;
+  recommendation: string | null;
+  target_mean_price: number | null;
+  num_analyst_opinions: number | null;
+  beta: string | null;
+  next_earnings_date: string | null;
+  
+  // Domain classification
+  domain: DomainType;
+  
+  // Bank-specific metrics
+  net_interest_income: number | null;  // NII in dollars
+  net_interest_margin: number | null;  // NIM as decimal (0.0179 = 1.79%)
+  interest_income: number | null;
+  interest_expense: number | null;
+  
+  // REIT-specific metrics
+  ffo: number | null;                  // Funds From Operations
+  ffo_per_share: number | null;
+  p_ffo: number | null;                // Price/FFO ratio
+  
+  // Insurance-specific metrics
+  loss_ratio: number | null;
+  expense_ratio: number | null;
+  combined_ratio: number | null;       // Loss ratio + expense ratio (< 100% = profitable)
+  
+  // Data freshness
+  source: 'live' | 'database' | 'cache';
+  fetched_at: string | null;
+  expires_at: string | null;
+  is_stale: boolean;
+}
+
+export async function getSymbolFundamentals(symbol: string): Promise<SymbolFundamentals | null> {
+  const cacheKey = `fundamentals:${symbol}`;
+  
+  try {
+    return await apiCache.fetch(
+      cacheKey,
+      () => fetchAPI<SymbolFundamentals>(`/symbols/fundamentals/${symbol}`),
+      { ttl: CACHE_TTL.STOCK_INFO, staleWhileRevalidate: true }
+    );
+  } catch {
+    return null;
+  }
+}
+
+// =============================================================================
 // PREFETCH UTILITIES
 // =============================================================================
 
@@ -358,16 +425,22 @@ export interface SignalTrigger {
   avg_return_pct: number;
   holding_days: number;
   drawdown_pct: number;  // The threshold that triggered (for drawdown signals)
+  signal_type: 'entry' | 'exit';  // "entry" for buy signals, "exit" for sell signals
 }
 
 export interface SignalTriggersResponse {
   symbol: string;
   signal_name: string | null;
   triggers: SignalTrigger[];
+  // Benchmark comparison
+  buy_hold_return_pct: number;  // Return from buying and holding
+  signal_return_pct: number;  // Aggregate return from signal trading
+  edge_vs_buy_hold_pct: number;  // Signal return - buy hold (the "alpha")
+  n_trades: number;  // Number of signals in the period
 }
 
-/** Get historical signal triggers for chart markers */
-export async function getSignalTriggers(symbol: string, lookbackDays: number = 365): Promise<SignalTrigger[]> {
+/** Get historical signal triggers for chart markers with benchmark comparison */
+export async function getSignalTriggers(symbol: string, lookbackDays: number = 365): Promise<SignalTriggersResponse> {
   const cacheKey = `signal-triggers:${symbol}:${lookbackDays}`;
   
   return apiCache.fetch(
@@ -376,7 +449,7 @@ export async function getSignalTriggers(symbol: string, lookbackDays: number = 3
       const response = await fetchAPI<SignalTriggersResponse>(
         `/recommendations/${symbol}/signal-triggers?lookback_days=${lookbackDays}`
       );
-      return response.triggers;
+      return response;  // Return full response with benchmark data
     },
     { ttl: CACHE_TTL.RECOMMENDATIONS, staleWhileRevalidate: true }
   );

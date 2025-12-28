@@ -481,3 +481,141 @@ class TestSignals:
                 assert 0 <= sig.win_rate <= 1
                 
                 # Optimal holding days should be positive
+
+
+class TestSignalEdgeDetection:
+    """
+    Tests for edge detection in signal triggers.
+    
+    CRITICAL: Signals should only fire on the FIRST day a condition becomes true,
+    not every day the condition remains true. This is the "event" vs "state" distinction.
+    """
+
+    @pytest.fixture
+    def oscillating_prices(self) -> dict[str, pd.Series]:
+        """
+        Create price data that oscillates above/below thresholds.
+        This tests that we only get signals on the first crossing.
+        """
+        np.random.seed(42)
+        n_days = 100
+        dates = pd.date_range("2023-01-01", periods=n_days, freq="D")
+        
+        # Create prices that oscillate: goes down, stays down, goes up, stays up, repeat
+        # Pattern: 5 days down, 5 days down, 5 days up, 5 days up (repeat 5x)
+        base_price = 100.0
+        prices = []
+        for cycle in range(5):
+            # 5 days going down
+            prices.extend([base_price * (1 - 0.01 * i) for i in range(1, 6)])
+            # 5 days staying down (near the low)
+            prices.extend([base_price * 0.95 for _ in range(5)])
+            # 5 days going up
+            prices.extend([base_price * (0.95 + 0.01 * i) for i in range(1, 6)])
+            # 5 days staying up (near the high)
+            prices.extend([base_price for _ in range(5)])
+        
+        close = pd.Series(prices[:n_days], index=dates, name="close")
+        
+        return {
+            "close": close,
+            "high": close * 1.01,
+            "low": close * 0.99,
+            "open": close,
+            "volume": pd.Series([1000000] * n_days, index=dates),
+        }
+
+    def test_backtest_signal_uses_edge_detection(self, oscillating_prices):
+        """
+        backtest_signal should only count signals on the FIRST day condition becomes true.
+        
+        In the oscillating_prices fixture, the price goes below a threshold ~5 times
+        (once per cycle), not every single day it's below the threshold.
+        """
+        from app.quant_engine.signals import backtest_signal
+        
+        prices = oscillating_prices["close"]
+        
+        # Create a simple signal that's below threshold when price is low
+        # The signal value is (price - 100) / 100, so negative when below $100
+        signal = (prices - 100) / 100
+        
+        # With edge detection, we should get ~5 triggers (one per down cycle)
+        # With state detection, we'd get ~50 triggers (every day below threshold)
+        result = backtest_signal(
+            prices=prices,
+            signal=signal,
+            threshold=-0.02,  # 2% below reference
+            direction="below",
+            holding_days=5,
+        )
+        
+        # Should be ~5 signals (one per cycle), definitely NOT 40+
+        assert result["n_signals"] <= 10, (
+            f"Expected ~5 edge-triggered signals, got {result['n_signals']}. "
+            "This suggests signals are firing every day condition is true (state-based) "
+            "instead of only on the first crossing (edge-based)."
+        )
+        assert result["n_signals"] >= 3, f"Expected at least 3 signals, got {result['n_signals']}"
+
+    def test_get_historical_triggers_uses_edge_detection(self, oscillating_prices):
+        """
+        get_historical_triggers should only return triggers on crossing days.
+        
+        This is what shows up as dots on the chart. We should see very few dots,
+        not a dot on every day the price is below a threshold.
+        """
+        from app.quant_engine.signals import get_historical_triggers
+        
+        triggers = get_historical_triggers(oscillating_prices, lookback_days=100, min_signals=3)
+        
+        # Should get at most ~10 triggers (edge crossings), not 40+ (every day below threshold)
+        assert len(triggers) <= 15, (
+            f"Expected ~5-10 edge-triggered chart markers, got {len(triggers)}. "
+            "Too many triggers means signals are firing every day condition is true "
+            "instead of only on the first crossing."
+        )
+
+    def test_individual_trade_returns_uses_edge_detection(self, oscillating_prices):
+        """
+        _get_individual_trade_returns should return one trade per signal entry,
+        not one trade per day condition is true.
+        """
+        from app.quant_engine.signals import _get_individual_trade_returns
+        
+        prices = oscillating_prices["close"]
+        signal = (prices - 100) / 100
+        
+        trades = _get_individual_trade_returns(
+            prices=prices,
+            signal=signal,
+            threshold=-0.02,
+            direction="below",
+            holding_days=5,
+        )
+        
+        # Should be ~5 trades (one per cycle), not 40+
+        assert len(trades) <= 10, (
+            f"Expected ~5 edge-triggered trades, got {len(trades)}. "
+            "This suggests each day below threshold is counted as a separate trade."
+        )
+
+    def test_above_direction_edge_detection(self, oscillating_prices):
+        """Test edge detection also works for 'above' direction."""
+        from app.quant_engine.signals import backtest_signal
+        
+        prices = oscillating_prices["close"]
+        signal = (prices - 95) / 95  # Positive when above $95
+        
+        result = backtest_signal(
+            prices=prices,
+            signal=signal,
+            threshold=0.02,  # 2% above reference
+            direction="above",
+            holding_days=5,
+        )
+        
+        # Should be ~5 signals (once per up cycle), not 40+
+        assert result["n_signals"] <= 10, (
+            f"Expected ~5 edge-triggered signals for 'above' direction, got {result['n_signals']}"
+        )

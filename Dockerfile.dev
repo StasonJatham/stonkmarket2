@@ -9,11 +9,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies (cmake needed for osqp build)
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         curl \
         build-essential \
+        cmake \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies

@@ -178,6 +178,41 @@ def compute_price_vs_sma(prices: pd.Series, window: int) -> pd.Series:
 def compute_stochastic(high: pd.Series, low: pd.Series, close: pd.Series, window: int = 14) -> pd.Series:
     """Stochastic Oscillator %K."""
     lowest_low = low.rolling(window).min()
+
+
+def apply_cooldown_to_triggers(triggers: pd.Series, cooldown_days: int) -> pd.Series:
+    """
+    Apply cooldown period to trigger signals.
+    
+    After a trigger fires, suppress all triggers for the next `cooldown_days` days.
+    This prevents "threshold whiplash" where oscillating signals create multiple
+    entries in quick succession (e.g., drawdown bouncing around -25%).
+    
+    Args:
+        triggers: Boolean series with True on trigger days
+        cooldown_days: Number of days to wait before allowing another trigger
+        
+    Returns:
+        Filtered trigger series with cooldown applied
+    """
+    if cooldown_days <= 0:
+        return triggers
+    
+    result = triggers.copy()
+    trigger_dates = triggers[triggers].index.tolist()
+    
+    last_trigger_date = None
+    for date in trigger_dates:
+        if last_trigger_date is not None:
+            days_since = (date - last_trigger_date).days
+            if days_since < cooldown_days:
+                # Still in cooldown - suppress this trigger
+                result.loc[date] = False
+                continue
+        # Allow this trigger and reset cooldown
+        last_trigger_date = date
+    
+    return result
     highest_high = high.rolling(window).max()
     k = 100 * (close - lowest_low) / (highest_high - lowest_low).replace(0, np.nan)
     return k
@@ -366,8 +401,166 @@ def _compute_dual_sma_below(prices: pd.Series) -> pd.Series:
 
 
 # =============================================================================
+# Transaction Cost Constants (imported from trade_engine concept)
+# =============================================================================
+
+DEFAULT_SLIPPAGE_BPS = 5  # 5 basis points (0.05%) per side
+TOTAL_ROUND_TRIP_COST = 2 * DEFAULT_SLIPPAGE_BPS / 10000  # 0.1% total
+
+
+# =============================================================================
+# Signal Decay Tracking (I6 Fix)
+# =============================================================================
+
+def compute_signal_half_life(
+    prices: pd.Series,
+    signal: pd.Series,
+    direction: str,
+    threshold: float,
+    max_lag: int = 60,
+) -> int:
+    """
+    Compute signal half-life (how quickly signal predictive power decays).
+    
+    Signals that decay quickly (low half-life) should be acted on fast.
+    Signals with long half-life are more robust for longer holds.
+    
+    Returns:
+        int: Number of days until signal autocorrelation drops below 0.5
+    """
+    if len(prices) < max_lag + 60:
+        return max_lag // 2  # Default to half of max
+    
+    # Compute returns at different lags
+    autocorrs = []
+    for lag in range(1, max_lag + 1):
+        fwd_ret = prices.pct_change(lag).shift(-lag)
+        
+        # Identify when signal is active
+        if direction == "below":
+            active = signal < threshold
+        elif direction == "above":
+            active = signal > threshold
+        else:
+            active = signal < threshold
+        
+        # Average return when signal is active vs inactive
+        active_rets = fwd_ret[active].dropna()
+        inactive_rets = fwd_ret[~active].dropna()
+        
+        if len(active_rets) < 10 or len(inactive_rets) < 10:
+            autocorrs.append(0)
+            continue
+        
+        # Compute correlation of signal with future returns
+        # Higher = signal still predictive
+        signal_effect = active_rets.mean() - inactive_rets.mean()
+        # Normalize by day-1 effect
+        autocorrs.append(signal_effect)
+    
+    if len(autocorrs) < 2 or autocorrs[0] == 0:
+        return max_lag // 2
+    
+    # Find half-life (when effect drops to 50% of initial)
+    initial_effect = abs(autocorrs[0])
+    half_effect = initial_effect * 0.5
+    
+    for i, effect in enumerate(autocorrs):
+        if abs(effect) < half_effect:
+            return i + 1
+    
+    return max_lag
+
+
+def compute_signal_turnover_rate(
+    signal: pd.Series,
+    direction: str,
+    threshold: float,
+    lookback: int = 252,
+) -> float:
+    """
+    Compute how often a signal flips (high turnover = more trading costs).
+    
+    Returns:
+        float: Average number of signal flips per year (252 trading days)
+    """
+    if len(signal) < lookback:
+        lookback = len(signal)
+    
+    recent = signal.iloc[-lookback:]
+    
+    if direction == "below":
+        active = recent < threshold
+    elif direction == "above":
+        active = recent > threshold
+    else:
+        active = recent < threshold
+    
+    # Count state changes
+    changes = (active != active.shift(1)).sum()
+    
+    # Annualize
+    turnover_rate = changes / lookback * 252
+    
+    return float(turnover_rate)
+
+
+# =============================================================================
 # Backtesting and Optimization (Fixed for Look-Ahead Bias)
 # =============================================================================
+
+
+def _get_individual_trade_returns(
+    prices: pd.Series,
+    signal: pd.Series,
+    threshold: float,
+    direction: str,
+    holding_days: int,
+) -> list[float]:
+    """
+    Get individual trade returns (not averaged) for proper OOS aggregation.
+    
+    Returns a list of individual trade returns, each adjusted for transaction costs.
+    Uses EDGE detection - only counts trades on the first day signal triggers.
+    """
+    # Identify signal triggers using EDGE detection
+    # CRITICAL: Only trigger on the FIRST day a condition becomes true.
+    if direction == "below":
+        is_condition_true = signal < threshold
+        was_condition_false = signal.shift(1) >= threshold
+        triggers = is_condition_true & was_condition_false
+    elif direction == "above":
+        is_condition_true = signal > threshold
+        was_condition_false = signal.shift(1) <= threshold
+        triggers = is_condition_true & was_condition_false
+    elif direction == "cross_above":
+        prev_signal = signal.shift(1)
+        triggers = (signal > threshold) & (prev_signal <= threshold)
+    elif direction == "cross_below":
+        prev_signal = signal.shift(1)
+        triggers = (signal < threshold) & (prev_signal >= threshold)
+    else:
+        is_condition_true = signal < threshold
+        was_condition_false = signal.shift(1) >= threshold
+        triggers = is_condition_true & was_condition_false
+    
+    # Apply cooldown to prevent overlapping trades
+    triggers = apply_cooldown_to_triggers(triggers, holding_days)
+    
+    # Compute forward returns with transaction costs
+    future_prices = prices.shift(-holding_days)
+    # Apply slippage: buy at higher, sell at lower
+    entry_prices = prices * (1 + DEFAULT_SLIPPAGE_BPS / 10000)
+    exit_prices = future_prices * (1 - DEFAULT_SLIPPAGE_BPS / 10000)
+    fwd_ret = (exit_prices / entry_prices) - 1
+    
+    # Exclude last holding_days points
+    fwd_ret.iloc[-holding_days:] = np.nan
+    
+    # Get individual returns where signal triggered
+    signal_returns = fwd_ret[triggers].dropna()
+    
+    return signal_returns.tolist()
 
 
 def backtest_signal(
@@ -386,11 +579,20 @@ def backtest_signal(
     
     Returns dict with win_rate, avg_return, max_return, min_return, n_signals.
     """
-    # Identify signal triggers
+    # Identify signal triggers using EDGE detection
+    # CRITICAL: Only trigger on the FIRST day a condition becomes true.
+    # This models real trading behavior - you enter once on the signal, 
+    # not re-enter every day the condition remains true.
     if direction == "below":
-        triggers = signal < threshold
+        # Edge: yesterday was >= threshold, today is < threshold
+        is_condition_true = signal < threshold
+        was_condition_false = signal.shift(1) >= threshold
+        triggers = is_condition_true & was_condition_false
     elif direction == "above":
-        triggers = signal > threshold
+        # Edge: yesterday was <= threshold, today is > threshold
+        is_condition_true = signal > threshold
+        was_condition_false = signal.shift(1) <= threshold
+        triggers = is_condition_true & was_condition_false
     elif direction == "cross_above":
         # Signal crosses above threshold from below
         prev_signal = signal.shift(1)
@@ -400,13 +602,23 @@ def backtest_signal(
         prev_signal = signal.shift(1)
         triggers = (signal < threshold) & (prev_signal >= threshold)
     else:
-        triggers = signal < threshold  # Default to below
+        # Default to below edge detection
+        is_condition_true = signal < threshold
+        was_condition_false = signal.shift(1) >= threshold
+        triggers = is_condition_true & was_condition_false
+    
+    # Apply cooldown: After entering a trade, wait for the holding period
+    # before allowing another entry. This prevents "threshold whiplash"
+    # where oscillating signals create multiple overlapping positions.
+    triggers = apply_cooldown_to_triggers(triggers, holding_days)
     
     # FIXED: Compute forward returns correctly (no look-ahead bias)
-    # Return from t to t+holding_days: (price[t+h] / price[t]) - 1
-    # We use shift(-holding_days) on prices, then divide by current price
+    # Now includes transaction costs (slippage on entry and exit)
     future_prices = prices.shift(-holding_days)
-    fwd_ret = (future_prices / prices) - 1
+    # Apply slippage: entry at slightly higher price, exit at slightly lower
+    entry_prices = prices * (1 + DEFAULT_SLIPPAGE_BPS / 10000)
+    exit_prices = future_prices * (1 - DEFAULT_SLIPPAGE_BPS / 10000)
+    fwd_ret = (exit_prices / entry_prices) - 1
     
     # CRITICAL: Exclude the last holding_days points - we can't know those returns yet
     fwd_ret.iloc[-holding_days:] = np.nan
@@ -458,8 +670,11 @@ def _grid_search_params(
             if results["n_signals"] < min_signals:
                 continue
             
-            signal_penalty = min(1.0, results["n_signals"] / 20)
-            score = results["win_rate"] * results["avg_return"] * 100 * signal_penalty
+            # Score by Expected Value (EV) = win_rate × avg_return
+            # REMOVED: signal_penalty that biased toward more frequent (lower quality) signals
+            # The min_signals requirement already ensures statistical significance.
+            # We want quality trades, not quantity of trades.
+            score = results["win_rate"] * results["avg_return"] * 100
             
             if score > best_score:
                 best_score = score
@@ -475,7 +690,7 @@ def optimize_signal_params_walkforward(
     signal: pd.Series,
     direction: str,
     threshold_range: list[float],
-    holding_days_options: list[int] = [5, 10, 20, 40, 60],
+    holding_days_options: list[int] = [10, 20, 40, 60, 90, 120],
     min_signals: int = 3,
     n_folds: int = 4,
     train_ratio: float = 0.7,
@@ -531,9 +746,12 @@ def optimize_signal_params_walkforward(
         )
         
         if oos_result["n_signals"] > 0:
-            # Collect individual OOS returns for aggregation
-            for _ in range(oos_result["n_signals"]):
-                oos_returns.append(oos_result["avg_return"])
+            # FIXED: Get actual individual trade returns, not averaged proxies
+            # Re-compute to get individual returns
+            individual_returns = _get_individual_trade_returns(
+                test_prices, test_signal, opt_thresh, direction, opt_hold
+            )
+            oos_returns.extend(individual_returns)
     
     # Aggregate OOS performance (this is the TRUE expected performance)
     if len(oos_returns) < 3:
@@ -586,7 +804,7 @@ def optimize_signal_params(
     signal: pd.Series,
     direction: str,
     threshold_range: list[float],
-    holding_days_options: list[int] = [5, 10, 20, 40, 60],
+    holding_days_options: list[int] = [10, 20, 40, 60, 90, 120],
     min_signals: int = 5,
     use_walkforward: bool = True,
 ) -> tuple[float, int, dict]:
@@ -617,7 +835,7 @@ def optimize_signal_params(
 def evaluate_signal_for_stock(
     price_data: dict[str, pd.Series],
     signal_config: dict,
-    holding_days_options: list[int] = [5, 10, 20, 40, 60],
+    holding_days_options: list[int] = [10, 20, 40, 60, 90, 120],
 ) -> OptimizedSignal | None:
     """Evaluate and optimize a single signal for a stock."""
     try:
@@ -707,11 +925,99 @@ def evaluate_signal_for_stock(
         return None
 
 
+# =============================================================================
+# Correlation-Aware Signal Weighting (S3 Fix)
+# =============================================================================
+
+def _compute_correlation_adjusted_weights(
+    price_data: dict[str, pd.Series],
+    active_signals: list,
+) -> dict[str, float]:
+    """
+    Compute weights that downweight correlated signals.
+    
+    If RSI and Stochastic are both triggered and highly correlated,
+    we don't want to double-count their contribution.
+    
+    Returns dict mapping signal name to weight (0 to 1).
+    """
+    if len(active_signals) <= 1:
+        return {s.name: 1.0 for s in active_signals}
+    
+    prices = price_data.get("close")
+    if prices is None or len(prices) < 60:
+        return {s.name: 1.0 for s in active_signals}
+    
+    # Compute signal trigger series for each active signal
+    signal_triggers = {}
+    
+    for sig in active_signals:
+        config = None
+        for cfg in SIGNAL_CONFIGS:
+            if cfg["name"] == sig.name:
+                config = cfg
+                break
+        
+        if config is None:
+            signal_triggers[sig.name] = pd.Series(0, index=prices.index)
+            continue
+        
+        try:
+            values = config["compute"](price_data)
+            threshold = sig.optimal_threshold
+            direction = config["direction"]
+            
+            if direction == "below":
+                trigger = (values < threshold).astype(float)
+            elif direction == "above":
+                trigger = (values > threshold).astype(float)
+            elif direction == "cross_above":
+                prev = values.shift(1)
+                trigger = ((values > threshold) & (prev <= threshold)).astype(float)
+            elif direction == "cross_below":
+                prev = values.shift(1)
+                trigger = ((values < threshold) & (prev >= threshold)).astype(float)
+            else:
+                trigger = (values < threshold).astype(float)
+            
+            signal_triggers[sig.name] = trigger
+        except Exception:
+            signal_triggers[sig.name] = pd.Series(0, index=prices.index)
+    
+    # Compute pairwise correlations
+    if len(signal_triggers) < 2:
+        return {s.name: 1.0 for s in active_signals}
+    
+    trigger_df = pd.DataFrame(signal_triggers)
+    corr_matrix = trigger_df.corr().fillna(0)
+    
+    # Compute weight as 1 / (1 + sum of correlations with other signals)
+    # Higher correlation with others = lower weight
+    weights = {}
+    for sig_name in corr_matrix.columns:
+        # Sum of absolute correlations with OTHER signals
+        other_corr = corr_matrix[sig_name].drop(sig_name).abs().sum()
+        n_others = len(corr_matrix) - 1
+        avg_corr = other_corr / n_others if n_others > 0 else 0
+        
+        # Weight inversely proportional to avg correlation
+        # High correlation (0.8) -> weight ~0.55
+        # Low correlation (0.2) -> weight ~0.83
+        weight = 1.0 / (1.0 + avg_corr)
+        weights[sig_name] = weight
+    
+    # Normalize so max weight is 1.0
+    max_weight = max(weights.values()) if weights else 1.0
+    weights = {k: v / max_weight for k, v in weights.items()}
+    
+    return weights
+
+
 def analyze_stock(
     symbol: str,
     name: str,
     price_data: dict[str, pd.Series],
-    holding_days_options: list[int] = [5, 10, 20, 40, 60],
+    holding_days_options: list[int] = [10, 20, 40, 60, 90, 120],
 ) -> StockOpportunity:
     """
     Complete analysis for a single stock.
@@ -760,12 +1066,19 @@ def analyze_stock(
     # Get active signals
     active_signals = [s for s in signals if s.is_buy_signal and s.n_signals >= 5]
     
-    # Calculate buy score
+    # FIXED (S3): Correlation-aware buy score calculation
+    # Downweight signals that are correlated to avoid double-counting
     buy_score = 0.0
     if active_signals:
-        for sig in active_signals:
+        # Compute signal correlations based on their trigger patterns
+        signal_weights = _compute_correlation_adjusted_weights(price_data, active_signals)
+        
+        for i, sig in enumerate(active_signals):
             # Score contribution = strength * win_rate * avg_return (capped)
-            contribution = sig.signal_strength * sig.win_rate * min(sig.avg_return_pct, 20) / 20
+            # Now weighted by independence from other signals
+            raw_contribution = sig.signal_strength * sig.win_rate * min(sig.avg_return_pct, 20) / 20
+            weight = signal_weights.get(sig.name, 1.0)
+            contribution = raw_contribution * weight
             buy_score += contribution * 25  # Scale to 0-100
         buy_score = min(100, buy_score)
     
@@ -819,7 +1132,7 @@ def analyze_stock(
 def scan_all_stocks(
     price_data: dict[str, pd.Series],
     stock_names: dict[str, str],
-    holding_days_options: list[int] = [5, 10, 20, 40, 60],
+    holding_days_options: list[int] = [10, 20, 40, 60, 90, 120],
 ) -> list[StockOpportunity]:
     """
     Scan all stocks and rank by opportunity.
@@ -873,6 +1186,7 @@ class SignalTrigger:
     avg_return_pct: float
     holding_days: int
     drawdown_pct: float = 0.0  # The threshold that triggered (for drawdown signals)
+    signal_type: str = "entry"  # "entry" for buy signals, "exit" for sell signals
 
 
 def get_historical_triggers(
@@ -916,7 +1230,7 @@ def get_historical_triggers(
                 signal_values,
                 direction,
                 config["threshold_range"],
-                holding_days_options=[5, 10, 20, 40, 60],
+                holding_days_options=[10, 20, 40, 60, 90, 120],
             )
             
             if opt_results.get("n_signals", 0) < min_signals:
@@ -947,10 +1261,20 @@ def get_historical_triggers(
         threshold = best_signal_threshold
         
         # Find trigger points using the OPTIMIZED threshold
+        # CRITICAL: Use EDGE detection for all directions - only trigger on the 
+        # FIRST day of condition becoming true, not every day it's true.
+        # This converts "state conditions" into "event signals".
+        
         if direction == "below":
-            is_triggered = signal_values < threshold
+            # Edge detection: yesterday was >= threshold, today is < threshold
+            is_condition_true = signal_values < threshold
+            was_condition_false = signal_values.shift(1) >= threshold
+            is_triggered = is_condition_true & was_condition_false
         elif direction == "above":
-            is_triggered = signal_values > threshold
+            # Edge detection: yesterday was <= threshold, today is > threshold
+            is_condition_true = signal_values > threshold
+            was_condition_false = signal_values.shift(1) <= threshold
+            is_triggered = is_condition_true & was_condition_false
         elif direction == "cross_above":
             prev_signal = signal_values.shift(1)
             is_triggered = (signal_values > threshold) & (prev_signal <= threshold)
@@ -958,13 +1282,23 @@ def get_historical_triggers(
             prev_signal = signal_values.shift(1)
             is_triggered = (signal_values < threshold) & (prev_signal >= threshold)
         else:
-            is_triggered = signal_values < threshold
+            # Default to below edge detection
+            is_condition_true = signal_values < threshold
+            was_condition_false = signal_values.shift(1) >= threshold
+            is_triggered = is_condition_true & was_condition_false
+        
+        # Optimal holding period from backtest
+        optimal_holding = best_signal_bt.get("holding_days", 20)
+        
+        # Apply cooldown: Don't trigger again until we've exited the previous position
+        # This prevents "threshold whiplash" (e.g., drawdown oscillating around -25%)
+        is_triggered = apply_cooldown_to_triggers(is_triggered, optimal_holding)
         
         # Get trigger dates in lookback period
         trigger_mask = is_triggered.iloc[-lookback_days:]
         trigger_dates = trigger_mask[trigger_mask].index
         
-        # Add triggers with historical stats from the best signal's backtest
+        # Add entry triggers with historical stats from the best signal's backtest
         for date_idx in trigger_dates:
             price_at_trigger = float(prices.loc[date_idx])
             triggers.append(SignalTrigger(
@@ -973,9 +1307,32 @@ def get_historical_triggers(
                 price=price_at_trigger,
                 win_rate=best_signal_bt["win_rate"],
                 avg_return_pct=best_signal_bt["avg_return"] * 100,
-                holding_days=best_signal_bt.get("holding_days", 20),
+                holding_days=optimal_holding,
                 drawdown_pct=abs(threshold) if "Drawdown" in best_signal_config["name"] else 0.0,
+                signal_type="entry",
             ))
+            
+            # Add corresponding exit trigger based on holding period
+            try:
+                exit_idx = date_idx + pd.Timedelta(days=optimal_holding)
+                # Find the nearest trading day in our price data
+                exit_prices = prices[prices.index >= exit_idx]
+                if len(exit_prices) > 0:
+                    exit_date = exit_prices.index[0]
+                    exit_price = float(exit_prices.iloc[0])
+                    entry_return = ((exit_price / price_at_trigger) - 1) * 100
+                    triggers.append(SignalTrigger(
+                        date=str(exit_date.date()) if hasattr(exit_date, "date") else str(exit_date),
+                        signal_name=f"Exit: {best_signal_config['name']}",
+                        price=exit_price,
+                        win_rate=best_signal_bt["win_rate"],
+                        avg_return_pct=entry_return,  # Actual return for this specific trade
+                        holding_days=optimal_holding,
+                        drawdown_pct=0.0,
+                        signal_type="exit",
+                    ))
+            except Exception:
+                pass  # Skip exits that fall outside available data
     except Exception as e:
         logger.warning(f"Error computing triggers for best signal: {e}")
     

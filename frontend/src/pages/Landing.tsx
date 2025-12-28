@@ -424,6 +424,8 @@ function HeroChart({
                   const data = payload[0]?.payload;
                   const trigger = data?.signalTrigger as SignalTrigger | undefined;
                   const price = payload[0]?.value as number;
+                  // Calculate expected value: win_rate * avg_return
+                  const expectedValue = trigger ? trigger.win_rate * trigger.avg_return_pct : 0;
                   
                   return (
                     <div className="bg-popover border border-border rounded-lg p-2 shadow-lg">
@@ -435,7 +437,7 @@ function HeroChart({
                             🟢 {trigger.signal_name}
                           </p>
                           <p className="text-muted-foreground text-xs">
-                            {Math.round(trigger.win_rate * 100)}% win rate
+                            {Math.round(trigger.win_rate * 100)}% win, {expectedValue >= 0 ? '+' : ''}{expectedValue.toFixed(1)}% EV
                           </p>
                         </div>
                       )}
@@ -546,7 +548,7 @@ interface LandingCacheData {
   heroSymbol: string;
   heroRec: QuantRecommendation | null;
   heroAgentAnalysis: AgentAnalysis | null;
-  heroSignals: SignalTrigger[];
+  heroSignals: SignalTrigger[];  // Keep array format for cache
   cachedAt: number;
 }
 
@@ -678,7 +680,8 @@ export function Landing() {
           
           // Load signal triggers for hero stock
           try {
-            newHeroSignals = await getSignalTriggers(buyRec.ticker, 180);
+            const signalsResponse = await getSignalTriggers(buyRec.ticker, 180);
+            newHeroSignals = signalsResponse.triggers;
             setHeroSignals(newHeroSignals);
           } catch (e) {
             console.warn('Failed to load signals for hero:', e);

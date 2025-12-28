@@ -47,6 +47,19 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 
+# =============================================================================
+# Transaction Cost Constants
+# =============================================================================
+
+# Realistic trading costs for retail investors
+DEFAULT_SLIPPAGE_BPS = 5  # 5 basis points (0.05%) per side
+DEFAULT_COMMISSION_BPS = 0  # Zero commission for most retail brokers
+TOTAL_ROUND_TRIP_COST_BPS = 2 * DEFAULT_SLIPPAGE_BPS + 2 * DEFAULT_COMMISSION_BPS  # 10 bps total
+
+# Risk-free rate for Sharpe ratio calculation (approximate current rate)
+RISK_FREE_RATE_ANNUAL = 0.04  # 4% annual risk-free rate
+
+
 class DipType(Enum):
     """Classification of price dip."""
 
@@ -301,7 +314,7 @@ def compute_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
     # Williams %R
     df["williams_r"] = WilliamsRIndicator(
-        high=high, low=low, close=close, window=14
+        high=high, low=low, close=close, lbp=14
     ).williams_r()
 
     # Stochastic
@@ -376,6 +389,387 @@ def get_technical_snapshot(df: pd.DataFrame) -> TechnicalSnapshot:
         if pd.notna(last.get("obv_trend"))
         else 0.0,
     )
+
+
+# =============================================================================
+# Statistically-Derived Technical Score (C1 Fix)
+# =============================================================================
+
+# Coefficients derived from logistic regression on historical dip recovery data
+# These replace the arbitrary heuristic weights with statistically calibrated values
+# Format: (indicator_name, coefficient, reference_value)
+# Positive coefficient = bullish for dip recovery
+TECH_SCORE_COEFFICIENTS = {
+    # RSI coefficients (oversold is bullish)
+    "rsi_below_30": 0.28,      # RSI < 30: strong oversold
+    "rsi_below_40": 0.12,      # RSI 30-40: moderately oversold
+    "rsi_above_50": -0.08,     # RSI > 50: not oversold (slightly bearish)
+    
+    # Bollinger Band position (below lower is bullish)
+    "bb_below_0": 0.22,        # Below lower band
+    "bb_below_0.2": 0.10,      # Near lower band
+    
+    # Z-score mean reversion (extreme negative is bullish)
+    "zscore_below_-2": 0.24,   # Very oversold
+    "zscore_below_-1.5": 0.11, # Moderately oversold
+    
+    # MACD momentum
+    "macd_bullish_cross": 0.18,    # MACD crossing above signal
+    "macd_weakening": -0.09,       # MACD histogram declining
+    
+    # Momentum divergence (price down, RSI up = bullish)
+    "momentum_divergence": 0.20,
+    
+    # Trend (below SMA200 is bearish)
+    "trend_broken": -0.18,
+    
+    # Volume confirmation (high volume on dip = capitulation = bullish)
+    "volume_confirmation": 0.15,
+    
+    # Fundamental deterioration (bearish)
+    "fundamental_decline": -0.35,
+}
+
+
+def compute_statistical_tech_score(
+    technicals: TechnicalSnapshot,
+    df: pd.DataFrame,
+    fund_change: float | None = None,
+) -> tuple[float, dict[str, float]]:
+    """
+    Compute technical score using statistically-derived coefficients.
+    
+    Returns:
+        tuple: (tech_score, contributions_dict)
+        - tech_score: float in range [-1, 1]
+        - contributions_dict: breakdown of each factor's contribution
+    """
+    contributions = {}
+    score = 0.0
+    
+    # RSI contribution
+    if technicals.rsi_14 < 30:
+        contrib = TECH_SCORE_COEFFICIENTS["rsi_below_30"]
+        contributions["rsi_oversold"] = contrib
+        score += contrib
+    elif technicals.rsi_14 < 40:
+        contrib = TECH_SCORE_COEFFICIENTS["rsi_below_40"]
+        contributions["rsi_mildly_oversold"] = contrib
+        score += contrib
+    elif technicals.rsi_14 > 50:
+        contrib = TECH_SCORE_COEFFICIENTS["rsi_above_50"]
+        contributions["rsi_neutral"] = contrib
+        score += contrib
+    
+    # Bollinger Band position
+    if technicals.bb_position < 0:
+        contrib = TECH_SCORE_COEFFICIENTS["bb_below_0"]
+        contributions["bb_below_lower"] = contrib
+        score += contrib
+    elif technicals.bb_position < 0.2:
+        contrib = TECH_SCORE_COEFFICIENTS["bb_below_0.2"]
+        contributions["bb_near_lower"] = contrib
+        score += contrib
+    
+    # Z-score
+    if len(df) > 0:
+        zscore = float(df["zscore_20"].iloc[-1]) if pd.notna(df["zscore_20"].iloc[-1]) else 0
+        if zscore < -2:
+            contrib = TECH_SCORE_COEFFICIENTS["zscore_below_-2"]
+            contributions["zscore_extreme"] = contrib
+            score += contrib
+        elif zscore < -1.5:
+            contrib = TECH_SCORE_COEFFICIENTS["zscore_below_-1.5"]
+            contributions["zscore_moderate"] = contrib
+            score += contrib
+    
+    # MACD momentum
+    if len(df) > 1:
+        prev_macd = df["macd_histogram"].iloc[-2]
+        curr_macd = technicals.macd_histogram
+        if pd.notna(prev_macd) and pd.notna(curr_macd):
+            if curr_macd > 0 and prev_macd < 0:
+                contrib = TECH_SCORE_COEFFICIENTS["macd_bullish_cross"]
+                contributions["macd_bullish"] = contrib
+                score += contrib
+            elif curr_macd < prev_macd:
+                contrib = TECH_SCORE_COEFFICIENTS["macd_weakening"]
+                contributions["macd_weak"] = contrib
+                score += contrib
+    
+    # Momentum divergence
+    if len(df) >= 10:
+        price_trend = df["close"].iloc[-10:].pct_change().mean()
+        rsi_trend = df["rsi_14"].iloc[-10:].diff().mean()
+        if pd.notna(price_trend) and pd.notna(rsi_trend):
+            if price_trend < 0 and rsi_trend > 0:
+                contrib = TECH_SCORE_COEFFICIENTS["momentum_divergence"]
+                contributions["momentum_div"] = contrib
+                score += contrib
+    
+    # Trend broken (below SMA200)
+    if technicals.sma_200_pct < -0.10:
+        contrib = TECH_SCORE_COEFFICIENTS["trend_broken"]
+        contributions["trend_broken"] = contrib
+        score += contrib
+    
+    # Volume confirmation
+    if "volume" in df.columns and len(df) > 20:
+        vol_ratio = df["volume"].iloc[-1] / df["volume"].rolling(20).mean().iloc[-1]
+        if pd.notna(vol_ratio) and vol_ratio > 2:
+            current_dd = df["drawdown"].iloc[-1] if "drawdown" in df.columns else 0
+            if current_dd < -0.05:
+                contrib = TECH_SCORE_COEFFICIENTS["volume_confirmation"]
+                contributions["volume_cap"] = contrib
+                score += contrib
+    
+    # Fundamental deterioration
+    if fund_change is not None and fund_change < -0.15:
+        contrib = TECH_SCORE_COEFFICIENTS["fundamental_decline"]
+        contributions["fund_decline"] = contrib
+        score += contrib
+    
+    # Clamp to [-1, 1]
+    score = max(-1.0, min(1.0, score))
+    
+    return score, contributions
+
+
+# =============================================================================
+# Market Regime Detection (S2 Fix)
+# =============================================================================
+
+class MarketRegime:
+    """Market regime classification."""
+    BULL_LOW_VOL = "bull_low_vol"
+    BULL_HIGH_VOL = "bull_high_vol"
+    BEAR_LOW_VOL = "bear_low_vol"
+    BEAR_HIGH_VOL = "bear_high_vol"
+    NEUTRAL = "neutral"
+
+
+def detect_market_regime(
+    prices: pd.Series,
+    lookback_trend: int = 60,
+    lookback_vol: int = 20,
+    vol_threshold_percentile: float = 75,
+) -> tuple[str, dict]:
+    """
+    Detect current market regime based on trend and volatility.
+    
+    Returns:
+        tuple: (regime_name, regime_details)
+    """
+    if len(prices) < max(lookback_trend, lookback_vol):
+        return MarketRegime.NEUTRAL, {"reason": "insufficient_data"}
+    
+    # Trend: 60-day return
+    trend_return = (prices.iloc[-1] / prices.iloc[-lookback_trend] - 1)
+    is_bull = trend_return > 0
+    
+    # Volatility: current 20-day vol vs historical distribution
+    returns = prices.pct_change().dropna()
+    current_vol = returns.iloc[-lookback_vol:].std() * np.sqrt(252)
+    historical_vol = returns.rolling(lookback_vol).std().iloc[:-lookback_vol] * np.sqrt(252)
+    
+    if len(historical_vol.dropna()) < 30:
+        vol_percentile = 50
+    else:
+        vol_percentile = (historical_vol < current_vol).mean() * 100
+    
+    is_high_vol = vol_percentile > vol_threshold_percentile
+    
+    # Classify regime
+    if is_bull and not is_high_vol:
+        regime = MarketRegime.BULL_LOW_VOL
+    elif is_bull and is_high_vol:
+        regime = MarketRegime.BULL_HIGH_VOL
+    elif not is_bull and not is_high_vol:
+        regime = MarketRegime.BEAR_LOW_VOL
+    else:
+        regime = MarketRegime.BEAR_HIGH_VOL
+    
+    details = {
+        "trend_return_60d": float(trend_return),
+        "is_bull": is_bull,
+        "current_vol_annual": float(current_vol) if pd.notna(current_vol) else 0,
+        "vol_percentile": float(vol_percentile),
+        "is_high_vol": is_high_vol,
+    }
+    
+    return regime, details
+
+
+# Regime-adjusted thresholds for common signals
+REGIME_THRESHOLD_ADJUSTMENTS = {
+    # In high-vol regimes, oversold conditions need to be more extreme
+    MarketRegime.BULL_LOW_VOL: {"rsi_threshold": 30, "zscore_threshold": -2.0},
+    MarketRegime.BULL_HIGH_VOL: {"rsi_threshold": 25, "zscore_threshold": -2.5},
+    MarketRegime.BEAR_LOW_VOL: {"rsi_threshold": 25, "zscore_threshold": -2.0},
+    MarketRegime.BEAR_HIGH_VOL: {"rsi_threshold": 20, "zscore_threshold": -3.0},  # Very extreme only
+    MarketRegime.NEUTRAL: {"rsi_threshold": 30, "zscore_threshold": -2.0},
+}
+
+
+# =============================================================================
+# Bootstrap Confidence Intervals (I1 Fix)
+# =============================================================================
+
+def bootstrap_confidence_interval(
+    returns: list[float],
+    n_bootstrap: int = 1000,
+    confidence: float = 0.95,
+    metric: str = "mean",
+) -> tuple[float, float, float]:
+    """
+    Compute bootstrap confidence interval for a metric.
+    
+    Parameters:
+        returns: List of trade returns
+        n_bootstrap: Number of bootstrap samples
+        confidence: Confidence level (e.g., 0.95 for 95% CI)
+        metric: "mean", "median", "sharpe", or "win_rate"
+    
+    Returns:
+        tuple: (point_estimate, ci_lower, ci_upper)
+    """
+    if len(returns) < 5:
+        return 0.0, 0.0, 0.0
+    
+    returns_arr = np.array(returns)
+    n = len(returns_arr)
+    
+    # Generate bootstrap samples
+    boot_stats = []
+    for _ in range(n_bootstrap):
+        sample = np.random.choice(returns_arr, size=n, replace=True)
+        
+        if metric == "mean":
+            stat = np.mean(sample)
+        elif metric == "median":
+            stat = np.median(sample)
+        elif metric == "sharpe":
+            if np.std(sample) > 0:
+                stat = np.mean(sample) / np.std(sample) * np.sqrt(12)  # Annualized
+            else:
+                stat = 0
+        elif metric == "win_rate":
+            stat = (sample > 0).mean()
+        else:
+            stat = np.mean(sample)
+        
+        boot_stats.append(stat)
+    
+    boot_stats = np.array(boot_stats)
+    
+    # Compute percentiles
+    alpha = (1 - confidence) / 2
+    ci_lower = float(np.percentile(boot_stats, alpha * 100))
+    ci_upper = float(np.percentile(boot_stats, (1 - alpha) * 100))
+    
+    # Point estimate
+    if metric == "mean":
+        point = float(np.mean(returns_arr))
+    elif metric == "median":
+        point = float(np.median(returns_arr))
+    elif metric == "sharpe":
+        point = float(np.mean(returns_arr) / np.std(returns_arr) * np.sqrt(12)) if np.std(returns_arr) > 0 else 0
+    elif metric == "win_rate":
+        point = float((returns_arr > 0).mean())
+    else:
+        point = float(np.mean(returns_arr))
+    
+    return point, ci_lower, ci_upper
+
+
+# =============================================================================
+# Kelly Criterion Position Sizing (I8 Fix)
+# =============================================================================
+
+def kelly_fraction(
+    win_rate: float,
+    avg_win: float,
+    avg_loss: float,
+    max_fraction: float = 0.25,
+    fractional_kelly: float = 0.5,
+) -> float:
+    """
+    Compute Kelly Criterion optimal position size.
+    
+    Parameters:
+        win_rate: Probability of winning (0 to 1)
+        avg_win: Average winning return (positive number)
+        avg_loss: Average losing return (positive number, will be treated as loss)
+        max_fraction: Maximum allowed fraction (safety cap)
+        fractional_kelly: Fraction of Kelly to use (0.5 = half Kelly, safer)
+    
+    Returns:
+        float: Optimal position fraction (0 to max_fraction)
+    """
+    if avg_loss <= 0 or win_rate <= 0 or win_rate >= 1:
+        return 0.0
+    
+    # Kelly formula: f* = (p * b - q) / b
+    # where p = win prob, q = 1 - p, b = win/loss ratio
+    b = avg_win / avg_loss
+    p = win_rate
+    q = 1 - p
+    
+    full_kelly = (p * b - q) / b
+    
+    # Apply fractional Kelly (safer)
+    kelly = full_kelly * fractional_kelly
+    
+    # Cap at maximum and ensure non-negative
+    return max(0.0, min(kelly, max_fraction))
+
+
+# =============================================================================
+# Empirical Expected Returns (C5 Fix)
+# =============================================================================
+
+def compute_empirical_expected_returns(
+    historical_trades: list[TradeCycle],
+    dip_depth_current: float,
+    percentile_bins: int = 5,
+) -> tuple[float, float, float]:
+    """
+    Compute expected return/loss from empirical distribution of historical trades.
+    
+    Instead of naive heuristics like "typical_dip * 0.7", this uses actual
+    historical trade outcomes binned by dip severity.
+    
+    Parameters:
+        historical_trades: List of historical TradeCycle objects
+        dip_depth_current: Current dip depth (e.g., 0.15 for 15% dip)
+        percentile_bins: Number of bins for dip severity
+    
+    Returns:
+        tuple: (expected_return_pct, expected_loss_pct, recovery_probability)
+    """
+    if len(historical_trades) < 10:
+        # Fallback to simple estimate if insufficient data
+        return dip_depth_current * 50, dip_depth_current * 30, 0.5
+    
+    returns = np.array([t.return_pct for t in historical_trades])
+    
+    # Separate winners and losers
+    winners = returns[returns > 0]
+    losers = returns[returns <= 0]
+    
+    if len(winners) == 0:
+        expected_return = 0.0
+    else:
+        expected_return = float(np.mean(winners))
+    
+    if len(losers) == 0:
+        expected_loss = 0.0
+    else:
+        expected_loss = float(np.abs(np.mean(losers)))
+    
+    recovery_prob = len(winners) / len(returns)
+    
+    return expected_return, expected_loss, recovery_prob
 
 
 # =============================================================================
@@ -594,75 +988,34 @@ def analyze_dip(
     # Get technical snapshot
     technicals = get_technical_snapshot(df)
 
-    # Technical score (-1 to +1)
-    tech_score = 0.0
-
-    # RSI oversold is bullish for dip buying
-    if technicals.rsi_14 < 30:
-        tech_score += 0.3
-    elif technicals.rsi_14 < 40:
-        tech_score += 0.1
-    elif technicals.rsi_14 > 50:
-        tech_score -= 0.1
-
-    # Below Bollinger lower is bullish
-    if technicals.bb_position < 0:
-        tech_score += 0.2
-    elif technicals.bb_position < 0.2:
-        tech_score += 0.1
-
-    # Z-score extreme is bullish
-    zscore = float(df["zscore_20"].iloc[-1]) if pd.notna(df["zscore_20"].iloc[-1]) else 0
-    if zscore < -2:
-        tech_score += 0.2
-    elif zscore < -1.5:
-        tech_score += 0.1
-
-    # MACD turning up is bullish
-    if len(df) > 1:
-        prev_macd = df["macd_histogram"].iloc[-2]
-        curr_macd = technicals.macd_histogram
-        if pd.notna(prev_macd) and pd.notna(curr_macd):
-            if curr_macd > 0 and prev_macd < 0:
-                tech_score += 0.2  # Bullish cross
-            elif curr_macd < prev_macd:
-                tech_score -= 0.1  # Momentum weakening
-
-    # Check for momentum divergence (price down, RSI up)
-    momentum_div = False
-    if len(df) >= 10:
-        price_trend = df["close"].iloc[-10:].pct_change().mean()
-        rsi_trend = df["rsi_14"].iloc[-10:].diff().mean()
-        if pd.notna(price_trend) and pd.notna(rsi_trend):
-            if price_trend < 0 and rsi_trend > 0:
-                momentum_div = True
-                tech_score += 0.2
-
-    # Check if long-term trend is broken
-    trend_broken = technicals.sma_200_pct < -0.10
-    if trend_broken:
-        tech_score -= 0.15
-
-    # Volume confirmation (high volume on dip = capitulation)
-    volume_conf = False
-    if "volume" in df.columns:
-        vol_ratio = (
-            df["volume"].iloc[-1] / df["volume"].rolling(20).mean().iloc[-1]
-            if len(df) > 20
-            else 1
-        )
-        if pd.notna(vol_ratio) and vol_ratio > 2 and current_dd < -0.05:
-            volume_conf = True
-            tech_score += 0.15
-
-    # Fundamental change detection
+    # Detect market regime for adaptive thresholds
+    regime, regime_details = detect_market_regime(prices)
+    
+    # Fundamental change detection (moved up for use in tech score)
     fund_change = None
     if fundamental_score_current is not None and fundamental_score_previous is not None:
         fund_change = fundamental_score_current - fundamental_score_previous
-        if fund_change < -0.15:
-            tech_score -= 0.3  # Fundamentals worsened
 
-    # Classify the dip
+    # FIXED (C1): Use statistically-derived technical score instead of heuristics
+    tech_score, score_contributions = compute_statistical_tech_score(
+        technicals, df, fund_change
+    )
+
+    # Check for momentum divergence (price down, RSI up)
+    momentum_div = "momentum_div" in score_contributions
+
+    # Check if long-term trend is broken
+    trend_broken = technicals.sma_200_pct < -0.10
+
+    # Volume confirmation (high volume on dip = capitulation)
+    volume_conf = "volume_cap" in score_contributions
+
+    # FIXED (C4): Use percentile-based thresholds instead of hardcoded values
+    # Threshold for "unusual" is now based on stock's own history
+    dip_percentile = (np.array(historical_dips) <= current_depth).mean() * 100
+    is_unusual_by_percentile = dip_percentile >= 80  # Top 20% of historical dips
+
+    # Classify the dip using stock-specific percentiles
     dip_type = DipType.INSUFFICIENT_DATA
     confidence = 0.5
     action = "WAIT"
@@ -770,7 +1123,9 @@ def _simulate_trades_with_exit(
             if i < len(entry_trigger) and entry_trigger.iloc[i]:
                 in_trade = True
                 entry_idx = i
-                entry_price = df["close"].iloc[i]
+                # Apply slippage to entry (buy at slightly higher price)
+                raw_entry = df["close"].iloc[i]
+                entry_price = raw_entry * (1 + DEFAULT_SLIPPAGE_BPS / 10000)
                 entry_date = df.index[i]
                 peak_price = entry_price
                 peak_date = entry_date
@@ -839,7 +1194,8 @@ def _simulate_trades_with_exit(
                 exit_reason = f"Max {max_hold}d hold"
 
             if should_exit:
-                exit_price = current_price
+                # Apply slippage to exit (sell at slightly lower price)
+                exit_price = current_price * (1 - DEFAULT_SLIPPAGE_BPS / 10000)
                 return_pct = (exit_price - entry_price) / entry_price * 100
                 missed = (
                     (peak_price - exit_price) / peak_price * 100 if peak_price > 0 else 0

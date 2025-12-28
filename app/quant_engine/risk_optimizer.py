@@ -73,6 +73,10 @@ class RiskOptimizationResult:
     
     # Risk changes
     vol_change_pct: float = 0.0
+    
+    # Optimization quality indicators (new)
+    optimization_quality: str = "optimal"  # "optimal", "degraded", "fallback"
+    quality_reason: str = ""  # Explanation if not optimal
 
 
 @dataclass
@@ -494,9 +498,16 @@ def optimize_hrp(
     returns_filtered = returns[symbols].dropna()
     n = len(symbols)
     
+    # Track optimization quality
+    opt_quality = "optimal"
+    quality_reason = ""
+    
     if len(returns_filtered) < 30:
         # Fallback to equal weight
         weights = np.ones(n) / n
+        opt_quality = "fallback"
+        quality_reason = f"Insufficient history ({len(returns_filtered)} days < 30 required)"
+        logger.warning(f"HRP fallback: {quality_reason}")
     else:
         cov = returns_filtered.cov().values
         corr = returns_filtered.corr().values
@@ -516,6 +527,8 @@ def optimize_hrp(
         except Exception as e:
             logger.warning(f"HRP clustering failed: {e}, falling back to equal weight")
             weights = np.ones(n) / n
+            opt_quality = "degraded"
+            quality_reason = f"Clustering failed: {str(e)[:100]}"
     
     # Apply constraints
     weights = np.maximum(weights, constraints.min_weight)
@@ -549,6 +562,8 @@ def optimize_hrp(
         current_weights={s: float(current_weights[i]) for i, s in enumerate(symbols)} if current_weights is not None else None,
         weight_changes=weight_changes,
         turnover=turnover,
+        optimization_quality=opt_quality,
+        quality_reason=quality_reason,
     )
 
 

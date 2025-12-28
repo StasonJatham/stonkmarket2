@@ -880,13 +880,20 @@ class SignalTriggerResponse(BaseModel):
     avg_return_pct: float
     holding_days: int
     drawdown_pct: float = 0.0  # The threshold that triggered (for drawdown signals)
+    signal_type: str = "entry"  # "entry" for buy signals, "exit" for sell signals
 
 
 class SignalTriggersResponse(BaseModel):
-    """Response containing historical signal triggers."""
+    """Response containing historical signal triggers with benchmark comparison."""
     symbol: str
     signal_name: str | None = None  # The signal being tracked
     triggers: list[SignalTriggerResponse]
+    
+    # Benchmark comparison - how the signal performed vs simply holding
+    buy_hold_return_pct: float = 0.0  # Return from buying and holding over the lookback period
+    signal_return_pct: float = 0.0  # Aggregate return from signal-based trading
+    edge_vs_buy_hold_pct: float = 0.0  # Signal return - buy hold return (the "alpha")
+    n_trades: int = 0  # Number of signal triggers in the period
 
 
 @global_router.get(
@@ -907,7 +914,7 @@ async def get_signal_triggers(
     symbol: str,
     lookback_days: int = Query(default=365, ge=30, le=730, description="Days to look back"),
 ) -> SignalTriggersResponse:
-    """Get historical signal triggers for chart markers."""
+    """Get historical signal triggers for chart markers with benchmark comparison."""
     from app.quant_engine.signals import get_historical_triggers
     
     symbol = symbol.strip().upper()
@@ -919,8 +926,9 @@ async def get_signal_triggers(
         return SignalTriggersResponse(symbol=symbol, signal_name=None, triggers=[])
     
     # Convert to dict format expected by signals module
+    close_prices = prices_df[symbol].dropna()
     price_data = {
-        "close": prices_df[symbol].dropna(),
+        "close": close_prices,
     }
     
     # Get historical triggers for the BEST signal
@@ -928,6 +936,31 @@ async def get_signal_triggers(
     
     # Get the signal name from the triggers (they're all from the same signal now)
     signal_name = triggers[0].signal_name if triggers else None
+    
+    # Calculate benchmark comparison
+    # Buy-and-hold return over the lookback period
+    buy_hold_return_pct = 0.0
+    signal_return_pct = 0.0
+    edge_vs_buy_hold_pct = 0.0
+    n_trades = len(triggers)
+    
+    if len(close_prices) >= lookback_days and lookback_days > 0:
+        lookback_slice = close_prices.iloc[-lookback_days:]
+        if len(lookback_slice) >= 2:
+            first_price = lookback_slice.iloc[0]
+            last_price = lookback_slice.iloc[-1]
+            buy_hold_return_pct = ((last_price / first_price) - 1) * 100
+    
+    # Signal aggregate return = average of individual signal returns
+    # (This is what you'd get if you deployed capital on each signal)
+    if triggers:
+        avg_return = triggers[0].avg_return_pct  # Same for all triggers from same signal
+        win_rate = triggers[0].win_rate
+        # Expected value per trade
+        signal_return_pct = avg_return * n_trades / max(1, lookback_days / 20)  # Normalize by trading frequency
+        # A simpler metric: just show the average return times number of trades
+        signal_return_pct = avg_return * n_trades
+        edge_vs_buy_hold_pct = signal_return_pct - buy_hold_return_pct
     
     return SignalTriggersResponse(
         symbol=symbol,
@@ -941,9 +974,14 @@ async def get_signal_triggers(
                 avg_return_pct=t.avg_return_pct,
                 holding_days=t.holding_days,
                 drawdown_pct=t.drawdown_pct,
+                signal_type=t.signal_type,
             )
             for t in triggers
         ],
+        buy_hold_return_pct=round(buy_hold_return_pct, 2),
+        signal_return_pct=round(signal_return_pct, 2),
+        edge_vs_buy_hold_pct=round(edge_vs_buy_hold_pct, 2),
+        n_trades=n_trades,
     )
 
 

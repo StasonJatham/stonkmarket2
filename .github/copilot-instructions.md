@@ -38,6 +38,7 @@ python -m pytest tests/ -x -W error --tb=short
 - `--tb=short` = Always show traceback/error output
 - **ALWAYS** run tests normally and edit files directly; **NEVER** use heredocs or shell-insert tricks to modify files (they can crash VSCode PTY)
 - **ALL errors are FATAL** - Do not proceed until fixed
+- **ALL errors anywhere are FATAL** - If any error occurs (tests, Docker builds, logs, lint, etc.), even if unrelated to the current task, analyze the root cause and fix it before proceeding
 - **NEVER skip or ignore test failures** - Every failure is CRITICAL
 - **NEVER just edit tests to make them pass** - Analyze the root cause and fix the actual code
 - **ALWAYS show full error output** - Never hide or truncate test failures

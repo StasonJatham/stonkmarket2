@@ -9,7 +9,7 @@ import {
   ReferenceDot,
 } from 'recharts';
 import { CHART_LINE_ANIMATION } from '@/lib/chartConfig';
-import type { ChartDataPoint, SignalTrigger } from '@/services/api';
+import type { ChartDataPoint, SignalTrigger, SignalTriggersResponse } from '@/services/api';
 import { getSignalTriggers } from '@/services/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -26,7 +26,7 @@ interface StockChartProps {
 }
 
 export function StockChart({ symbol, data, isLoading, showSignalMarkers = true }: StockChartProps) {
-  const [signals, setSignals] = useState<SignalTrigger[]>([]);
+  const [signalsResponse, setSignalsResponse] = useState<SignalTriggersResponse | null>(null);
   const [showMarkers, setShowMarkers] = useState(showSignalMarkers);
   const [isLoadingSignals, setIsLoadingSignals] = useState(false);
   
@@ -36,10 +36,13 @@ export function StockChart({ symbol, data, isLoading, showSignalMarkers = true }
     
     setIsLoadingSignals(true);
     getSignalTriggers(symbol, Math.max(180, data.length))
-      .then(setSignals)
-      .catch(() => setSignals([]))
+      .then(setSignalsResponse)
+      .catch(() => setSignalsResponse(null))
       .finally(() => setIsLoadingSignals(false));
   }, [symbol, data.length, showMarkers]);
+  
+  // Extract triggers from response
+  const signals = signalsResponse?.triggers ?? [];
   
   // Merge chart data with signal triggers
   const chartData = useMemo(() => {
@@ -171,6 +174,8 @@ export function StockChart({ symbol, data, isLoading, showSignalMarkers = true }
                 formatter={(value, _name, props) => {
                   const trigger = props.payload?.signalTrigger as SignalTrigger | undefined;
                   if (trigger) {
+                    // Calculate expected value: win_rate * avg_return
+                    const expectedValue = trigger.win_rate * trigger.avg_return_pct;
                     return [
                       <div key="price" className="flex flex-col gap-1">
                         <span>${Number(value).toFixed(2)}</span>
@@ -178,7 +183,7 @@ export function StockChart({ symbol, data, isLoading, showSignalMarkers = true }
                           🟢 {trigger.signal_name}
                         </span>
                         <span className="text-muted-foreground text-xs">
-                          {Math.round(trigger.win_rate * 100)}% win rate
+                          {Math.round(trigger.win_rate * 100)}% win, {expectedValue >= 0 ? '+' : ''}{expectedValue.toFixed(1)}% EV
                         </span>
                       </div>,
                       'Price'
