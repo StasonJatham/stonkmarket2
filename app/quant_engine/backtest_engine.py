@@ -229,6 +229,55 @@ class ValidationReport:
 
 
 # =============================================================================
+# Price Data Preparation
+# =============================================================================
+
+def prepare_price_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Prepare price DataFrame for backtesting.
+    
+    - Converts column names to lowercase
+    - Uses Adj Close as the primary "close" column (for dividends/splits)
+    - Ensures all required columns exist
+    
+    Args:
+        df: Raw price DataFrame (may have mixed case columns)
+        
+    Returns:
+        Cleaned DataFrame with lowercase columns, using adj_close for close
+    """
+    df = df.copy()
+    
+    # Handle multi-level columns from yfinance
+    if hasattr(df.columns, 'nlevels') and df.columns.nlevels > 1:
+        df.columns = df.columns.get_level_values(0)
+    
+    # Convert to lowercase
+    col_map = {str(c): str(c).lower().replace(' ', '_') for c in df.columns}
+    df = df.rename(columns=col_map)
+    
+    # Use Adj Close as the primary close (accounts for dividends/splits)
+    if 'adj_close' in df.columns and df['adj_close'].notna().any():
+        df['close'] = df['adj_close'].combine_first(df.get('close', df['adj_close']))
+    
+    # Ensure required columns exist
+    if 'close' not in df.columns:
+        raise ValueError("DataFrame must have 'close' or 'adj_close' column")
+    
+    # Fill missing OHLV from close if needed
+    if 'open' not in df.columns:
+        df['open'] = df['close']
+    if 'high' not in df.columns:
+        df['high'] = df['close']
+    if 'low' not in df.columns:
+        df['low'] = df['close']
+    if 'volume' not in df.columns:
+        df['volume'] = 1
+    
+    return df
+
+
+# =============================================================================
 # Technical Indicators (using ta library)
 # =============================================================================
 
@@ -237,13 +286,15 @@ def compute_indicators(prices: pd.DataFrame) -> pd.DataFrame:
     Compute comprehensive technical indicators.
     
     Uses the 'ta' library for standardized, tested implementations.
+    NOTE: Automatically normalizes price data using prepare_price_dataframe.
     """
     from ta import add_all_ta_features
     from ta.momentum import RSIIndicator, StochasticOscillator
     from ta.trend import MACD, EMAIndicator, SMAIndicator, ADXIndicator
     from ta.volatility import BollingerBands, AverageTrueRange
     
-    df = prices.copy()
+    # Normalize price data (use adj_close, lowercase columns)
+    df = prepare_price_dataframe(prices)
     close = df["close"]
     high = df.get("high", close)
     low = df.get("low", close)
@@ -1381,6 +1432,14 @@ class BacktestEngine:
             if len(pnl_pcts) >= 10:
                 _, p_value = stats.ttest_1samp(pnl_pcts, 0)
                 report.passes_t_test = p_value < 0.05
+                report.p_value = float(p_value)
+                
+                # Bootstrap test: 95% CI of mean return must be > 0
+                from app.quant_engine.trade_engine import bootstrap_confidence_interval
+                _, ci_lower, _ = bootstrap_confidence_interval(
+                    pnl_pcts, n_bootstrap=1000, confidence=0.95, metric="mean"
+                )
+                report.passes_bootstrap = ci_lower > 0
         
         # Benchmark comparison
         stock_bh_return = (df["close"].iloc[-1] / df["close"].iloc[0] - 1) * 100
@@ -1399,10 +1458,11 @@ class BacktestEngine:
             report.current_year_return = cy_result.total_return_pct
             report.current_year_sharpe = cy_result.sharpe_ratio
         
-        # Overall validity
+        # Overall validity - requires BOTH t-test and bootstrap
         report.is_valid = (
             not report.has_overfitting and
             report.passes_t_test and
+            report.passes_bootstrap and  # Bootstrap CI lower bound must be > 0
             oos_result.sharpe_ratio > 0.5 and
             oos_result.n_trades >= self.config.min_trades_for_significance
         )
@@ -1415,7 +1475,9 @@ class BacktestEngine:
             if report.has_overfitting:
                 reasons.append(f"Overfitting detected ({report.sharpe_degradation*100:.0f}% degradation)")
             if not report.passes_t_test:
-                reasons.append("Failed statistical significance test")
+                reasons.append("Failed t-test significance")
+            if not report.passes_bootstrap:
+                reasons.append("Failed bootstrap CI test (mean return CI includes 0)")
             if oos_result.sharpe_ratio <= 0.5:
                 reasons.append(f"Low Sharpe ratio ({oos_result.sharpe_ratio:.2f})")
             if oos_result.n_trades < self.config.min_trades_for_significance:

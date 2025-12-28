@@ -432,7 +432,7 @@ async def get_recommendations(
     
     # Check cache first (5 minute TTL)
     cache = Cache(prefix="recommendations", default_ttl=300)
-    cache_key = f"recs_{limit}"
+    cache_key = f"recs_{inflow_eur}_{limit}"
     cached = await cache.get(cache_key)
     if cached:
         # Reconstruct response from cached dict

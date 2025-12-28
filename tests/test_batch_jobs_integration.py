@@ -1749,7 +1749,6 @@ class TestRealDBDataUnifiedBatch:
             "prices_daily": ("0 23 * * 1-5", "Fetch stock data Mon-Fri 11pm"),
             "cache_warmup": ("*/30 * * * *", "Pre-cache chart data every 30 min"),
             "ai_bios_weekly": ("0 4 * * 0", "Generate swipe bios weekly Sunday 4am"),
-            "ai_ratings_weekly": ("0 5 * * 0", "Generate dip analysis weekly Sunday 5am"),
             "ai_batch_poll": ("*/5 * * * *", "Poll for completed batch jobs every 5 min"),
             "fundamentals_monthly": ("0 2 1 * *", "Refresh stock fundamentals monthly 1st at 2am"),
             "ai_personas_weekly": ("0 3 * * 0", "AI persona analysis weekly Sunday 3am"),

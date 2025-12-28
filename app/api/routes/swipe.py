@@ -235,13 +235,13 @@ async def refresh_ai_analysis(symbol: str) -> DipCard:
     "/cards/{symbol}/refresh-ai/{field}",
     response_model=DipCard,
     summary="Refresh specific AI field",
-    description="Queue regeneration for a swipe AI field: rating or bio. For summary, use /symbols/{symbol}/ai/summary.",
+    description="Queue regeneration for a swipe AI field: bio only. For summary, use /symbols/{symbol}/ai/summary.",
 )
 async def refresh_ai_field(
     symbol: str,
-    field: Literal["rating", "bio"],
+    field: Literal["bio"],
 ) -> DipCard:
-    """Regenerate a swipe-specific AI field for a dip (rating or bio)."""
+    """Regenerate a swipe-specific AI field for a dip (bio only)."""
     card = await swipe.get_dip_card(symbol.upper())
 
     if not card:

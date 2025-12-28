@@ -15,7 +15,6 @@ Job Categories:
     3. WEEKLY AI ANALYSIS (Sunday morning)
        - ai_personas_weekly: Warren Buffett, Peter Lynch etc. analysis
        - ai_bios_weekly: Swipe-style stock bios
-       - ai_ratings_weekly: Investment ratings
 
     4. AI BATCH POLLING (every 5 min)
        - ai_batch_poll: Check OpenAI batch results
@@ -93,11 +92,6 @@ DEFAULT_SCHEDULES: dict[str, tuple[str, str]] = {
         "AI swipe bios - generates fun 'dating profile' style descriptions for stocks. "
         "Sunday 4 AM UTC."
     ),
-    "ai_ratings_weekly": (
-        "0 5 * * 0",
-        "AI investment ratings - generates buy/hold/sell ratings with reasoning. "
-        "Sunday 5 AM UTC."
-    ),
     
     # =========================================================================
     # 4. AI BATCH POLLING - Check for completed OpenAI batch jobs
@@ -165,7 +159,6 @@ JOB_PRIORITIES: dict[str, dict[str, int | str]] = {
     # Batch queue - AI jobs (can run longer)
     "ai_personas_weekly": {"queue": "batch", "priority": 6},
     "ai_bios_weekly": {"queue": "batch", "priority": 4},
-    "ai_ratings_weekly": {"queue": "batch", "priority": 4},
     
     # Low priority - maintenance
     "cleanup_daily": {"queue": "low", "priority": 2},

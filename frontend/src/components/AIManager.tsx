@@ -38,67 +38,11 @@ import {
   Sparkles,
   Brain,
   MessageSquare,
-  TrendingUp,
-  TrendingDown,
-  Minus,
   Eye,
   FileText,
 } from 'lucide-react';
 import { BatchJobsPanel } from '@/components/BatchJobsPanel';
 import { DataTableControls } from '@/components/ui/data-table-controls';
-
-function getRatingBadge(rating: string | null) {
-  if (!rating) {
-    return (
-      <Badge variant="outline" className="text-muted-foreground">
-        <Minus className="h-3 w-3 mr-1" />
-        No Rating
-      </Badge>
-    );
-  }
-  
-  switch (rating) {
-    case 'strong_buy':
-      return (
-        <Badge className="bg-success/20 text-success border-success/30">
-          <TrendingUp className="h-3 w-3 mr-1" />
-          Strong Buy
-        </Badge>
-      );
-    case 'buy':
-      return (
-        <Badge className="bg-success/10 text-success border-success/20">
-          <TrendingUp className="h-3 w-3 mr-1" />
-          Buy
-        </Badge>
-      );
-    case 'hold':
-      return (
-        <Badge variant="outline">
-          <Minus className="h-3 w-3 mr-1" />
-          Hold
-        </Badge>
-      );
-    case 'sell':
-      return (
-        <Badge className="bg-danger/10 text-danger border-danger/20">
-          <TrendingDown className="h-3 w-3 mr-1" />
-          Sell
-        </Badge>
-      );
-    case 'strong_sell':
-      return (
-        <Badge className="bg-danger/20 text-danger border-danger/30">
-          <TrendingDown className="h-3 w-3 mr-1" />
-          Strong Sell
-        </Badge>
-      );
-    default:
-      return (
-        <Badge variant="outline">{rating}</Badge>
-      );
-  }
-}
 
 export function AIManager() {
   const [dipCards, setDipCards] = useState<DipCard[]>([]);
@@ -433,7 +377,6 @@ export function AIManager() {
                   <TableHead>Symbol</TableHead>
                   <TableHead>Name</TableHead>
                   <TableHead>Dip %</TableHead>
-                  <TableHead>AI Rating</TableHead>
                   <TableHead>Swipe Bio</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -456,9 +399,6 @@ export function AIManager() {
                         <Badge variant="destructive" className="font-mono">
                           -{card.dip_pct.toFixed(1)}%
                         </Badge>
-                      </TableCell>
-                      <TableCell>
-                        {getRatingBadge(card.ai_rating)}
                       </TableCell>
                       <TableCell className="max-w-[200px]">
                         {card.swipe_bio ? (
@@ -528,47 +468,6 @@ export function AIManager() {
           {selectedCard && (
             <ScrollArea className="max-h-[60vh]">
               <div className="space-y-6 py-4">
-                {/* Rating Section */}
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <h4 className="text-sm font-medium flex items-center gap-2">
-                      <Sparkles className="h-4 w-4 text-chart-4" />
-                      AI Rating (Serious Analysis)
-                    </h4>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleRegenerateField(selectedCard.symbol, 'rating')}
-                      disabled={regeneratingField === 'rating' || swipeQueued}
-                    >
-                      {regeneratingField === 'rating' || swipeQueued ? (
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                      ) : (
-                        <RefreshCw className="h-3 w-3" />
-                      )}
-                    </Button>
-                  </div>
-                  <div className="bg-muted/30 rounded-lg p-4">
-                    <div className="flex items-center gap-3 mb-3">
-                      {getRatingBadge(selectedCard.ai_rating)}
-                      {selectedCard.ai_confidence && (
-                        <Badge variant="outline">
-                          Confidence: {selectedCard.ai_confidence}/10
-                        </Badge>
-                      )}
-                    </div>
-                    {selectedCard.ai_reasoning ? (
-                      <p className="text-sm text-muted-foreground leading-relaxed">
-                        {selectedCard.ai_reasoning}
-                      </p>
-                    ) : (
-                      <p className="text-sm text-muted-foreground italic">
-                        No analysis available. Click refresh to generate.
-                      </p>
-                    )}
-                  </div>
-                </div>
-
                 {/* Swipe Bio Section */}
                 <div>
                   <div className="flex items-center justify-between mb-2">

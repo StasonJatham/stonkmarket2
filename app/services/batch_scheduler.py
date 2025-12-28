@@ -610,23 +610,6 @@ async def run_realtime_analysis_for_new_stock(
 # ============================================================================
 
 
-async def cron_batch_ai_dips() -> dict:
-    """
-    Cron job: Schedule weekly batch AI analysis for all dips.
-
-    Runs Sunday 3 AM UTC by default.
-    """
-    logger.info("Running weekly batch AI analysis for dips")
-
-    batch_id = await schedule_batch_dip_analysis()
-
-    return {
-        "job": "batch_ai_dips",
-        "batch_id": batch_id,
-        "status": "scheduled" if batch_id else "no_dips",
-    }
-
-
 async def cron_batch_ai_suggestions() -> dict:
     """
     Cron job: Schedule weekly batch AI bios for suggestions.

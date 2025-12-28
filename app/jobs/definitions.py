@@ -7,7 +7,6 @@ Jobs (New Names):
 - regime_daily: Market regime detection (Mon-Fri 10:30 PM UTC)
 - ai_personas_weekly: Warren Buffett, Peter Lynch etc. (Sunday 3 AM UTC)
 - ai_bios_weekly: Swipe-style stock bios (Sunday 4 AM UTC)
-- ai_ratings_weekly: Investment ratings (Sunday 5 AM UTC)
 - ai_batch_poll: OpenAI batch result collector (every 5 min)
 - fundamentals_monthly: Company fundamentals (1st of month)
 - quant_monthly: Portfolio optimization (1st of month)
@@ -559,36 +558,6 @@ async def ai_bios_weekly_job() -> str:
 
     except Exception as e:
         logger.error(f"ai_bios_weekly failed: {e}")
-        raise
-
-
-@register_job("ai_ratings_weekly")
-async def ai_ratings_weekly_job() -> str:
-    """
-    Generate serious dip analysis using OpenAI Batch API.
-
-    Schedule: Weekly Sunday 5am
-    """
-    from app.services.batch_scheduler import (
-        process_completed_batch_jobs,
-        schedule_batch_dip_analysis,
-    )
-
-    logger.info("Starting ai_ratings_weekly job")
-
-    try:
-        # Process any completed batches first
-        processed = await process_completed_batch_jobs()
-
-        # Schedule new batch
-        batch_id = await schedule_batch_dip_analysis()
-
-        message = f"Batch: {batch_id or 'none needed'}, processed: {processed}"
-        logger.info(f"ai_ratings_weekly: {message}")
-        return message
-
-    except Exception as e:
-        logger.error(f"ai_ratings_weekly failed: {e}")
         raise
 
 

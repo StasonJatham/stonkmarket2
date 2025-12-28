@@ -170,11 +170,6 @@ def ai_bios_weekly_task() -> str:
     return _run_job("ai_bios_weekly")
 
 
-@celery_app.task(name="jobs.ai_ratings_weekly")
-def ai_ratings_weekly_task() -> str:
-    return _run_job("ai_ratings_weekly")
-
-
 @celery_app.task(name="jobs.ai_batch_poll")
 def ai_batch_poll_task() -> str:
     return _run_job("ai_batch_poll")

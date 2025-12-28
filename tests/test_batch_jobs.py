@@ -224,7 +224,6 @@ class TestJobDefinitions:
             "prices_daily",
             "cache_warmup",
             "ai_bios_weekly",
-            "ai_ratings_weekly",
             "ai_batch_poll",
             "fundamentals_monthly",
             "ai_personas_weekly",
@@ -270,28 +269,6 @@ class TestAIBiosWeeklyJob:
             result = await ai_bios_weekly_job()
 
             assert "batch_123" in result or "none needed" in result.lower()
-
-
-class TestAIRatingsWeeklyJob:
-    """Test AI ratings weekly job."""
-
-    @pytest.mark.asyncio
-    async def test_ai_ratings_job_with_mocks(self):
-        """AI ratings weekly job should process correctly."""
-        from app.jobs.definitions import ai_ratings_weekly_job
-
-        with patch(
-            "app.services.batch_scheduler.schedule_batch_dip_analysis",
-            new_callable=AsyncMock,
-            return_value="batch_456",
-        ), patch(
-            "app.services.batch_scheduler.process_completed_batch_jobs",
-            new_callable=AsyncMock,
-            return_value=0,
-        ):
-            result = await ai_ratings_weekly_job()
-
-            assert "batch_456" in result or "none needed" in result.lower()
 
 
 class TestAIBatchPollJob:

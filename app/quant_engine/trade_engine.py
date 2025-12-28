@@ -1296,7 +1296,11 @@ def optimize_full_trade(
         if len(trades) < min_trades:
             continue
 
-        total_ret = sum(t.return_pct for t in trades)
+        # Use compounded return for comparison
+        compounded = 1.0
+        for t in trades:
+            compounded *= (1 + t.return_pct / 100)
+        total_ret = (compounded - 1) * 100
 
         if total_ret > best_total_return:
             best_total_return = total_ret
@@ -1310,7 +1314,12 @@ def optimize_full_trade(
     returns = [t.return_pct for t in best_trades]
     win_rate = sum(1 for r in returns if r > 0) / len(returns)
     avg_return = float(np.mean(returns))
-    total_return = sum(returns)
+    # FIXED: Use compounded return instead of sum of returns
+    # Compound: final = (1 + r1/100) * (1 + r2/100) * ... - 1
+    compounded = 1.0
+    for r in returns:
+        compounded *= (1 + r / 100)
+    total_return = (compounded - 1) * 100
     max_return = max(returns)
     holding_days = [t.holding_days for t in best_trades]
     avg_holding = float(np.mean(holding_days))
@@ -1336,16 +1345,16 @@ def optimize_full_trade(
             # Annualized Sharpe
             sharpe = (excess_return / ret_std) * np.sqrt(trades_per_year)
 
-    # Max drawdown during trades
-    cumulative = [0.0]
+    # Max drawdown during trades (using compounded equity curve)
+    equity = [1.0]  # Start at 1.0 (normalized)
     for r in returns:
-        cumulative.append(cumulative[-1] + r)
-    peak = cumulative[0]
+        equity.append(equity[-1] * (1 + r / 100))
+    peak = equity[0]
     max_dd = 0.0
-    for c in cumulative:
-        if c > peak:
-            peak = c
-        dd = c - peak
+    for e in equity:
+        if e > peak:
+            peak = e
+        dd = (e - peak) / peak * 100  # Drawdown as percentage
         max_dd = min(max_dd, dd)
 
     # Buy-and-hold benchmark

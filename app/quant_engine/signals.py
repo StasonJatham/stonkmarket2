@@ -1418,14 +1418,18 @@ def get_historical_triggers(
         for date_idx in trigger_dates:
             price_at_trigger = float(prices.loc[date_idx])
             try:
-                exit_idx = date_idx + pd.Timedelta(days=optimal_holding)
-                exit_prices = prices[prices.index >= exit_idx]
-                if len(exit_prices) > 0:
-                    exit_date = exit_prices.index[0]
-                    exit_price = float(exit_prices.iloc[0])
+                # Use trading days (iloc offset) instead of calendar days
+                entry_iloc = prices.index.get_loc(date_idx)
+                exit_iloc = entry_iloc + optimal_holding
+                if exit_iloc < len(prices):
+                    exit_date = prices.index[exit_iloc]
+                    exit_price = float(prices.iloc[exit_iloc])
                     trade_return = ((exit_price / price_at_trigger) - 1) * 100
                     trade_returns.append(trade_return)
                     trade_data.append((date_idx, price_at_trigger, exit_date, exit_price, trade_return))
+                else:
+                    # Trade still open - don't include in win rate
+                    trade_data.append((date_idx, price_at_trigger, None, None, None))
             except Exception:
                 # Trade still open or data unavailable - don't include in win rate
                 trade_data.append((date_idx, price_at_trigger, None, None, None))
