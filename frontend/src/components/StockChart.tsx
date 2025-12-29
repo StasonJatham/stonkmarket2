@@ -35,14 +35,16 @@ export function StockChart({ symbol, data, isLoading, showSignalMarkers = true }
     if (!symbol || !showMarkers) return;
     
     setIsLoadingSignals(true);
-    getSignalTriggers(symbol, Math.max(180, data.length))
+    // Cap at 730 days (API limit)
+    const lookbackDays = Math.min(730, Math.max(180, data.length));
+    getSignalTriggers(symbol, lookbackDays)
       .then(setSignalsResponse)
       .catch(() => setSignalsResponse(null))
       .finally(() => setIsLoadingSignals(false));
   }, [symbol, data.length, showMarkers]);
   
-  // Extract triggers from response
-  const signals = signalsResponse?.triggers ?? [];
+  // Extract triggers from response, but only if signals beat buy-and-hold
+  const signals = (signalsResponse?.beats_buy_hold ?? false) ? (signalsResponse?.triggers ?? []) : [];
   
   // Merge chart data with signal triggers
   const chartData = useMemo(() => {
@@ -67,7 +69,7 @@ export function StockChart({ symbol, data, isLoading, showSignalMarkers = true }
     });
   }, [data, signals]);
   
-  // Find data points that have signals
+  // Find data points that have signals (only if strategy beats buy-and-hold)
   const signalPoints = useMemo(() => 
     chartData.filter(d => d.signalTrigger != null),
     [chartData]

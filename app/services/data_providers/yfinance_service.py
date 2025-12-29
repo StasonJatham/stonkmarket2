@@ -248,6 +248,28 @@ class YFinanceService:
             most_recent_quarter = _ts_to_date(info.get("mostRecentQuarter"))
             earnings_timestamp = _ts_to_date(info.get("earningsTimestamp"))
 
+            # Calculate debt-to-equity from balance sheet (more reliable than info.debtToEquity)
+            # yfinance's pre-calculated D/E ratio is often wrong (uses inconsistent debt figures)
+            debt_to_equity_ratio = None
+            total_equity = None
+            if not is_etf:
+                try:
+                    bs = ticker.balance_sheet
+                    if bs is not None and not bs.empty:
+                        # Get most recent quarter's values
+                        total_debt_bs = bs.loc["Total Debt"].iloc[0] if "Total Debt" in bs.index else None
+                        stockholders_equity = bs.loc["Stockholders Equity"].iloc[0] if "Stockholders Equity" in bs.index else None
+                        
+                        if total_debt_bs is not None and stockholders_equity is not None and stockholders_equity > 0:
+                            debt_to_equity_ratio = float(total_debt_bs) / float(stockholders_equity)
+                            total_equity = float(stockholders_equity)
+                except Exception:
+                    pass  # Fall back to info.debtToEquity
+                
+                # Fall back to yfinance's pre-calculated ratio if balance sheet unavailable
+                if debt_to_equity_ratio is None:
+                    debt_to_equity_ratio = _safe_float(info.get("debtToEquity"))
+
             return {
                 # Identity
                 "symbol": symbol.upper(),
@@ -294,7 +316,9 @@ class YFinanceService:
                 "return_on_assets": None if is_etf else _safe_float(info.get("returnOnAssets")),
 
                 # Financial Health
-                "debt_to_equity": None if is_etf else _safe_float(info.get("debtToEquity")),
+                # Use calculated D/E from balance sheet (more accurate than info.debtToEquity)
+                "debt_to_equity": debt_to_equity_ratio,
+                "stockholders_equity": total_equity,
                 "current_ratio": None if is_etf else _safe_float(info.get("currentRatio")),
                 "quick_ratio": None if is_etf else _safe_float(info.get("quickRatio")),
                 "total_cash": None if is_etf else _safe_int(info.get("totalCash")),

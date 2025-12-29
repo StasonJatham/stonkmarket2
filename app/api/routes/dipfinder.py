@@ -16,7 +16,6 @@ from app.core.logging import get_logger
 from app.core.security import TokenData
 from app.dipfinder.config import get_dipfinder_config
 from app.dipfinder.service import get_dipfinder_service
-from app.repositories import dip_state_orm as dip_state_repo
 from app.schemas.dipfinder import (
     DipFinderConfigResponse,
     DipFinderRunRequest,
@@ -35,31 +34,12 @@ logger = get_logger("api.dipfinder")
 router = APIRouter()
 
 
-async def _get_dip_state_map(tickers: list[str]) -> dict[str, dict]:
-    """Get dip_state data for multiple tickers (ATH-based source of truth)."""
-    if not tickers:
-        return {}
-
-    states = await dip_state_repo.get_dip_states_for_symbols(tickers)
-    return {
-        symbol: {
-            "symbol": state.symbol,
-            "current_price": float(state.current_price) if state.current_price else None,
-            "ath_price": float(state.ath_price) if state.ath_price else None,
-            "dip_percentage": float(state.dip_percentage) if state.dip_percentage else None,
-            "dip_start_date": state.dip_start_date,
-        }
-        for symbol, state in states.items()
-    }
-
-
-def _signal_to_response(signal, include_factors: bool = False, dip_state: dict = None) -> DipSignalResponse:
+def _signal_to_response(signal, include_factors: bool = False) -> DipSignalResponse:
     """Convert DipSignal to response schema.
     
     Args:
         signal: The computed DipSignal
         include_factors: Whether to include quality/stability factors
-        dip_state: Optional dip_state data (ATH-based source of truth)
     """
     # Default to signal's computed values
     dip_pct = signal.dip_metrics.dip_pct
@@ -68,21 +48,6 @@ def _signal_to_response(signal, include_factors: bool = False, dip_state: dict =
     persist_days = signal.dip_metrics.persist_days
     dip_score = signal.dip_score
     final_score = signal.final_score
-
-    # Override with ATH-based values from dip_state (source of truth)
-    if dip_state:
-        if dip_state.get("dip_percentage"):
-            dip_pct = float(dip_state["dip_percentage"]) / 100
-        if dip_state.get("ath_price"):
-            peak_price = float(dip_state["ath_price"])
-        if dip_state.get("current_price"):
-            current_price = float(dip_state["current_price"])
-        if dip_state.get("dip_start_date"):
-            from datetime import date
-            persist_days = (date.today() - dip_state["dip_start_date"]).days
-        # Recalculate scores based on ATH dip
-        dip_score = min(100.0, dip_pct * 100 * 5)
-        final_score = (signal.quality_metrics.score + signal.stability_metrics.score + dip_score) / 3
 
     response = DipSignalResponse(
         ticker=signal.ticker,
@@ -178,11 +143,8 @@ async def get_signals(
         window=window,
     )
 
-    # Get dip_state data for ATH-based dip percentages
-    dip_state_map = await _get_dip_state_map(ticker_list)
-
     return DipSignalListResponse(
-        signals=[_signal_to_response(s, include_factors, dip_state_map.get(s.ticker)) for s in signals],
+        signals=[_signal_to_response(s, include_factors) for s in signals],
         count=len(signals),
         benchmark=benchmark,
         window=window,
@@ -222,9 +184,7 @@ async def get_ticker_signal(
             details={"ticker": ticker},
         )
 
-    # Get dip_state for ATH-based dip percentage
-    dip_state_map = await _get_dip_state_map([ticker.upper()])
-    return _signal_to_response(signal, include_factors=True, dip_state=dip_state_map.get(ticker.upper()))
+    return _signal_to_response(signal, include_factors=True)
 
 
 @router.post(
@@ -342,12 +302,8 @@ async def get_latest_signals(
         only_alerts=only_alerts,
     )
 
-    # Get dip_state data for ATH-based values
-    tickers = [s.ticker for s in signals if s]
-    dip_state_map = await _get_dip_state_map(tickers)
-
     return DipSignalListResponse(
-        signals=[_signal_to_response(s, dip_state=dip_state_map.get(s.ticker)) for s in signals if s],
+        signals=[_signal_to_response(s) for s in signals if s],
         count=len(signals),
         benchmark=config.default_benchmark,
         window=config.windows[1],
@@ -373,12 +329,8 @@ async def get_alerts(
         only_alerts=True,
     )
 
-    # Get dip_state data for ATH-based values
-    tickers = [s.ticker for s in signals if s]
-    dip_state_map = await _get_dip_state_map(tickers)
-
     return DipSignalListResponse(
-        signals=[_signal_to_response(s, dip_state=dip_state_map.get(s.ticker)) for s in signals if s],
+        signals=[_signal_to_response(s) for s in signals if s],
         count=len(signals),
         benchmark=config.default_benchmark,
         window=config.windows[1],

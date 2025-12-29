@@ -1247,6 +1247,10 @@ export interface QuantRecommendation {
   volatility_regime: string | null;
   volatility_percentile: number | null;
   vs_sector_performance: number | null;
+  // Intrinsic Value
+  intrinsic_value: number | null;
+  upside_pct: number | null;
+  valuation_status: 'undervalued' | 'fair' | 'overvalued' | null;
   // Legacy compatibility
   legacy_dip_pct: number | null;
   legacy_days_in_dip: number | null;
@@ -1515,6 +1519,10 @@ export function quantToStockCardData(
     mu_hat: rec.mu_hat,
     uncertainty: rec.uncertainty,
     marginal_utility: rec.marginal_utility,
+    // Intrinsic Value
+    intrinsic_value: rec.intrinsic_value,
+    upside_pct: rec.upside_pct,
+    valuation_status: rec.valuation_status,
     // APUS + DOUS Dual-Mode Scoring
     quant_mode: rec.quant_mode,
     quant_score_a: rec.quant_score_a,

@@ -16,7 +16,7 @@ from collections.abc import Sequence
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.dialects.postgresql import insert
 
 from app.core.logging import get_logger
@@ -55,6 +55,51 @@ async def get_latest_signals(
             query = query.where(and_(*conditions))
 
         query = query.order_by(DipfinderSignal.final_score.desc()).limit(limit)
+
+        result = await session.execute(query)
+        return result.scalars().all()
+
+
+async def get_latest_signals_for_tickers(
+    tickers: Sequence[str],
+) -> Sequence[DipfinderSignal]:
+    """Get the latest dipfinder signal per ticker.
+
+    Returns the most recent as_of_date per ticker, then picks the highest
+    final_score if multiple windows exist for that date.
+    """
+    if not tickers:
+        return []
+
+    normalized = [t.upper() for t in tickers]
+
+    async with get_session() as session:
+        latest_subq = (
+            select(
+                DipfinderSignal.ticker.label("ticker"),
+                func.max(DipfinderSignal.as_of_date).label("max_date"),
+            )
+            .where(DipfinderSignal.ticker.in_(normalized))
+            .group_by(DipfinderSignal.ticker)
+            .subquery()
+        )
+
+        query = (
+            select(DipfinderSignal)
+            .join(
+                latest_subq,
+                and_(
+                    DipfinderSignal.ticker == latest_subq.c.ticker,
+                    DipfinderSignal.as_of_date == latest_subq.c.max_date,
+                ),
+            )
+            .where(DipfinderSignal.ticker.in_(normalized))
+            .order_by(
+                DipfinderSignal.ticker.asc(),
+                DipfinderSignal.final_score.desc().nullslast(),
+                DipfinderSignal.window_days.desc(),
+            )
+        )
 
         result = await session.execute(query)
         return result.scalars().all()

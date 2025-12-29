@@ -411,9 +411,27 @@ class DipEntryOptimizer:
         threshold: float,
         df: pd.DataFrame,
     ) -> DipThresholdStats:
-        """Calculate statistics for a specific dip threshold."""
-        # Filter dips that reached this threshold
-        relevant_dips = [d for d in dip_events if d.drawdown_pct <= threshold]
+        """Calculate statistics for a specific dip threshold.
+        
+        Uses TROUGH-BASED filtering: For a threshold of -15%, we look at dips
+        that bottomed in a range around -15% (e.g., -12% to -18%), not all dips
+        that passed through -15% on their way deeper.
+        
+        This prevents extreme historical crashes from dominating the statistics
+        for moderate thresholds.
+        """
+        # Define the bucket range for this threshold
+        # For -15%, look at dips that bottomed between -12% and -18%
+        # This is 3% on each side, or for deeper thresholds, proportional
+        bucket_margin = max(3, abs(threshold) * 0.2)  # At least 3%, or 20% of threshold
+        bucket_min = threshold - bucket_margin  # Deeper (e.g., -18%)
+        bucket_max = threshold + bucket_margin  # Shallower (e.g., -12%)
+        
+        # Filter dips whose TROUGH fell in this bucket
+        relevant_dips = [
+            d for d in dip_events 
+            if bucket_min <= d.drawdown_pct <= bucket_max
+        ]
         
         n = len(relevant_dips)
         years = len(df) / 252
@@ -439,22 +457,126 @@ class DipEntryOptimizer:
         
         # Calculate entry score
         # Higher score = better entry opportunity
-        # Factors: win rate, avg return, recovery rate, frequency (not too rare)
-        win_rate_60 = (sum(1 for r in returns_60d if r > 0) / len(returns_60d) * 100) if returns_60d else 0
-        avg_ret_60 = np.mean(returns_60d) if returns_60d else 0
+        #
+        # Key insight: We want to find the "sweet spot" threshold that:
+        # 1. Occurs frequently enough to be practical (at least 1-2x per year)
+        # 2. Offers meaningful return improvement over just buying anytime
+        # 3. Has good win rate and recovery characteristics
+        #
+        # The score should reward:
+        # - Higher returns (but with diminishing returns after ~15-20%)
+        # - Reasonable frequency (penalize if < 1/year or > 10/year)
+        # - High win rate
+        # - Good recovery rate
         
-        # Score formula: balance return, win rate, and practical frequency
-        frequency_score = min(n / years, 3) / 3 * 100  # Cap at 3 per year = 100
-        return_score = min(max(avg_ret_60, 0), 30) / 30 * 100  # Cap at 30% = 100
-        win_score = win_rate_60
+        # Use 90-day metrics for scoring (better captures full recovery cycles)
+        # Data shows median recovery is 46-98 days depending on stock
+        win_rate_90 = (sum(1 for r in returns_90d if r > 0) / len(returns_90d) * 100) if returns_90d else 0
+        avg_ret_90 = np.mean(returns_90d) if returns_90d else 0
+        
+        occurrences_per_year = n / years if years > 0 else 0
+        
+        # Return score: Reward returns up to 25%, diminishing after
+        # A 15% return is excellent, 25%+ is amazing but rare
+        return_score = min(avg_ret_90 / 25, 1.0) * 100  # 0-100, maxes at 25% return
+        
+        # Win rate score: Straightforward 0-100
+        win_score = win_rate_90
+        
+        # Recovery score: 0-100
         recovery_score = recovery_rate
         
-        entry_score = (
-            return_score * 0.35 +
+        # Frequency score: Sweet spot is 1-3 occurrences per year
+        # Too rare (< 0.5/year) = heavily penalized, you might wait forever
+        # Too frequent (> 5/year) = slight penalty, probably just noise
+        if occurrences_per_year < 0.5:
+            frequency_score = 20  # Very rare - big penalty
+        elif occurrences_per_year < 1.0:
+            frequency_score = 50  # Rare - moderate penalty
+        elif occurrences_per_year < 1.5:
+            frequency_score = 70  # Uncommon - slight penalty
+        elif occurrences_per_year <= 3.0:
+            frequency_score = 100  # Sweet spot
+        elif occurrences_per_year <= 5.0:
+            frequency_score = 85  # Common - slight penalty (might be noise)
+        else:
+            frequency_score = 70  # Very common - moderate penalty (probably noise)
+        
+        # EXTREME THRESHOLD PENALTY
+        # Dips beyond -30% are catastrophic events, not normal buying opportunities
+        # - 30-35%: Moderate penalty (major correction)
+        # - 35-40%: Significant penalty (near-crash)
+        # - 40%+: Heavy penalty (crash territory - survival uncertain)
+        abs_threshold = abs(threshold)
+        if abs_threshold <= 25:
+            threshold_penalty = 1.0  # No penalty - normal dip territory
+        elif abs_threshold <= 30:
+            threshold_penalty = 0.95  # Slight penalty
+        elif abs_threshold <= 35:
+            threshold_penalty = 0.80  # Moderate penalty
+        elif abs_threshold <= 40:
+            threshold_penalty = 0.60  # Significant penalty
+        elif abs_threshold <= 45:
+            threshold_penalty = 0.40  # Heavy penalty
+        else:
+            threshold_penalty = 0.25  # Extreme penalty - crash territory
+        
+        # Sample size confidence adjustment
+        if n < self.min_dips_for_stats:
+            confidence = 0.0  # Not enough data
+        elif n < 4:
+            confidence = 0.6  # Low confidence
+        elif n < 8:
+            confidence = 0.8  # Moderate confidence  
+        else:
+            confidence = 1.0  # Good confidence
+        
+        # RECOVERY GATE: Recovery rate is critical - it's a GATE not just a factor
+        # If you don't recover, you lose money permanently. This is non-negotiable.
+        # But we need to be practical - 80%+ recovery is acceptable for volatile stocks
+        if recovery_rate < 50:
+            recovery_gate = 0.1  # Extremely risky - almost eliminate
+        elif recovery_rate < 60:
+            recovery_gate = 0.4  # Very risky
+        elif recovery_rate < 70:
+            recovery_gate = 0.6  # High risk
+        elif recovery_rate < 80:
+            recovery_gate = 0.8  # Moderate risk - still acceptable
+        else:
+            recovery_gate = 1.0  # Good recovery
+        
+        # WIN RATE GATE: Lighter touch - volatile stocks can have lower win rates
+        # at 90 days but still recover eventually. The recovery gate handles the
+        # "will it come back?" question. Win rate just indicates timing risk.
+        # We want to penalize very low win rates but not be too aggressive.
+        if win_rate_90 < 40:
+            win_rate_gate = 0.4  # Very bad - often down after 90 days
+        elif win_rate_90 < 50:
+            win_rate_gate = 0.6  # Poor timing
+        elif win_rate_90 < 60:
+            win_rate_gate = 0.75  # Below average but acceptable
+        elif win_rate_90 < 70:
+            win_rate_gate = 0.85  # Slightly below average
+        elif win_rate_90 < 80:
+            win_rate_gate = 0.95  # Good
+        else:
+            win_rate_gate = 1.0  # Excellent
+        
+        # Final score: Weighted combination
+        # Return is most important (40%), then win rate (30%), 
+        # then frequency (20%), then recovery (10%) - but recovery is a GATE
+        raw_score = (
+            return_score * 0.40 +
             win_score * 0.30 +
-            recovery_score * 0.20 +
-            frequency_score * 0.15
+            frequency_score * 0.20 +
+            recovery_score * 0.10
         )
+        
+        # Apply all adjustments: confidence, threshold practicality, and gates
+        entry_score = raw_score * confidence * threshold_penalty * recovery_gate * win_rate_gate
+        
+        # Also calculate 60-day metrics for backward compatibility
+        win_rate_60 = (sum(1 for r in returns_60d if r > 0) / len(returns_60d) * 100) if returns_60d else 0
         
         return DipThresholdStats(
             threshold_pct=threshold,
@@ -468,7 +590,7 @@ class DipEntryOptimizer:
             avg_return_90d=np.mean(returns_90d) if returns_90d else 0,
             win_rate_30d=(sum(1 for r in returns_30d if r > 0) / len(returns_30d) * 100) if returns_30d else 0,
             win_rate_60d=win_rate_60,
-            win_rate_90d=(sum(1 for r in returns_90d if r > 0) / len(returns_90d) * 100) if returns_90d else 0,
+            win_rate_90d=win_rate_90,
             entry_score=entry_score,
         )
     

@@ -335,6 +335,11 @@ class QuantRecommendation(BaseModel):
     volatility_regime: str | None = Field(None, description="Volatility regime: low, normal, high, extreme")
     volatility_percentile: float | None = Field(None, description="Current volatility percentile 0-100")
     vs_sector_performance: float | None = Field(None, description="Performance vs sector ETF (percentage points)")
+    
+    # Intrinsic Value
+    intrinsic_value: float | None = Field(None, description="Fair value estimate")
+    upside_pct: float | None = Field(None, description="Percentage upside/downside vs intrinsic value")
+    valuation_status: str | None = Field(None, description="undervalued, fair, or overvalued")
 
 
 

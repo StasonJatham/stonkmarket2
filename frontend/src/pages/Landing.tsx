@@ -4,8 +4,6 @@ import { motion, useMotionValue, useTransform, animate } from 'framer-motion';
 import {
   AreaChart,
   Area,
-  Line,
-  ComposedChart,
   ResponsiveContainer,
   XAxis,
   YAxis,
@@ -32,17 +30,9 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { StockLogo } from '@/components/StockLogo';
-import { 
-  Tooltip as UITooltip, 
-  TooltipContent, 
-  TooltipTrigger 
-} from '@/components/ui/tooltip';
-import { HelpCircle } from 'lucide-react';
 import {
   ArrowRight,
   Target,
-  Activity,
-  LineChart,
   Sparkles,
   ChevronRight,
   ArrowUpRight,
@@ -91,8 +81,46 @@ function AnimatedCounter({ value, suffix = '', prefix = '' }: { value: number; s
   return <span>{prefix}{display.toLocaleString()}{suffix}</span>;
 }
 
-// Featured stock card with chart - using quant recommendations
-function FeaturedStockCard({
+function formatSignedPercent(value: number, digits: number = 1): string {
+  if (!Number.isFinite(value)) return 'N/A';
+  const sign = value > 0 ? '+' : '';
+  return `${sign}${value.toFixed(digits)}%`;
+}
+
+function formatOptionalPercent(value: number | null | undefined, digits: number = 1): string {
+  if (value == null || Number.isNaN(value)) return 'N/A';
+  const percent = Math.abs(value) <= 1 ? value * 100 : value;
+  return `${percent.toFixed(digits)}%`;
+}
+
+function formatDipPercent(value: number | null | undefined): string {
+  if (value == null || Number.isNaN(value)) return 'N/A';
+  return `-${Math.abs(value).toFixed(1)}%`;
+}
+
+function formatOptionalNumber(value: number | null | undefined, suffix = ''): string {
+  if (value == null || Number.isNaN(value)) return 'N/A';
+  return `${Math.round(value)}${suffix}`;
+}
+
+function formatRatio(value: number | null | undefined): string {
+  if (value == null || Number.isNaN(value)) return 'N/A';
+  return `${value.toFixed(1)}x`;
+}
+
+function formatUpdatedLabel(timestamp: number | null): string {
+  if (!timestamp) return 'Updated just now';
+  const diffMs = Date.now() - timestamp;
+  const minutes = Math.floor(diffMs / 60000);
+  if (minutes < 1) return 'Updated just now';
+  if (minutes < 60) return `Updated ${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `Updated ${hours}h ago`;
+  return `Updated ${new Date(timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+}
+
+// Compact signal board card - emphasizes action, expected return, and sparkline
+function SignalBoardCard({
   rec,
   chartData,
   index,
@@ -105,213 +133,118 @@ function FeaturedStockCard({
 }) {
   const { getActiveColors } = useTheme();
   const colors = getActiveColors();
-  
-  // Calculate chart-based trend
+
+  const lastPrice = chartData.length > 0
+    ? chartData[chartData.length - 1].close
+    : (rec.last_price ?? 0);
+
   const priceChange = useMemo(() => {
-    if (chartData.length < 2) return 0;
-    const first = chartData[0].close;
-    const last = chartData[chartData.length - 1].close;
-    return ((last - first) / first) * 100;
+    if (chartData.length >= 2) {
+      const first = chartData[0].close;
+      const last = chartData[chartData.length - 1].close;
+      return ((last - first) / first) * 100;
+    }
+    if (typeof rec.change_percent === 'number') {
+      return rec.change_percent;
+    }
+    return null;
+  }, [chartData, rec.change_percent]);
+
+  const isUp = (priceChange ?? 0) >= 0;
+  const priceChangeClass = priceChange == null
+    ? 'text-muted-foreground'
+    : isUp
+      ? 'text-success'
+      : 'text-danger';
+
+  const miniChartData = useMemo(() => {
+    const sliced = chartData.slice(-45);
+    return sliced.map((p, i) => ({ x: i, y: p.close }));
   }, [chartData]);
-  
-  const lastPrice = chartData.length > 0 ? chartData[chartData.length - 1].close : 0;
-  const isUp = priceChange >= 0;
-  
-  // Enhanced mini chart data with peak reference
-  const chartWithRef = useMemo(() => {
-    const sliced = chartData.slice(-60);
-    if (sliced.length === 0) return [];
-    
-    const maxPrice = Math.max(...sliced.map(p => p.close));
-    return sliced.map((p, i) => ({ 
-      x: i, 
-      y: p.close,
-      peak: maxPrice,
-    }));
-  }, [chartData]);
+
+  const edgeScore = useMemo(() => {
+    if (rec.quant_mode === 'CERTIFIED_BUY' && rec.quant_score_a != null) return rec.quant_score_a;
+    if (rec.quant_score_b != null) return rec.quant_score_b;
+    if (rec.best_chance_score != null) return rec.best_chance_score;
+    if (rec.dip_score != null) return rec.dip_score * 100;
+    return null;
+  }, [rec]);
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 20 }}
+      initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4, delay: index * 0.1 }}
+      transition={{ duration: 0.35, delay: index * 0.08 }}
     >
       <Card
-        className="cursor-pointer transition-all hover:shadow-lg hover:border-primary/50 overflow-hidden group"
+        className="cursor-pointer transition-all hover:shadow-lg hover:border-primary/40 group"
         onClick={onClick}
       >
         <CardContent className="p-4">
-          <div className="flex items-start justify-between mb-3">
-            <div className="flex items-center gap-3">
-              <StockLogo symbol={rec.ticker} size="md" />
-              <div>
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <StockLogo symbol={rec.ticker} size="sm" />
+              <div className="min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="font-bold text-lg">{rec.ticker}</span>
+                  <span className="font-semibold text-base">{rec.ticker}</span>
                   <Badge variant={getActionBadgeVariant(rec.action)} className="text-xs h-5 gap-1">
                     <ActionIcon action={rec.action} />
                     {rec.action}
                   </Badge>
                 </div>
-                <p className="text-sm text-muted-foreground line-clamp-1">
+                <p className="text-xs text-muted-foreground line-clamp-1">
                   {rec.name || rec.ticker}
                 </p>
               </div>
             </div>
-            <div className="text-right">
+            <div className="text-right shrink-0">
               {lastPrice > 0 && (
-                <p className="font-mono font-bold text-lg">
-                  ${lastPrice.toFixed(2)}
-                </p>
+                <p className="font-mono font-bold text-base">${lastPrice.toFixed(2)}</p>
               )}
-              <p className={`text-sm font-medium ${isUp ? 'text-success' : 'text-danger'}`}>
-                {isUp ? '+' : ''}{priceChange.toFixed(2)}%
+              <p className={`text-xs font-medium ${priceChangeClass}`}>
+                {priceChange != null ? `${isUp ? '+' : ''}${priceChange.toFixed(2)}%` : 'N/A'}
               </p>
             </div>
           </div>
 
-          {/* Mini chart with peak reference line */}
-          <div className="h-20 -mx-2 mb-3">
-            {chartWithRef.length > 0 ? (
+          <div className="mt-3 grid grid-cols-2 gap-3 text-xs">
+            <div>
+              <p className="text-muted-foreground">Expected Return</p>
+              <p className={`font-mono font-semibold ${rec.mu_hat >= 0 ? 'text-success' : 'text-danger'}`}>
+                {formatSignedPercent(rec.mu_hat * 100, 1)}
+              </p>
+            </div>
+            <div>
+              <p className="text-muted-foreground">Signal Score</p>
+              <p className="font-mono font-semibold text-foreground">
+                {edgeScore != null ? edgeScore.toFixed(0) : 'N/A'}
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-3 h-16 -mx-1">
+            {miniChartData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={chartWithRef}>
+                <AreaChart data={miniChartData}>
                   <defs>
-                    <linearGradient id={`gradient-${rec.ticker}`} x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={isUp ? colors.up : colors.down} stopOpacity={0.3} />
+                    <linearGradient id={`signal-gradient-${rec.ticker}`} x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={isUp ? colors.up : colors.down} stopOpacity={0.35} />
                       <stop offset="100%" stopColor={isUp ? colors.up : colors.down} stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  {/* Peak reference line (52w high) */}
-                  <Line
-                    type="linear"
-                    dataKey="peak"
-                    stroke={colors.up}
-                    strokeWidth={1}
-                    strokeDasharray="3 3"
-                    strokeOpacity={0.4}
-                    dot={false}
-                    isAnimationActive={false}
-                  />
-                  {/* Price area */}
                   <Area
                     type="monotone"
                     dataKey="y"
                     stroke={isUp ? colors.up : colors.down}
                     strokeWidth={2}
-                    fill={`url(#gradient-${rec.ticker})`}
+                    fill={`url(#signal-gradient-${rec.ticker})`}
                     isAnimationActive={false}
                   />
-                </ComposedChart>
+                </AreaChart>
               </ResponsiveContainer>
             ) : (
               <Skeleton className="h-full w-full" />
             )}
-          </div>
-
-          {/* Quant metrics */}
-          <div className="grid grid-cols-3 gap-2 text-sm">
-            {/* Quant Mode & Score */}
-            <div className="text-center">
-              <UITooltip>
-                <TooltipTrigger asChild>
-                  <p className="text-muted-foreground text-xs inline-flex items-center gap-0.5 cursor-help">
-                    {rec.quant_mode === 'CERTIFIED_BUY' ? 'Certified' : 
-                     rec.quant_mode === 'DIP_ENTRY' ? 'Dip Entry' : 
-                     rec.quant_mode === 'HOLD' ? 'Hold' :
-                     rec.quant_mode === 'DOWNTREND' ? 'Downtrend' : 'μ̂ (E[R])'} <HelpCircle className="h-3 w-3" />
-                  </p>
-                </TooltipTrigger>
-                <TooltipContent className="max-w-xs">
-                  {rec.quant_mode === 'CERTIFIED_BUY' ? (
-                    <p>CERTIFIED BUY: Passed statistical validation gate. P(outperf) ≥ 75%, CI &gt; 0, DSR ≥ 0.50</p>
-                  ) : rec.quant_mode === 'DIP_ENTRY' ? (
-                    <p>DIP ENTRY: Stock is in a qualifying dip with recovery probability scoring.</p>
-                  ) : rec.quant_mode === 'HOLD' ? (
-                    <p>HOLD: Stock is not currently in a dip. No action recommended.</p>
-                  ) : rec.quant_mode === 'DOWNTREND' ? (
-                    <p>DOWNTREND: Stock has been declining for over a year. Avoid or wait for reversal confirmation.</p>
-                  ) : (
-                    <p>Expected return (μ̂) from Bayesian posterior estimation. Higher values indicate higher expected returns.</p>
-                  )}
-                </TooltipContent>
-              </UITooltip>
-              {rec.quant_mode ? (
-                <p className={`font-mono font-bold ${
-                  rec.quant_mode === 'CERTIFIED_BUY' ? 'text-success' : 
-                  rec.quant_mode === 'DIP_ENTRY' ? 'text-amber-500' :
-                  rec.quant_mode === 'HOLD' ? 'text-muted-foreground' :
-                  'text-red-500'
-                }`}>
-                  {((rec.quant_mode === 'CERTIFIED_BUY' ? rec.quant_score_a : rec.quant_score_b) ?? 0).toFixed(0)}
-                </p>
-              ) : (
-                <p className={`font-mono font-medium ${rec.mu_hat >= 0 ? 'text-success' : 'text-danger'}`}>
-                  {rec.mu_hat > 0 ? '+' : ''}{(rec.mu_hat * 100).toFixed(2)}%
-                </p>
-              )}
-            </div>
-            {/* P(outperf) or P(recovery) */}
-            <div className="text-center">
-              <UITooltip>
-                <TooltipTrigger asChild>
-                  <p className="text-muted-foreground text-xs inline-flex items-center gap-0.5 cursor-help">
-                    {rec.quant_evidence ? (rec.quant_mode === 'CERTIFIED_BUY' ? 'P(edge)' : 'P(rec)') : 'Dip Score'} <HelpCircle className="h-3 w-3" />
-                  </p>
-                </TooltipTrigger>
-                <TooltipContent className="max-w-xs">
-                  {rec.quant_evidence ? (
-                    rec.quant_mode === 'CERTIFIED_BUY' ? (
-                      <p>Probability of outperformance from stationary bootstrap. {(rec.quant_evidence.p_outperf * 100).toFixed(0)}% of bootstrap samples beat benchmarks.</p>
-                    ) : (
-                      <p>Probability of recovery within holding period based on historical dip analysis.</p>
-                    )
-                  ) : (
-                    <p>Dip quality score (0-1). Higher scores indicate deeper, more potentially attractive dips for value investing.</p>
-                  )}
-                </TooltipContent>
-              </UITooltip>
-              {rec.quant_evidence ? (
-                <p className={`font-mono font-medium ${(rec.quant_mode === 'CERTIFIED_BUY' ? rec.quant_evidence.p_outperf : rec.quant_evidence.p_recovery) >= 0.6 ? 'text-success' : 'text-muted-foreground'}`}>
-                  {((rec.quant_mode === 'CERTIFIED_BUY' ? rec.quant_evidence.p_outperf : rec.quant_evidence.p_recovery) * 100).toFixed(0)}%
-                </p>
-              ) : (
-                <p className={`font-mono font-medium ${(rec.dip_score ?? 0) > 0.5 ? 'text-success' : 'text-muted-foreground'}`}>
-                  {rec.dip_score !== null ? (rec.dip_score * 100).toFixed(0) : 'N/A'}
-                </p>
-              )}
-            </div>
-            {/* DSR or EV */}
-            <div className="text-center">
-              <UITooltip>
-                <TooltipTrigger asChild>
-                  <p className="text-muted-foreground text-xs inline-flex items-center gap-0.5 cursor-help">
-                    {rec.quant_evidence ? (rec.quant_mode === 'CERTIFIED_BUY' ? 'DSR' : 'EV') : 'Utility'} <HelpCircle className="h-3 w-3" />
-                  </p>
-                </TooltipTrigger>
-                <TooltipContent className="max-w-xs">
-                  {rec.quant_evidence ? (
-                    rec.quant_mode === 'CERTIFIED_BUY' ? (
-                      <p>Deflated Sharpe Ratio - adjusts for multiple testing. DSR ≥ 0.50 required for certification.</p>
-                    ) : (
-                      <p>Expected value of dip entry = P(rec) × avg_up - (1-P(rec)) × avg_down</p>
-                    )
-                  ) : (
-                    <p>Marginal portfolio utility - the optimizer's ranking signal for risk-adjusted allocation.</p>
-                  )}
-                </TooltipContent>
-              </UITooltip>
-              {rec.quant_evidence ? (
-                <p className={`font-mono font-medium ${(rec.quant_mode === 'CERTIFIED_BUY' ? rec.quant_evidence.dsr >= 0.5 : rec.quant_evidence.expected_value > 0) ? 'text-success' : 'text-muted-foreground'}`}>
-                  {rec.quant_mode === 'CERTIFIED_BUY' 
-                    ? rec.quant_evidence.dsr.toFixed(2)
-                    : `${rec.quant_evidence.expected_value > 0 ? '+' : ''}${(rec.quant_evidence.expected_value * 100).toFixed(1)}%`
-                  }
-                </p>
-              ) : (
-                <p className={`font-mono font-medium ${rec.marginal_utility >= 0 ? 'text-success' : 'text-danger'}`}>
-                  {(rec.marginal_utility * 1000).toFixed(2)}
-                </p>
-              )}
-            </div>
           </div>
         </CardContent>
       </Card>
@@ -365,15 +298,16 @@ function HeroChart({
   isLoading: boolean;
   signals?: SignalTrigger[];
 }) {
-  const { getActiveColors } = useTheme();
+  const { getActiveColors, resolvedTheme } = useTheme();
   const colors = getActiveColors();
 
   // Merge chart data with signal triggers
   const displayData = useMemo(() => {
     const signalMap = new Map<string, SignalTrigger>();
     signals.forEach(s => signalMap.set(s.date, s));
-    
-    return chartData.map((point) => {
+
+    const sliced = chartData.slice(-120);
+    return sliced.map((point) => {
       const signalTrigger = signalMap.get(point.date);
       return {
         ...point,
@@ -401,15 +335,16 @@ function HeroChart({
 
   const isPositive = priceChange >= 0;
   const chartColor = isPositive ? colors.up : colors.down;
+  const signalDotStroke = resolvedTheme === 'dark' ? '#0b0f19' : '#ffffff';
 
-  if (isLoading) {
+  if (isLoading || !symbol) {
     return (
       <Card className="overflow-hidden">
         <CardHeader className="pb-2">
           <Skeleton className="h-6 w-32" />
         </CardHeader>
         <CardContent>
-          <Skeleton className="h-64 w-full" />
+          <Skeleton className="h-72 md:h-80 w-full" />
         </CardContent>
       </Card>
     );
@@ -423,7 +358,7 @@ function HeroChart({
             <StockLogo symbol={symbol} size="sm" />
             <div>
               <CardTitle className="text-lg">{symbol}</CardTitle>
-              <CardDescription>Live Chart Preview</CardDescription>
+              <CardDescription>Live signal preview</CardDescription>
             </div>
           </div>
           {chartData.length > 0 && (
@@ -444,12 +379,12 @@ function HeroChart({
         {signalPoints.length > 0 && (
           <Badge variant="secondary" className="mt-2 gap-1 w-fit text-xs">
             <Zap className="h-3 w-3 text-success" />
-            {signalPoints.length} buy signal{signalPoints.length > 1 ? 's' : ''} detected
+            {signalPoints.length} signal{signalPoints.length > 1 ? 's' : ''} detected
           </Badge>
         )}
       </CardHeader>
       <CardContent className="pb-4">
-        <div className="h-64">
+        <div className="h-72 md:h-80">
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={displayData}>
               <defs>
@@ -517,17 +452,21 @@ function HeroChart({
               />
               
               {/* Signal marker dots */}
-              {signalPoints.map((point, idx) => (
-                <ReferenceDot
-                  key={`signal-${idx}`}
-                  x={point.displayDate}
-                  y={point.close}
-                  r={6}
-                  fill="hsl(var(--success))"
-                  stroke="hsl(var(--background))"
-                  strokeWidth={2}
-                />
-              ))}
+              {signalPoints.map((point, idx) => {
+                const isExit = point.signalTrigger?.signal_type === 'exit';
+                const dotColor = isExit ? colors.down : colors.up;
+                return (
+                  <ReferenceDot
+                    key={`signal-${idx}`}
+                    x={point.displayDate}
+                    y={point.close}
+                    r={6}
+                    fill={dotColor}
+                    stroke={signalDotStroke}
+                    strokeWidth={2}
+                  />
+                );
+              })}
             </AreaChart>
           </ResponsiveContainer>
         </div>
@@ -536,71 +475,71 @@ function HeroChart({
   );
 }
 
-// Stats component - uses quant recommendations
-function Stats({ recommendations, portfolioStats }: { 
-  recommendations: QuantRecommendation[];
-  portfolioStats: {
-    expectedReturn: number;
-    expectedRisk: number;
-    totalTrades: number;
-  };
+function PipelineCard({
+  icon: Icon,
+  title,
+  description,
+  value,
+  valueText,
+  valueSuffix,
+  valuePrefix,
+  footer,
+  valueClassName,
+}: {
+  icon: typeof Target;
+  title: string;
+  description: string;
+  value?: number;
+  valueText?: string;
+  valueSuffix?: string;
+  valuePrefix?: string;
+  footer?: string;
+  valueClassName?: string;
 }) {
-  const stats = useMemo(() => {
-    const buyCount = recommendations.filter((r) => r.action === 'BUY').length;
-    const avgMuHat = recommendations.length > 0
-      ? recommendations.reduce((sum, r) => sum + r.mu_hat, 0) / recommendations.length * 100
-      : 0;
-    
-    return { 
-      count: recommendations.length,
-      buyCount,
-      avgMuHat: Math.round(avgMuHat * 100) / 100,
-    };
-  }, [recommendations]);
-
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true }}
-      transition={{ duration: 0.5 }}
-      className="grid grid-cols-3 gap-4 md:gap-8"
-    >
-      <Card className="text-center">
-        <CardContent className="pt-6 pb-4">
-          <p className="text-3xl md:text-4xl font-bold text-primary">
-            <AnimatedCounter value={stats.count} suffix="" />
-          </p>
-          <p className="text-sm text-muted-foreground mt-1">Assets Analyzed</p>
-        </CardContent>
-      </Card>
-      <Card className="text-center">
-        <CardContent className="pt-6 pb-4">
-          <p className="text-3xl md:text-4xl font-bold text-success">
-            <AnimatedCounter value={stats.buyCount} />
-          </p>
-          <p className="text-sm text-muted-foreground mt-1">Buy Signals</p>
-        </CardContent>
-      </Card>
-      <Card className="text-center">
-        <CardContent className="pt-6 pb-4">
-          <p className="text-3xl md:text-4xl font-bold text-primary">
-            {portfolioStats.expectedReturn > 0 ? '+' : ''}
-            <AnimatedCounter value={Math.round(portfolioStats.expectedReturn * 10000) / 100} suffix="%" />
-          </p>
-          <p className="text-sm text-muted-foreground mt-1">Portfolio E[R]</p>
-        </CardContent>
-      </Card>
-    </motion.div>
+    <Card className="h-full transition-all hover:shadow-md hover:border-primary/30">
+      <CardHeader>
+        <div className="h-11 w-11 rounded-lg bg-primary/10 flex items-center justify-center mb-2">
+          <Icon className="h-5 w-5 text-primary" />
+        </div>
+        <CardTitle className="text-lg">{title}</CardTitle>
+        <CardDescription>{description}</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <p className={`text-2xl font-bold ${valueClassName ?? 'text-foreground'}`}>
+          {valueText ?? (value != null ? (
+            <AnimatedCounter value={value} prefix={valuePrefix} suffix={valueSuffix} />
+          ) : 'N/A')}
+        </p>
+        {footer && (
+          <p className="text-xs text-muted-foreground mt-2">{footer}</p>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
 // Cache configuration for landing page
 const LANDING_CACHE_KEY = 'landing_page_cache';
-const LANDING_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const LANDING_CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
+const LANDING_RECOMMENDATIONS_LIMIT = 12;
+const LANDING_SIGNAL_BOARD_COUNT = 4;
+const LANDING_MINI_CHART_DAYS = 60;
+const LANDING_HERO_CHART_DAYS = 180;
+const LANDING_SIGNAL_LOOKBACK_DAYS = 180;
+
+interface HeroSignalSummary {
+  edgeVsBuyHoldPct: number | null;
+  buyHoldReturnPct: number | null;
+  signalReturnPct: number | null;
+  nTrades: number | null;
+  beatsBuyHold: boolean | null;
+  signalName: string | null;
+}
 
 interface LandingCacheData {
   recommendations: QuantRecommendation[];
+  marketMessage: string | null;
   portfolioStats: {
     expectedReturn: number;
     expectedRisk: number;
@@ -612,6 +551,8 @@ interface LandingCacheData {
   heroRec: QuantRecommendation | null;
   heroAgentAnalysis: AgentAnalysis | null;
   heroSignals: SignalTrigger[];  // Keep array format for cache
+  heroSignalSummary: HeroSignalSummary | null;
+  lastUpdatedAt: number | null;
   cachedAt: number;
 }
 
@@ -619,19 +560,16 @@ function getLandingCache(): LandingCacheData | null {
   try {
     const cached = localStorage.getItem(LANDING_CACHE_KEY);
     if (!cached) return null;
-    
+
     const data: LandingCacheData = JSON.parse(cached);
-    const now = Date.now();
-    
-    // Check if cache is still valid
-    if (now - data.cachedAt > LANDING_CACHE_TTL_MS) {
-      return null;
-    }
-    
     return data;
   } catch {
     return null;
   }
+}
+
+function isLandingCacheFresh(data: LandingCacheData): boolean {
+  return Date.now() - data.cachedAt <= LANDING_CACHE_TTL_MS;
 }
 
 function setLandingCache(data: Omit<LandingCacheData, 'cachedAt'>): void {
@@ -663,40 +601,52 @@ export function Landing() {
   const [heroRec, setHeroRec] = useState<QuantRecommendation | null>(null);
   const [heroAgentAnalysis, setHeroAgentAnalysis] = useState<AgentAnalysis | null>(null);
   const [heroSignals, setHeroSignals] = useState<SignalTrigger[]>([]);
+  const [heroSignalSummary, setHeroSignalSummary] = useState<HeroSignalSummary | null>(null);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingHero, setIsLoadingHero] = useState(true);
 
   // Fetch quant recommendations data with caching
   useEffect(() => {
+    let isActive = true;
+
+    const applyCache = (cached: LandingCacheData) => {
+      setRecommendations(cached.recommendations);
+      setMarketMessage(cached.marketMessage ?? null);
+      setPortfolioStats(cached.portfolioStats);
+      setChartDataMap(cached.chartDataMap);
+      setHeroChart(cached.heroChart);
+      setHeroSymbol(cached.heroSymbol);
+      setHeroRec(cached.heroRec);
+      setHeroAgentAnalysis(cached.heroAgentAnalysis);
+      setHeroSignals(cached.heroSignals ?? []);
+      setHeroSignalSummary(cached.heroSignalSummary ?? null);
+      setLastUpdatedAt(cached.lastUpdatedAt ?? cached.cachedAt);
+      setIsLoading(false);
+      setIsLoadingHero(false);
+    };
+
     const loadData = async (skipCache = false) => {
-      // Try to load from cache first for instant render
       if (!skipCache) {
         const cached = getLandingCache();
         if (cached) {
-          setRecommendations(cached.recommendations);
-          setPortfolioStats(cached.portfolioStats);
-          setChartDataMap(cached.chartDataMap);
-          setHeroChart(cached.heroChart);
-          setHeroSymbol(cached.heroSymbol);
-          setHeroRec(cached.heroRec);
-          setHeroAgentAnalysis(cached.heroAgentAnalysis);
-          setHeroSignals(cached.heroSignals ?? []);
-          setIsLoading(false);
-          setIsLoadingHero(false);
-          
-          // Check if cache is stale (> 2 minutes) - refresh in background
-          const cacheAge = Date.now() - cached.cachedAt;
-          if (cacheAge > 2 * 60 * 1000) {
-            // Refresh in background without showing loading state
+          applyCache(cached);
+          if (!isLandingCacheFresh(cached)) {
             loadData(true);
           }
           return;
         }
       }
 
+      if (!skipCache) {
+        setIsLoading(true);
+        setIsLoadingHero(true);
+      }
+
       try {
-        // Fetch quant engine recommendations
-        const data = await getQuantRecommendations(1000, 20);
+        const data = await getQuantRecommendations(1000, LANDING_RECOMMENDATIONS_LIMIT);
+        if (!isActive) return;
+
         setRecommendations(data.recommendations);
         setMarketMessage(data.market_message);
         const newPortfolioStats = {
@@ -706,81 +656,120 @@ export function Landing() {
         };
         setPortfolioStats(newPortfolioStats);
 
-        // Load charts for top recommendations
-        const topRecs = data.recommendations.slice(0, 6);
-        const chartPromises = topRecs.map(async (rec: QuantRecommendation) => {
-          try {
-            const chart = await getStockChart(rec.ticker, 90);
-            return { symbol: rec.ticker, chart };
-          } catch {
-            return { symbol: rec.ticker, chart: [] as ChartDataPoint[] };
-          }
-        });
+        const parsedAsOf = data.as_of_date ? Date.parse(data.as_of_date) : Number.NaN;
+        const updatedAt = Number.isNaN(parsedAsOf) ? Date.now() : parsedAsOf;
+        setLastUpdatedAt(updatedAt);
 
-        const results = await Promise.all(chartPromises);
-        const chartMap: Record<string, ChartDataPoint[]> = {};
-        results.forEach(({ symbol, chart }: { symbol: string; chart: ChartDataPoint[] }) => {
-          chartMap[symbol] = chart;
-        });
-        setChartDataMap(chartMap);
+        if (!skipCache) {
+          setIsLoading(false);
+        }
 
-        // Set hero stock to first recommendation with a BUY action, or first overall
-        const buyRec = data.recommendations.find(r => r.action === 'BUY') || data.recommendations[0];
-        let newHeroChart: ChartDataPoint[] = [];
-        let newHeroAgentAnalysis: AgentAnalysis | null = null;
+        const signalBoardRecs = data.recommendations.slice(0, LANDING_SIGNAL_BOARD_COUNT);
+        const boardSymbols = signalBoardRecs.map((rec) => rec.ticker);
+        const buyRec = data.recommendations.find((r) => r.action === 'BUY') || data.recommendations[0] || null;
+        const newHeroSymbol = buyRec?.ticker ?? '';
+        const newHeroRec = buyRec ?? null;
+
+        if (!skipCache) {
+          setHeroAgentAnalysis(null);
+          setHeroSignals([]);
+          setHeroSignalSummary(null);
+        }
+
+        const batchChartsPromise = boardSymbols.length > 0
+          ? getBatchCharts([...boardSymbols], LANDING_MINI_CHART_DAYS)
+          : Promise.resolve({} as Record<string, ChartDataPoint[]>);
+        const heroChartPromise = buyRec
+          ? getStockChart(buyRec.ticker, LANDING_HERO_CHART_DAYS)
+          : Promise.resolve([] as ChartDataPoint[]);
+
+        const [batchChartsResult, heroChartResult] = await Promise.allSettled([
+          batchChartsPromise,
+          heroChartPromise,
+        ]);
+
+        if (!isActive) return;
+        const resolvedCharts = batchChartsResult.status === 'fulfilled'
+          ? batchChartsResult.value
+          : {};
+        const resolvedHeroChart = heroChartResult.status === 'fulfilled'
+          ? heroChartResult.value
+          : [];
+        setChartDataMap(resolvedCharts ?? {});
+        setHeroChart(resolvedHeroChart ?? []);
+        setHeroSymbol(newHeroSymbol);
+        setHeroRec(newHeroRec);
+        if (!skipCache) {
+          setIsLoadingHero(false);
+        }
+
         let newHeroSignals: SignalTrigger[] = [];
-        
+        let newHeroAgentAnalysis: AgentAnalysis | null = null;
+        let newHeroSignalSummary: HeroSignalSummary | null = null;
+
         if (buyRec) {
-          setHeroSymbol(buyRec.ticker);
-          setHeroRec(buyRec);
-          
-          // Load hero chart
-          if (chartMap[buyRec.ticker]) {
-            newHeroChart = chartMap[buyRec.ticker];
-            setHeroChart(newHeroChart);
-          } else {
-            newHeroChart = await getStockChart(buyRec.ticker, 180);
-            setHeroChart(newHeroChart);
-          }
-          
-          // Load signal triggers for hero stock
-          try {
-            const signalsResponse = await getSignalTriggers(buyRec.ticker, 180);
-            newHeroSignals = signalsResponse.triggers;
+          const [signalsResult, agentResult] = await Promise.allSettled([
+            getSignalTriggers(buyRec.ticker, LANDING_SIGNAL_LOOKBACK_DAYS),
+            getAgentAnalysis(buyRec.ticker),
+          ]);
+
+          if (!isActive) return;
+
+          if (signalsResult.status === 'fulfilled') {
+            newHeroSignals = signalsResult.value.triggers;
+            newHeroSignalSummary = {
+              edgeVsBuyHoldPct: signalsResult.value.edge_vs_buy_hold_pct,
+              buyHoldReturnPct: signalsResult.value.buy_hold_return_pct,
+              signalReturnPct: signalsResult.value.signal_return_pct,
+              nTrades: signalsResult.value.n_trades,
+              beatsBuyHold: signalsResult.value.beats_buy_hold,
+              signalName: signalsResult.value.signal_name,
+            };
             setHeroSignals(newHeroSignals);
-          } catch (e) {
-            console.warn('Failed to load signals for hero:', e);
+            setHeroSignalSummary(newHeroSignalSummary);
+          } else {
+            console.warn('Failed to load signals for hero:', signalsResult.reason);
           }
-          
-          // Load AI agent analysis for hero stock
-          try {
-            newHeroAgentAnalysis = await getAgentAnalysis(buyRec.ticker);
+
+          if (agentResult.status === 'fulfilled') {
+            newHeroAgentAnalysis = agentResult.value;
             setHeroAgentAnalysis(newHeroAgentAnalysis);
-          } catch (e) {
-            console.warn('Failed to load agent analysis for hero:', e);
+          } else {
+            console.warn('Failed to load agent analysis for hero:', agentResult.reason);
           }
         }
-        
-        // Cache the data for next visit
+
         setLandingCache({
           recommendations: data.recommendations,
+          marketMessage: data.market_message,
           portfolioStats: newPortfolioStats,
-          chartDataMap: chartMap,
-          heroChart: newHeroChart,
+          chartDataMap: resolvedCharts ?? {},
+          heroChart: resolvedHeroChart ?? [],
           heroSymbol: buyRec?.ticker ?? '',
           heroRec: buyRec ?? null,
           heroAgentAnalysis: newHeroAgentAnalysis,
           heroSignals: newHeroSignals,
+          heroSignalSummary: newHeroSignalSummary,
+          lastUpdatedAt: updatedAt,
         });
       } catch (err) {
         console.error('Failed to load landing data:', err);
-      } finally {
-        setIsLoading(false);
-        setIsLoadingHero(false);
+        if (!skipCache) {
+          setIsLoading(false);
+          setIsLoadingHero(false);
+        }
       }
     };
 
     loadData();
+    const refreshInterval = setInterval(() => {
+      loadData(true);
+    }, LANDING_CACHE_TTL_MS);
+
+    return () => {
+      isActive = false;
+      clearInterval(refreshInterval);
+    };
   }, []);
 
   const handleCTA = useCallback(() => {
@@ -794,13 +783,46 @@ export function Landing() {
     [navigate]
   );
 
-  const featuredRecs = recommendations.slice(0, 6);
+  const signalBoardRecs = recommendations.slice(0, LANDING_SIGNAL_BOARD_COUNT);
+  const updatedLabel = useMemo(
+    () => (lastUpdatedAt ? formatUpdatedLabel(lastUpdatedAt) : 'Updating...'),
+    [lastUpdatedAt]
+  );
+  const buyCount = useMemo(
+    () => recommendations.filter((rec) => rec.action === 'BUY').length,
+    [recommendations]
+  );
+  const heroVerdicts = heroAgentAnalysis?.verdicts ?? [];
+  const verdictCounts = useMemo(() => {
+    const bullishCount = heroVerdicts.filter((v) => v.signal === 'buy' || v.signal === 'strong_buy').length;
+    const bearishCount = heroVerdicts.filter((v) => v.signal === 'sell' || v.signal === 'strong_sell').length;
+    const neutralCount = heroVerdicts.filter((v) => v.signal === 'hold').length;
+    const isBullish = heroAgentAnalysis?.overall_signal === 'buy' || heroAgentAnalysis?.overall_signal === 'strong_buy';
+    const isBearish = heroAgentAnalysis?.overall_signal === 'sell' || heroAgentAnalysis?.overall_signal === 'strong_sell';
+    return { bullishCount, bearishCount, neutralCount, isBullish, isBearish };
+  }, [heroVerdicts, heroAgentAnalysis?.overall_signal]);
+  const signalCount = heroSignalSummary?.nTrades ?? heroSignals.length;
+  const expectedReturnPercent = portfolioStats.expectedReturn * 100;
+  const edgeVsBuyHold = heroSignalSummary?.edgeVsBuyHoldPct;
+  const edgeClassName = edgeVsBuyHold == null
+    ? 'text-muted-foreground'
+    : edgeVsBuyHold >= 0
+      ? 'text-success'
+      : 'text-danger';
+  const dipDepth = heroRec?.legacy_dip_pct ?? null;
+  const dipDays = heroRec?.legacy_days_in_dip ?? null;
+  const dipScore = heroRec?.dip_score ?? null;
+  const recoveryOdds = heroRec?.quant_evidence?.p_recovery ?? heroRec?.win_rate ?? null;
+  const expectedRecovery = heroRec?.expected_recovery_days ?? heroRec?.domain_recovery_days ?? null;
+  const dipVsTypical = heroRec?.dip_vs_typical ?? null;
 
   return (
     <div className="min-h-screen">
       {/* Hero Section */}
-      <section className="relative py-16 md:py-24 px-4">
-        <div className="container mx-auto max-w-6xl">
+      <section className="relative overflow-hidden py-16 md:py-24 px-4">
+        <div className="absolute -top-32 right-0 h-64 w-64 rounded-full bg-emerald-500/10 blur-3xl" />
+        <div className="absolute -bottom-32 left-10 h-72 w-72 rounded-full bg-sky-500/10 blur-3xl" />
+        <div className="container mx-auto max-w-6xl relative">
           <div className="grid lg:grid-cols-2 gap-12 items-center">
             {/* Left: Content */}
             <div>
@@ -811,7 +833,7 @@ export function Landing() {
               >
                 <Badge variant="secondary" className="mb-4 gap-1.5">
                   <Sparkles className="h-3 w-3" />
-                  AI-Powered Analysis
+                  AI-Powered Signal Engine
                 </Badge>
               </motion.div>
 
@@ -821,20 +843,39 @@ export function Landing() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.6, delay: 0.1 }}
               >
-                Find the dip.
+                Catch real dips with
                 <br />
-                <span className="text-primary">Catch the wave.</span>
+                <span className="text-primary">AI-backed conviction.</span>
               </motion.h1>
 
               <motion.p
-                className="text-lg md:text-xl text-muted-foreground mb-8 max-w-lg"
+                className="text-lg md:text-xl text-muted-foreground mb-6 max-w-lg"
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.5, delay: 0.2 }}
               >
-                Quantitative stock analysis identifies oversold conditions before the bounce.
-                Real-time signals powered by mean-variance optimization.
+                StonkMarket scans the market, flags high-probability reversals, and explains the signal in plain language.
               </motion.p>
+
+              <motion.div
+                className="flex flex-wrap gap-2 mb-8"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.5, delay: 0.25 }}
+              >
+                <Badge variant="outline" className="gap-1.5">
+                  <Zap className="h-3 w-3" />
+                  Live signals
+                </Badge>
+                <Badge variant="outline" className="gap-1.5">
+                  <Brain className="h-3 w-3" />
+                  AI debate
+                </Badge>
+                <Badge variant="outline" className="gap-1.5">
+                  <Target className="h-3 w-3" />
+                  Optimized entries
+                </Badge>
+              </motion.div>
 
               <motion.div
                 className="flex flex-col sm:flex-row gap-4"
@@ -851,6 +892,16 @@ export function Landing() {
                   <ChevronRight className="h-4 w-4" />
                 </Button>
               </motion.div>
+
+              <div className="mt-6 flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
+                <span className="inline-flex items-center gap-1">
+                  <Clock className="h-3 w-3" />
+                  {updatedLabel}
+                </span>
+                <span>
+                  {isLoading ? 'Loading signals...' : `${recommendations.length} ranked | ${buyCount} buy signals`}
+                </span>
+              </div>
             </div>
 
             {/* Right: Hero Chart + Analysis */}
@@ -858,145 +909,303 @@ export function Landing() {
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               transition={{ duration: 0.8, delay: 0.2 }}
-              className="space-y-4"
             >
-              <HeroChart chartData={heroChart} symbol={heroSymbol} isLoading={isLoadingHero} signals={heroSignals} />
-              
-              {/* Quant Metrics for Hero Stock */}
-              {heroRec && (
-                <Card className="bg-gradient-to-br from-blue-500/5 to-cyan-500/10 border-blue-500/20">
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm flex items-center gap-2">
-                      <Brain className="h-4 w-4 text-blue-500" />
-                      Quant Analysis for {heroSymbol}
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="grid grid-cols-3 gap-4 text-sm">
-                      <div>
-                        <UITooltip>
-                          <TooltipTrigger asChild>
-                            <p className="text-muted-foreground text-xs inline-flex items-center gap-0.5 cursor-help">
-                              Expected Return <HelpCircle className="h-3 w-3" />
+              <div className="relative">
+                <div className="absolute -inset-4 rounded-3xl bg-gradient-to-br from-emerald-500/10 via-transparent to-sky-500/10 blur-2xl" />
+                <div className="relative space-y-4">
+                  <HeroChart chartData={heroChart} symbol={heroSymbol} isLoading={isLoadingHero} signals={heroSignals} />
+
+                  {heroRec && (
+                    <Card className="bg-gradient-to-br from-emerald-500/5 to-sky-500/10 border-emerald-500/20">
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-sm flex items-center gap-2">
+                          <Target className="h-4 w-4 text-emerald-600" />
+                          Signal Snapshot
+                        </CardTitle>
+                        <CardDescription>Dip metrics and recovery outlook for {heroSymbol}</CardDescription>
+                        <div className="flex flex-wrap gap-2">
+                          <Badge variant={getActionBadgeVariant(heroRec.action)} className="gap-1 text-xs">
+                            <ActionIcon action={heroRec.action} />
+                            {heroRec.action}
+                          </Badge>
+                          {heroRec.quant_mode && (
+                            <Badge variant="secondary" className="text-xs">
+                              {heroRec.quant_mode.replace('_', ' ')}
+                            </Badge>
+                          )}
+                          {heroRec.dip_bucket && (
+                            <Badge variant="outline" className="text-xs">
+                              {heroRec.dip_bucket.replace('_', ' ')}
+                            </Badge>
+                          )}
+                          <Badge variant="outline" className="text-xs">
+                            E[R] {formatSignedPercent(heroRec.mu_hat * 100, 1)}
+                          </Badge>
+                          {heroRec.is_unusual_dip && (
+                            <Badge variant="outline" className="text-xs">
+                              Unusual dip
+                            </Badge>
+                          )}
+                        </div>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="grid grid-cols-3 gap-4 text-sm">
+                          <div>
+                            <p className="text-muted-foreground text-xs">Dip Depth</p>
+                            <p className="font-mono font-bold text-danger">
+                              {formatDipPercent(dipDepth)}
                             </p>
-                          </TooltipTrigger>
-                          <TooltipContent className="max-w-xs">
-                            <p>Bayesian posterior expected return estimate (μ̂). Higher values indicate higher expected returns.</p>
-                          </TooltipContent>
-                        </UITooltip>
-                        <p className={`font-mono font-bold ${heroRec.mu_hat >= 0 ? 'text-success' : 'text-danger'}`}>
-                          {heroRec.mu_hat > 0 ? '+' : ''}{(heroRec.mu_hat * 100).toFixed(1)}%
-                        </p>
-                      </div>
-                      <div>
-                        <UITooltip>
-                          <TooltipTrigger asChild>
-                            <p className="text-muted-foreground text-xs inline-flex items-center gap-0.5 cursor-help">
-                              Dip Score <HelpCircle className="h-3 w-3" />
+                          </div>
+                          <div>
+                            <p className="text-muted-foreground text-xs">Days in Dip</p>
+                            <p className="font-mono font-bold text-foreground">
+                              {formatOptionalNumber(dipDays, 'd')}
                             </p>
-                          </TooltipTrigger>
-                          <TooltipContent className="max-w-xs">
-                            <p>Dip quality score (0-100). Higher scores indicate deeper, more attractive dips for value investing.</p>
-                          </TooltipContent>
-                        </UITooltip>
-                        <p className={`font-mono font-bold ${(heroRec.dip_score ?? 0) > 0.5 ? 'text-success' : 'text-muted-foreground'}`}>
-                          {heroRec.dip_score !== null ? (heroRec.dip_score * 100).toFixed(0) : 'N/A'}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-muted-foreground text-xs">Action</p>
-                        <Badge variant={getActionBadgeVariant(heroRec.action)} className="gap-1">
-                          <ActionIcon action={heroRec.action} />
-                          {heroRec.action}
-                        </Badge>
-                      </div>
-                    </div>
-                    {heroRec.ai_summary && (
-                      <p className="text-xs text-muted-foreground mt-3 line-clamp-2">
-                        <span className="font-medium text-foreground">AI: </span>
-                        {heroRec.ai_summary}
-                      </p>
-                    )}
-                  </CardContent>
-                </Card>
-              )}
+                          </div>
+                          <div>
+                            <p className="text-muted-foreground text-xs">Dip vs Typical</p>
+                            <p className="font-mono font-bold text-foreground">
+                              {formatRatio(dipVsTypical)}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="mt-3 grid grid-cols-3 gap-4 text-sm">
+                          <div>
+                            <p className="text-muted-foreground text-xs">Recovery Odds</p>
+                            <p className="font-mono font-bold text-foreground">
+                              {formatOptionalPercent(recoveryOdds, 0)}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-muted-foreground text-xs">Expected Recovery</p>
+                            <p className="font-mono font-bold text-foreground">
+                              {formatOptionalNumber(expectedRecovery, 'd')}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-muted-foreground text-xs">Dip Score</p>
+                            <p className="font-mono font-bold text-foreground">
+                              {formatOptionalPercent(dipScore, 0)}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground">
+                          <span>
+                            {heroSignalSummary?.nTrades != null
+                              ? `${heroSignalSummary.nTrades} trades backtested`
+                              : 'Signal stats loading'}
+                            {edgeVsBuyHold != null && (
+                              <span className={`ml-2 font-medium ${edgeClassName}`}>
+                                Edge vs buy-hold: {formatSignedPercent(edgeVsBuyHold, 1)}
+                              </span>
+                            )}
+                          </span>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => navigate(`/dashboard?stock=${heroSymbol}`)}
+                            className="gap-1"
+                          >
+                            View Full Analysis
+                            <ChevronRight className="h-4 w-4" />
+                          </Button>
+                        </div>
+                        {heroRec.ai_summary && (
+                          <p className="text-xs text-muted-foreground mt-3 line-clamp-2">
+                            <span className="font-medium text-foreground">AI: </span>
+                            {heroRec.ai_summary}
+                          </p>
+                        )}
+                      </CardContent>
+                    </Card>
+                  )}
+                </div>
+              </div>
             </motion.div>
           </div>
-          
-          {/* AI Persona Analysis Section - Full Width Below Hero */}
-          {heroAgentAnalysis && heroAgentAnalysis.verdicts.length > 0 && (() => {
-            // Compute signal counts from verdicts
-            const bullishCount = heroAgentAnalysis.verdicts.filter(v => 
-              v.signal === 'buy' || v.signal === 'strong_buy'
-            ).length;
-            const bearishCount = heroAgentAnalysis.verdicts.filter(v => 
-              v.signal === 'sell' || v.signal === 'strong_sell'
-            ).length;
-            const neutralCount = heroAgentAnalysis.verdicts.filter(v => 
-              v.signal === 'hold'
-            ).length;
-            
-            const isBullish = heroAgentAnalysis.overall_signal === 'buy' || heroAgentAnalysis.overall_signal === 'strong_buy';
-            const isBearish = heroAgentAnalysis.overall_signal === 'sell' || heroAgentAnalysis.overall_signal === 'strong_sell';
-            
-            const isVerdictBullish = (signal: string) => signal === 'buy' || signal === 'strong_buy';
-            const isVerdictBearish = (signal: string) => signal === 'sell' || signal === 'strong_sell';
-            
-            return (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.6, delay: 0.4 }}
-              className="mt-12"
-            >
-              <Card className="bg-gradient-to-br from-violet-500/5 to-purple-500/10 border-violet-500/20">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Users className="h-5 w-5 text-violet-500" />
-                    What Famous Investors Think About {heroSymbol}
-                    <Badge 
-                      variant={
-                        isBullish ? 'default' :
-                        isBearish ? 'destructive' : 'secondary'
-                      }
-                      className="ml-auto"
-                    >
-                      {bullishCount} Bullish • {bearishCount} Bearish • {neutralCount} Neutral
-                    </Badge>
-                  </CardTitle>
-                  <CardDescription>
-                    AI-powered analysis from the perspective of legendary investors
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-                    {heroAgentAnalysis.verdicts.map((verdict) => (
-                      <div 
+        </div>
+      </section>
+
+      {/* Signal Board Section */}
+      <section className="py-12 px-4">
+        <div className="container mx-auto max-w-6xl">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+            <div>
+              <h2 className="text-2xl md:text-3xl font-bold">Live Signal Board</h2>
+              <p className="text-muted-foreground mt-1">Top-ranked opportunities, refreshed every 15 minutes.</p>
+            </div>
+            <Button variant="outline" onClick={() => navigate('/dashboard')} className="gap-1.5">
+              View Full Board
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+
+          {marketMessage && (
+            <Alert variant={marketMessage.includes('No certified') ? 'destructive' : 'default'} className="mb-6">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>{marketMessage}</AlertDescription>
+            </Alert>
+          )}
+
+          {isLoading ? (
+            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {Array.from({ length: LANDING_SIGNAL_BOARD_COUNT }).map((_, i) => (
+                <Card key={i}>
+                  <CardContent className="p-4">
+                    <Skeleton className="h-32 w-full" />
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          ) : (
+            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {signalBoardRecs.map((rec, i) => (
+                <SignalBoardCard
+                  key={rec.ticker}
+                  rec={rec}
+                  chartData={chartDataMap[rec.ticker] || []}
+                  index={i}
+                  onClick={() => handleStockClick(rec.ticker)}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* AI Pipeline Section */}
+      <section className="py-16 md:py-20 px-4 bg-muted/30">
+        <div className="container mx-auto max-w-6xl">
+          <motion.div
+            className="text-center mb-12"
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.5 }}
+          >
+            <h2 className="text-2xl md:text-3xl font-bold mb-3">
+              The AI pipeline behind every signal
+            </h2>
+            <p className="text-muted-foreground max-w-2xl mx-auto">
+              From raw price action to AI consensus to risk-adjusted allocation.
+            </p>
+          </motion.div>
+
+          <div className="grid md:grid-cols-3 gap-6">
+            <PipelineCard
+              icon={Zap}
+              title="Signal Detection"
+              description="Dip detection, momentum shifts, and volatility filters."
+              value={signalCount}
+              valueSuffix=""
+              footer={
+                heroSignalSummary?.signalName
+                  ? `${heroSignalSummary.signalName} over ${LANDING_SIGNAL_LOOKBACK_DAYS}d`
+                  : `${LANDING_SIGNAL_LOOKBACK_DAYS}d lookback`
+              }
+              valueClassName="text-primary"
+            />
+            <PipelineCard
+              icon={Users}
+              title="AI Debate"
+              description="Investor personas challenge the signal with thesis and risk."
+              value={heroVerdicts.length}
+              valueSuffix=""
+              footer={
+                heroVerdicts.length > 0
+                  ? `${verdictCounts.bullishCount} bullish, ${verdictCounts.bearishCount} bearish`
+                  : 'AI debate loading'
+              }
+              valueClassName="text-primary"
+            />
+            <PipelineCard
+              icon={Target}
+              title="Portfolio Optimizer"
+              description="Mean-variance allocation sized for risk-adjusted edge."
+              valueText={formatSignedPercent(expectedReturnPercent, 2)}
+              footer={
+                portfolioStats.totalTrades > 0
+                  ? `${portfolioStats.totalTrades} trades simulated`
+                  : portfolioStats.expectedRisk > 0
+                    ? `Risk ${(portfolioStats.expectedRisk * 100).toFixed(1)}%`
+                    : 'Risk-adjusted allocation'
+              }
+              valueClassName={expectedReturnPercent >= 0 ? 'text-success' : 'text-danger'}
+            />
+          </div>
+        </div>
+      </section>
+
+      {/* AI Persona Section */}
+      <section className="py-16 px-4">
+        <div className="container mx-auto max-w-6xl">
+          <motion.div
+            className="text-center mb-12"
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.5 }}
+          >
+            <h2 className="text-2xl md:text-3xl font-bold mb-3">
+              AI investor council for {heroSymbol || "today's top signal"}
+            </h2>
+            <p className="text-muted-foreground max-w-2xl mx-auto">
+              See how legendary investing styles react to the same setup.
+            </p>
+          </motion.div>
+
+          {heroVerdicts.length > 0 ? (
+            <Card className="bg-gradient-to-br from-amber-500/5 to-emerald-500/10 border-amber-500/20">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Users className="h-5 w-5 text-amber-600" />
+                  AI Consensus
+                  <Badge
+                    variant={
+                      verdictCounts.isBullish ? 'default' :
+                      verdictCounts.isBearish ? 'destructive' : 'secondary'
+                    }
+                    className="ml-auto"
+                  >
+                    {verdictCounts.bullishCount} Bullish | {verdictCounts.bearishCount} Bearish | {verdictCounts.neutralCount} Neutral
+                  </Badge>
+                </CardTitle>
+                <CardDescription>
+                  AI-powered analysis from the perspective of legendary investors
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                  {heroVerdicts.slice(0, 4).map((verdict) => {
+                    const isVerdictBullish = verdict.signal === 'buy' || verdict.signal === 'strong_buy';
+                    const isVerdictBearish = verdict.signal === 'sell' || verdict.signal === 'strong_sell';
+                    return (
+                      <div
                         key={verdict.agent_id}
-                        className="p-4 rounded-lg bg-background/50 border"
+                        className="p-4 rounded-lg bg-background/60 border"
                       >
                         <div className="flex items-start gap-3 mb-2">
                           <Avatar className="h-10 w-10 border">
-                            <AvatarImage 
-                              src={verdict.avatar_url} 
+                            <AvatarImage
+                              src={verdict.avatar_url}
                               alt={verdict.agent_name}
                             />
                             <AvatarFallback className="bg-primary/10 text-primary text-xs">
-                              {verdict.agent_name.split(' ').map(n => n[0]).join('').slice(0, 2)}
+                              {verdict.agent_name.split(' ').map((n) => n[0]).join('').slice(0, 2)}
                             </AvatarFallback>
                           </Avatar>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center justify-between gap-2">
                               <h4 className="font-semibold text-sm truncate">{verdict.agent_name}</h4>
-                              <Badge 
+                              <Badge
                                 variant={
-                                  isVerdictBullish(verdict.signal) ? 'default' :
-                                  isVerdictBearish(verdict.signal) ? 'destructive' : 'secondary'
+                                  isVerdictBullish ? 'default' :
+                                  isVerdictBearish ? 'destructive' : 'secondary'
                                 }
                                 className="text-xs h-5 shrink-0"
                               >
-                                {isVerdictBullish(verdict.signal) && <ThumbsUp className="h-3 w-3 mr-1" />}
-                                {isVerdictBearish(verdict.signal) && <ThumbsDown className="h-3 w-3 mr-1" />}
+                                {isVerdictBullish && <ThumbsUp className="h-3 w-3 mr-1" />}
+                                {isVerdictBearish && <ThumbsDown className="h-3 w-3 mr-1" />}
                                 {verdict.signal === 'hold' && <MinusCircle className="h-3 w-3 mr-1" />}
                                 {verdict.signal.toUpperCase().replace('_', ' ')}
                               </Badge>
@@ -1010,78 +1219,28 @@ export function Landing() {
                           {verdict.reasoning}
                         </p>
                       </div>
-                    ))}
-                  </div>
-                  <div className="mt-4 text-center">
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      onClick={() => navigate(`/dashboard?stock=${heroSymbol}`)}
-                      className="gap-1"
-                    >
-                      View Full Analysis
-                      <ChevronRight className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            </motion.div>
-          );
-          })()}
-        </div>
-      </section>
-
-      {/* Stats Section */}
-      <section className="py-12 px-4">
-        <div className="container mx-auto max-w-4xl">
-          <Stats recommendations={recommendations} portfolioStats={portfolioStats} />
-        </div>
-      </section>
-
-      {/* Featured Stocks Section */}
-      <section className="py-12 px-4 bg-muted/30">
-        <div className="container mx-auto max-w-6xl">
-          <div className="flex items-center justify-between mb-8">
-            <div>
-              <h2 className="text-2xl md:text-3xl font-bold">Today's Top Opportunities</h2>
-              <p className="text-muted-foreground mt-1">Quant-ranked stocks by expected return</p>
-            </div>
-            <Button variant="ghost" onClick={() => navigate('/dashboard')} className="gap-1.5">
-              View All
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-          </div>
-
-          {/* Market Message Alert */}
-          {marketMessage && (
-            <Alert variant={marketMessage.includes('No certified') ? 'destructive' : 'default'} className="mb-6">
-              <AlertCircle className="h-4 w-4" />
-              <AlertDescription>{marketMessage}</AlertDescription>
-            </Alert>
-          )}
-
-          {isLoading ? (
-            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {Array.from({ length: 6 }).map((_, i) => (
-                <Card key={i}>
-                  <CardContent className="p-4">
-                    <Skeleton className="h-32 w-full" />
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
+                    );
+                  })}
+                </div>
+                <div className="mt-4 text-center">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => navigate(`/dashboard?stock=${heroSymbol}`)}
+                    className="gap-1"
+                  >
+                    View Full Analysis
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
           ) : (
-            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {featuredRecs.map((rec, i) => (
-                <FeaturedStockCard
-                  key={rec.ticker}
-                  rec={rec}
-                  chartData={chartDataMap[rec.ticker] || []}
-                  index={i}
-                  onClick={() => handleStockClick(rec.ticker)}
-                />
-              ))}
-            </div>
+            <Card className="border-dashed">
+              <CardContent className="py-10 text-center text-sm text-muted-foreground">
+                {heroRec ? 'Loading AI debate for this signal...' : 'Loading AI debate...'}
+              </CardContent>
+            </Card>
           )}
         </div>
       </section>
@@ -1097,30 +1256,30 @@ export function Landing() {
             transition={{ duration: 0.5 }}
           >
             <h2 className="text-2xl md:text-3xl font-bold mb-3">
-              Built for <span className="text-primary">serious traders</span>
+              Built for <span className="text-primary">signal-driven traders</span>
             </h2>
             <p className="text-muted-foreground max-w-2xl mx-auto">
-              Professional-grade tools for quantitative stock analysis and portfolio optimization.
+              A quant + AI stack that turns noisy markets into clear entry decisions.
             </p>
           </motion.div>
 
           <div className="grid md:grid-cols-3 gap-6">
             <FeatureCard
-              icon={LineChart}
-              title="Real-Time Analysis"
-              description="Monitor stocks with live momentum signals and technical indicators. Charts update automatically with the latest market data."
+              icon={Zap}
+              title="Signal Engine"
+              description="Detects oversold conditions with mean-reversion, volatility filters, and statistical validation."
               delay={0}
             />
             <FeatureCard
-              icon={Target}
-              title="Dip Detection"
-              description="Our algorithms identify oversold conditions using 52-week highs, volume patterns, and AI-powered sentiment analysis."
+              icon={Brain}
+              title="AI Personas"
+              description="Explains each setup with multiple investor viewpoints so you see the risks and the upside."
               delay={0.1}
             />
             <FeatureCard
-              icon={Activity}
-              title="Portfolio Optimization"
-              description="Mean-variance optimization calculates risk-adjusted expected returns. Build efficient portfolios with quantitative precision."
+              icon={Target}
+              title="Portfolio Optimizer"
+              description="Position sizing based on expected return, risk, and correlation for smarter allocations."
               delay={0.2}
             />
           </div>
@@ -1136,9 +1295,9 @@ export function Landing() {
             viewport={{ once: true }}
             transition={{ duration: 0.6 }}
           >
-            <h2 className="text-2xl md:text-3xl font-bold mb-4">Ready to find your edge?</h2>
+            <h2 className="text-2xl md:text-3xl font-bold mb-4">Ready to trade with AI conviction?</h2>
             <p className="text-muted-foreground mb-8 max-w-lg mx-auto">
-              Join traders using StonkMarket to identify market opportunities before they disappear.
+              Join traders using StonkMarket to move faster on signals that are explained, tested, and optimized.
             </p>
             <Button size="lg" onClick={handleCTA} className="gap-2">
               {isAuthenticated ? 'Open Dashboard' : 'Start Trading Smarter'}

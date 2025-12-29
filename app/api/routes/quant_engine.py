@@ -439,14 +439,13 @@ async def get_recommendations(
         # Reconstruct response from cached dict
         return QuantEngineResponse(**cached)
     
-    # Parallel fetch all data sources
+    # Parallel fetch base data sources
     symbols_task = symbols_repo.list_symbols()
     dip_states_task = dip_state_repo.get_all_dip_states()
     ai_analyses_task = dip_votes_repo.get_all_ai_analyses()
-    dipfinder_task = dipfinder_repo.get_latest_signals(limit=500)
     
-    symbols, dip_states, ai_analyses, dipfinder_signals = await asyncio.gather(
-        symbols_task, dip_states_task, ai_analyses_task, dipfinder_task
+    symbols, dip_states, ai_analyses = await asyncio.gather(
+        symbols_task, dip_states_task, ai_analyses_task
     )
     
     if not symbols:
@@ -470,11 +469,6 @@ async def get_recommendations(
     # Build lookup maps
     dip_state_map = {d.symbol: d for d in dip_states}
     ai_map = {a.symbol: a for a in ai_analyses}
-    # Build dipfinder_map correctly
-    dipfinder_map = {}
-    for sig in (dipfinder_signals or []):
-        if sig.ticker not in dipfinder_map:
-            dipfinder_map[sig.ticker] = sig
     
     # Get pre-computed strategy signals and quant scores from database
     strategy_map: dict[str, Any] = {}
@@ -499,6 +493,12 @@ async def get_recommendations(
     symbol_sector_map = {s.symbol: s.sector for s in symbols}
     symbol_mcap_map = {s.symbol: s.market_cap for s in symbols}
     symbol_list = [s.symbol for s in symbols if s.symbol not in ("SPY", "^GSPC", "URTH")]
+
+    dipfinder_signals = await dipfinder_repo.get_latest_signals_for_tickers(symbol_list)
+    dipfinder_map = {}
+    for sig in (dipfinder_signals or []):
+        if sig.ticker not in dipfinder_map:
+            dipfinder_map[sig.ticker] = sig
     
     recommendations: list[QuantRecommendation] = []
     
@@ -549,12 +549,15 @@ async def get_recommendations(
         # Get typical dip from dipfinder (pre-computed)
         typical_dip_pct = None
         dip_vs_typical = None
+        dip_score = None
         is_unusual_dip = False
         
         if dipfinder:
             if dipfinder.dip_vs_typical is not None:
                 dip_vs_typical = float(dipfinder.dip_vs_typical)
                 is_unusual_dip = dip_vs_typical >= 1.5
+            if dipfinder.dip_score is not None:
+                dip_score = float(dipfinder.dip_score)
             if dipfinder.stability_factors:
                 stability = dipfinder.stability_factors
                 if isinstance(stability, str):
@@ -713,6 +716,7 @@ async def get_recommendations(
             dip_vs_typical=dip_vs_typical,
             is_unusual_dip=is_unusual_dip,
             win_rate=win_rate,
+            dip_score=dip_score,
             dip_bucket=_dip_bucket(dip_pct) if dip_pct else None,
             marginal_utility=buy_score / 100,
             legacy_dip_pct=dip_pct,

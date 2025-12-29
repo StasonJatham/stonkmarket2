@@ -16,6 +16,13 @@ from .dip import DipMetrics, compute_dip_metrics
 from .fundamentals import QualityMetrics
 from .stability import StabilityMetrics
 
+QUANT_BLEND_WEIGHT = 0.30
+FUND_MOM_WARN_THRESHOLD = 0.35
+FUND_MOM_SEVERE_THRESHOLD = 0.25
+FUND_MOM_PENALTY = 6.0
+FUND_MOM_SEVERE_PENALTY = 12.0
+EVENT_PENALTY_MULTIPLIER = 0.4
+
 
 class DipClass(str, Enum):
     """Dip classification based on market context."""
@@ -54,6 +61,17 @@ class MarketContext:
             "dip_class": self.dip_class.value,
             "benchmark_data_available": self.benchmark_data_available,
         }
+
+
+@dataclass
+class QuantContext:
+    """Quant engine context for adjusting dipfinder scores."""
+
+    best_score: float
+    mode: str | None = None
+    gate_pass: bool = False
+    fund_mom: float | None = None
+    event_risk: bool = False
 
 
 @dataclass
@@ -215,12 +233,12 @@ def compute_market_context(
     if benchmark_data_available:
         benchmark_dips = compute_dip_series_windowed(benchmark_prices, window)
         dip_mkt = float(benchmark_dips[-1]) if not np.isnan(benchmark_dips[-1]) else 0.0
+        excess_dip = dip_stock - dip_mkt
+        dip_class = classify_dip(dip_stock, dip_mkt, config)
     else:
         dip_mkt = 0.0
-
-    excess_dip = dip_stock - dip_mkt
-
-    dip_class = classify_dip(dip_stock, dip_mkt, config)
+        excess_dip = 0.0
+        dip_class = DipClass.MIXED
 
     return MarketContext(
         benchmark_ticker=benchmark_ticker,
@@ -281,16 +299,40 @@ def compute_dip_score(
         score += persist_factor * 10
 
     # Classification adjustment (max 5 points)
-    if market_context.dip_class == DipClass.STOCK_SPECIFIC:
-        # Stock-specific dips may be more actionable (or more risky)
-        score += 5
-    elif market_context.dip_class == DipClass.MIXED:
-        score += 3
-    elif market_context.dip_class == DipClass.MARKET_DIP:
-        # Market dips can still be good buying opportunities
-        score += 2
+    if market_context.benchmark_data_available:
+        if market_context.dip_class == DipClass.STOCK_SPECIFIC:
+            # Stock-specific dips may be more actionable (or more risky)
+            score += 5
+        elif market_context.dip_class == DipClass.MIXED:
+            score += 3
+        elif market_context.dip_class == DipClass.MARKET_DIP:
+            # Market dips can still be good buying opportunities
+            score += 2
 
     return min(100.0, max(0.0, score))
+
+
+def _apply_quant_adjustments(
+    final_score: float,
+    quant_context: QuantContext,
+) -> tuple[float, bool]:
+    blended = final_score * (1 - QUANT_BLEND_WEIGHT) + quant_context.best_score * QUANT_BLEND_WEIGHT
+    fundamental_warning = False
+    penalty = 0.0
+
+    if quant_context.fund_mom is not None:
+        if quant_context.fund_mom < FUND_MOM_SEVERE_THRESHOLD:
+            penalty = FUND_MOM_SEVERE_PENALTY
+            fundamental_warning = True
+        elif quant_context.fund_mom < FUND_MOM_WARN_THRESHOLD:
+            penalty = FUND_MOM_PENALTY
+            fundamental_warning = True
+
+    if penalty > 0 and quant_context.event_risk:
+        penalty *= EVENT_PENALTY_MULTIPLIER
+
+    adjusted = blended - penalty
+    return min(100.0, max(0.0, adjusted)), fundamental_warning
 
 
 def generate_reason(
@@ -301,6 +343,8 @@ def generate_reason(
     dip_score: float,
     final_score: float,
     config: DipFinderConfig | None = None,
+    quant_context: QuantContext | None = None,
+    fundamental_warning: bool = False,
 ) -> str:
     """
     Generate human-readable reason for the signal.
@@ -323,7 +367,9 @@ def generate_reason(
         parts.append("significant dip (top 20%)")
 
     # Context
-    if market_context.dip_class == DipClass.STOCK_SPECIFIC:
+    if not market_context.benchmark_data_available:
+        parts.append("benchmark data limited")
+    elif market_context.dip_class == DipClass.STOCK_SPECIFIC:
         excess_pct = market_context.excess_dip * 100
         parts.append(f"stock-specific ({excess_pct:.1f}% below market)")
     elif market_context.dip_class == DipClass.MARKET_DIP:
@@ -332,12 +378,18 @@ def generate_reason(
         parts.append("mixed market/stock factors")
 
     # Quality/stability flags
-    if quality_metrics.score >= 80:
-        parts.append("excellent fundamentals")
-    elif quality_metrics.score >= 70:
-        parts.append("strong fundamentals")
-    elif quality_metrics.score < config.quality_gate:
-        parts.append("weak fundamentals")
+    if fundamental_warning:
+        if quant_context and quant_context.event_risk:
+            parts.append("fundamentals weak (earnings noise)")
+        else:
+            parts.append("fundamentals deteriorating")
+    else:
+        if quality_metrics.score >= 80:
+            parts.append("excellent fundamentals")
+        elif quality_metrics.score >= 70:
+            parts.append("strong fundamentals")
+        elif quality_metrics.score < config.quality_gate:
+            parts.append("weak fundamentals")
 
     if stability_metrics.score >= 80:
         parts.append("very stable")
@@ -358,6 +410,7 @@ def compute_signal(
     stability_metrics: StabilityMetrics,
     as_of_date: str,
     config: DipFinderConfig | None = None,
+    quant_context: QuantContext | None = None,
 ) -> DipSignal:
     """
     Compute complete dip signal for a ticker.
@@ -372,6 +425,7 @@ def compute_signal(
         stability_metrics: Pre-computed stability metrics
         as_of_date: Date string (ISO format)
         config: Configuration
+        quant_context: Quant engine context for score adjustments
 
     Returns:
         Complete DipSignal
@@ -419,6 +473,12 @@ def compute_signal(
             + w_stability * stability_metrics.score
         )
 
+    fundamental_warning = False
+    if quant_context and dip_metrics.dip_pct >= config.min_dip_abs:
+        final_score, fundamental_warning = _apply_quant_adjustments(
+            final_score, quant_context
+        )
+
     # Determine alert level
     # Convert to native Python bool to avoid numpy bool issues with database
     should_alert = bool(
@@ -445,6 +505,8 @@ def compute_signal(
         dip_score,
         final_score,
         config,
+        quant_context=quant_context,
+        fundamental_warning=fundamental_warning,
     )
 
     return DipSignal(

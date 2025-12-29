@@ -236,7 +236,9 @@ export function StockDetailsPanel({
       return;
     }
     
-    getSignalTriggers(stock.symbol, Math.max(chartPeriod + 30, 365))
+    // Cap at 730 days (API limit) - signals beyond 2 years are too historical to be useful
+    const lookbackDays = Math.min(730, Math.max(chartPeriod + 30, 365));
+    getSignalTriggers(stock.symbol, lookbackDays)
       .then(setSignalsResponse)
       .catch(() => setSignalsResponse(null));
   }, [stock?.symbol, chartPeriod]);
@@ -391,11 +393,17 @@ export function StockDetailsPanel({
 
   // Check if the stock has a valid optimized strategy (not just "dip" fallback)
   const hasValidStrategy = strategySignal && strategySignal.strategy_name !== 'dip';
+  
+  // Only show signals if they beat buy-and-hold (have positive edge)
+  const signalsBeatBuyHold = signalsResponse?.beats_buy_hold ?? false;
 
   // Find signal trigger points that match chart dates
   const signalPoints = useMemo(() => {
-    // Don't show signals if strategy is "dip" (no real backtested signals)
-    if (!showSignals || !hasValidStrategy || signalTriggers.length === 0 || formattedChartData.length === 0) return [];
+    // Don't show signals if:
+    // 1. User toggled them off
+    // 2. Strategy is "dip" (no real backtested signals)
+    // 3. Signal doesn't beat buy-and-hold (no edge = useless signal)
+    if (!showSignals || !hasValidStrategy || !signalsBeatBuyHold || signalTriggers.length === 0 || formattedChartData.length === 0) return [];
     
     // Create a map of date -> signal for quick lookup
     const signalMap = new Map<string, SignalTrigger>();
@@ -408,7 +416,7 @@ export function StockDetailsPanel({
         ...point,
         signal: signalMap.get(point.date)!,
       }));
-  }, [showSignals, hasValidStrategy, signalTriggers, formattedChartData]);
+  }, [showSignals, hasValidStrategy, signalsBeatBuyHold, signalTriggers, formattedChartData]);
 
   const priceChange = useMemo(() => {
     if (chartData.length < 2) return 0;
@@ -903,6 +911,75 @@ export function StockDetailsPanel({
               </Tooltip>
             </div>
 
+            {/* PROMINENT: Intrinsic Value + Dip Entry Row */}
+            {(fundamentals?.intrinsic_value || dipEntry) && (
+              <div className="grid grid-cols-2 gap-2 mb-4">
+                {/* Intrinsic Value Card */}
+                {fundamentals?.intrinsic_value && fundamentals?.upside_pct != null && (
+                  <div className={cn(
+                    "p-3 rounded-lg border",
+                    fundamentals.valuation_status === 'undervalued'
+                      ? "bg-success/10 border-success/30" 
+                      : fundamentals.valuation_status === 'overvalued'
+                        ? "bg-danger/10 border-danger/30"
+                        : "bg-muted/30 border-border"
+                  )}>
+                    <p className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
+                      <DollarSign className="h-3 w-3" />
+                      Intrinsic Value
+                    </p>
+                    <p className={cn(
+                      "text-xl font-bold",
+                      fundamentals.valuation_status === 'undervalued' ? "text-success" : 
+                      fundamentals.valuation_status === 'overvalued' ? "text-danger" : ""
+                    )}>
+                      ${fundamentals.intrinsic_value.toFixed(2)}
+                    </p>
+                    <p className={cn(
+                      "text-sm font-medium",
+                      (fundamentals.upside_pct ?? 0) >= 0 ? "text-success" : "text-danger"
+                    )}>
+                      {(fundamentals.upside_pct ?? 0) >= 0 ? '+' : ''}{(fundamentals.upside_pct ?? 0).toFixed(0)}% upside
+                    </p>
+                    <p className="text-[10px] text-muted-foreground mt-1">
+                      {fundamentals.intrinsic_value_method === 'analyst' 
+                        ? `${fundamentals.num_analyst_opinions || 0} analysts` 
+                        : fundamentals.intrinsic_value_method === 'peg' 
+                          ? 'PEG-based' 
+                          : fundamentals.intrinsic_value_method === 'graham'
+                            ? 'Graham #'
+                            : fundamentals.intrinsic_value_method || 'DCF'}
+                    </p>
+                  </div>
+                )}
+                
+                {/* Dip Entry Card */}
+                {dipEntry && (
+                  <div className={cn(
+                    "p-3 rounded-lg border",
+                    dipEntry.is_buy_now && "bg-success/10 border-success/30",
+                    !dipEntry.is_buy_now && dipEntry.current_drawdown_pct <= -10 && "bg-amber-500/10 border-amber-500/30",
+                    !dipEntry.is_buy_now && dipEntry.current_drawdown_pct > -10 && "bg-muted/30 border-border",
+                  )}>
+                    <p className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
+                      <Target className="h-3 w-3" />
+                      Optimal Entry
+                    </p>
+                    <p className="text-xl font-bold text-primary">${dipEntry.optimal_entry_price.toFixed(2)}</p>
+                    <p className="text-sm text-muted-foreground">
+                      {dipEntry.optimal_dip_threshold}% dip level
+                    </p>
+                    <p className={cn(
+                      "text-[10px] mt-1",
+                      dipEntry.is_buy_now ? "text-success font-medium" : "text-muted-foreground"
+                    )}>
+                      {dipEntry.is_buy_now ? "✓ Buy now" : `Wait for ${(dipEntry.optimal_entry_price - displayPrice).toFixed(2)} more drop`}
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Domain-Specific Metrics (Banks, REITs, Insurance) */}
             {fundamentals && fundamentals.domain && fundamentals.domain !== 'stock' && (
               <div className="p-3 rounded-lg bg-gradient-to-br from-primary/5 to-primary/10 border border-primary/20 mb-4">
@@ -1089,9 +1166,12 @@ export function StockDetailsPanel({
                   </div>
                 </div>
                 
-                {/* Top 3 verdicts always visible */}
-                <div className="space-y-2">
-                  {(showAllVerdicts ? agentAnalysis.verdicts : agentAnalysis.verdicts.slice(0, 3)).map((verdict) => {
+                {/* Show 2 verdicts by default, scrollable list when expanded */}
+                <div className={cn(
+                  "space-y-2",
+                  showAllVerdicts ? "max-h-[250px] overflow-y-auto pr-1" : ""
+                )}>
+                  {(showAllVerdicts ? agentAnalysis.verdicts : agentAnalysis.verdicts.slice(0, 2)).map((verdict) => {
                     const isExpanded = expandedVerdicts.has(verdict.agent_id);
                     return (
                     <div 
@@ -1150,12 +1230,12 @@ export function StockDetailsPanel({
                   )})}
                 </div>
                 
-                {!showAllVerdicts && agentAnalysis.verdicts.length > 3 && (
+                {!showAllVerdicts && agentAnalysis.verdicts.length > 2 && (
                   <button 
                     onClick={() => setShowAllVerdicts(true)}
                     className="text-xs text-primary hover:underline mt-2 w-full text-center"
                   >
-                    Show {agentAnalysis.verdicts.length - 3} more analysts...
+                    Show {agentAnalysis.verdicts.length - 2} more analysts...
                   </button>
                 )}
               </div>
@@ -1340,8 +1420,8 @@ export function StockDetailsPanel({
               </div>
             )}
 
-            {/* Dip Entry Optimizer - Show when strategy doesn't beat B&H or no strategy */}
-            {dipEntry && (!strategySignal || !strategySignal.benchmarks.beats_buy_hold) && (
+            {/* Dip Entry Optimizer section moved to prominent row at top */}
+            {false && dipEntry && (!strategySignal || !strategySignal.benchmarks.beats_buy_hold) && (
               <div className="mb-4">
                 <div className="flex items-center gap-2 mb-2">
                   <Target className="h-4 w-4 text-primary" />
@@ -1506,108 +1586,103 @@ export function StockDetailsPanel({
                     icon={Building2}
                     label="Market Cap"
                     value={formatMarketCap(stock.market_cap ?? stockInfo?.market_cap ?? null)}
+                    tooltip="Total value of all outstanding shares. Larger companies tend to be more stable but may grow slower."
                   />
                   <StatItem
                     icon={BarChart3}
                     label="P/E Ratio"
                     value={fundamentals?.pe_ratio?.toFixed(2) ?? stock.pe_ratio?.toFixed(2) ?? '—'}
+                    tooltip="Price-to-Earnings ratio. Shows how much investors pay per dollar of earnings. Lower (<15) = cheaper, higher (>25) = growth priced in."
                   />
                   <StatItem
                     icon={Target}
                     label="Fwd P/E"
                     value={fundamentals?.forward_pe?.toFixed(2) ?? '—'}
+                    tooltip="Forward P/E uses expected future earnings. If lower than P/E, earnings are expected to grow."
                   />
                   <StatItem
                     icon={DollarSign}
                     label="Target Price"
                     value={fundamentals?.target_mean_price ? `$${fundamentals.target_mean_price.toFixed(0)}` : '—'}
+                    tooltip="Average analyst price target. Compare to current price to see potential upside/downside."
                   />
                 </div>
                 
                 {/* Valuation & Health Metrics */}
                 {fundamentals && (
                   <div className="grid grid-cols-4 gap-2 text-center">
-                    <div className="p-2 rounded bg-muted/30">
-                      <p className="text-[10px] text-muted-foreground">P/B Ratio</p>
-                      <p className={cn(
-                        "text-sm font-medium",
-                        fundamentals.price_to_book && Number(fundamentals.price_to_book) < 1 ? "text-success" :
-                        fundamentals.price_to_book && Number(fundamentals.price_to_book) > 3 ? "text-warning" : ""
-                      )}>
-                        {fundamentals.price_to_book != null ? Number(fundamentals.price_to_book).toFixed(2) : '—'}
-                      </p>
-                    </div>
-                    <div className="p-2 rounded bg-muted/30">
-                      <p className="text-[10px] text-muted-foreground">D/E Ratio</p>
-                      <p className={cn(
-                        "text-sm font-medium",
-                        fundamentals.debt_to_equity && Number(fundamentals.debt_to_equity) < 0.5 ? "text-success" :
-                        fundamentals.debt_to_equity && Number(fundamentals.debt_to_equity) > 1.5 ? "text-danger" : ""
-                      )}>
-                        {fundamentals.debt_to_equity != null ? Number(fundamentals.debt_to_equity).toFixed(2) : '—'}
-                      </p>
-                    </div>
-                    <div className="p-2 rounded bg-muted/30">
-                      <p className="text-[10px] text-muted-foreground">Current Ratio</p>
-                      <p className={cn(
-                        "text-sm font-medium",
-                        fundamentals.current_ratio && Number(fundamentals.current_ratio) > 1.5 ? "text-success" :
-                        fundamentals.current_ratio && Number(fundamentals.current_ratio) < 1 ? "text-danger" : ""
-                      )}>
-                        {fundamentals.current_ratio != null ? Number(fundamentals.current_ratio).toFixed(2) : '—'}
-                      </p>
-                    </div>
-                    <div className="p-2 rounded bg-muted/30">
-                      <p className="text-[10px] text-muted-foreground">PEG Ratio</p>
-                      <p className={cn(
-                        "text-sm font-medium",
-                        fundamentals.peg_ratio && Number(fundamentals.peg_ratio) < 1 ? "text-success" :
-                        fundamentals.peg_ratio && Number(fundamentals.peg_ratio) > 2 ? "text-warning" : ""
-                      )}>
-                        {fundamentals.peg_ratio != null ? Number(fundamentals.peg_ratio).toFixed(2) : '—'}
-                      </p>
-                    </div>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="p-2 rounded bg-muted/30 cursor-help">
+                          <p className="text-[10px] text-muted-foreground">P/B Ratio</p>
+                          <p className={cn(
+                            "text-sm font-medium",
+                            fundamentals.price_to_book && Number(fundamentals.price_to_book) < 1 ? "text-success" :
+                            fundamentals.price_to_book && Number(fundamentals.price_to_book) > 3 ? "text-warning" : ""
+                          )}>
+                            {fundamentals.price_to_book != null ? Number(fundamentals.price_to_book).toFixed(2) : '—'}
+                          </p>
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-[200px]">
+                        <p className="text-xs">Price-to-Book: Stock price vs book value. Under 1 = trading below asset value (potentially undervalued).</p>
+                      </TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="p-2 rounded bg-muted/30 cursor-help">
+                          <p className="text-[10px] text-muted-foreground">D/E Ratio</p>
+                          <p className={cn(
+                            "text-sm font-medium",
+                            fundamentals.debt_to_equity && Number(fundamentals.debt_to_equity) < 0.5 ? "text-success" :
+                            fundamentals.debt_to_equity && Number(fundamentals.debt_to_equity) > 1.5 ? "text-danger" : ""
+                          )}>
+                            {fundamentals.debt_to_equity != null ? Number(fundamentals.debt_to_equity).toFixed(2) : '—'}
+                          </p>
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-[200px]">
+                        <p className="text-xs">Debt-to-Equity: How much debt vs shareholder equity. Under 0.5 = conservative, over 1.5 = high leverage.</p>
+                      </TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="p-2 rounded bg-muted/30 cursor-help">
+                          <p className="text-[10px] text-muted-foreground">Current Ratio</p>
+                          <p className={cn(
+                            "text-sm font-medium",
+                            fundamentals.current_ratio && Number(fundamentals.current_ratio) > 1.5 ? "text-success" :
+                            fundamentals.current_ratio && Number(fundamentals.current_ratio) < 1 ? "text-danger" : ""
+                          )}>
+                            {fundamentals.current_ratio != null ? Number(fundamentals.current_ratio).toFixed(2) : '—'}
+                          </p>
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-[200px]">
+                        <p className="text-xs">Current Ratio: Assets vs liabilities due within 1 year. Above 1.5 = healthy, below 1 = liquidity risk.</p>
+                      </TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="p-2 rounded bg-muted/30 cursor-help">
+                          <p className="text-[10px] text-muted-foreground">PEG Ratio</p>
+                          <p className={cn(
+                            "text-sm font-medium",
+                            fundamentals.peg_ratio && Number(fundamentals.peg_ratio) < 1 ? "text-success" :
+                            fundamentals.peg_ratio && Number(fundamentals.peg_ratio) > 2 ? "text-warning" : ""
+                          )}>
+                            {fundamentals.peg_ratio != null ? Number(fundamentals.peg_ratio).toFixed(2) : '—'}
+                          </p>
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-[200px]">
+                        <p className="text-xs">P/E to Growth: Under 1 = growth is cheap, 1-2 = fair value, over 2 = growth is expensive.</p>
+                      </TooltipContent>
+                    </Tooltip>
                   </div>
                 )}
                 
-                {/* Intrinsic Value Assessment */}
-                {fundamentals?.intrinsic_value && fundamentals?.upside_pct !== null && (
-                  <div className={cn(
-                    "p-3 rounded-lg border",
-                    fundamentals.valuation_status === 'undervalued'
-                      ? "bg-success/10 border-success/30" 
-                      : fundamentals.valuation_status === 'overvalued'
-                        ? "bg-danger/10 border-danger/30"
-                        : "bg-muted/30 border-border"
-                  )}>
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-medium">
-                        Intrinsic Value 
-                        <span className="text-[10px] text-muted-foreground ml-1">
-                          ({fundamentals.intrinsic_value_method === 'analyst' 
-                            ? `${fundamentals.num_analyst_opinions || 0} analysts` 
-                            : fundamentals.intrinsic_value_method === 'peg' 
-                              ? 'PEG-based' 
-                              : fundamentals.intrinsic_value_method === 'graham'
-                                ? 'Graham #'
-                                : fundamentals.intrinsic_value_method})
-                        </span>
-                      </span>
-                      <span className={cn(
-                        "text-sm font-bold",
-                        fundamentals.valuation_status === 'undervalued' ? "text-success" : 
-                        fundamentals.valuation_status === 'overvalued' ? "text-danger" : ""
-                      )}>
-                        {(fundamentals.upside_pct ?? 0) >= 0 ? '+' : ''}{(fundamentals.upside_pct ?? 0).toFixed(1)}%
-                      </span>
-                    </div>
-                    <p className="text-[10px] text-muted-foreground mt-1">
-                      Fair Value ${fundamentals.intrinsic_value.toFixed(2)} vs Current ${displayPrice.toFixed(2)}
-                      {fundamentals.valuation_status === 'undervalued' && " — Undervalued"}
-                      {fundamentals.valuation_status === 'overvalued' && " — Overvalued"}
-                    </p>
-                  </div>
-                )}
+                {/* Intrinsic Value - now shown prominently at top of panel */}
                 
                 {/* Growth & Returns */}
                 {fundamentals && (
@@ -1708,11 +1783,15 @@ interface StatItemProps {
   label: string;
   value: string;
   valueColor?: string;
+  tooltip?: string;
 }
 
-function StatItem({ icon: Icon, label, value, valueColor }: StatItemProps) {
-  return (
-    <div className="flex items-center gap-2 p-2 rounded-lg bg-muted/50">
+function StatItem({ icon: Icon, label, value, valueColor, tooltip }: StatItemProps) {
+  const content = (
+    <div className={cn(
+      "flex items-center gap-2 p-2 rounded-lg bg-muted/50",
+      tooltip && "cursor-help"
+    )}>
       <Icon className="h-4 w-4 text-muted-foreground shrink-0" />
       <div className="min-w-0">
         <p className="text-xs text-muted-foreground truncate">{label}</p>
@@ -1720,5 +1799,18 @@ function StatItem({ icon: Icon, label, value, valueColor }: StatItemProps) {
       </div>
     </div>
   );
+
+  if (tooltip) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>{content}</TooltipTrigger>
+        <TooltipContent className="max-w-[250px]">
+          <p className="text-xs">{tooltip}</p>
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  return content;
 }
 

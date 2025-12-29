@@ -122,6 +122,11 @@ export interface StockCardData {
   uncertainty?: number;
   marginal_utility?: number;
   
+  // Intrinsic Value
+  intrinsic_value?: number | null;
+  upside_pct?: number | null;
+  valuation_status?: 'undervalued' | 'fair' | 'overvalued' | null;
+  
   // APUS + DOUS Dual-Mode Scoring
   quant_mode?: 'CERTIFIED_BUY' | 'DIP_ENTRY' | 'HOLD' | 'DOWNTREND' | null;
   quant_score_a?: number | null;  // Mode A (APUS) score 0-100
@@ -666,21 +671,32 @@ export const StockCardV2 = memo(function StockCardV2({
           
           {/* Signals Row - only show unique info not shown elsewhere */}
           <div className="flex items-center gap-2 mt-2">
-            {/* Technical Signal with description */}
-            {stock.top_signal && <SignalBadge signal={stock.top_signal} />}
-            
-            {/* Win Rate - show if no signal badge */}
-            {!stock.top_signal && stock.win_rate && stock.win_rate >= 0.50 && (
-              <InfoTooltip content={`Historical win rate: ${(stock.win_rate * 100).toFixed(0)}% of similar setups were profitable`}>
+            {/* Intrinsic Value Badge */}
+            {stock.valuation_status && stock.upside_pct != null && (
+              <InfoTooltip content={`Intrinsic value: $${stock.intrinsic_value?.toFixed(2) ?? '?'} (${stock.upside_pct >= 0 ? '+' : ''}${stock.upside_pct.toFixed(0)}% vs current)`}>
                 <Badge 
                   variant="outline" 
-                  className="gap-1 text-[10px] px-1.5 py-0 h-5 cursor-help border-primary/50 text-primary"
+                  className={cn(
+                    "gap-0.5 text-[10px] px-1.5 py-0 h-5 cursor-help",
+                    stock.valuation_status === 'undervalued' && "border-success/50 text-success bg-success/10",
+                    stock.valuation_status === 'overvalued' && "border-danger/50 text-danger bg-danger/10",
+                    stock.valuation_status === 'fair' && "border-muted-foreground/50 text-muted-foreground"
+                  )}
                 >
-                  <Target className="h-3 w-3" />
-                  {(stock.win_rate * 100).toFixed(0)}% Win
+                  {stock.valuation_status === 'undervalued' && <TrendingUp className="h-3 w-3" />}
+                  {stock.valuation_status === 'overvalued' && <TrendingDown className="h-3 w-3" />}
+                  {stock.upside_pct >= 0 ? '+' : ''}{stock.upside_pct.toFixed(0)}%
                 </Badge>
               </InfoTooltip>
             )}
+            
+            {/* Technical Signal with description */}
+            {stock.top_signal && <SignalBadge signal={stock.top_signal} />}
+            
+            {/* Win Rate - REMOVED: Strategy backtest win rate is misleading for dip stocks
+               Users think it means "% of similar dips recovered" but it's actually
+               "% of trades from a trading strategy were profitable" - different concept.
+               TODO: Replace with dip-specific metrics like dip recovery rate when available */}
             
             <div className="flex-1" />
             

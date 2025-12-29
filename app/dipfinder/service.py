@@ -20,12 +20,13 @@ from app.cache.cache import Cache
 from app.core.logging import get_logger
 from app.repositories import dipfinder_orm as dipfinder_repo
 from app.repositories import price_history_orm as price_history_repo
+from app.repositories import quant_scores_orm as quant_scores_repo
 from app.services.data_providers import get_yfinance_service
 
 from .config import DipFinderConfig, get_dipfinder_config
 from .dip import DipMetrics
 from .fundamentals import QualityMetrics, compute_quality_score, fetch_stock_info
-from .signal import DipSignal, compute_signal
+from .signal import DipSignal, QuantContext, compute_signal
 from .stability import StabilityMetrics, compute_stability_score
 
 
@@ -399,6 +400,19 @@ class DipFinderService:
         history_days = self.config.history_years * 365
         start_date = as_of_date - timedelta(days=history_days)
 
+        quant_score = await quant_scores_repo.get_quant_score(ticker)
+        if not quant_score:
+            logger.info(f"No quant score for {ticker}; skipping dipfinder signal")
+            return None
+
+        quant_context = QuantContext(
+            best_score=float(quant_score.best_score),
+            mode=quant_score.mode,
+            gate_pass=bool(quant_score.gate_pass),
+            fund_mom=float(quant_score.fund_mom) if quant_score.fund_mom is not None else None,
+            event_risk=bool(quant_score.event_risk),
+        )
+
         # Fetch prices
         prices = await self.price_provider.get_prices_batch(
             [ticker, benchmark],
@@ -454,6 +468,7 @@ class DipFinderService:
             stability_metrics=stability,
             as_of_date=as_of_date.isoformat(),
             config=self.config,
+            quant_context=quant_context,
         )
 
         return signal
@@ -468,25 +483,11 @@ class DipFinderService:
             if isinstance(as_of_date, str):
                 as_of_date = date.fromisoformat(as_of_date)
 
-            # Fetch ATH-based dip values from dip_state (source of truth)
-            dip_state = await dipfinder_repo.get_dip_state(signal.ticker)
-
-            # Use ATH-based values if available, otherwise fall back to computed values
-            if dip_state:
-                peak_stock = float(dip_state.ath_price)
-                dip_stock = float(dip_state.dip_percentage) / 100.0  # Convert to fraction
-                persist_days = (date.today() - dip_state.dip_start_date).days if dip_state.dip_start_date else 0
-                # Recalculate dip_score based on ATH dip
-                dip_score = min(100.0, dip_stock * 100 * 5)
-                # Recalculate final_score
-                final_score = (signal.quality_metrics.score + signal.stability_metrics.score + dip_score) / 3
-            else:
-                # Fallback to computed values
-                peak_stock = signal.dip_metrics.peak_price
-                dip_stock = signal.dip_metrics.dip_pct
-                persist_days = signal.dip_metrics.persist_days
-                dip_score = signal.dip_score
-                final_score = signal.final_score
+            peak_stock = signal.dip_metrics.peak_price
+            dip_stock = signal.dip_metrics.dip_pct
+            persist_days = signal.dip_metrics.persist_days
+            dip_score = signal.dip_score
+            final_score = signal.final_score
 
             await dipfinder_repo.save_signal(
                 ticker=signal.ticker,

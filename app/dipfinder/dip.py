@@ -280,14 +280,10 @@ def compute_dip_metrics(
     peak_idx_in_window = int(np.argmax(window_prices))
     days_since_peak = len(window_prices) - 1 - peak_idx_in_window
 
-    # Percentile (exclude current day from comparison)
-    dip_percentile = compute_dip_percentile(dip_series, current_dip, exclude_last=True)
+    # Use recent history for percentile/typical to keep window-consistent comparisons.
+    baseline_series = dip_series[-365:] if len(dip_series) >= 365 else dip_series
 
-    # Typical dip (use 365-day baseline if enough data, else use current window)
-    if len(close_prices) >= 365:
-        baseline_series = compute_dip_series_windowed(close_prices, 365)
-    else:
-        baseline_series = dip_series
+    dip_percentile = compute_dip_percentile(baseline_series, current_dip, exclude_last=True)
     typical_dip = compute_typical_dip(baseline_series)
 
     # Dip vs typical ratio

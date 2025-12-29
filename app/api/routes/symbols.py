@@ -933,6 +933,22 @@ class AgentVerdictResponse(BaseModel):
     avatar_url: str | None = None
 
 
+def _compute_signal_counts(verdicts: list[dict | AgentVerdictResponse]) -> tuple[int, int, int]:
+    """Compute bullish/bearish/neutral counts from verdicts."""
+    bullish = 0
+    bearish = 0
+    neutral = 0
+    for v in verdicts:
+        signal = v.get("signal") if isinstance(v, dict) else v.signal
+        if signal in ("strong_buy", "buy"):
+            bullish += 1
+        elif signal in ("strong_sell", "sell"):
+            bearish += 1
+        else:
+            neutral += 1
+    return bullish, bearish, neutral
+
+
 class AgentAnalysisResponse(BaseModel):
     """Complete agent analysis for a stock."""
     symbol: str
@@ -940,6 +956,9 @@ class AgentAnalysisResponse(BaseModel):
     overall_signal: str
     overall_confidence: int
     summary: str
+    bullish_count: int = 0
+    bearish_count: int = 0
+    neutral_count: int = 0
     analyzed_at: str | None = None
     expires_at: str | None = None
 
@@ -982,6 +1001,11 @@ async def get_agent_analysis_endpoint(
             if "verdicts" in analysis_resp:
                 for v in analysis_resp["verdicts"]:
                     v["avatar_url"] = get_avatar_url(v.get("agent_id", ""), personas_with_avatars)
+                # Compute signal counts from verdicts
+                bullish, bearish, neutral = _compute_signal_counts(analysis_resp["verdicts"])
+                analysis_resp["bullish_count"] = bullish
+                analysis_resp["bearish_count"] = bearish
+                analysis_resp["neutral_count"] = neutral
             return AgentAnalysisResponse(**analysis_resp)
 
     # Run new analysis
@@ -989,23 +1013,30 @@ async def get_agent_analysis_endpoint(
     if not result:
         raise NotFoundError(f"Could not generate agent analysis for {symbol}")
 
+    # Build verdict responses
+    verdict_responses = [
+        AgentVerdictResponse(
+            agent_id=v.agent_id,
+            agent_name=v.agent_name,
+            signal=v.signal,
+            confidence=v.confidence,
+            reasoning=v.reasoning,
+            key_factors=v.key_factors,
+            avatar_url=get_avatar_url(v.agent_id, personas_with_avatars),
+        )
+        for v in result.verdicts
+    ]
+    bullish, bearish, neutral = _compute_signal_counts(verdict_responses)
+
     return AgentAnalysisResponse(
         symbol=result.symbol,
-        verdicts=[
-            AgentVerdictResponse(
-                agent_id=v.agent_id,
-                agent_name=v.agent_name,
-                signal=v.signal,
-                confidence=v.confidence,
-                reasoning=v.reasoning,
-                key_factors=v.key_factors,
-                avatar_url=get_avatar_url(v.agent_id, personas_with_avatars),
-            )
-            for v in result.verdicts
-        ],
+        verdicts=verdict_responses,
         overall_signal=result.overall_signal,
         overall_confidence=result.overall_confidence,
         summary=result.summary,
+        bullish_count=bullish,
+        bearish_count=bearish,
+        neutral_count=neutral,
         analyzed_at=result.analyzed_at.isoformat() if result.analyzed_at else None,
     )
 
@@ -1038,23 +1069,30 @@ async def refresh_agent_analysis_endpoint(
 
     logger.info(f"Refreshed agent analysis for {symbol}: {result.overall_signal} ({result.overall_confidence}%)")
 
+    # Build verdict responses
+    verdict_responses = [
+        AgentVerdictResponse(
+            agent_id=v.agent_id,
+            agent_name=v.agent_name,
+            signal=v.signal,
+            confidence=v.confidence,
+            reasoning=v.reasoning,
+            key_factors=v.key_factors,
+            avatar_url=get_avatar_url(v.agent_id, personas_with_avatars),
+        )
+        for v in result.verdicts
+    ]
+    bullish, bearish, neutral = _compute_signal_counts(verdict_responses)
+
     return AgentAnalysisResponse(
         symbol=result.symbol,
-        verdicts=[
-            AgentVerdictResponse(
-                agent_id=v.agent_id,
-                agent_name=v.agent_name,
-                signal=v.signal,
-                confidence=v.confidence,
-                reasoning=v.reasoning,
-                key_factors=v.key_factors,
-                avatar_url=get_avatar_url(v.agent_id, personas_with_avatars),
-            )
-            for v in result.verdicts
-        ],
+        verdicts=verdict_responses,
         overall_signal=result.overall_signal,
         overall_confidence=result.overall_confidence,
         summary=result.summary,
+        bullish_count=bullish,
+        bearish_count=bearish,
+        neutral_count=neutral,
         analyzed_at=result.analyzed_at.isoformat() if result.analyzed_at else None,
     )
 
