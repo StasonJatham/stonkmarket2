@@ -204,6 +204,9 @@ async def get_dip_entry(
             volatility_regime="normal",  # Could be enhanced
             optimal_dip_threshold=float(precomputed.dip_entry_optimal_threshold),
             optimal_entry_price=float(precomputed.dip_entry_optimal_price) if precomputed.dip_entry_optimal_price else current_price,
+            max_profit_threshold=float(precomputed.dip_entry_max_profit_threshold) if precomputed.dip_entry_max_profit_threshold else 0.0,
+            max_profit_entry_price=float(precomputed.dip_entry_max_profit_price) if precomputed.dip_entry_max_profit_price else 0.0,
+            max_profit_total_return=float(precomputed.dip_entry_max_profit_total_return) if precomputed.dip_entry_max_profit_total_return else 0.0,
             is_buy_now=precomputed.dip_entry_is_buy_now,
             buy_signal_strength=float(precomputed.dip_entry_signal_strength) if precomputed.dip_entry_signal_strength else 0.0,
             signal_reason=precomputed.dip_entry_signal_reason or "",
