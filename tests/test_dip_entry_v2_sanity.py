@@ -57,9 +57,13 @@ def _analyze_results(symbol: str, result: OptimalDipEntry) -> dict:
     # Find stats for key thresholds
     stats_by_threshold = {s.threshold_pct: s for s in result.threshold_stats}
     
-    # Get primary metrics for optimal threshold
+    # Get primary metrics for optimal (risk-adjusted) threshold
     optimal = result.optimal_dip_threshold
     optimal_stats = stats_by_threshold.get(optimal)
+    
+    # Get max profit threshold stats
+    max_profit = result.max_profit_threshold
+    max_profit_stats = stats_by_threshold.get(max_profit)
     
     # Find shallow threshold stats for comparison
     shallow_thresholds = [-5, -6, -7, -8, -10]
@@ -71,6 +75,7 @@ def _analyze_results(symbol: str, result: OptimalDipEntry) -> dict:
     
     return {
         "symbol": symbol,
+        # Risk-adjusted optimal
         "optimal_threshold": optimal,
         "optimal_n_occurrences": optimal_stats.n_occurrences if optimal_stats else 0,
         "optimal_entry_score": optimal_stats.entry_score if optimal_stats else 0,
@@ -83,12 +88,22 @@ def _analyze_results(symbol: str, result: OptimalDipEntry) -> dict:
         "optimal_max_mae": optimal_stats.max_further_drawdown if optimal_stats else 0,
         "optimal_recovery_rate": optimal_stats.recovery_threshold_rate if optimal_stats else 0,
         "optimal_avg_return": optimal_stats.avg_returns.get(90, 0) if optimal_stats else 0,
+        "optimal_total_profit": optimal_stats.total_profit.get(90, 0) if optimal_stats else 0,
+        # Max profit threshold
+        "max_profit_threshold": max_profit,
+        "max_profit_n_occurrences": max_profit_stats.n_occurrences if max_profit_stats else 0,
+        "max_profit_avg_return": max_profit_stats.avg_returns.get(90, 0) if max_profit_stats else 0,
+        "max_profit_total_profit": result.max_profit_total_return,
+        "max_profit_avg_mae": max_profit_stats.avg_further_drawdown if max_profit_stats else 0,
+        "max_profit_recovery_rate": max_profit_stats.recovery_threshold_rate if max_profit_stats else 0,
+        # Shallow comparison
         "shallow_threshold": shallow_stats.threshold_pct if shallow_stats else None,
         "shallow_entry_score": shallow_stats.entry_score if shallow_stats else 0,
         "shallow_legacy_score": shallow_stats.legacy_entry_score if shallow_stats else 0,
         "shallow_continuation_risk": shallow_stats.continuation_risk if shallow_stats else "unknown",
         "shallow_prob_further_drop": shallow_stats.prob_further_drop if shallow_stats else 0,
         "shallow_avg_mae": shallow_stats.avg_further_drawdown if shallow_stats else 0,
+        # Meta
         "confidence": result.confidence,
         "data_years": result.data_years,
         "outlier_events": len(result.outlier_events),
@@ -105,26 +120,25 @@ def _print_analysis(analysis: dict, title: str):
     print("="*80)
     print(f"Current drawdown: {analysis['current_drawdown']:.1f}%")
     print(f"Is buy now: {analysis['is_buy_now']} (signal: {analysis['buy_signal_strength']:.1f})")
-    print(f"\nOptimal threshold: {analysis['optimal_threshold']:.0f}%")
-    print(f"  - Occurrences: {analysis['optimal_n_occurrences']}")
-    print(f"  - V2 entry score: {analysis['optimal_entry_score']:.1f}")
-    print(f"  - Legacy score:   {analysis['optimal_legacy_score']:.1f}")
-    print(f"  - Sharpe (90d):   {analysis['optimal_sharpe']:.2f}")
-    print(f"  - Sortino (90d):  {analysis['optimal_sortino']:.2f}")
-    print(f"  - Recovery rate:  {analysis['optimal_recovery_rate']:.1f}%")
-    print(f"  - Avg return:     {analysis['optimal_avg_return']:.1f}%")
-    print(f"  - Continuation:   {analysis['optimal_continuation_risk']}")
-    print(f"  - P(drop 10%+):   {analysis['optimal_prob_further_drop']:.1f}%")
-    print(f"  - Avg MAE:        {analysis['optimal_avg_mae']:.1f}%")
-    print(f"  - Max MAE:        {analysis['optimal_max_mae']:.1f}%")
     
-    if analysis['shallow_threshold']:
-        print(f"\nShallow threshold ({analysis['shallow_threshold']}%):")
-        print(f"  - V2 entry score: {analysis['shallow_entry_score']:.1f}")
-        print(f"  - Legacy score:   {analysis['shallow_legacy_score']:.1f}")
-        print(f"  - Continuation:   {analysis['shallow_continuation_risk']}")
-        print(f"  - P(drop 10%+):   {analysis['shallow_prob_further_drop']:.1f}%")
-        print(f"  - Avg MAE:        {analysis['shallow_avg_mae']:.1f}%")
+    # Risk-adjusted optimal (primary)
+    print(f"\n🎯 RISK-ADJUSTED OPTIMAL: {analysis['optimal_threshold']:.0f}%")
+    print(f"   (Less pain, better timing)")
+    print(f"  - Occurrences: {analysis['optimal_n_occurrences']}")
+    print(f"  - Avg return:     {analysis['optimal_avg_return']:.1f}%")
+    print(f"  - Total profit:   {analysis['optimal_total_profit']:.1f}%")
+    print(f"  - Recovery rate:  {analysis['optimal_recovery_rate']:.1f}%")
+    print(f"  - Avg MAE:        {analysis['optimal_avg_mae']:.1f}%")
+    print(f"  - Continuation:   {analysis['optimal_continuation_risk']}")
+    
+    # Max profit optimal (secondary)
+    print(f"\n💰 MAX PROFIT OPTIMAL: {analysis['max_profit_threshold']:.0f}%")
+    print(f"   (More opportunities, higher total return)")
+    print(f"  - Occurrences: {analysis['max_profit_n_occurrences']}")
+    print(f"  - Avg return:     {analysis['max_profit_avg_return']:.1f}%")
+    print(f"  - Total profit:   {analysis['max_profit_total_profit']:.1f}%")
+    print(f"  - Recovery rate:  {analysis['max_profit_recovery_rate']:.1f}%")
+    print(f"  - Avg MAE:        {analysis['max_profit_avg_mae']:.1f}%")
     
     print(f"\nData: {analysis['data_years']:.1f} years, {analysis['outlier_events']} outliers")
     print(f"Confidence: {analysis['confidence']}")
@@ -184,7 +198,8 @@ class TestDipEntryV2RealData:
             pytest.skip("Could not fetch HOOD data")
         
         optimizer = DipEntryOptimizer()
-        result = optimizer.analyze(df, "HOOD")
+        # Pass min_dip_threshold from "DB" - typical value is -10%
+        result = optimizer.analyze(df, "HOOD", min_dip_threshold=-10.0)
         
         analysis = _analyze_results("HOOD", result)
         _print_analysis(analysis, "HOOD - Volatile Fintech")
@@ -214,7 +229,8 @@ class TestDipEntryV2RealData:
             pytest.skip("Could not fetch META data")
         
         optimizer = DipEntryOptimizer()
-        result = optimizer.analyze(df, "META")
+        # Pass min_dip_threshold from "DB" - typical value is -10%
+        result = optimizer.analyze(df, "META", min_dip_threshold=-10.0)
         
         analysis = _analyze_results("META", result)
         _print_analysis(analysis, "META - Large Cap Growth")
@@ -238,7 +254,8 @@ class TestDipEntryV2RealData:
             pytest.skip("Could not fetch NVDA data")
         
         optimizer = DipEntryOptimizer()
-        result = optimizer.analyze(df, "NVDA")
+        # Pass min_dip_threshold from "DB" - typical value is -10%
+        result = optimizer.analyze(df, "NVDA", min_dip_threshold=-10.0)
         
         analysis = _analyze_results("NVDA", result)
         _print_analysis(analysis, "NVDA - AI Growth")
@@ -261,7 +278,8 @@ class TestDipEntryV2RealData:
             pytest.skip("Could not fetch BAC data")
         
         optimizer = DipEntryOptimizer()
-        result = optimizer.analyze(df, "BAC")
+        # Pass min_dip_threshold from "DB" - typical value is -10%
+        result = optimizer.analyze(df, "BAC", min_dip_threshold=-10.0)
         
         analysis = _analyze_results("BAC", result)
         _print_analysis(analysis, "BAC - Stable Bank")
@@ -285,7 +303,8 @@ class TestDipEntryV2RealData:
             pytest.skip("Could not fetch QQQ data")
         
         optimizer = DipEntryOptimizer()
-        result = optimizer.analyze(df, "QQQ")
+        # Pass min_dip_threshold from "DB" - typical value is -10%
+        result = optimizer.analyze(df, "QQQ", min_dip_threshold=-10.0)
         
         analysis = _analyze_results("QQQ", result)
         _print_analysis(analysis, "QQQ - Nasdaq-100 ETF")
@@ -309,7 +328,8 @@ class TestDipEntryV2RealData:
             pytest.skip("Could not fetch NFLX data")
         
         optimizer = DipEntryOptimizer()
-        result = optimizer.analyze(df, "NFLX")
+        # Pass min_dip_threshold from "DB" - typical value is -10%
+        result = optimizer.analyze(df, "NFLX", min_dip_threshold=-10.0)
         
         analysis = _analyze_results("NFLX", result)
         _print_analysis(analysis, "NFLX - Streaming")
@@ -337,7 +357,8 @@ class TestDipEntryV2RealData:
                 continue
             
             optimizer = DipEntryOptimizer()
-            result = optimizer.analyze(df, symbol)
+            # Pass min_dip_threshold from "DB" - typical value is -10%
+            result = optimizer.analyze(df, symbol, min_dip_threshold=-10.0)
             analysis = _analyze_results(symbol, result)
             results.append(analysis)
         
@@ -391,7 +412,8 @@ class TestDipEntryV2ApiOutput:
             pytest.skip("Could not fetch SPY data")
         
         optimizer = DipEntryOptimizer()
-        result = optimizer.analyze(df, "SPY")
+        # Pass min_dip_threshold from "DB" - typical value is -10%
+        result = optimizer.analyze(df, "SPY", min_dip_threshold=-10.0)
         
         summary = get_dip_summary(result)
         
