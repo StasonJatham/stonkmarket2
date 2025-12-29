@@ -771,6 +771,7 @@ class TestFullSignalFlow:
 # ===========================================================================
 
 
+@pytest.mark.integration
 @pytest.mark.slow
 class TestRealYFinanceData:
     """Tests that validate calculations using real yfinance data.

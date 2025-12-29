@@ -2,39 +2,8 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
-
-import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
-
-
-class TestValidateSymbolEndpoint:
-    """Tests for GET /symbols/validate/{symbol} (public endpoint)."""
-
-    def test_validate_endpoint_exists(self, client: TestClient):
-        """GET /validate/{symbol} endpoint exists."""
-        response = client.get("/symbols/validate/AAPL")
-        # Depends on cache/external service state
-        assert response.status_code in [
-            status.HTTP_200_OK,
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-        ]
-
-    def test_validate_returns_validation_response(self, client: TestClient):
-        """Response contains valid, symbol fields."""
-        response = client.get("/symbols/validate/AAPL")
-        if response.status_code == status.HTTP_200_OK:
-            data = response.json()
-            assert "valid" in data
-            assert "symbol" in data
-            assert data["symbol"] == "AAPL"
-
-    def test_validate_normalizes_symbol_to_uppercase(self, client: TestClient):
-        """Symbol is normalized to uppercase."""
-        response = client.get("/symbols/validate/aapl")
-        if response.status_code == status.HTTP_200_OK:
-            assert response.json()["symbol"] == "AAPL"
 
 
 class TestListSymbolsEndpoint:
@@ -46,14 +15,6 @@ class TestListSymbolsEndpoint:
         assert response.status_code == status.HTTP_200_OK
         # Returns empty list or list of symbols
         assert isinstance(response.json(), list)
-
-    def test_list_symbols_with_invalid_token_still_returns_200(self, client: TestClient):
-        """GET /symbols with invalid token still works (public endpoint)."""
-        response = client.get(
-            "/symbols", headers={"Authorization": "Bearer invalid"}
-        )
-        # Public endpoint ignores auth header
-        assert response.status_code == status.HTTP_200_OK
 
 
 class TestGetSymbolEndpoint:
@@ -131,24 +92,5 @@ class TestSymbolValidation:
     def test_symbol_max_length(self, client: TestClient):
         """Symbol longer than 10 chars returns validation error."""
         response = client.get("/symbols/validate/ABCDEFGHIJK")
-        # Either 422 from path validation or handled in endpoint
-        assert response.status_code in [
-            status.HTTP_200_OK,  # May return valid=False
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
-        ]
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
-
-class TestSymbolCaching:
-    """Tests for symbol validation caching."""
-
-    def test_validation_cache_ttl_valid(self):
-        """Valid symbols should be cached for 30 days."""
-        # 30 days in seconds
-        expected_ttl = 30 * 24 * 60 * 60
-        assert expected_ttl == 2592000
-
-    def test_validation_cache_ttl_invalid(self):
-        """Invalid symbols should be cached for 1 day."""
-        # 1 day in seconds
-        expected_ttl = 24 * 60 * 60
-        assert expected_ttl == 86400

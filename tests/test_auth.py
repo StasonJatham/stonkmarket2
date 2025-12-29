@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
-
 import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
@@ -27,18 +25,18 @@ class TestLoginEndpoint:
         response = client.post("/auth/login", json={"username": "test", "password": ""})
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
-    def test_login_with_nonexistent_user_returns_401(self, client: TestClient):
+    def test_login_with_nonexistent_user_returns_401(self, client: TestClient, monkeypatch):
         """Login with non-existent user returns authentication error."""
-        # Note: Without mocking the database, this may fail with connection errors
-        # This test validates the endpoint exists and rejects invalid credentials
+        async def fake_get_user(username: str):
+            return None
+
+        from app.api.routes import auth as auth_routes
+
+        monkeypatch.setattr(auth_routes.auth_repo, "get_user", fake_get_user)
         response = client.post(
             "/auth/login", json={"username": "nonexistent_user_xyz", "password": "test"}
         )
-        # May be 401 (auth failed) or 500 (db connection) depending on environment
-        assert response.status_code in [
-            status.HTTP_401_UNAUTHORIZED,
-            status.HTTP_500_INTERNAL_SERVER_ERROR,
-        ]
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
 
 class TestLogoutEndpoint:

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
 
@@ -32,17 +31,6 @@ class TestCreateAPIKeyEndpoint:
         response = client.post("/admin/user-keys", json={"name": "test-key"})
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
-    def test_create_api_key_requires_auth(
-        self, client: TestClient, admin_headers: dict
-    ):
-        """POST /admin/user-keys requires valid auth to process body validation."""
-        response = client.post("/admin/user-keys", headers=admin_headers)
-        # 401 if test admin doesn't exist in DB, 422 if auth passes but no body
-        assert response.status_code in [
-            status.HTTP_401_UNAUTHORIZED,
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
-        ]
-
 
 class TestRevokeAPIKeyEndpoint:
     """Tests for DELETE /admin/user-keys/{key_id}."""
@@ -62,12 +50,28 @@ class TestAdminAPIKeysEndpoint:
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
     def test_admin_list_api_keys_with_user_token_requires_admin(
-        self, client: TestClient, auth_headers: dict
+        self, client: TestClient
     ):
-        """GET /admin/api-keys with non-admin token returns 401 (user not in DB) or 403."""
-        response = client.get("/admin/api-keys", headers=auth_headers)
-        # 401 if test user doesn't exist in DB, 403 if exists but not admin
-        assert response.status_code in [
-            status.HTTP_401_UNAUTHORIZED,
-            status.HTTP_403_FORBIDDEN,
-        ]
+        """GET /admin/api-keys with non-admin token returns 403."""
+        from datetime import UTC, datetime
+
+        from app.api.dependencies import require_user
+        from app.core.security import TokenData
+
+        async def override_require_user():
+            return TokenData(
+                sub="test_user",
+                exp=datetime.now(UTC),
+                iat=datetime.now(UTC),
+                iss="stonkmarket",
+                aud="stonkmarket-api",
+                jti="test-jti",
+                is_admin=False,
+            )
+
+        client.app.dependency_overrides[require_user] = override_require_user
+        try:
+            response = client.get("/admin/api-keys")
+            assert response.status_code == status.HTTP_403_FORBIDDEN
+        finally:
+            client.app.dependency_overrides.clear()

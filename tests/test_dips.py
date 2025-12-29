@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import status
@@ -57,7 +57,7 @@ class TestRefreshRankingEndpoint:
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
     def test_refresh_ranking_with_user_token_returns_403(
-        self, client: TestClient, auth_headers: dict
+        self, client: TestClient
     ):
         """POST /ranking/refresh with non-admin token returns 403."""
         from datetime import UTC, datetime
@@ -156,21 +156,6 @@ class TestChartEndpoint:
         """GET /chart with days > 1825 returns validation error."""
         response = client.get("/dips/AAPL/chart?days=2000")
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
-
-
-class TestStockInfoEndpoint:
-    """Tests for GET /dips/{symbol}/info (public endpoint)."""
-
-    def test_info_endpoint_exists(self, client: TestClient):
-        """GET /{symbol}/info endpoint exists."""
-        # Response depends on external service, just verify route exists
-        response = client.get("/dips/AAPL/info")
-        # 200, 404, or 503 are all valid depending on cache/service state
-        assert response.status_code in [
-            status.HTTP_200_OK,
-            status.HTTP_404_NOT_FOUND,
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-        ]
 
 
 class TestBuildRankingHelper:

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
 
@@ -35,19 +34,34 @@ class TestUpdateCronJobEndpoint:
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
     def test_update_cronjob_with_user_token_requires_admin(
-        self, client: TestClient, auth_headers: dict
+        self, client: TestClient
     ):
-        """PUT /cronjobs/{name} with non-admin token returns 401 or 403."""
-        response = client.put(
-            "/cronjobs/data_grab",
-            json={"cron": "0 23 * * 1-5"},
-            headers=auth_headers,
-        )
-        # 401 if test user doesn't exist in DB, 403 if exists but not admin
-        assert response.status_code in [
-            status.HTTP_401_UNAUTHORIZED,
-            status.HTTP_403_FORBIDDEN,
-        ]
+        """PUT /cronjobs/{name} with non-admin token returns 403."""
+        from datetime import UTC, datetime
+
+        from app.api.dependencies import require_user
+        from app.core.security import TokenData
+
+        async def override_require_user():
+            return TokenData(
+                sub="test_user",
+                exp=datetime.now(UTC),
+                iat=datetime.now(UTC),
+                iss="stonkmarket",
+                aud="stonkmarket-api",
+                jti="test-jti",
+                is_admin=False,
+            )
+
+        client.app.dependency_overrides[require_user] = override_require_user
+        try:
+            response = client.put(
+                "/cronjobs/data_grab",
+                json={"cron": "0 23 * * 1-5"},
+            )
+            assert response.status_code == status.HTTP_403_FORBIDDEN
+        finally:
+            client.app.dependency_overrides.clear()
 
 
 class TestRunCronJobEndpoint:
@@ -59,18 +73,31 @@ class TestRunCronJobEndpoint:
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
     def test_run_cronjob_with_user_token_requires_admin(
-        self, client: TestClient, auth_headers: dict
+        self, client: TestClient
     ):
-        """POST /cronjobs/{name}/run with non-admin token returns 401 or 403."""
-        response = client.post(
-            "/cronjobs/data_grab/run",
-            headers=auth_headers,
-        )
-        # 401 if test user doesn't exist in DB, 403 if exists but not admin
-        assert response.status_code in [
-            status.HTTP_401_UNAUTHORIZED,
-            status.HTTP_403_FORBIDDEN,
-        ]
+        """POST /cronjobs/{name}/run with non-admin token returns 403."""
+        from datetime import UTC, datetime
+
+        from app.api.dependencies import require_user
+        from app.core.security import TokenData
+
+        async def override_require_user():
+            return TokenData(
+                sub="test_user",
+                exp=datetime.now(UTC),
+                iat=datetime.now(UTC),
+                iss="stonkmarket",
+                aud="stonkmarket-api",
+                jti="test-jti",
+                is_admin=False,
+            )
+
+        client.app.dependency_overrides[require_user] = override_require_user
+        try:
+            response = client.post("/cronjobs/data_grab/run")
+            assert response.status_code == status.HTTP_403_FORBIDDEN
+        finally:
+            client.app.dependency_overrides.clear()
 
 
 class TestCronLogsEndpoint:
@@ -82,12 +109,28 @@ class TestCronLogsEndpoint:
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
     def test_logs_with_user_token_requires_admin(
-        self, client: TestClient, auth_headers: dict
+        self, client: TestClient
     ):
-        """GET /cronjobs/logs with non-admin token returns 401 or 403."""
-        response = client.get("/cronjobs/logs/all", headers=auth_headers)
-        # 401 if test user doesn't exist in DB, 403 if exists but not admin
-        assert response.status_code in [
-            status.HTTP_401_UNAUTHORIZED,
-            status.HTTP_403_FORBIDDEN,
-        ]
+        """GET /cronjobs/logs with non-admin token returns 403."""
+        from datetime import UTC, datetime
+
+        from app.api.dependencies import require_user
+        from app.core.security import TokenData
+
+        async def override_require_user():
+            return TokenData(
+                sub="test_user",
+                exp=datetime.now(UTC),
+                iat=datetime.now(UTC),
+                iss="stonkmarket",
+                aud="stonkmarket-api",
+                jti="test-jti",
+                is_admin=False,
+            )
+
+        client.app.dependency_overrides[require_user] = override_require_user
+        try:
+            response = client.get("/cronjobs/logs/all")
+            assert response.status_code == status.HTTP_403_FORBIDDEN
+        finally:
+            client.app.dependency_overrides.clear()

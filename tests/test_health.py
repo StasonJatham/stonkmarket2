@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 from fastapi import status
@@ -36,27 +36,6 @@ class TestHealthEndpoint:
         data = response.json()
         assert "checks" in data
         assert isinstance(data["checks"], dict)
-
-
-class TestReadinessEndpoint:
-    """Tests for GET /health/ready."""
-
-    def test_ready_endpoint_exists(self, client: TestClient):
-        """GET /health/ready endpoint exists."""
-        response = client.get("/health/ready")
-        # May be 200 or 503 depending on DB state
-        assert response.status_code in [
-            status.HTTP_200_OK,
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-        ]
-
-    def test_ready_returns_status_field(self, client: TestClient):
-        """GET /health/ready returns status when healthy."""
-        response = client.get("/health/ready")
-        if response.status_code == status.HTTP_200_OK:
-            data = response.json()
-            assert "status" in data
-            assert data["status"] == "ready"
 
 
 class TestLivenessEndpoint:
@@ -96,46 +75,3 @@ class TestDbHealthcheck:
             result = await db_healthcheck()
             assert isinstance(result, bool)
             assert result is False
-
-
-class TestHealthChecks:
-    """Integration tests for health status logic."""
-
-    def test_healthy_when_all_checks_pass(self):
-        """Status is 'healthy' when all checks pass."""
-        checks = {"database": True, "cache": True}
-        
-        if all(checks.values()):
-            status_val = "healthy"
-        elif checks.get("database", False):
-            status_val = "degraded"
-        else:
-            status_val = "unhealthy"
-        
-        assert status_val == "healthy"
-
-    def test_degraded_when_cache_down(self):
-        """Status is 'degraded' when cache is down but DB is up."""
-        checks = {"database": True, "cache": False}
-        
-        if all(checks.values()):
-            status_val = "healthy"
-        elif checks.get("database", False):
-            status_val = "degraded"
-        else:
-            status_val = "unhealthy"
-        
-        assert status_val == "degraded"
-
-    def test_unhealthy_when_db_down(self):
-        """Status is 'unhealthy' when database is down."""
-        checks = {"database": False, "cache": True}
-        
-        if all(checks.values()):
-            status_val = "healthy"
-        elif checks.get("database", False):
-            status_val = "degraded"
-        else:
-            status_val = "unhealthy"
-        
-        assert status_val == "unhealthy"

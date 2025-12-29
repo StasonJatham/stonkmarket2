@@ -17,7 +17,6 @@ from datetime import datetime
 
 from app.quant_engine.dip_entry_optimizer import (
     DipEntryOptimizer,
-    DipOptimizerConfig,
     OptimalDipEntry,
     get_dip_summary,
 )
@@ -82,7 +81,7 @@ def _analyze_results(symbol: str, result: OptimalDipEntry) -> dict:
         "optimal_prob_further_drop": optimal_stats.prob_further_drop if optimal_stats else 0,
         "optimal_avg_mae": optimal_stats.avg_further_drawdown if optimal_stats else 0,
         "optimal_max_mae": optimal_stats.max_further_drawdown if optimal_stats else 0,
-        "optimal_win_rate": optimal_stats.win_rates.get(90, 0) if optimal_stats else 0,
+        "optimal_recovery_rate": optimal_stats.recovery_threshold_rate if optimal_stats else 0,
         "optimal_avg_return": optimal_stats.avg_returns.get(90, 0) if optimal_stats else 0,
         "shallow_threshold": shallow_stats.threshold_pct if shallow_stats else None,
         "shallow_entry_score": shallow_stats.entry_score if shallow_stats else 0,
@@ -112,7 +111,7 @@ def _print_analysis(analysis: dict, title: str):
     print(f"  - Legacy score:   {analysis['optimal_legacy_score']:.1f}")
     print(f"  - Sharpe (90d):   {analysis['optimal_sharpe']:.2f}")
     print(f"  - Sortino (90d):  {analysis['optimal_sortino']:.2f}")
-    print(f"  - Win rate (90d): {analysis['optimal_win_rate']:.1f}%")
+    print(f"  - Recovery rate:  {analysis['optimal_recovery_rate']:.1f}%")
     print(f"  - Avg return:     {analysis['optimal_avg_return']:.1f}%")
     print(f"  - Continuation:   {analysis['optimal_continuation_risk']}")
     print(f"  - P(drop 10%+):   {analysis['optimal_prob_further_drop']:.1f}%")
@@ -133,29 +132,30 @@ def _print_analysis(analysis: dict, title: str):
 
 def _print_threshold_table(result: OptimalDipEntry):
     """Print a comparison table of all thresholds."""
-    print("\n" + "-"*100)
-    print(f"{'Threshold':>10} {'N':>5} {'V2 Score':>10} {'Legacy':>10} {'Sharpe':>8} "
-          f"{'WinRate':>8} {'Cont.Risk':>10} {'AvgMAE':>8} {'P(drop)':>8}")
-    print("-"*100)
+    print("\n" + "-"*130)
+    print(f"{'Threshold':>10} {'N':>5} {'AvgRet':>8} {'TotalProfit':>12} {'Recovery':>8} "
+          f"{'DaysToRec':>10} {'Velocity':>10} {'AvgMAE':>8} {'V2 Score':>10}")
+    print("-"*130)
     
     for stats in sorted(result.threshold_stats, key=lambda s: s.threshold_pct, reverse=True):
         if stats.n_occurrences == 0:
             continue
-        sharpe = stats.sharpe_ratios.get(90, 0)
-        win_rate = stats.win_rates.get(90, 0)
+        recovery_rate = stats.recovery_threshold_rate
+        avg_return = stats.avg_returns.get(90, 0)
+        total_profit = stats.total_profit.get(90, 0)
         print(
             f"{stats.threshold_pct:>10.0f}% "
             f"{stats.n_occurrences:>5} "
-            f"{stats.entry_score:>10.1f} "
-            f"{stats.legacy_entry_score:>10.1f} "
-            f"{sharpe:>8.2f} "
-            f"{win_rate:>7.1f}% "
-            f"{stats.continuation_risk:>10} "
+            f"{avg_return:>7.1f}% "
+            f"{total_profit:>11.1f}% "
+            f"{recovery_rate:>7.1f}% "
+            f"{stats.avg_days_to_threshold:>9.0f}d "
+            f"{stats.avg_recovery_velocity:>9.2f} "
             f"{stats.avg_further_drawdown:>7.1f}% "
-            f"{stats.prob_further_drop:>7.1f}%"
+            f"{stats.entry_score:>10.1f}"
         )
     
-    print("-"*100)
+    print("-"*130)
     print(f"OPTIMAL: {result.optimal_dip_threshold:.0f}%")
 
 

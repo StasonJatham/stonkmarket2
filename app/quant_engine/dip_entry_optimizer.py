@@ -80,7 +80,8 @@ class DipOptimizerConfig:
     
     # Lookback and recovery
     lookback_years: int = 5
-    recovery_max_days: int = 180
+    max_recovery_days: int = 90  # Max days we're willing to wait for recovery
+    recovery_win_threshold: float = 80.0  # 80% = recovered 80% of the drop counts as "win"
     min_dips_for_stats: int = 2
     
     # Confidence thresholds
@@ -114,7 +115,12 @@ class DipEvent:
     # Recovery info
     recovered: bool = False
     recovery_date: datetime | None = None
-    recovery_days: int | None = None
+    recovery_days: int | None = None  # Days to FULL (100%) recovery
+    recovery_pct: float = 0.0  # What % of the dip was recovered within max_recovery_days
+    
+    # Dynamic recovery tracking - how fast did it recover?
+    days_to_threshold_recovery: int | None = None  # Days to hit recovery_win_threshold %
+    recovery_velocity: float = 0.0  # recovery_pct / days (higher = faster bounce)
     
     # Returns if bought at entry (keyed by holding period days)
     returns: dict[int, float | None] = field(default_factory=dict)  # {30: 5.2, 60: 8.1, 90: 12.3}
@@ -171,7 +177,18 @@ class DipThresholdStats:
     
     # Returns from buying at dip (keyed by holding period)
     avg_returns: dict[int, float] = field(default_factory=dict)  # {30: 5.2, 60: 8.1, 90: 12.3}
+    total_profit: dict[int, float] = field(default_factory=dict)  # N × avg_return for each period
     win_rates: dict[int, float] = field(default_factory=dict)  # {30: 60.0, 60: 70.0, 90: 75.0}
+    
+    # Recovery-based metrics (more meaningful than raw win rate)
+    # recovery_threshold_rate uses config.recovery_win_threshold (default 80%)
+    recovery_threshold_rate: float = 0.0  # % that recovered at least X% of the drop
+    full_recovery_rate: float = 0.0  # % that fully recovered to peak (100%)
+    avg_recovery_pct: float = 0.0  # Average recovery percentage
+    
+    # Dynamic recovery metrics - how FAST does it recover?
+    avg_days_to_threshold: float = 0.0  # Avg days to hit recovery threshold
+    avg_recovery_velocity: float = 0.0  # Avg recovery_pct / days (higher = faster)
     
     # Legacy compatibility
     @property
@@ -248,9 +265,16 @@ class OptimalDipEntry:
     recent_high: float = 0.0
     current_drawdown_pct: float = 0.0
     
-    # Optimal levels
-    optimal_dip_threshold: float = 0.0  # Best dip % to buy at
+    # Risk-adjusted optimal (less pain, better timing)
+    # This is the PRIMARY recommendation - minimizes MAE while maximizing quality
+    optimal_dip_threshold: float = 0.0  # Best risk-adjusted dip %
     optimal_entry_price: float = 0.0  # Price to set buy order
+    
+    # Max profit optimal (more opportunities, higher total return)
+    # Secondary recommendation - maximizes total expected profit
+    max_profit_threshold: float = 0.0  # Best total profit dip %
+    max_profit_entry_price: float = 0.0  # Price for max profit strategy
+    max_profit_total_return: float = 0.0  # Expected total return from this threshold
     
     # Current recommendation
     is_buy_now: bool = False
@@ -320,14 +344,14 @@ class DipEntryOptimizer:
         config: DipOptimizerConfig | None = None,
         # Legacy parameters for backward compatibility
         lookback_years: int | None = None,
-        recovery_max_days: int | None = None,
+        max_recovery_days: int | None = None,
         min_dips_for_stats: int | None = None,
     ):
         """
         Args:
             config: Configuration object with all parameters
             lookback_years: (Legacy) Years of history to analyze
-            recovery_max_days: (Legacy) Max days to consider for recovery
+            max_recovery_days: (Legacy) Max days to wait for recovery
             min_dips_for_stats: (Legacy) Minimum dip occurrences for valid stats
         """
         self.config = config or DipOptimizerConfig()
@@ -335,14 +359,14 @@ class DipEntryOptimizer:
         # Apply legacy overrides if provided
         if lookback_years is not None:
             self.config.lookback_years = lookback_years
-        if recovery_max_days is not None:
-            self.config.recovery_max_days = recovery_max_days
+        if max_recovery_days is not None:
+            self.config.max_recovery_days = max_recovery_days
         if min_dips_for_stats is not None:
             self.config.min_dips_for_stats = min_dips_for_stats
         
         # Shortcuts for frequently used config values
         self.lookback_years = self.config.lookback_years
-        self.recovery_max_days = self.config.recovery_max_days
+        self.max_recovery_days = self.config.max_recovery_days
         self.min_dips_for_stats = self.config.min_dips_for_stats
     
     def analyze(
@@ -352,6 +376,7 @@ class DipEntryOptimizer:
         fundamentals: dict | None = None,
         earnings_dates: list[datetime] | None = None,
         dividend_dates: list[datetime] | None = None,
+        min_dip_threshold: float | None = None,
     ) -> OptimalDipEntry:
         """
         Analyze a stock to find optimal dip entry points.
@@ -362,11 +387,16 @@ class DipEntryOptimizer:
             fundamentals: Dict with PE, FCF, debt ratios, etc.
             earnings_dates: List of earnings announcement dates
             dividend_dates: List of ex-dividend dates (opportunity windows)
+            min_dip_threshold: Minimum dip % from symbol config in DB (e.g., -10.0)
+                              If None, uses config.min_optimal_threshold
         
         Returns:
             OptimalDipEntry with recommendations and analysis
         """
         logger.info(f"Analyzing dip entry points for {symbol}")
+        
+        # Use symbol-specific min threshold if provided, otherwise config default
+        effective_min_threshold = min_dip_threshold if min_dip_threshold is not None else self.config.min_optimal_threshold
         
         # Prepare data
         df = self._prepare_data(df)
@@ -387,16 +417,22 @@ class DipEntryOptimizer:
             if stats.n_occurrences >= self.min_dips_for_stats:
                 threshold_stats.append(stats)
         
-        # Find optimal threshold (using new risk-adjusted scoring)
+        # Find RISK-ADJUSTED optimal threshold (less pain, better timing)
         optimal = self._find_optimal_threshold(threshold_stats)
+        
+        # Find MAX PROFIT threshold (respects symbol's min_dip_threshold from DB)
+        max_profit_threshold, max_profit_total = self._find_max_profit_threshold(
+            threshold_stats, effective_min_threshold
+        )
         
         # Current state analysis
         current_price = float(df["close"].iloc[-1])
         recent_high = float(df["close"].rolling(252).max().iloc[-1])  # 1-year high
         current_drawdown = (current_price / recent_high - 1) * 100
         
-        # Calculate entry price
+        # Calculate entry prices for both strategies
         optimal_entry_price = recent_high * (1 + optimal / 100) if optimal else current_price * 0.9
+        max_profit_entry_price = recent_high * (1 + max_profit_threshold / 100)
         
         # Determine if now is a buy (using new risk-adjusted logic)
         is_buy_now, signal_strength, reason, cont_risk = self._evaluate_current_opportunity(
@@ -436,8 +472,14 @@ class DipEntryOptimizer:
             current_price=current_price,
             recent_high=recent_high,
             current_drawdown_pct=current_drawdown,
+            # Risk-adjusted optimal (primary recommendation)
             optimal_dip_threshold=optimal,
             optimal_entry_price=optimal_entry_price,
+            # Max profit optimal (secondary recommendation)
+            max_profit_threshold=max_profit_threshold,
+            max_profit_entry_price=max_profit_entry_price,
+            max_profit_total_return=max_profit_total,
+            # Current opportunity
             is_buy_now=is_buy_now,
             buy_signal_strength=signal_strength,
             signal_reason=reason,
@@ -586,11 +628,49 @@ class DipEntryOptimizer:
         max_adverse_excursion = ((min_price_after / entry_price) - 1) * 100  # Negative %
         further_drop_pct = abs(max_adverse_excursion)  # Positive number for easier comparison
         
-        # Recovery calculation
-        future_close = close.iloc[cross_idx + 1:]
-        recovered = any(future_close >= peak_price)
+        # Recovery calculation - both full recovery and recovery percentage
+        # Use configurable max_recovery_days instead of full holding period
+        recovery_end_idx = min(cross_idx + self.config.max_recovery_days, len(close))
+        future_close = close.iloc[cross_idx + 1:recovery_end_idx]
+        recovered = any(future_close >= peak_price) if len(future_close) > 0 else False
         recovery_days = None
         recovery_date = None
+        
+        # Calculate recovery percentage: how much of the dip was recovered?
+        # If price dropped from 100 to 80 (peak to entry), and recovered to 95,
+        # that's recovering 15 of the 20 point drop = 75% recovery
+        dip_size = peak_price - entry_price  # The size of the drop
+        recovery_prices = close.iloc[cross_idx:recovery_end_idx]
+        max_price_after = float(recovery_prices.max()) if len(recovery_prices) > 0 else entry_price
+        
+        # Track day-by-day recovery to find when threshold was hit
+        days_to_threshold_recovery = None
+        recovery_threshold = self.config.recovery_win_threshold
+        
+        if dip_size > 0:
+            recovery_amount = max_price_after - entry_price
+            recovery_pct = min(100.0, (recovery_amount / dip_size) * 100)
+            
+            # Find first day that hit recovery threshold
+            for day_offset in range(1, len(recovery_prices)):
+                price_at_day = recovery_prices.iloc[day_offset]
+                day_recovery_pct = ((price_at_day - entry_price) / dip_size) * 100
+                if day_recovery_pct >= recovery_threshold:
+                    days_to_threshold_recovery = day_offset
+                    break
+        else:
+            recovery_pct = 100.0 if max_price_after >= peak_price else 0.0
+        
+        # Recovery velocity = how fast it recovered (% per day)
+        # Higher is better - recovering 60% in 10 days (6%/day) beats 80% in 80 days (1%/day)
+        if days_to_threshold_recovery and days_to_threshold_recovery > 0:
+            # Velocity based on reaching threshold
+            recovery_velocity = recovery_threshold / days_to_threshold_recovery
+        elif recovery_pct > 0:
+            # Fallback: use final recovery_pct over max_recovery_days
+            recovery_velocity = recovery_pct / self.config.max_recovery_days
+        else:
+            recovery_velocity = 0.0
         
         if recovered:
             recovery_mask = future_close >= peak_price
@@ -622,8 +702,11 @@ class DipEntryOptimizer:
             max_adverse_excursion=max_adverse_excursion,
             further_drop_pct=further_drop_pct,
             recovered=recovered,
+            recovery_pct=recovery_pct,
             recovery_date=recovery_date,
             recovery_days=recovery_days,
+            days_to_threshold_recovery=days_to_threshold_recovery,
+            recovery_velocity=recovery_velocity,
             returns=returns,
             max_return=max_return,
             volatility_percentile=vol_percentile,
@@ -699,92 +782,6 @@ class DipEntryOptimizer:
         
         return regular_events, outlier_events
     
-    def _find_all_dips(
-        self,
-        df: pd.DataFrame,
-        earnings_dates: list[datetime] | None = None,
-        dividend_dates: list[datetime] | None = None,
-    ) -> list[DipEvent]:
-        """
-        LEGACY: Find all significant dip events using trough-based detection.
-        Kept for backward compatibility. Use _find_threshold_crossings() instead.
-        """
-        dip_events = []
-        
-        # Get local minima in drawdown (significant dips)
-        drawdown = df["drawdown"]
-        close = df["close"]
-        
-        # Find dip troughs (local minima)
-        for i in range(5, len(df) - 1):
-            current_dd = drawdown.iloc[i]
-            
-            # Is this a local minimum? (dip trough)
-            if current_dd <= -5:  # At least 5% dip
-                # Check if it's a local minimum
-                window_before = drawdown.iloc[max(0, i-5):i]
-                window_after = drawdown.iloc[i+1:min(len(df), i+6)]
-                
-                if len(window_after) > 0:
-                    is_local_min = (
-                        current_dd <= window_before.min() and
-                        current_dd < window_after.min()
-                    )
-                    
-                    if is_local_min:
-                        dip_date = df.index[i] if hasattr(df.index[i], 'date') else datetime.now()
-                        dip_price = float(close.iloc[i])
-                        peak_price = float(df["rolling_max"].iloc[i])
-                        
-                        # Calculate recovery
-                        future_close = close.iloc[i+1:]
-                        recovered = any(future_close >= peak_price)
-                        recovery_idx = None
-                        if recovered:
-                            recovery_mask = future_close >= peak_price
-                            if recovery_mask.any():
-                                recovery_idx = recovery_mask.idxmax()
-                                recovery_days = (recovery_idx - df.index[i]).days if hasattr(recovery_idx, 'days') else int(recovery_mask.argmax())
-                            else:
-                                recovery_days = None
-                        else:
-                            recovery_days = None
-                        
-                        # Returns after N days
-                        return_30d = self._calc_future_return(close, i, 30)
-                        return_60d = self._calc_future_return(close, i, 60)
-                        return_90d = self._calc_future_return(close, i, 90)
-                        max_return = self._calc_max_return(close, i, 180)
-                        
-                        # Volatility percentile
-                        vol_percentile = self._calc_vol_percentile(df, i)
-                        
-                        # Near earnings? (risk - volatility spike around earnings)
-                        near_earnings = self._is_near_event(dip_date, earnings_dates)
-                        
-                        # Near dividend? (opportunity - can capture dividend)
-                        near_dividend = self._is_near_event(dip_date, dividend_dates)
-                        
-                        event = DipEvent(
-                            dip_date=dip_date if isinstance(dip_date, datetime) else datetime.now(),
-                            dip_price=dip_price,
-                            peak_price=peak_price,
-                            drawdown_pct=current_dd,
-                            recovered=recovered,
-                            recovery_date=recovery_idx if isinstance(recovery_idx, datetime) else None,
-                            recovery_days=recovery_days if isinstance(recovery_days, int) else None,
-                            return_30d=return_30d,
-                            return_60d=return_60d,
-                            return_90d=return_90d,
-                            max_return=max_return,
-                            volatility_percentile=vol_percentile,
-                            near_earnings=near_earnings,
-                            near_dividend=near_dividend,
-                        )
-                        dip_events.append(event)
-        
-        return dip_events
-    
     def _calc_future_return(self, close: pd.Series, idx: int, days: int) -> float | None:
         """Calculate return N days after index."""
         if idx + days >= len(close):
@@ -858,8 +855,25 @@ class DipEntryOptimizer:
         recovery_rate = len(recovered) / n * 100
         recovery_days = [d.recovery_days for d in recovered if d.recovery_days]
         
+        # Recovery percentage stats - more meaningful than just "recovered" yes/no
+        # recovery_pct: how much of the dip was recovered (100% = full recovery)
+        recovery_pcts = [d.recovery_pct for d in relevant_dips]
+        avg_recovery_pct = float(np.mean(recovery_pcts)) if recovery_pcts else 0.0
+        # Use configurable threshold for "good enough" recovery
+        recovery_threshold = self.config.recovery_win_threshold
+        recovery_threshold_rate = sum(1 for r in recovery_pcts if r >= recovery_threshold) / n * 100 if n > 0 else 0.0
+        full_recovery_rate = sum(1 for r in recovery_pcts if r >= 100) / n * 100 if n > 0 else 0.0
+        
+        # Dynamic recovery metrics - how FAST did it recover?
+        days_to_threshold = [d.days_to_threshold_recovery for d in relevant_dips if d.days_to_threshold_recovery is not None]
+        avg_days_to_threshold = float(np.mean(days_to_threshold)) if days_to_threshold else self.config.max_recovery_days
+        
+        velocities = [d.recovery_velocity for d in relevant_dips if d.recovery_velocity > 0]
+        avg_recovery_velocity = float(np.mean(velocities)) if velocities else 0.0
+        
         # Return stats for each holding period
         avg_returns: dict[int, float] = {}
+        total_profit: dict[int, float] = {}
         win_rates: dict[int, float] = {}
         sharpe_ratios: dict[int, float] = {}
         sortino_ratios: dict[int, float] = {}
@@ -868,7 +882,9 @@ class DipEntryOptimizer:
         for period in self.config.holding_periods:
             returns = [d.returns.get(period) for d in relevant_dips if d.returns.get(period) is not None]
             if returns:
-                avg_returns[period] = float(np.mean(returns))
+                avg_ret = float(np.mean(returns))
+                avg_returns[period] = avg_ret
+                total_profit[period] = n * avg_ret  # N × avg_return
                 win_rates[period] = sum(1 for r in returns if r > 0) / len(returns) * 100
                 
                 # Sharpe ratio: mean / std (annualized for holding period)
@@ -886,6 +902,7 @@ class DipEntryOptimizer:
                 cvar[period] = float(np.mean(sorted_returns[:n_tail]))
             else:
                 avg_returns[period] = 0.0
+                total_profit[period] = 0.0
                 win_rates[period] = 0.0
                 sharpe_ratios[period] = 0.0
                 sortino_ratios[period] = 0.0
@@ -937,8 +954,10 @@ class DipEntryOptimizer:
         best_ratio = max(primary_sharpe, primary_sortino)
         risk_adjusted_score = min(best_ratio / 1.5, 1.0) * 100
         
-        # Win rate score
-        win_score = primary_win_rate
+        # Win rate score - USE RECOVERY-BASED WIN RATE
+        # The old win_rate just checks "is price higher at day 90?" which is flawed
+        # The real question: "did the stock recover back to (or near) highs?"
+        win_score = recovery_threshold_rate  # Uses config.recovery_win_threshold
         
         # Frequency score: Sweet spot is 1-3 per year
         if occurrences_per_year < 0.5:
@@ -954,8 +973,8 @@ class DipEntryOptimizer:
         else:
             frequency_score = 70
         
-        # Recovery score
-        recovery_score = recovery_rate
+        # Recovery score - use recovery_threshold_rate not just "full recovery"
+        recovery_score = recovery_threshold_rate
         
         # --- Gates and penalties ---
         
@@ -1079,7 +1098,13 @@ class DipEntryOptimizer:
             recovery_rate=recovery_rate,
             avg_recovery_days=float(np.mean(recovery_days)) if recovery_days else 0.0,
             median_recovery_days=float(np.median(recovery_days)) if recovery_days else 0.0,
+            recovery_threshold_rate=recovery_threshold_rate,
+            full_recovery_rate=full_recovery_rate,
+            avg_recovery_pct=avg_recovery_pct,
+            avg_days_to_threshold=avg_days_to_threshold,
+            avg_recovery_velocity=avg_recovery_velocity,
             avg_returns=avg_returns,
+            total_profit=total_profit,
             win_rates=win_rates,
             max_further_drawdown=max_further_drawdown,
             avg_further_drawdown=avg_further_drawdown,
@@ -1100,27 +1125,22 @@ class DipEntryOptimizer:
         stats: list[DipThresholdStats],
     ) -> float:
         """
-        Find the optimal dip threshold based on entry scores.
+        Find the optimal dip threshold - WHERE THE STOCK ACTUALLY BOTTOMS OUT.
         
-        V2: Filters out:
-        - Shallow thresholds (< min_optimal_threshold) - daily noise, not real dips
-        - Low occurrence thresholds - not statistically significant
-        - Negative score thresholds - too risky
+        The goal is NOT to find the "safest" shallow dip.
+        The goal IS to find where the stock typically stops dropping and recovers.
         
-        V3 MAE-ADJUSTED SELECTION:
-        The key insight is: if -15% typically drops another 8% (MAE=-8%), then
-        buying at -15% means you'll likely see prices at -23% before recovery.
+        Key insight: If -10% has MAE of -8%, that means it typically drops to -18%
+        before recovering. So -10% is NOT optimal - you're buying 8% too early!
         
-        The "effective entry" = threshold + avg_MAE
+        The optimal entry has LOW MAE RATIO - meaning you're buying close to 
+        where it actually bottoms out. A dip with 0% MAE = perfect timing.
         
-        The optimal threshold minimizes the gap between where you buy and where
-        the price actually bottoms out. This is measured by:
-        1. "Proximity score" = how close to the real bottom (low MAE = good)
-        2. "Efficiency score" = MAE relative to threshold (MAE/threshold ratio)
-        
-        A -20% dip with -3% MAE is better than -10% with -8% MAE because:
-        - First: you're buying at -20%, bottom is ~-23%, only 3% slippage
-        - Second: you're buying at -10%, bottom is ~-18%, 8% slippage
+        Scoring priorities:
+        1. LOW MAE RATIO (primary) - buying near the actual bottom
+        2. Good recovery rate - it does bounce back from there
+        3. Reasonable Sharpe - risk-adjusted returns are decent
+        4. Enough occurrences - statistically meaningful
         """
         if not stats:
             return -10.0  # Default to 10% dip
@@ -1144,14 +1164,8 @@ class DipEntryOptimizer:
             return -10.0  # Default fallback
         
         # =========================================================================
-        # V3: MAE-Adjusted Optimal Threshold Selection
+        # V4: Find where the stock ACTUALLY bottoms out (LOW MAE = near bottom)
         # =========================================================================
-        
-        # Calculate composite score for each threshold:
-        # - High win rate (primary goal: make money)
-        # - Low MAE ratio (buy close to bottom)
-        # - Good Sharpe ratio (risk-adjusted returns)
-        # - Reasonable frequency (not too rare)
         
         best_threshold = valid_stats[0].threshold_pct
         best_composite_score = float('-inf')
@@ -1160,77 +1174,135 @@ class DipEntryOptimizer:
             threshold = s.threshold_pct
             abs_threshold = abs(threshold)
             
-            # Skip if no return data (too recent)
+            # Get metrics
             primary_return = s.avg_returns.get(self.config.primary_holding_period, 0)
-            primary_win_rate = s.win_rates.get(self.config.primary_holding_period, 0)
+            recovery_win_rate = s.recovery_threshold_rate
+            sharpe = s.sharpe_ratios.get(self.config.primary_holding_period, 0)
             
-            # If no valid returns data, use a penalty
-            if primary_win_rate == 0 and s.avg_returns.get(self.config.primary_holding_period) is None:
-                # Recent events with no 90-day data yet - lower priority
-                data_penalty = 0.5
-            else:
-                data_penalty = 1.0
-            
-            # 1. Win rate component (0-40 points)
-            # 80%+ win rate = 40 points, 50% = 20 points
-            win_component = min(primary_win_rate / 2, 40)
-            
-            # 2. MAE efficiency component (0-30 points)
-            # Measures how close to the bottom you're buying
-            # Lower MAE relative to threshold = better
+            # MAE ratio: how much further does it drop after entry?
+            # Lower = better (you're buying closer to the actual bottom)
             avg_mae = abs(s.avg_further_drawdown) if s.avg_further_drawdown else 0
             mae_ratio = avg_mae / abs_threshold if abs_threshold > 0 else 1.0
             
-            # mae_ratio < 0.3 = excellent (30 pts), 0.5 = good (20 pts), > 1.0 = bad (0 pts)
-            if mae_ratio <= 0.3:
-                mae_component = 30
-            elif mae_ratio <= 0.5:
-                mae_component = 25
-            elif mae_ratio <= 0.7:
-                mae_component = 18
+            # =====================================================
+            # SCORING: Prioritize buying near the actual bottom
+            # =====================================================
+            
+            # 1. MAE EFFICIENCY (0-50 points) - PRIMARY FACTOR
+            # mae_ratio < 0.2 = excellent (buying very close to bottom)
+            # mae_ratio = 0.5 = okay (drops 50% more after entry)
+            # mae_ratio > 1.0 = BAD (drops more than the threshold itself - way too early!)
+            if mae_ratio <= 0.15:
+                mae_score = 50  # Near-perfect timing
+            elif mae_ratio <= 0.25:
+                mae_score = 45
+            elif mae_ratio <= 0.35:
+                mae_score = 40
+            elif mae_ratio <= 0.50:
+                mae_score = 35
+            elif mae_ratio <= 0.60:
+                mae_score = 28
+            elif mae_ratio <= 0.70:
+                mae_score = 22
+            elif mae_ratio <= 0.80:
+                mae_score = 16
+            elif mae_ratio <= 0.90:
+                mae_score = 10
             elif mae_ratio <= 1.0:
-                mae_component = 10
+                mae_score = 5  # Barely acceptable - drops as much as threshold
             else:
-                mae_component = max(0, 10 - (mae_ratio - 1.0) * 10)
+                # PENALTY: Drops MORE than the threshold = buying way too early
+                mae_score = max(-20, 5 - (mae_ratio - 1.0) * 25)
             
-            # 3. Return component (0-20 points)
-            # Reward positive returns, penalize losses
+            # 2. Recovery rate (0-25 points)
+            # Does it actually bounce back from this level?
+            recovery_score = min(recovery_win_rate / 4, 25)  # 100% = 25 pts
+            
+            # 3. Sharpe ratio (0-15 points)
+            # Risk-adjusted returns matter
+            sharpe_score = min(max(sharpe * 10, 0), 15)
+            
+            # 4. Return potential (0-10 points)
+            # Higher returns from deeper dips
             if primary_return > 0:
-                return_component = min(primary_return / 1.5, 20)  # 30% return = 20 pts
+                return_score = min(primary_return / 3, 10)  # 30% = 10 pts
             else:
-                return_component = max(-10, primary_return / 3)  # Losses penalized
+                return_score = max(-10, primary_return / 2)  # Penalty for losses
             
-            # 4. Sharpe component (0-10 points)
-            sharpe = s.sharpe_ratios.get(self.config.primary_holding_period, 0)
-            sharpe_component = min(max(sharpe * 10, 0), 10)
+            # 5. Depth bonus (0-10 points)
+            # Deeper dips = bigger opportunities, slight bonus
+            depth_bonus = min(abs_threshold / 5, 10)  # -50% = 10 pts
             
-            # 5. Continuation risk penalty (-20 to 0)
-            prob_drop = s.prob_further_drop
-            if prob_drop > 60:
-                continuation_penalty = -20
-            elif prob_drop > 50:
-                continuation_penalty = -15
-            elif prob_drop > 40:
-                continuation_penalty = -10
-            elif prob_drop > 30:
-                continuation_penalty = -5
+            # 6. Sample size confidence (0.6-1.0 multiplier)
+            n = s.n_occurrences
+            if n < 3:
+                sample_mult = 0.5
+            elif n < 5:
+                sample_mult = 0.7
+            elif n < 8:
+                sample_mult = 0.85
             else:
-                continuation_penalty = 0
+                sample_mult = 1.0
             
             # Composite score
-            composite = (
-                win_component +
-                mae_component +
-                return_component +
-                sharpe_component +
-                continuation_penalty
-            ) * data_penalty
+            raw_score = mae_score + recovery_score + sharpe_score + return_score + depth_bonus
+            composite = raw_score * sample_mult
             
             if composite > best_composite_score:
                 best_composite_score = composite
                 best_threshold = threshold
         
         return best_threshold
+    
+    def _find_max_profit_threshold(
+        self,
+        stats: list[DipThresholdStats],
+        min_threshold: float,
+    ) -> tuple[float, float]:
+        """
+        Find the threshold that maximizes TOTAL expected profit.
+        
+        This is different from risk-adjusted optimal:
+        - Risk-adjusted: minimizes pain (low MAE) with good returns
+        - Max profit: maximizes N × avg_return regardless of MAE
+        
+        Args:
+            stats: List of threshold statistics
+            min_threshold: Minimum dip threshold from symbol config (e.g., -10%)
+                          We won't consider shallower dips than this.
+        
+        Returns:
+            tuple of (optimal_threshold, total_profit)
+        """
+        if not stats:
+            return -10.0, 0.0
+        
+        # Filter to dips at or deeper than the symbol's minimum threshold
+        # min_threshold is negative (e.g., -10), so we want threshold <= min_threshold
+        valid_stats = [
+            s for s in stats
+            if s.threshold_pct <= min_threshold  # Respect minimum dip threshold
+            and s.n_occurrences >= 2  # Need at least 2 occurrences for any confidence
+        ]
+        
+        if not valid_stats:
+            # Fallback to minimum threshold if nothing qualifies
+            return min_threshold, 0.0
+        
+        # Find threshold with highest total profit
+        primary_period = self.config.primary_holding_period
+        
+        best_threshold = valid_stats[0].threshold_pct
+        best_total_profit = 0.0
+        
+        for s in valid_stats:
+            total_profit = s.total_profit.get(primary_period, 0.0)
+            
+            if total_profit > best_total_profit:
+                best_total_profit = total_profit
+                best_threshold = s.threshold_pct
+        
+        return best_threshold, best_total_profit
     
     def _evaluate_current_opportunity(
         self,
