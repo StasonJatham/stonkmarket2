@@ -100,6 +100,8 @@ alembic upgrade head
 - **NEVER** put raw SQL in `migrations/` folder
 - Migrations MUST work out of the box - no manual tweaks allowed
 - Let Alembic detect ORM model changes automatically
+- **NEVER edit existing migration files** - they are HOLY and UNTOUCHABLE
+- If migration has issues, delete it and regenerate from clean state
 
 ### If Migration Fails
 
@@ -200,6 +202,13 @@ import { Card, CardHeader, CardContent } from "@/components/ui/card"
 - Use Tailwind utility classes
 - Follow existing patterns in the codebase
 - Responsive design: `sm:`, `md:`, `lg:` prefixes
+
+### UI/UX Rules
+
+- **NEVER use emojis in code** - The UI uses professional Lucide icons exclusively
+- Use `lucide-react` icons for all visual indicators (badges, buttons, status)
+- Backend reason/message strings should be clean text without emoji characters
+- Frontend renders appropriate icons based on semantic meaning (e.g., `opportunity_type` → icon)
 
 ---
 

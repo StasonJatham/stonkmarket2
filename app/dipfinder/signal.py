@@ -42,6 +42,12 @@ STRUCTURAL_DECLINE_PENALTY_MODERATE = 12.0
 STRUCTURAL_DECLINE_PENALTY_SEVERE = 25.0
 EARNINGS_DETERIORATION_PENALTY = 10.0  # Penalty for post-earnings decline
 
+# Post-earnings deterioration thresholds
+# These define what constitutes "deterioration" after earnings report
+POST_EARNINGS_REVENUE_YOY_THRESHOLD = -10.0  # Revenue YoY <= -10%
+POST_EARNINGS_EARNINGS_YOY_THRESHOLD = -15.0  # Earnings YoY <= -15%
+POST_EARNINGS_MARGIN_DECLINE_THRESHOLD = -2.0  # Operating margin down >= 2pp
+
 
 class DipClass(str, Enum):
     """Dip classification based on market context."""
@@ -49,6 +55,15 @@ class DipClass(str, Enum):
     MARKET_DIP = "MARKET_DIP"  # Dip is mainly due to market decline
     STOCK_SPECIFIC = "STOCK_SPECIFIC"  # Stock is underperforming market significantly
     MIXED = "MIXED"  # Combination of market and stock-specific factors
+
+
+class OpportunityType(str, Enum):
+    """Type of dip opportunity - different strategies for different risk profiles."""
+
+    NONE = "NONE"  # Does not qualify as an opportunity
+    OUTLIER = "OUTLIER"  # Conservative: stable stock at rare statistical discount
+    BOUNCE = "BOUNCE"  # Aggressive: volatile stock with mean-reversion potential
+    BOTH = "BOTH"  # Qualifies for both strategies (rare)
 
 
 class AlertLevel(str, Enum):
@@ -183,6 +198,11 @@ class DipSignal:
     alert_level: AlertLevel
     should_alert: bool
     reason: str  # Human-readable explanation
+    
+    # Opportunity classification
+    # OUTLIER = stable stock at rare discount (conservative)
+    # BOUNCE = volatile stock with mean-reversion potential (aggressive)
+    opportunity_type: OpportunityType = OpportunityType.NONE
 
     # Enhanced analysis (optional, populated when available)
     # These provide deeper insights into dip quality
@@ -221,6 +241,7 @@ class DipSignal:
             # Alert
             "alert_level": self.alert_level.value,
             "should_alert": self.should_alert,
+            "opportunity_type": self.opportunity_type.value,
             "reason": self.reason,
             # Detailed factors
             "quality_factors": self.quality_metrics.to_dict(),
@@ -498,6 +519,107 @@ def _compute_volume_adjustment(dip_metrics: DipMetrics) -> tuple[float, bool]:
     return adjustment, dip_metrics.volume_confirmed
 
 
+def _classify_opportunity_type(
+    dip_metrics: DipMetrics,
+    quality_metrics: QualityMetrics,
+    stability_metrics: StabilityMetrics,
+    quant_gated: bool = False,
+    fundamental_warning: bool = False,
+) -> OpportunityType:
+    """
+    Classify the opportunity as OUTLIER, BOUNCE, BOTH, or NONE.
+    
+    Two distinct opportunity types for different risk profiles:
+    
+    OUTLIER (Conservative):
+        - Stable stock (low volatility) at a rare statistical discount
+        - High dip percentile (unusual event for this stock)
+        - Strong fundamentals required
+        - Lower risk, moderate expected return
+    
+    BOUNCE (Aggressive):
+        - Volatile stock with significant drawdown
+        - Mean-reversion potential
+        - Sound fundamentals (not deteriorating)
+        - Higher risk, higher expected return
+    
+    Args:
+        dip_metrics: Dip metrics with percentile and magnitude
+        quality_metrics: Fundamental quality scores
+        stability_metrics: Volatility and stability metrics
+        quant_gated: If True, stock is gated by quant signals
+        fundamental_warning: If True, fundamentals are deteriorating
+    
+    Returns:
+        OpportunityType classification
+    """
+    # Hard gates - neither type if these fail
+    if quant_gated:
+        return OpportunityType.NONE
+    
+    # Must have meaningful dip
+    if not dip_metrics.is_meaningful:
+        return OpportunityType.NONE
+    
+    # Get key metrics
+    dip_pct = dip_metrics.dip_pct
+    dip_percentile = dip_metrics.dip_percentile
+    volatility = stability_metrics.volatility_252d or 0.25
+    fundamental_stability = stability_metrics.fundamental_stability_score
+    quality_score = quality_metrics.score
+    
+    # ETF detection: ETFs don't have fundamentals, so we use different criteria
+    # ETFs typically have neutral quality scores (50) and neutral fundamental_stability (50)
+    # when no fundamental data is available
+    is_etf = (
+        quality_score == 50.0  # Neutral quality (no data)
+        and fundamental_stability == 50.0  # Neutral stability (no data)
+        and quality_metrics.fields_available <= 2  # Very few fields populated
+    )
+    
+    # === OUTLIER CRITERIA (Conservative) ===
+    # Stable stock/ETF at rare statistical discount
+    if is_etf:
+        # ETFs: rely on price-based metrics only, no fundamental requirements
+        is_outlier = (
+            volatility <= 0.30  # ETFs should be even more stable (<30%)
+            and dip_percentile >= 80.0  # Rare dip (top 20% - stricter for ETFs)
+            and dip_pct >= 0.08  # At least 8% dip (lower threshold for diversified ETFs)
+        )
+    else:
+        # Stocks: require strong fundamentals
+        is_outlier = (
+            volatility <= 0.35  # Low volatility (<35% annualized)
+            and dip_percentile >= 75.0  # Rare dip (top 25% historically)
+            and dip_pct >= 0.10  # At least 10% dip
+            and quality_score >= 60.0  # Strong fundamentals
+            and fundamental_stability >= 60.0  # Stable business
+            and not fundamental_warning  # No deterioration
+        )
+    
+    # === BOUNCE CRITERIA (Aggressive) ===
+    # Volatile stock with mean-reversion potential
+    # Note: ETFs typically don't qualify for BOUNCE due to lower volatility
+    is_bounce = (
+        not is_etf  # ETFs don't bounce like individual stocks
+        and volatility >= 0.40  # Higher volatility (>40% annualized)
+        and dip_pct >= 0.15  # Significant dip (15%+)
+        and quality_score >= 50.0  # Decent fundamentals (can be less strict)
+        and fundamental_stability >= 55.0  # Reasonably stable business
+        # Note: fundamental_warning allowed - bounce plays can work even with some concerns
+    )
+    
+    # Classify
+    if is_outlier and is_bounce:
+        return OpportunityType.BOTH
+    elif is_outlier:
+        return OpportunityType.OUTLIER
+    elif is_bounce:
+        return OpportunityType.BOUNCE
+    else:
+        return OpportunityType.NONE
+
+
 def _compute_support_resistance_adjustment(
     enhanced: EnhancedAnalysisInputs,
     current_price: float,
@@ -641,7 +763,10 @@ def _compute_earnings_adjustment(enhanced: EnhancedAnalysisInputs) -> tuple[floa
     
     IMPORTANT: Only apply penalty if:
     1. Earnings were recently reported (within last 30 days), AND
-    2. Fundamentals show deterioration (structural decline or negative momentum)
+    2. Fundamentals show explicit deterioration based on thresholds:
+       - Revenue YoY <= -10%
+       - Earnings YoY <= -15%
+       - Operating margin down >= 2pp
     
     Pre-earnings risk is handled separately via pre_earnings_risk_level.
     
@@ -658,17 +783,38 @@ def _compute_earnings_adjustment(enhanced: EnhancedAnalysisInputs) -> tuple[floa
     post_earnings_decline = False
     
     # Check for post-earnings deterioration scenario
-    # Earnings reported recently AND fundamentals declining
+    # Earnings reported recently AND fundamentals meet deterioration criteria
     if earnings.days_since_earnings is not None and earnings.days_since_earnings <= 30:
-        # Recent earnings - check if fundamentals deteriorated
-        if momentum is not None and momentum.is_structural_decline:
-            post_earnings_decline = True
-            severity_factor = 1.0
-            if momentum.decline_severity == "severe":
-                severity_factor = 1.5
-            elif momentum.decline_severity == "mild":
-                severity_factor = 0.5
-            adjustment -= EARNINGS_DETERIORATION_PENALTY * severity_factor
+        if momentum is not None:
+            # Check explicit deterioration thresholds
+            deterioration_signals = 0
+            
+            # Revenue YoY <= -10%
+            if (momentum.revenue_yoy_change is not None and 
+                momentum.revenue_yoy_change <= POST_EARNINGS_REVENUE_YOY_THRESHOLD):
+                deterioration_signals += 1
+            
+            # Earnings YoY <= -15%
+            if (momentum.earnings_yoy_change is not None and
+                momentum.earnings_yoy_change <= POST_EARNINGS_EARNINGS_YOY_THRESHOLD):
+                deterioration_signals += 1
+            
+            # Operating margin down >= 2pp
+            if (momentum.operating_margin_trend is not None and
+                momentum.operating_margin_trend <= POST_EARNINGS_MARGIN_DECLINE_THRESHOLD):
+                deterioration_signals += 1
+            
+            # Also check structural decline flag for broader coverage
+            if momentum.is_structural_decline:
+                deterioration_signals += 1
+            
+            # Apply penalty if any deterioration signal is present
+            if deterioration_signals > 0:
+                post_earnings_decline = True
+                # Scale penalty by number of signals (1-4) -> 0.5x to 1.5x
+                severity_factor = 0.5 + (deterioration_signals - 1) * 0.33
+                severity_factor = min(1.5, severity_factor)
+                adjustment -= EARNINGS_DETERIORATION_PENALTY * severity_factor
     
     # Note: No pre-earnings penalty. The requirement is to only adjust post-earnings
     # when fundamentals deteriorate. Pre-earnings uncertainty is not penalized because:
@@ -747,6 +893,7 @@ def generate_reason(
     quant_context: QuantContext | None = None,
     fundamental_warning: bool = False,
     enhanced_adjustments: EnhancedScoreAdjustments | None = None,
+    opportunity_type: OpportunityType | None = None,
 ) -> str:
     """
     Generate human-readable reason for the signal.
@@ -757,6 +904,8 @@ def generate_reason(
         config = get_dipfinder_config()
 
     parts = []
+    # Note: opportunity_type badge is NOT included in reason text
+    # The UI renders badges using Lucide icons based on opportunity_type field
 
     # Dip description
     dip_pct = dip_metrics.dip_pct * 100
@@ -810,7 +959,11 @@ def generate_reason(
         elif quality_metrics.score < config.quality_gate:
             parts.append("weak fundamentals")
 
-    if stability_metrics.score >= 80:
+    # Volatility context (important for understanding opportunity type)
+    if opportunity_type == OpportunityType.BOUNCE:
+        vol = stability_metrics.volatility_252d or 0
+        parts.append(f"high reversion potential ({vol*100:.0f}% vol)")
+    elif stability_metrics.score >= 80:
         parts.append("very stable")
     elif stability_metrics.score < config.stability_gate:
         parts.append("higher volatility")
@@ -900,6 +1053,29 @@ def compute_signal(
             + w_quality * quality_metrics.score
             + w_stability * stability_metrics.score
         )
+        
+        # BOUNCE POTENTIAL BONUS: Volatile stocks with significant dips and sound
+        # fundamentals have higher mean-reversion potential. This rewards the upside
+        # of volatility rather than penalizing it.
+        # Requirements:
+        #   - Dip is above meaningful threshold (15%+)
+        #   - Fundamental stability is sound (60+)
+        #   - Quality score is decent (50+)
+        # Bonus scales with: volatility * dip magnitude (max +15 points)
+        fundamental_stability = stability_metrics.fundamental_stability_score
+        if (
+            dip_metrics.dip_pct >= 0.15
+            and fundamental_stability >= 60.0
+            and quality_metrics.score >= 50.0
+        ):
+            # Higher volatility = higher bounce potential
+            volatility = stability_metrics.volatility_252d or 0.25
+            # Scale: 25% vol = no bonus, 50% vol = half bonus, 75%+ vol = full bonus
+            vol_factor = min(max((volatility - 0.25) / 0.50, 0.0), 1.0)
+            # Scale by dip magnitude: 15% dip = half bonus, 30%+ dip = full bonus
+            dip_factor = min((dip_metrics.dip_pct - 0.15) / 0.15, 1.0)
+            bounce_bonus = vol_factor * dip_factor * 15.0
+            final_score += bounce_bonus
 
     # Apply enhanced analysis adjustments FIRST (only for meaningful dips)
     # This allows us to check for structural decline before applying quant fund_mom penalty
@@ -939,13 +1115,25 @@ def compute_signal(
     if structural_decline_penalized:
         fundamental_warning = True
 
+    # Quant gating: hard-gate alerts for downtrend stocks without gate_pass
+    # This prevents alerting on "falling knife" situations where quant signals
+    # indicate it's not a certified buy. Score is still computed for UI display.
+    quant_gated = False
+    if in_downtrend and quant_context is not None and not quant_context.gate_pass:
+        quant_gated = True
+        fundamental_warning = True
+
     # Determine alert level
     # Convert to native Python bool to avoid numpy bool issues with database
+    # Use fundamental_stability_score for gate (not price volatility) - 
+    # for dip-buying, price volatility is opportunity, not risk
+    fundamental_stability = stability_metrics.fundamental_stability_score
     should_alert = bool(
         final_score >= config.alert_good
         and dip_metrics.is_meaningful
         and quality_metrics.score >= config.quality_gate
-        and stability_metrics.score >= config.stability_gate
+        and fundamental_stability >= config.stability_gate
+        and not quant_gated  # Hard gate: no alerts for gated stocks
     )
 
     if should_alert:
@@ -955,6 +1143,26 @@ def compute_signal(
             alert_level = AlertLevel.GOOD
     else:
         alert_level = AlertLevel.NONE
+
+    # Classify opportunity type: OUTLIER vs BOUNCE
+    # These are different investment strategies with different risk/reward profiles
+    opportunity_type = _classify_opportunity_type(
+        dip_metrics=dip_metrics,
+        quality_metrics=quality_metrics,
+        stability_metrics=stability_metrics,
+        quant_gated=quant_gated,
+        fundamental_warning=fundamental_warning,
+    )
+    
+    # Update should_alert based on opportunity type
+    # If stock qualifies as OUTLIER or BOUNCE (or BOTH), it should alert
+    if opportunity_type != OpportunityType.NONE and not quant_gated:
+        should_alert = True
+        # Determine alert level based on opportunity strength
+        if opportunity_type == OpportunityType.BOTH or final_score >= config.alert_strong:
+            alert_level = AlertLevel.STRONG
+        else:
+            alert_level = AlertLevel.GOOD
 
     # Generate reason
     reason = generate_reason(
@@ -968,6 +1176,7 @@ def compute_signal(
         quant_context=quant_context,
         fundamental_warning=fundamental_warning,
         enhanced_adjustments=enhanced_adjustments,
+        opportunity_type=opportunity_type,
     )
 
     signal = DipSignal(
@@ -983,6 +1192,7 @@ def compute_signal(
         final_score=final_score,
         alert_level=alert_level,
         should_alert=should_alert,
+        opportunity_type=opportunity_type,
         reason=reason,
     )
     

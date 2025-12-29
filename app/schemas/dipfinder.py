@@ -144,6 +144,10 @@ class DipSignalResponse(BaseModel):
     # Alert
     alert_level: str = Field(..., description="Alert level")
     should_alert: bool = Field(..., description="Whether to alert")
+    opportunity_type: str = Field(
+        default="NONE",
+        description="Opportunity type: OUTLIER (conservative), BOUNCE (aggressive), BOTH, or NONE",
+    )
     reason: str = Field(..., description="Human-readable explanation")
 
     # Detailed factors (optional, included on request)

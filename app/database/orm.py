@@ -192,6 +192,7 @@ class DipState(Base):
     ath_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
     dip_percentage: Mapped[Decimal | None] = mapped_column(Numeric(8, 4))
     dip_start_date: Mapped[date | None] = mapped_column(Date)
+    opportunity_type: Mapped[str | None] = mapped_column(String(20), default="NONE")  # OUTLIER, BOUNCE, BOTH, NONE
     # Legacy columns
     ref_high: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
     last_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))

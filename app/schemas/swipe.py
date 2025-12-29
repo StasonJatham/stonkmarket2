@@ -53,6 +53,12 @@ class DipCard(BaseModel):
     dip_pct: float = Field(..., description="Dip percentage from high")
     days_below: int = Field(..., description="Days below dip threshold")
     min_dip_pct: float | None = Field(None, description="Configured dip threshold")
+    
+    # Opportunity classification
+    opportunity_type: str = Field(
+        default="NONE",
+        description="Opportunity type: OUTLIER (stable stock at rare discount), BOUNCE (volatile with reversion potential), BOTH, or NONE"
+    )
 
     # AI content
     summary_ai: str | None = Field(None, description="AI-generated company summary from finance description")

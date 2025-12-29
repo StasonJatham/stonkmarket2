@@ -729,9 +729,14 @@ class TestFullSignalFlow:
         stock_prices = np.array(typical_history)
         benchmark_prices = np.array([100.0] * len(stock_prices))
 
-        # Excellent fundamentals
+        # Excellent fundamentals with proper stability for opportunity classification
         quality = QualityMetrics(ticker="TEST", score=85.0)
-        stability = StabilityMetrics(ticker="TEST", score=80.0)
+        stability = StabilityMetrics(
+            ticker="TEST",
+            score=80.0,
+            volatility_252d=0.25,  # Low volatility for OUTLIER classification
+            fundamental_stability_score=75.0,  # Sound fundamentals
+        )
 
         signal = compute_signal(
             ticker="TEST",

@@ -27,6 +27,45 @@ from app.database.orm import PriceHistory
 logger = get_logger("repositories.price_history_orm")
 
 
+# Maximum allowed deviation between Close and Adj Close (10%)
+# yfinance occasionally returns anomalous adj_close values that corrupt data
+MAX_ADJ_CLOSE_DEVIATION = 0.10
+
+
+def _validate_adj_close(close: float, adj_close: float | None, symbol: str, dt: date) -> float | None:
+    """Validate adjusted close price against close price.
+    
+    yfinance can return anomalous adjusted close values (e.g., 315 instead of 618).
+    This validation rejects adj_close values that differ by more than MAX_ADJ_CLOSE_DEVIATION.
+    
+    Args:
+        close: Regular close price
+        adj_close: Adjusted close price from yfinance
+        symbol: Stock ticker (for logging)
+        dt: Date of the price (for logging)
+    
+    Returns:
+        adj_close if valid, close if invalid (fallback), None if both missing
+    """
+    if adj_close is None or pd.isna(adj_close):
+        return None
+    
+    if close <= 0:
+        return None
+    
+    deviation = abs(adj_close - close) / close
+    
+    if deviation > MAX_ADJ_CLOSE_DEVIATION:
+        logger.warning(
+            f"Rejected anomalous adj_close for {symbol} on {dt}: "
+            f"adj_close={adj_close:.2f} vs close={close:.2f} (deviation={deviation:.1%}). "
+            f"Using close price instead."
+        )
+        return close
+    
+    return adj_close
+
+
 async def get_prices(
     symbol: str,
     start_date: date,
@@ -158,6 +197,7 @@ async def save_prices(symbol: str, df: pd.DataFrame) -> int:
     async with get_session() as session:
         count = 0
         skipped = 0
+        rejected_adj = 0
         for idx, row in df.iterrows():
             # Skip rows with NaN close values - they're not usable
             if pd.isna(row["Close"]):
@@ -165,6 +205,16 @@ async def save_prices(symbol: str, df: pd.DataFrame) -> int:
                 continue
                 
             dt = idx.date() if hasattr(idx, "date") else idx
+            close_val = float(row["Close"])
+            raw_adj = row.get("Adj Close")
+            raw_adj_float = float(raw_adj) if pd.notna(raw_adj) else None
+            
+            # Validate adj_close - reject anomalous values from yfinance
+            validated_adj = _validate_adj_close(close_val, raw_adj_float, symbol, dt)
+            if validated_adj != raw_adj_float and raw_adj_float is not None:
+                rejected_adj += 1
+            
+            adj_decimal = Decimal(str(validated_adj)) if validated_adj is not None else None
 
             stmt = insert(PriceHistory).values(
                 symbol=symbol.upper(),
@@ -172,8 +222,8 @@ async def save_prices(symbol: str, df: pd.DataFrame) -> int:
                 open=Decimal(str(row.get("Open", 0))) if pd.notna(row.get("Open")) else None,
                 high=Decimal(str(row.get("High", 0))) if pd.notna(row.get("High")) else None,
                 low=Decimal(str(row.get("Low", 0))) if pd.notna(row.get("Low")) else None,
-                close=Decimal(str(row["Close"])),
-                adj_close=Decimal(str(row.get("Adj Close", row["Close"]))) if pd.notna(row.get("Adj Close", row["Close"])) else None,
+                close=Decimal(str(close_val)),
+                adj_close=adj_decimal,
                 volume=int(row.get("Volume", 0)) if pd.notna(row.get("Volume")) else None,
             ).on_conflict_do_update(
                 index_elements=["symbol", "date"],
@@ -181,8 +231,8 @@ async def save_prices(symbol: str, df: pd.DataFrame) -> int:
                     "open": Decimal(str(row.get("Open", 0))) if pd.notna(row.get("Open")) else None,
                     "high": Decimal(str(row.get("High", 0))) if pd.notna(row.get("High")) else None,
                     "low": Decimal(str(row.get("Low", 0))) if pd.notna(row.get("Low")) else None,
-                    "close": Decimal(str(row["Close"])),
-                    "adj_close": Decimal(str(row.get("Adj Close", row["Close"]))) if pd.notna(row.get("Adj Close", row["Close"])) else None,
+                    "close": Decimal(str(close_val)),
+                    "adj_close": adj_decimal,
                     "volume": int(row.get("Volume", 0)) if pd.notna(row.get("Volume")) else None,
                 }
             )
@@ -193,5 +243,7 @@ async def save_prices(symbol: str, df: pd.DataFrame) -> int:
         await session.commit()
         if skipped > 0:
             logger.warning(f"Skipped {skipped} rows with NaN close for {symbol}")
+        if rejected_adj > 0:
+            logger.warning(f"Rejected {rejected_adj} anomalous adj_close values for {symbol}")
         logger.debug(f"Saved {count} price records for {symbol}")
         return count

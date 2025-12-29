@@ -69,6 +69,7 @@ def _signal_to_response(signal, include_factors: bool = False) -> DipSignalRespo
         final_score=final_score,
         alert_level=signal.alert_level.value,
         should_alert=signal.should_alert,
+        opportunity_type=signal.opportunity_type.value,
         reason=signal.reason,
     )
 

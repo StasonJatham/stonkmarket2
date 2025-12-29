@@ -29,6 +29,18 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
+def include_object(object, name, type_, reflected, compare_to):
+    """Filter objects for autogenerate comparison.
+    
+    Excludes index comparisons which cause false positives with
+    postgresql_ops DESC indexes - Alembic detects them as changed
+    even when they haven't.
+    """
+    if type_ == "index":
+        return False  # Skip index comparison entirely
+    return True
+
+
 def get_url() -> str:
     """Get database URL from settings, converted to async format."""
     return get_async_database_url(settings.database_url)
@@ -53,6 +65,7 @@ def run_migrations_offline() -> None:
         dialect_opts={"paramstyle": "named"},
         compare_type=True,  # Detect column type changes
         compare_server_default=True,  # Detect default value changes
+        include_object=include_object,  # Skip index comparison
     )
 
     with context.begin_transaction():
@@ -66,6 +79,7 @@ def do_run_migrations(connection: Connection) -> None:
         target_metadata=target_metadata,
         compare_type=True,  # Detect column type changes
         compare_server_default=True,  # Detect default value changes
+        include_object=include_object,  # Skip index comparison
     )
 
     with context.begin_transaction():

@@ -91,6 +91,38 @@ class DipFinderSettings(BaseSettings):
         default=0.25, ge=0, le=1, description="Weight for stability score in final"
     )
 
+    # Enhanced analysis weights (score adjustments)
+    dipfinder_volume_confirmation_bonus: float = Field(
+        default=5.0, ge=0, le=20, description="Bonus for volume-confirmed dips"
+    )
+    dipfinder_volume_spike_bonus_max: float = Field(
+        default=8.0, ge=0, le=20, description="Max bonus for high volume spike"
+    )
+    dipfinder_support_proximity_bonus: float = Field(
+        default=10.0, ge=0, le=25, description="Bonus for being near strong support"
+    )
+    dipfinder_support_break_penalty: float = Field(
+        default=15.0, ge=0, le=30, description="Penalty for trading below all support"
+    )
+    dipfinder_valuation_bonus_max: float = Field(
+        default=8.0, ge=0, le=20, description="Max bonus for undervaluation"
+    )
+    dipfinder_valuation_penalty_max: float = Field(
+        default=6.0, ge=0, le=15, description="Max penalty for overvaluation"
+    )
+    dipfinder_structural_decline_penalty_moderate: float = Field(
+        default=12.0, ge=0, le=30, description="Penalty for moderate structural decline"
+    )
+    dipfinder_structural_decline_penalty_severe: float = Field(
+        default=25.0, ge=0, le=50, description="Penalty for severe structural decline"
+    )
+    dipfinder_earnings_deterioration_penalty: float = Field(
+        default=10.0, ge=0, le=25, description="Penalty for post-earnings deterioration"
+    )
+    dipfinder_quant_blend_weight: float = Field(
+        default=0.30, ge=0, le=1, description="Weight for blending quant score with dip score"
+    )
+
     # Domain-specific scoring
     dipfinder_domain_scoring_enabled: bool = Field(
         default=True,
@@ -174,6 +206,18 @@ class DipFinderConfig:
     weight_quality: float = 0.30
     weight_stability: float = 0.25
 
+    # Enhanced analysis weights (score adjustments)
+    volume_confirmation_bonus: float = 5.0
+    volume_spike_bonus_max: float = 8.0
+    support_proximity_bonus: float = 10.0
+    support_break_penalty: float = 15.0
+    valuation_bonus_max: float = 8.0
+    valuation_penalty_max: float = 6.0
+    structural_decline_penalty_moderate: float = 12.0
+    structural_decline_penalty_severe: float = 25.0
+    earnings_deterioration_penalty: float = 10.0
+    quant_blend_weight: float = 0.30
+
     # Default benchmark
     default_benchmark: str = "SPY"
 
@@ -218,6 +262,18 @@ class DipFinderConfig:
             weight_dip=settings.dipfinder_weight_dip,
             weight_quality=settings.dipfinder_weight_quality,
             weight_stability=settings.dipfinder_weight_stability,
+            # Enhanced analysis weights
+            volume_confirmation_bonus=settings.dipfinder_volume_confirmation_bonus,
+            volume_spike_bonus_max=settings.dipfinder_volume_spike_bonus_max,
+            support_proximity_bonus=settings.dipfinder_support_proximity_bonus,
+            support_break_penalty=settings.dipfinder_support_break_penalty,
+            valuation_bonus_max=settings.dipfinder_valuation_bonus_max,
+            valuation_penalty_max=settings.dipfinder_valuation_penalty_max,
+            structural_decline_penalty_moderate=settings.dipfinder_structural_decline_penalty_moderate,
+            structural_decline_penalty_severe=settings.dipfinder_structural_decline_penalty_severe,
+            earnings_deterioration_penalty=settings.dipfinder_earnings_deterioration_penalty,
+            quant_blend_weight=settings.dipfinder_quant_blend_weight,
+            # Other settings
             default_benchmark=settings.dipfinder_default_benchmark,
             price_cache_ttl=settings.dipfinder_price_cache_ttl,
             info_cache_ttl=settings.dipfinder_info_cache_ttl,
