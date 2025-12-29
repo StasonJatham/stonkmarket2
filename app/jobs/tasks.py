@@ -417,6 +417,55 @@ def market_analysis_hourly_task() -> str:
     return _run_job("market_analysis_hourly")
 
 
+@celery_app.task(name="jobs.precompute_dip_entry")
+def precompute_dip_entry_task(symbol: str) -> str:
+    """Precompute dip entry analysis for a single symbol."""
+    import asyncio
+    from datetime import date, timedelta
+    
+    from app.core.logging import get_logger
+    from app.quant_engine.dip_entry_optimizer import DipEntryOptimizer, get_dip_summary
+    from app.repositories import price_history_orm as price_history_repo
+    from app.repositories import quant_precomputed_orm as quant_repo
+    
+    logger = get_logger("jobs.precompute_dip_entry")
+    
+    async def _compute() -> str:
+        symbol_upper = symbol.upper().strip()
+        
+        # Fetch price history (5 years)
+        end_date = date.today()
+        start_date = end_date - timedelta(days=1825)
+        
+        df = await price_history_repo.get_prices_as_dataframe(
+            symbol_upper, start_date, end_date
+        )
+        
+        if df is None or df.empty or len(df) < 252:
+            return f"Insufficient price history for {symbol_upper}"
+        
+        # Run analysis
+        optimizer = DipEntryOptimizer()
+        result = optimizer.analyze(df, symbol_upper, None)
+        summary = get_dip_summary(result)
+        
+        # Update quant_precomputed table
+        await quant_repo.update_dip_entry(
+            symbol=symbol_upper,
+            optimal_threshold=summary["optimal_dip_threshold"],
+            optimal_price=summary["optimal_entry_price"],
+            is_buy_now=summary["is_buy_now"],
+            signal_strength=summary["buy_signal_strength"],
+            signal_reason=summary["signal_reason"],
+            recovery_days=summary["typical_recovery_days"],
+            threshold_analysis=summary["threshold_analysis"],
+        )
+        
+        return f"Precomputed dip entry for {symbol_upper}"
+    
+    return asyncio.get_event_loop().run_until_complete(_compute())
+
+
 @celery_app.task(name="jobs.fetch_suggestion_data")
 def fetch_suggestion_data_task(symbol: str) -> str:
     """Fetch stock data for a pending suggestion asynchronously."""

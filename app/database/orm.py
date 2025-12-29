@@ -1255,6 +1255,18 @@ class QuantPrecomputed(Base):
     # Current Signals (JSONB for flexibility)
     current_signals: Mapped[dict | None] = mapped_column(JSONB)
     
+    # Dip Entry Analysis Results
+    dip_entry_optimal_threshold: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    dip_entry_optimal_price: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    dip_entry_is_buy_now: Mapped[bool] = mapped_column(Boolean, default=False)
+    dip_entry_signal_strength: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    dip_entry_signal_reason: Mapped[str | None] = mapped_column(Text)
+    dip_entry_recovery_days: Mapped[int | None] = mapped_column(Integer)
+    dip_entry_threshold_analysis: Mapped[dict | None] = mapped_column(JSONB)
+    
+    # Signal Triggers (for chart overlays)
+    signal_triggers: Mapped[dict | None] = mapped_column(JSONB)
+    
     # Metadata
     computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     data_start: Mapped[date | None] = mapped_column(Date)

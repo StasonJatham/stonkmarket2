@@ -24,9 +24,6 @@ from app.repositories import suggestions_orm as suggestions_repo
 from app.repositories import symbols_orm as symbols_repo
 from app.services.runtime_settings import get_runtime_setting
 from app.services.suggestion_stock_info import (
-    get_stock_info_full_async,
-)
-from app.services.suggestion_stock_info import (
     validate_symbol_format as _validate_symbol_format,
 )
 
@@ -773,7 +770,7 @@ async def retry_suggestion_fetch(
 ):
     """Retry fetching yfinance data for a suggestion with rate_limited or error status (admin only).
     
-    This is useful for retrying individual suggestions that failed due to rate limiting.
+    Queues a background task for the fetch to avoid blocking the request.
     """
     # Get suggestion
     suggestion = await suggestions_repo.get_suggestion_by_id(suggestion_id)
@@ -793,30 +790,15 @@ async def retry_suggestion_fetch(
 
     symbol = suggestion.symbol
 
-    # Fetch stock info
-    stock_info = await get_stock_info_full_async(symbol)
-
-    # Update suggestion with fetched data
-    await suggestions_repo.update_suggestion_stock_info(
-        symbol=symbol,
-        company_name=stock_info["name"],
-        sector=stock_info["sector"],
-        summary=stock_info["summary"],
-        website=stock_info["website"],
-        ipo_year=stock_info["ipo_year"],
-        current_price=stock_info["current_price"],
-        ath_price=stock_info["ath_price"],
-        fetch_status=stock_info["fetch_status"],
-        fetch_error=stock_info["fetch_error"],
-    )
-
-    logger.info(f"Retried fetch for {symbol}: {stock_info['fetch_status']}")
+    # Queue background task instead of inline fetch
+    task = celery_app.send_task("jobs.fetch_suggestion_data", args=[symbol])
+    logger.info(f"Queued retry fetch for {symbol}: task_id={task.id}")
 
     return {
-        "message": f"Retried fetch for {symbol}",
+        "message": f"Queued retry fetch for {symbol}",
         "symbol": symbol,
-        "fetch_status": stock_info["fetch_status"],
-        "fetch_error": stock_info["fetch_error"],
+        "task_id": task.id,
+        "fetch_status": "pending",
     }
 
 
@@ -827,51 +809,30 @@ async def backfill_suggestion_data(
 ):
     """Backfill yfinance data for suggestions with pending fetch status (admin only).
     
-    This is useful for populating data for suggestions created before the
-    data fetch was implemented.
+    Queues background tasks for all pending suggestions instead of processing inline.
     """
     # Get suggestions with pending fetch status
     suggestions = await suggestions_repo.list_suggestions_needing_backfill(limit)
 
     if not suggestions:
-        return {"message": "No suggestions need backfilling", "processed": 0}
+        return {"message": "No suggestions need backfilling", "queued": 0}
 
-    processed = 0
-    errors = []
+    queued = 0
+    task_ids = []
 
     for suggestion in suggestions:
         symbol = suggestion.symbol
-        suggestion_id = suggestion.id
-
-        try:
-            # Fetch stock info
-            stock_info = await get_stock_info_full_async(symbol)
-
-            # Update suggestion with fetched data
-            await suggestions_repo.update_suggestion_stock_info(
-                symbol=symbol,
-                company_name=stock_info["name"],
-                sector=stock_info["sector"],
-                summary=stock_info["summary"],
-                website=stock_info["website"],
-                ipo_year=stock_info["ipo_year"],
-                current_price=stock_info["current_price"],
-                ath_price=stock_info["ath_price"],
-                fetch_status=stock_info["fetch_status"],
-                fetch_error=stock_info["fetch_error"],
-            )
-            processed += 1
-            logger.info(f"Backfilled data for {symbol}: {stock_info['fetch_status']}")
-
-        except Exception as e:
-            errors.append({"symbol": symbol, "error": str(e)})
-            logger.error(f"Error backfilling {symbol}: {e}")
+        # Queue background task for each suggestion
+        task = celery_app.send_task("jobs.fetch_suggestion_data", args=[symbol])
+        task_ids.append({"symbol": symbol, "task_id": task.id})
+        queued += 1
+        logger.info(f"Queued backfill for {symbol}: task_id={task.id}")
 
     return {
-        "message": f"Processed {processed} suggestions",
-        "processed": processed,
+        "message": f"Queued {queued} suggestions for backfill",
+        "queued": queued,
         "total": len(suggestions),
-        "errors": errors if errors else None,
+        "tasks": task_ids,
     }
 
 

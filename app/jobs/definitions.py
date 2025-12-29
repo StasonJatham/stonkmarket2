@@ -2291,6 +2291,68 @@ async def quant_analysis_nightly_job() -> str:
             except Exception as e:
                 logger.debug(f"Current signals failed for {symbol}: {e}")
             
+            # 6. Dip Entry Analysis
+            dip_entry_data = None
+            try:
+                from app.quant_engine.dip_entry_optimizer import DipEntryOptimizer, get_dip_summary
+                
+                optimizer = DipEntryOptimizer()
+                result = optimizer.analyze(df, symbol, fundamentals=None)
+                summary = get_dip_summary(result)
+                
+                dip_entry_data = {
+                    "optimal_threshold": summary["optimal_dip_threshold"],
+                    "optimal_price": summary["optimal_entry_price"],
+                    "is_buy_now": summary["is_buy_now"],
+                    "signal_strength": summary["buy_signal_strength"],
+                    "signal_reason": summary["signal_reason"],
+                    "recovery_days": int(summary["typical_recovery_days"]) if summary["typical_recovery_days"] else None,
+                    "threshold_analysis": summary["threshold_analysis"],
+                }
+            except Exception as e:
+                logger.debug(f"Dip entry failed for {symbol}: {e}")
+            
+            # 7. Signal Triggers (for chart overlays)
+            signal_triggers_data = None
+            try:
+                triggers_list = get_historical_triggers(price_data, lookback_days=365)
+                if triggers_list:
+                    # Get benchmark comparison
+                    buy_hold_return_pct = 0.0
+                    signal_return_pct = 0.0
+                    
+                    if len(prices) >= 365:
+                        lookback_slice = prices.iloc[-365:]
+                        if len(lookback_slice) >= 2:
+                            first_price = float(lookback_slice.iloc[0])
+                            last_price = float(lookback_slice.iloc[-1])
+                            buy_hold_return_pct = ((last_price / first_price) - 1) * 100
+                    
+                    exit_triggers = [t for t in triggers_list if t.signal_type == "exit"]
+                    if exit_triggers:
+                        signal_return_pct = sum(t.avg_return_pct for t in exit_triggers)
+                    
+                    signal_triggers_data = {
+                        "signal_name": triggers_list[0].signal_name if triggers_list else None,
+                        "n_trades": len([t for t in triggers_list if t.signal_type == "entry"]),
+                        "buy_hold_return_pct": round(buy_hold_return_pct, 2),
+                        "signal_return_pct": round(signal_return_pct, 2),
+                        "edge_vs_buy_hold_pct": round(signal_return_pct - buy_hold_return_pct, 2),
+                        "triggers": [
+                            {
+                                "date": t.date.isoformat() if hasattr(t.date, 'isoformat') else str(t.date),
+                                "signal_name": t.signal_name,
+                                "price": t.price,
+                                "win_rate": t.win_rate,
+                                "avg_return_pct": t.avg_return_pct,
+                                "signal_type": t.signal_type,
+                            }
+                            for t in triggers_list
+                        ],
+                    }
+            except Exception as e:
+                logger.debug(f"Signal triggers failed for {symbol}: {e}")
+            
             # Store all results
             await quant_repo.upsert_all_quant_data(
                 symbol=symbol,
@@ -2299,6 +2361,8 @@ async def quant_analysis_nightly_job() -> str:
                 combinations=combinations_data,
                 dip_analysis=dip_data,
                 current_signals=signals_data,
+                dip_entry=dip_entry_data,
+                signal_triggers=signal_triggers_data,
                 data_start=data_start_date,
                 data_end=data_end_date,
             )

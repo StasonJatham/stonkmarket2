@@ -224,6 +224,8 @@ async def upsert_all_quant_data(
     combinations: list[dict[str, Any]] | None = None,
     dip_analysis: dict[str, Any] | None = None,
     current_signals: dict[str, Any] | None = None,
+    dip_entry: dict[str, Any] | None = None,
+    signal_triggers: dict[str, Any] | None = None,
     data_start: date | None = None,
     data_end: date | None = None,
 ) -> None:
@@ -283,8 +285,56 @@ async def upsert_all_quant_data(
     if current_signals is not None:
         values["current_signals"] = current_signals
     
+    if dip_entry:
+        values.update({
+            "dip_entry_optimal_threshold": Decimal(str(dip_entry["optimal_threshold"])) if dip_entry.get("optimal_threshold") is not None else None,
+            "dip_entry_optimal_price": Decimal(str(dip_entry["optimal_price"])) if dip_entry.get("optimal_price") is not None else None,
+            "dip_entry_is_buy_now": dip_entry.get("is_buy_now", False),
+            "dip_entry_signal_strength": Decimal(str(dip_entry["signal_strength"])) if dip_entry.get("signal_strength") is not None else None,
+            "dip_entry_signal_reason": dip_entry.get("signal_reason"),
+            "dip_entry_recovery_days": dip_entry.get("recovery_days"),
+            "dip_entry_threshold_analysis": dip_entry.get("threshold_analysis"),
+        })
+    
+    if signal_triggers is not None:
+        values["signal_triggers"] = signal_triggers
+    
     async with get_session() as session:
         # Build the set_ dict excluding symbol
+        set_dict = {k: v for k, v in values.items() if k != "symbol"}
+        
+        stmt = insert(QuantPrecomputed).values(**values).on_conflict_do_update(
+            index_elements=["symbol"],
+            set_=set_dict,
+        )
+        await session.execute(stmt)
+        await session.commit()
+
+
+async def update_dip_entry(
+    symbol: str,
+    optimal_threshold: float,
+    optimal_price: float,
+    is_buy_now: bool,
+    signal_strength: float,
+    signal_reason: str,
+    recovery_days: float,
+    threshold_analysis: list[dict[str, Any]],
+) -> None:
+    """Update dip entry data for a single symbol."""
+    async with get_session() as session:
+        values = {
+            "symbol": symbol,
+            "dip_entry_optimal_threshold": Decimal(str(optimal_threshold)),
+            "dip_entry_optimal_price": Decimal(str(optimal_price)),
+            "dip_entry_is_buy_now": is_buy_now,
+            "dip_entry_signal_strength": Decimal(str(signal_strength)),
+            "dip_entry_signal_reason": signal_reason,
+            "dip_entry_recovery_days": int(recovery_days),
+            "dip_entry_threshold_analysis": threshold_analysis,
+            "computed_at": datetime.now(),
+        }
+        
         set_dict = {k: v for k, v in values.items() if k != "symbol"}
         
         stmt = insert(QuantPrecomputed).values(**values).on_conflict_do_update(

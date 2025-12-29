@@ -743,21 +743,21 @@ class ProcessSymbolsResponse(BaseModel):
     "/admin/process-now",
     response_model=ProcessSymbolsResponse,
     summary="Process symbols immediately (Admin)",
-    description="Trigger immediate processing of pending symbols instead of waiting for batch job. Admin only.",
+    description="Queue immediate processing of pending symbols via Celery task. Admin only.",
     dependencies=[Depends(require_admin)],
 )
 async def process_symbols_now(
     request: ProcessSymbolsRequest | None = None,
 ) -> ProcessSymbolsResponse:
     """
-    Admin endpoint to process symbols immediately.
+    Admin endpoint to queue symbol processing via Celery.
     
     If symbols list is provided, process those specific symbols.
     If symbols list is empty/None, process all pending symbols.
     
-    This bypasses the 10-minute batch schedule for urgent processing.
+    This queues a Celery task for immediate processing instead of
+    running the batch job inline.
     """
-    from app.jobs.definitions import process_new_symbols_batch_job
     from app.repositories import symbols_orm
 
     # Get symbols to process
@@ -787,24 +787,13 @@ async def process_symbols_now(
 
     logger.info(f"Admin triggered immediate processing of {len(symbols_to_process)} symbols: {symbols_to_process}")
 
-    # Run the batch job immediately
-    result = await process_new_symbols_batch_job()
-
-    # Parse result to get counts
-    # Result format: "Processed X/Y symbols (Z failed)"
-    import re
-    match = re.search(r"Processed (\d+)/(\d+) symbols \((\d+) failed\)", result)
-    if match:
-        processed = int(match.group(1))
-        failed = int(match.group(3))
-    else:
-        processed = len(symbols_to_process)
-        failed = 0
-
+    # Queue Celery task instead of running inline
+    task = celery_app.send_task("jobs.symbol_ingest")
+    
     return ProcessSymbolsResponse(
-        processed=processed,
-        failed=failed,
-        message=result,
+        processed=0,  # Task is async, no immediate count
+        failed=0,
+        message=f"Queued processing of {len(symbols_to_process)} symbols (task_id: {task.id})",
         symbols=symbols_to_process,
     )
 

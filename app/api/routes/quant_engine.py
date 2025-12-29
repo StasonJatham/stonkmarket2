@@ -964,6 +964,7 @@ class SignalTriggersResponse(BaseModel):
     There is no look-ahead bias - each trigger uses only data available at that time.
     
     Use these to overlay buy markers on price charts.
+    Results are pre-computed nightly for tracked symbols.
     """,
 )
 async def get_signal_triggers(
@@ -971,9 +972,41 @@ async def get_signal_triggers(
     lookback_days: int = Query(default=365, ge=30, le=730, description="Days to look back"),
 ) -> SignalTriggersResponse:
     """Get historical signal triggers for chart markers with benchmark comparison."""
-    from app.quant_engine.signals import get_historical_triggers
+    from app.repositories import quant_precomputed_orm as quant_repo
     
     symbol = symbol.strip().upper()
+    
+    # Check precomputed cache first (only for default 365-day lookback)
+    if lookback_days == 365:
+        precomputed = await quant_repo.get_precomputed(symbol)
+        if precomputed and precomputed.signal_triggers:
+            cached = precomputed.signal_triggers
+            return SignalTriggersResponse(
+                symbol=symbol,
+                signal_name=cached.get("signal_name"),
+                triggers=[
+                    SignalTriggerResponse(
+                        date=t["date"],
+                        signal_name=t["signal_name"],
+                        price=t["price"],
+                        win_rate=t["win_rate"],
+                        avg_return_pct=t["avg_return_pct"],
+                        holding_days=t.get("holding_days", 20),
+                        drawdown_pct=t.get("drawdown_pct", 0.0),
+                        signal_type=t.get("signal_type", "entry"),
+                    )
+                    for t in cached.get("triggers", [])
+                ],
+                buy_hold_return_pct=cached.get("buy_hold_return_pct", 0.0),
+                signal_return_pct=cached.get("signal_return_pct", 0.0),
+                edge_vs_buy_hold_pct=cached.get("edge_vs_buy_hold_pct", 0.0),
+                n_trades=cached.get("n_trades", 0),
+                beats_buy_hold=cached.get("edge_vs_buy_hold_pct", 0.0) > 0,
+                actual_win_rate=cached.get("triggers", [{}])[0].get("win_rate", 0.0) if cached.get("triggers") else 0.0,
+            )
+    
+    # Fallback to computing inline for non-default lookback
+    from app.quant_engine.signals import get_historical_triggers
     
     # Fetch price data - use same 5-year window as the signals scanner for consistent optimization
     prices_df = await _fetch_prices_for_symbols([symbol], lookback_days=1260)
