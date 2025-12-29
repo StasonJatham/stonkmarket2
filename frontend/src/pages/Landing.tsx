@@ -16,6 +16,7 @@ import { useTheme } from '@/context/ThemeContext';
 import { useAuth } from '@/context/AuthContext';
 import {
   getStockChart,
+  getBatchCharts,
   getQuantRecommendations,
   getAgentAnalysis,
   getSignalTriggers,
@@ -55,6 +56,7 @@ import {
   Zap,
   CircleArrowUp,
   AlertCircle,
+  Clock,
 } from 'lucide-react';
 
 // Action icon based on recommendation
