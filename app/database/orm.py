@@ -1119,7 +1119,7 @@ class StrategySignal(Base):
     """Optimized trading strategy signals computed nightly.
     
     Stores the best strategy for each symbol with performance metrics.
-    Updated by the strategy_optimize_nightly job.
+    Updated by the strategy_nightly job.
     """
     __tablename__ = "strategy_signals"
 

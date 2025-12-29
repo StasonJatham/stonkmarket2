@@ -462,7 +462,17 @@ class DipFinderService:
         if "Volume" in stock_df.columns:
             volumes = stock_df["Volume"].dropna().to_numpy()
 
-        # Compute full signal (with volume data for confirmation)
+        # Build enhanced analysis inputs for scoring (uses stored fundamentals)
+        enhanced_inputs = await self._build_enhanced_inputs(
+            ticker=ticker,
+            stock_df=stock_df,
+        )
+
+        # Get per-symbol min_dip_pct threshold
+        from app.repositories.dips_orm import get_symbol_min_dip_pct
+        min_dip_threshold = await get_symbol_min_dip_pct(ticker)
+
+        # Compute full signal (with volume data and enhanced inputs for scoring)
         signal = compute_signal(
             ticker=ticker,
             stock_prices=stock_prices,
@@ -475,22 +485,82 @@ class DipFinderService:
             config=self.config,
             quant_context=quant_context,
             volumes=volumes,
+            enhanced_inputs=enhanced_inputs,
+            min_dip_threshold=min_dip_threshold,
         )
 
-        # Compute enhanced analysis for meaningful dips
-        if signal.dip_metrics.is_meaningful:
-            try:
-                enhanced = await self._compute_enhanced_analysis(
-                    ticker=ticker,
-                    stock_df=stock_df,
-                    info=info,
-                    dip_pct=signal.dip_metrics.dip_pct,
-                )
-                signal.enhanced_analysis = enhanced
-            except Exception as e:
-                logger.warning(f"Failed to compute enhanced analysis for {ticker}: {e}")
-
         return signal
+
+    async def _build_enhanced_inputs(
+        self,
+        ticker: str,
+        stock_df: pd.DataFrame,
+    ) -> "EnhancedAnalysisInputs | None":
+        """
+        Build enhanced analysis inputs for scoring.
+
+        Uses locally stored fundamentals from scheduled jobs.
+        If data is missing, triggers on-demand fetch via Celery task.
+        Missing data is treated as neutral (not penalizing).
+        """
+        from app.dipfinder.earnings_calendar import get_earnings_info_from_stored
+        from app.dipfinder.sector_valuation import (
+            compute_sector_relative_valuation_from_stored,
+        )
+        from app.dipfinder.signal import EnhancedAnalysisInputs
+        from app.dipfinder.structural_analysis import (
+            analyze_fundamental_momentum_from_stored,
+        )
+        from app.quant_engine.support_resistance import analyze_support_resistance
+        from app.services.fundamentals import get_fundamentals_from_db
+
+        # Load stored fundamentals - if missing, queue a fetch task
+        stored_fundamentals = await get_fundamentals_from_db(ticker)
+        data_quality = "unknown"
+        
+        if stored_fundamentals is None:
+            # No stored data - queue a task to fetch it for next time
+            # For now, return inputs with whatever we can compute
+            logger.info(f"No stored fundamentals for {ticker}, queuing fetch task")
+            try:
+                from app.jobs.tasks import refresh_fundamentals_symbol_task
+                refresh_fundamentals_symbol_task.delay(ticker)
+            except Exception as e:
+                logger.debug(f"Could not queue fundamentals task for {ticker}: {e}")
+            stored_fundamentals = {}
+            data_quality = "unknown"
+        else:
+            data_quality = "full" if stored_fundamentals.get("income_stmt_quarterly") else "minimal"
+
+        inputs = EnhancedAnalysisInputs(data_quality=data_quality)
+
+        # 1. Structural decline analysis (uses stored quarterly financials)
+        try:
+            inputs.structural_momentum = analyze_fundamental_momentum_from_stored(stored_fundamentals)
+        except Exception as e:
+            logger.debug(f"Structural analysis failed for {ticker}: {e}")
+
+        # 2. Support/resistance analysis (uses price DataFrame, no API calls)
+        try:
+            inputs.support_resistance = analyze_support_resistance(stock_df)
+        except Exception as e:
+            logger.debug(f"Support/resistance analysis failed for {ticker}: {e}")
+
+        # 3. Sector-relative valuation (uses stored fundamentals)
+        try:
+            inputs.sector_valuation = compute_sector_relative_valuation_from_stored(
+                ticker, stored_fundamentals
+            )
+        except Exception as e:
+            logger.debug(f"Sector valuation failed for {ticker}: {e}")
+
+        # 4. Earnings calendar (uses stored fundamentals)
+        try:
+            inputs.earnings_info = get_earnings_info_from_stored(stored_fundamentals)
+        except Exception as e:
+            logger.debug(f"Earnings calendar failed for {ticker}: {e}")
+
+        return inputs
 
     async def _compute_enhanced_analysis(
         self,
@@ -503,7 +573,8 @@ class DipFinderService:
         Compute enhanced dip analysis including structural, support/resistance,
         sector-relative valuation, and earnings calendar data.
 
-        Uses locally stored fundamentals from scheduled jobs - no ad-hoc API calls.
+        DEPRECATED: Use _build_enhanced_inputs instead. This method is kept
+        for backward compatibility but the scoring now happens in signal.py.
         """
         from app.dipfinder.earnings_calendar import (
             compute_earnings_penalty,

@@ -1,18 +1,34 @@
 """Built-in job definitions for scheduled tasks.
 
-Jobs (New Names):
-- symbol_ingest: Process new symbols (every 15 min, idempotent)
-- prices_daily: Daily price updates (Mon-Fri 11 PM UTC)
-- signals_daily: Technical signal scanner (Mon-Fri 10 PM UTC)
-- regime_daily: Market regime detection (Mon-Fri 10:30 PM UTC)
-- ai_personas_weekly: Warren Buffett, Peter Lynch etc. (Sunday 3 AM UTC)
-- ai_bios_weekly: Swipe-style stock bios (Sunday 4 AM UTC)
-- ai_batch_poll: OpenAI batch result collector (every 5 min)
-- fundamentals_monthly: Company fundamentals (1st of month)
-- quant_monthly: Portfolio optimization (1st of month)
-- portfolio_worker: Portfolio analytics queue (every 5 min)
-- cache_warmup: Pre-cache chart data (every 30 min)
-- cleanup_daily: Remove expired data (midnight UTC)
+Job Categories:
+
+1. REAL-TIME PROCESSING (every 5-15 min)
+   - symbol_ingest: Process NEW symbols from queue
+   - ai_batch_poll: Check OpenAI batch results
+   - portfolio_worker: Process analytics queue
+   - cache_warmup: Pre-cache chart data
+
+2. DAILY MARKET DATA (after market close, Mon-Fri)
+   - signals_daily: Technical signal scanner (10 PM)
+   - regime_daily: Market regime detection (10:30 PM)
+   - prices_daily: Fetch closing prices (11 PM)
+   - strategy_nightly: Backtest & optimize (11:30 PM)
+   - quant_scoring_daily: Quant metrics (11:45 PM)
+   - dipfinder_daily: Dip signals (11:50 PM)
+
+3. WEEKLY AI ANALYSIS (Sunday morning)
+   - ai_personas_weekly: Warren Buffett, Peter Lynch etc.
+   - ai_bios_weekly: Swipe-style stock bios
+
+4. WEEKLY MAINTENANCE (Sunday)
+   - data_backfill: Fill ALL data gaps (comprehensive)
+
+5. MONTHLY MAINTENANCE
+   - fundamentals_monthly: Refresh company fundamentals
+   - quant_monthly: Portfolio optimization
+
+6. DAILY CLEANUP
+   - cleanup_daily: Remove expired data
 """
 
 from __future__ import annotations
@@ -267,6 +283,212 @@ async def add_to_ingest_queue(symbol: str, priority: int = 0) -> bool:
     Returns True if added, False if already in queue.
     """
     return await jobs_repo.add_to_ingest_queue(symbol, priority)
+
+
+@register_job("data_backfill")
+async def data_backfill_job() -> str:
+    """
+    Comprehensive data backfill for all tracked symbols.
+    
+    This job runs weekly to ensure data integrity by filling gaps caused by:
+    - yfinance returning incomplete data at import time
+    - Failed API calls during symbol_ingest
+    - New data fields added after symbols were imported
+    - Expired or missing computed data
+    
+    Checks and fills (in order):
+    1. Missing sector/summary_ai (from yfinance cache)
+    2. Missing price history (fetch from yfinance)
+    3. Missing fundamentals (refresh from yfinance)
+    4. Missing quant scores (compute fresh)
+    5. Missing dipfinder signals (compute fresh)
+    
+    Schedule: Weekly (Sunday 2 AM UTC, before AI jobs)
+    """
+    from datetime import date, timedelta
+    
+    from app.dipfinder.config import get_dipfinder_config
+    from app.dipfinder.service import DipFinderService
+    from app.repositories import symbols_orm as symbols_repo
+    from app.repositories import quant_scores_orm as quant_repo
+    from app.services.data_providers import get_yfinance_service
+    from app.services.fundamentals import refresh_fundamentals
+    from app.services.openai_client import summarize_company
+    from app.services.stock_info import get_stock_info_async
+    
+    logger.info("Starting data_backfill job")
+    
+    stats = {
+        "sectors": 0,
+        "summaries": 0,
+        "prices": 0,
+        "fundamentals": 0,
+        "quant_scores": 0,
+        "dipfinder": 0,
+    }
+    
+    try:
+        # Get all symbols
+        all_symbols = await symbols_repo.list_symbols()
+        tickers = [s.symbol for s in all_symbols if s.symbol not in ("SPY", "^GSPC", "URTH")]
+        
+        if not tickers:
+            return "No symbols to backfill"
+        
+        logger.info(f"[BACKFILL] Checking {len(tickers)} symbols for data gaps")
+        
+        # =====================================================================
+        # PHASE 1: Symbol metadata (sector, summary_ai)
+        # =====================================================================
+        symbols_needing_sector = [s.symbol for s in all_symbols if not s.sector and s.symbol in tickers]
+        symbols_needing_summary = [s.symbol for s in all_symbols if not s.summary_ai and s.symbol in tickers]
+        metadata_symbols = list(set(symbols_needing_sector + symbols_needing_summary))
+        
+        if metadata_symbols:
+            logger.info(f"[BACKFILL] Phase 1: Filling metadata for {len(metadata_symbols)} symbols")
+            
+            for symbol in metadata_symbols:
+                try:
+                    info = await get_stock_info_async(symbol)
+                    if not info:
+                        continue
+                    
+                    name = info.get("name")
+                    sector = info.get("sector")
+                    summary = info.get("summary")
+                    
+                    if symbol in symbols_needing_sector and sector:
+                        await symbols_repo.update_symbol_info(symbol, name=name, sector=sector)
+                        stats["sectors"] += 1
+                    
+                    if symbol in symbols_needing_summary and summary and len(summary) > 100:
+                        ai_summary = await summarize_company(symbol=symbol, name=name, description=summary)
+                        if ai_summary:
+                            await symbols_repo.update_symbol_info(symbol, summary_ai=ai_summary)
+                            stats["summaries"] += 1
+                            
+                except Exception as e:
+                    logger.debug(f"[BACKFILL] Metadata failed for {symbol}: {e}")
+        
+        # =====================================================================
+        # PHASE 2: Price history (symbols with < 200 days of data)
+        # =====================================================================
+        symbols_needing_prices = []
+        for symbol in tickers:
+            count = await price_history_repo.get_price_count(symbol)
+            if count < 200:  # Need at least ~1 year of data
+                symbols_needing_prices.append(symbol)
+        
+        if symbols_needing_prices:
+            logger.info(f"[BACKFILL] Phase 2: Fetching prices for {len(symbols_needing_prices)} symbols")
+            
+            yf_service = get_yfinance_service()
+            today = date.today()
+            start_date = today - timedelta(days=1825)  # 5 years
+            
+            # Batch fetch prices
+            price_results = await yf_service.get_price_history_batch(
+                symbols=symbols_needing_prices[:20],  # Limit batch size
+                start_date=start_date,
+                end_date=today,
+            )
+            
+            for symbol, result in price_results.items():
+                if result:
+                    prices, _version = result
+                    if prices is not None and not prices.empty:
+                        await price_history_repo.save_prices(symbol, prices)
+                        stats["prices"] += 1
+        
+        # =====================================================================
+        # PHASE 3: Fundamentals (symbols without recent fundamentals)
+        # =====================================================================
+        symbols_needing_fundamentals = []
+        for symbol in tickers[:50]:  # Limit to avoid rate limiting
+            from app.repositories import financials_orm
+            try:
+                fundamentals = await financials_orm.get_fundamentals(symbol)
+                if not fundamentals:
+                    symbols_needing_fundamentals.append(symbol)
+            except Exception:
+                symbols_needing_fundamentals.append(symbol)
+        
+        if symbols_needing_fundamentals:
+            logger.info(f"[BACKFILL] Phase 3: Refreshing fundamentals for {len(symbols_needing_fundamentals)} symbols")
+            
+            for symbol in symbols_needing_fundamentals[:20]:  # Limit batch
+                try:
+                    await refresh_fundamentals(symbol)
+                    stats["fundamentals"] += 1
+                except Exception as e:
+                    logger.debug(f"[BACKFILL] Fundamentals failed for {symbol}: {e}")
+        
+        # =====================================================================
+        # PHASE 4: Quant scores (symbols without scores)
+        # =====================================================================
+        symbols_needing_quant = []
+        for symbol in tickers:
+            score = await quant_repo.get_score(symbol)
+            if not score:
+                symbols_needing_quant.append(symbol)
+        
+        if symbols_needing_quant:
+            logger.info(f"[BACKFILL] Phase 4: Computing quant scores for {len(symbols_needing_quant)} symbols")
+            
+            from app.quant_engine.dual_scoring import compute_and_store_scores
+            
+            for symbol in symbols_needing_quant[:30]:  # Limit batch
+                try:
+                    await compute_and_store_scores(symbol)
+                    stats["quant_scores"] += 1
+                except Exception as e:
+                    logger.debug(f"[BACKFILL] Quant score failed for {symbol}: {e}")
+        
+        # =====================================================================
+        # PHASE 5: Dipfinder signals (symbols without recent signals)
+        # =====================================================================
+        from app.repositories import dipfinder_orm
+        
+        symbols_needing_dipfinder = []
+        today = date.today()
+        for symbol in tickers:
+            signal = await dipfinder_orm.get_latest_signal(symbol)
+            if not signal or (today - signal.as_of_date).days > 7:
+                symbols_needing_dipfinder.append(symbol)
+        
+        if symbols_needing_dipfinder:
+            logger.info(f"[BACKFILL] Phase 5: Computing dipfinder signals for {len(symbols_needing_dipfinder)} symbols")
+            
+            config = get_dipfinder_config()
+            service = DipFinderService(config)
+            
+            for symbol in symbols_needing_dipfinder[:30]:  # Limit batch
+                try:
+                    signal = await service.get_signal(
+                        ticker=symbol,
+                        window=config.windows[0] if config.windows else 60,
+                        benchmark=config.default_benchmark,
+                        force_refresh=True,
+                    )
+                    if signal:
+                        stats["dipfinder"] += 1
+                except Exception as e:
+                    logger.debug(f"[BACKFILL] Dipfinder failed for {symbol}: {e}")
+        
+        # Build summary message
+        filled = sum(stats.values())
+        message = (
+            f"Backfilled {filled} data gaps: "
+            f"{stats['sectors']} sectors, {stats['summaries']} summaries, "
+            f"{stats['prices']} prices, {stats['fundamentals']} fundamentals, "
+            f"{stats['quant_scores']} quant scores, {stats['dipfinder']} dipfinder"
+        )
+        logger.info(f"[BACKFILL] {message}")
+        return message
+        
+    except Exception as e:
+        logger.error(f"data_backfill failed: {e}", exc_info=True)
+        raise
 
 
 @register_job("prices_daily")
@@ -987,6 +1209,71 @@ async def signals_daily_job() -> str:
         raise
 
 
+@register_job("dipfinder_daily")
+async def dipfinder_daily_job() -> str:
+    """
+    Daily DipFinder signal refresh for all tracked symbols.
+    
+    Computes dip metrics, scores, and enhanced analysis for each symbol.
+    Must run AFTER quant_scoring_daily since DipFinder requires quant scores.
+    
+    Schedule: Daily at 11:50 PM UTC (after quant_scoring_daily at 11:45 PM)
+    """
+    from app.dipfinder.config import get_dipfinder_config
+    from app.dipfinder.service import DipFinderService
+    from app.repositories import symbols_orm as symbols_repo
+    
+    logger.info("Starting dipfinder_daily job")
+    
+    try:
+        # Get all tracked symbols
+        symbols_list = await symbols_repo.list_symbols()
+        
+        if not symbols_list:
+            return "No symbols tracked"
+        
+        # Filter out benchmarks
+        tickers = [
+            s.symbol for s in symbols_list
+            if s.symbol not in ("SPY", "^GSPC", "URTH")
+        ]
+        
+        config = get_dipfinder_config()
+        service = DipFinderService(config)
+        
+        logger.info(f"[DIPFINDER] Refreshing signals for {len(tickers)} symbols")
+        
+        processed = 0
+        skipped = 0
+        failed = 0
+        
+        for ticker in tickers:
+            try:
+                signal = await service.get_signal(
+                    ticker=ticker,
+                    window=config.windows[0] if config.windows else 60,
+                    benchmark=config.default_benchmark,
+                    force_refresh=True,
+                )
+                
+                if signal:
+                    processed += 1
+                else:
+                    skipped += 1
+                    
+            except Exception as e:
+                logger.debug(f"[DIPFINDER] Failed to process {ticker}: {e}")
+                failed += 1
+        
+        message = f"Processed {processed} signals, {skipped} skipped (no quant score), {failed} failed"
+        logger.info(f"[DIPFINDER] {message}")
+        return message
+        
+    except Exception as e:
+        logger.error(f"dipfinder_daily failed: {e}", exc_info=True)
+        raise
+
+
 @register_job("regime_daily")
 async def regime_daily_job() -> str:
     """
@@ -1124,8 +1411,8 @@ async def quant_monthly_job() -> str:
 # =============================================================================
 
 
-@register_job("strategy_optimize_nightly")
-async def strategy_optimize_nightly_job() -> str:
+@register_job("strategy_nightly")
+async def strategy_nightly_job() -> str:
     """
     Nightly strategy optimization for all tracked symbols.
     
@@ -1157,7 +1444,7 @@ async def strategy_optimize_nightly_job() -> str:
     )
     from app.quant_engine.dip_entry_optimizer import DipEntryOptimizer
     
-    logger.info("Starting strategy_optimize_nightly job")
+    logger.info("Starting strategy_nightly job")
     
     # Initialize dip entry optimizer for recovery time calculation
     dip_optimizer = DipEntryOptimizer()
@@ -1330,11 +1617,11 @@ async def strategy_optimize_nightly_job() -> str:
         await cache.delete("strategy_signals:*")
         
         message = f"Optimized strategies for {processed} symbols ({failed} failed), saved {signals_saved} signals"
-        logger.info(f"strategy_optimize_nightly: {message}")
+        logger.info(f"strategy_nightly: {message}")
         return message
         
     except Exception as e:
-        logger.exception(f"strategy_optimize_nightly failed: {e}")
+        logger.exception(f"strategy_nightly failed: {e}")
         raise
 
 # =============================================================================
@@ -1359,7 +1646,7 @@ async def quant_scoring_daily_job() -> str:
     - Fundamental momentum z-scores
     - BestScore 0-100 per symbol
     
-    Schedule: Mon-Fri 11:45 PM UTC (15 min after strategy_optimize_nightly)
+    Schedule: Mon-Fri 11:45 PM UTC (15 min after strategy_nightly)
     """
     from datetime import date, timedelta
     from decimal import Decimal

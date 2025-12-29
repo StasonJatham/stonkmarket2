@@ -4,11 +4,11 @@ import asyncio
 import sys
 sys.path.insert(0, "/Users/karl/Code/stonkmarket")
 
-from app.jobs.definitions import strategy_optimize_nightly_job
+from app.jobs.definitions import strategy_nightly_job
 
 
 async def main():
-    result = await strategy_optimize_nightly_job()
+    result = await strategy_nightly_job()
     print("Result:", result)
 
 

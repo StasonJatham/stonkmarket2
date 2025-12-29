@@ -6,6 +6,18 @@ treated with caution for dip entry.
 
 IMPORTANT: Uses locally stored fundamentals data from scheduled jobs,
 NOT ad-hoc yfinance fetches at runtime.
+
+KNOWN LIMITATIONS:
+- No EPS/revenue surprise data: We don't have actual vs expected EPS/revenue
+  from earnings releases. This limits post-earnings accuracy.
+- No guidance data: Forward guidance changes are not captured.
+- No estimate revisions: Analyst estimate changes before earnings aren't tracked.
+- Only timing + structural decline: Post-earnings adjustments are based on
+  whether earnings recently occurred + whether fundamentals deteriorated,
+  not on the actual earnings surprise magnitude.
+
+To improve: Would need integration with earnings data provider (e.g., earnings
+calendar API, SEC filings parser) to get actual surprise data.
 """
 
 from __future__ import annotations

@@ -217,25 +217,34 @@ def analyze_support_resistance(
     all_supports = []
     all_resistances = []
     
+    # Track ALL historical support levels (before filtering by current price)
+    # Used to detect if price has broken below all supports
+    all_historical_supports = []
+    
     for price, touches in support_clusters:
-        if price < current_price:  # Only consider supports below current price
-            # Find when price was last near this level
-            tolerance = price * cluster_tolerance / 100
-            close_to_level = (np.abs(lows - price) <= tolerance)
-            last_touch_idx = np.where(close_to_level)[0]
-            last_touch_days = n_days - last_touch_idx[-1] if len(last_touch_idx) > 0 else n_days
-            
-            # Calculate strength (more touches + recency = stronger)
-            recency_factor = max(0, 1 - last_touch_days / 252)  # Decay over a year
-            strength = min(100, touches * 20 + recency_factor * 30)
-            
-            level = PriceLevel(
-                price=price,
-                level_type="support",
-                strength=strength,
-                touches=touches,
-                last_touch_days_ago=int(last_touch_days),
-            )
+        # Find when price was last near this level
+        tolerance = price * cluster_tolerance / 100
+        close_to_level = (np.abs(lows - price) <= tolerance)
+        last_touch_idx = np.where(close_to_level)[0]
+        last_touch_days = n_days - last_touch_idx[-1] if len(last_touch_idx) > 0 else n_days
+        
+        # Calculate strength (more touches + recency = stronger)
+        recency_factor = max(0, 1 - last_touch_days / 252)  # Decay over a year
+        strength = min(100, touches * 20 + recency_factor * 30)
+        
+        level = PriceLevel(
+            price=price,
+            level_type="support",
+            strength=strength,
+            touches=touches,
+            last_touch_days_ago=int(last_touch_days),
+        )
+        
+        # Add ALL supports to historical list for below_support detection
+        all_historical_supports.append(level)
+        
+        # Only include supports below current price in the active list
+        if price < current_price:
             all_supports.append(level)
     
     for price, touches in resistance_clusters:
@@ -288,9 +297,24 @@ def analyze_support_resistance(
         else:
             result.price_position = "near_resistance" if result.distance_to_resistance_pct and result.distance_to_resistance_pct <= 5 else "mid_range"
     
-    # Check if below all supports (broken support)
-    if all_supports and current_price < min(s.price for s in all_supports):
-        result.price_position = "below_support"
+    # Check if below all historical supports (broken support)
+    # Use all_historical_supports (includes levels above current price) to detect true support breaks
+    # This catches cases where price has crashed through all support levels
+    if all_historical_supports:
+        min_historical_support = min(s.price for s in all_historical_supports)
+        if current_price < min_historical_support:
+            result.price_position = "below_support"
+            # Broken support now acts as resistance - update if no nearer resistance
+            broken_support = min(all_historical_supports, key=lambda s: abs(s.price - current_price))
+            if broken_support.price > current_price:
+                if result.nearest_resistance is None or broken_support.price < result.nearest_resistance.price:
+                    result.nearest_resistance = PriceLevel(
+                        price=broken_support.price,
+                        level_type="resistance",  # Broken support becomes resistance
+                        strength=broken_support.strength * 0.7,  # Slightly weaker as resistance
+                        touches=broken_support.touches,
+                        last_touch_days_ago=broken_support.last_touch_days_ago,
+                    )
     
     # Determine entry quality
     if result.price_position == "near_support":

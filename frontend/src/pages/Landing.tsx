@@ -811,10 +811,22 @@ export function Landing() {
       : 'text-danger';
   const dipDepth = heroRec?.legacy_dip_pct ?? null;
   const dipDays = heroRec?.legacy_days_in_dip ?? null;
-  const dipScore = heroRec?.dip_score ?? null;
+  
+  // Dip score: prefer dipfinder score, fallback to best_chance_score (which is the composite scoring)
+  const dipScore = heroRec?.dip_score ?? heroRec?.best_chance_score ?? null;
+  
   const recoveryOdds = heroRec?.quant_evidence?.p_recovery ?? heroRec?.win_rate ?? null;
   const expectedRecovery = heroRec?.expected_recovery_days ?? heroRec?.domain_recovery_days ?? null;
-  const dipVsTypical = heroRec?.dip_vs_typical ?? null;
+  
+  // Dip vs typical: prefer dipfinder, fallback to computed from legacy/typical
+  const dipVsTypical = useMemo(() => {
+    if (heroRec?.dip_vs_typical != null) return heroRec.dip_vs_typical;
+    // Compute fallback: current dip / typical dip
+    if (heroRec?.legacy_dip_pct != null && heroRec?.typical_dip_pct != null && heroRec.typical_dip_pct > 0) {
+      return Math.abs(heroRec.legacy_dip_pct) / heroRec.typical_dip_pct;
+    }
+    return null;
+  }, [heroRec?.dip_vs_typical, heroRec?.legacy_dip_pct, heroRec?.typical_dip_pct]);
 
   return (
     <div className="min-h-screen">

@@ -387,7 +387,19 @@ def quant_scoring_daily_task() -> str:
     return _run_job("quant_scoring_daily")
 
 
-@celery_app.task(name="jobs.strategy_optimize_nightly")
-def strategy_optimize_nightly_task() -> str:
+@celery_app.task(name="jobs.strategy_nightly")
+def strategy_nightly_task() -> str:
     """Run nightly strategy optimization for all symbols."""
-    return _run_job("strategy_optimize_nightly")
+    return _run_job("strategy_nightly")
+
+
+@celery_app.task(name="jobs.dipfinder_daily")
+def dipfinder_daily_task() -> str:
+    """Run daily DipFinder signal refresh for all tracked symbols."""
+    return _run_job("dipfinder_daily")
+
+
+@celery_app.task(name="jobs.data_backfill")
+def data_backfill_task() -> str:
+    """Run weekly comprehensive data backfill for all data gaps."""
+    return _run_job("data_backfill")

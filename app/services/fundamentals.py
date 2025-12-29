@@ -300,6 +300,7 @@ async def _fetch_fundamentals_from_service(
     symbol: str,
     include_financials: bool = True,
     include_calendar: bool = True,
+    skip_cache: bool = False,
 ) -> dict[str, Any] | None:
     """
     Fetch fundamentals via unified YFinanceService.
@@ -309,6 +310,12 @@ async def _fetch_fundamentals_from_service(
     - Earnings calendar
     - Financial statements (quarterly/annual income stmt, balance sheet, cash flow)
     - Domain-specific metrics (NIM, FFO, loss ratio based on domain type)
+    
+    Args:
+        symbol: Stock ticker symbol
+        include_financials: Whether to fetch financial statements
+        include_calendar: Whether to fetch earnings calendar
+        skip_cache: If True, bypass Redis cache and fetch fresh from yfinance
     """
     if symbol.startswith("^"):
         logger.debug(f"Skipping fundamentals for index: {symbol}")
@@ -317,14 +324,14 @@ async def _fetch_fundamentals_from_service(
     service = get_yfinance_service()
 
     # Fetch ticker info and financials concurrently
-    info_task = service.get_ticker_info(symbol)
+    info_task = service.get_ticker_info(symbol, skip_cache=skip_cache)
     financials_task = (
-        service.get_financials(symbol)
+        service.get_financials(symbol, skip_cache=skip_cache)
         if include_financials
         else asyncio.sleep(0, result=None)
     )
     calendar_task = (
-        service.get_calendar(symbol)
+        service.get_calendar(symbol, skip_cache=skip_cache)
         if include_calendar
         else asyncio.sleep(0, result=(None, None))
     )

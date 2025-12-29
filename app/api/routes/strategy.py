@@ -1,7 +1,7 @@
 """Strategy signals API routes.
 
 Returns optimized trading signals for tracked symbols.
-Data is computed nightly by the strategy_optimize_nightly job.
+Data is computed nightly by the strategy_nightly job.
 """
 
 from __future__ import annotations

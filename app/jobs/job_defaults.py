@@ -4,29 +4,33 @@ Job Naming Convention:
     <domain>_<frequency> - Clear, descriptive names
 
 Job Categories:
-    1. NEW SYMBOL PROCESSING (every 15 min)
-       - symbol_ingest: Process pending symbols, fetch data, submit AI batch
+    1. REAL-TIME PROCESSING (every 5-15 min)
+       - symbol_ingest: Process NEW symbols from queue
+       - ai_batch_poll: Check OpenAI batch results
+       - portfolio_worker: Process analytics queue
+       - cache_warmup: Pre-cache chart data
 
-    2. DAILY PRICE UPDATES (after market close)  
-       - prices_daily: Fetch latest prices for all tracked symbols
-       - signals_daily: Scan for technical buy signals
-       - regime_daily: Detect market conditions
+    2. DAILY MARKET DATA (after market close, Mon-Fri)
+       - prices_daily: Fetch closing prices (11 PM)
+       - signals_daily: Technical signal scanner (10 PM)
+       - regime_daily: Market regime detection (10:30 PM)
+       - strategy_nightly: Backtest & optimize (11:30 PM)
+       - quant_scoring_daily: Quant metrics (11:45 PM)
+       - dipfinder_daily: Dip signals (11:50 PM)
 
     3. WEEKLY AI ANALYSIS (Sunday morning)
-       - ai_personas_weekly: Warren Buffett, Peter Lynch etc. analysis
+       - ai_personas_weekly: Warren Buffett, Peter Lynch etc.
        - ai_bios_weekly: Swipe-style stock bios
 
-    4. AI BATCH POLLING (every 5 min)
-       - ai_batch_poll: Check OpenAI batch results
+    4. WEEKLY MAINTENANCE (Sunday)
+       - data_backfill: Fill ALL data gaps (comprehensive)
 
     5. MONTHLY MAINTENANCE
        - fundamentals_monthly: Refresh company fundamentals
        - quant_monthly: Portfolio optimization
 
-    6. BACKGROUND WORKERS (every 5 min)
-       - portfolio_worker: Process portfolio analytics queue
+    6. DAILY CLEANUP
        - cleanup_daily: Remove expired data
-       - cache_warmup: Pre-cache popular data
 """
 
 from __future__ import annotations
@@ -46,22 +50,33 @@ from app.database.orm import CronJob
 
 DEFAULT_SCHEDULES: dict[str, tuple[str, str]] = {
     # =========================================================================
-    # 1. NEW SYMBOL PROCESSING - When users add new stocks
+    # 1. REAL-TIME PROCESSING - Continuous background tasks
     # =========================================================================
     "symbol_ingest": (
         "*/15 * * * *",
         "Process new symbols - fetches price history, fundamentals, and queues AI analysis. "
         "Batches symbols added in the last 15 minutes. Idempotent - skips already processed."
     ),
+    "ai_batch_poll": (
+        "*/5 * * * *",
+        "OpenAI batch result collector - checks for completed AI jobs and stores results. "
+        "Every 5 minutes."
+    ),
+    "portfolio_worker": (
+        "*/5 * * * *",
+        "Portfolio analytics processor - handles queued risk analysis calculations. "
+        "Every 5 minutes."
+    ),
+    "cache_warmup": (
+        "*/30 * * * *",
+        "Cache pre-warming - pre-generates chart data for top stocks to speed up page loads. "
+        "Every 30 minutes."
+    ),
     
     # =========================================================================
-    # 2. DAILY PRICE & ANALYSIS - After market close
+    # 2. DAILY MARKET DATA - After market close (Mon-Fri)
+    # Order matters: prices → signals → regime → strategy → quant → dipfinder
     # =========================================================================
-    "prices_daily": (
-        "0 23 * * 1-5",
-        "Daily price update - fetches closing prices and updates dip states for all stocks. "
-        "Runs Mon-Fri at 11 PM UTC (after US market close)."
-    ),
     "signals_daily": (
         "0 22 * * 1-5",
         "Technical signal scanner - finds RSI oversold, MACD crossovers, Bollinger squeezes. "
@@ -72,11 +87,26 @@ DEFAULT_SCHEDULES: dict[str, tuple[str, str]] = {
         "Market regime detection - identifies bull/bear market and volatility conditions. "
         "Runs Mon-Fri at 10:30 PM UTC."
     ),
-    "strategy_optimize_nightly": (
+    "prices_daily": (
+        "0 23 * * 1-5",
+        "Daily price update - fetches closing prices and updates dip states for all stocks. "
+        "Runs Mon-Fri at 11 PM UTC (after US market close)."
+    ),
+    "strategy_nightly": (
         "30 23 * * 1-5",
         "Strategy optimization - runs full backtest with recency weighting, finds best strategy "
         "for each symbol that works NOW. Includes fundamental filters. "
         "Runs Mon-Fri at 11:30 PM UTC (30 min after prices_daily)."
+    ),
+    "quant_scoring_daily": (
+        "45 23 * * 1-5",
+        "Quant scoring - computes quantitative metrics (momentum, quality, value, volatility) "
+        "for all tracked symbols. Runs Mon-Fri at 11:45 PM UTC."
+    ),
+    "dipfinder_daily": (
+        "50 23 * * 1-5",
+        "DipFinder signal refresh - computes dip metrics, scores, and enhanced analysis for all "
+        "tracked symbols. Must run after quant_scoring_daily. Runs Mon-Fri at 11:50 PM UTC."
     ),
     
     # =========================================================================
@@ -94,12 +124,12 @@ DEFAULT_SCHEDULES: dict[str, tuple[str, str]] = {
     ),
     
     # =========================================================================
-    # 4. AI BATCH POLLING - Check for completed OpenAI batch jobs
+    # 4. WEEKLY MAINTENANCE - Data integrity
     # =========================================================================
-    "ai_batch_poll": (
-        "*/5 * * * *",
-        "OpenAI batch result collector - checks for completed AI jobs and stores results. "
-        "Every 5 minutes."
+    "data_backfill": (
+        "0 2 * * 0",
+        "Comprehensive data backfill - fills ALL data gaps: missing sectors, summaries, "
+        "price history, fundamentals, quant scores, dipfinder signals. Sunday 2 AM UTC."
     ),
     
     # =========================================================================
@@ -117,18 +147,8 @@ DEFAULT_SCHEDULES: dict[str, tuple[str, str]] = {
     ),
     
     # =========================================================================
-    # 6. BACKGROUND WORKERS & MAINTENANCE
+    # 6. DAILY CLEANUP
     # =========================================================================
-    "portfolio_worker": (
-        "*/5 * * * *",
-        "Portfolio analytics processor - handles queued risk analysis calculations. "
-        "Every 5 minutes."
-    ),
-    "cache_warmup": (
-        "*/30 * * * *",
-        "Cache pre-warming - pre-generates chart data for top stocks to speed up page loads. "
-        "Every 30 minutes."
-    ),
     "cleanup_daily": (
         "0 0 * * *",
         "Data cleanup - removes expired cache entries, old analytics jobs, stale sessions. "
@@ -145,24 +165,27 @@ DEFAULT_SCHEDULES: dict[str, tuple[str, str]] = {
 JOB_PRIORITIES: dict[str, dict[str, int | str]] = {
     # High priority - time-sensitive market data
     "prices_daily": {"queue": "high", "priority": 9},
-    "cache_warmup": {"queue": "high", "priority": 8},
     "ai_batch_poll": {"queue": "high", "priority": 8},
+    "cache_warmup": {"queue": "high", "priority": 8},
     
     # Default priority - data ingestion & analysis
     "symbol_ingest": {"queue": "default", "priority": 7},
     "signals_daily": {"queue": "default", "priority": 7},
     "regime_daily": {"queue": "default", "priority": 6},
-    "strategy_optimize_nightly": {"queue": "batch", "priority": 6},  # Heavy computation
+    "quant_scoring_daily": {"queue": "default", "priority": 6},
+    "dipfinder_daily": {"queue": "default", "priority": 6},
     "fundamentals_monthly": {"queue": "default", "priority": 5},
     "portfolio_worker": {"queue": "default", "priority": 5},
+    "quant_monthly": {"queue": "default", "priority": 4},
     
-    # Batch queue - AI jobs (can run longer)
+    # Batch queue - heavy computation / AI jobs
+    "strategy_nightly": {"queue": "batch", "priority": 6},
     "ai_personas_weekly": {"queue": "batch", "priority": 6},
     "ai_bios_weekly": {"queue": "batch", "priority": 4},
+    "data_backfill": {"queue": "batch", "priority": 3},
     
     # Low priority - maintenance
     "cleanup_daily": {"queue": "low", "priority": 2},
-    "quant_monthly": {"queue": "default", "priority": 4},
 }
 
 
