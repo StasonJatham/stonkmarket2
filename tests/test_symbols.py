@@ -73,10 +73,30 @@ class TestCreateSymbolEndpoint:
         response = client.post("/symbols", json={"symbol": "AAPL"})
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
-    def test_create_symbol_without_body_returns_422(self, client: TestClient, auth_headers: dict):
+    def test_create_symbol_without_body_returns_422(self, client: TestClient):
         """POST /symbols without body returns validation error."""
-        # Note: Would need DB mock to actually work
-        pass
+        from datetime import UTC, datetime
+
+        from app.api.dependencies import require_user
+        from app.core.security import TokenData
+
+        async def override_require_user():
+            return TokenData(
+                sub="test_user",
+                exp=datetime.now(UTC),
+                iat=datetime.now(UTC),
+                iss="stonkmarket",
+                aud="stonkmarket-api",
+                jti="test-jti",
+                is_admin=False,
+            )
+
+        client.app.dependency_overrides[require_user] = override_require_user
+        try:
+            response = client.post("/symbols", json={})
+            assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+        finally:
+            client.app.dependency_overrides.clear()
 
 
 class TestUpdateSymbolEndpoint:
@@ -106,7 +126,7 @@ class TestSymbolValidation:
         
         # Path function returns the processed value
         # Note: In actual use, this is a Depends callable
-        pass
+        assert _validate_symbol_path(" aapl ") == "AAPL"
 
     def test_symbol_max_length(self, client: TestClient):
         """Symbol longer than 10 chars returns validation error."""

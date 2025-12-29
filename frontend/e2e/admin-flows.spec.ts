@@ -140,23 +140,24 @@ test.describe('Add Stock Flow (API)', () => {
   });
 
   test('should search symbols via API', async ({ request }) => {
-    const response = await request.get(`${BASE_URL}/api/symbols/search?q=Apple`);
+    const response = await request.get(`${BASE_URL}/api/symbols/search/Apple?limit=10`);
     
     expect(response.ok()).toBe(true);
     
     const data = await response.json();
-    expect(Array.isArray(data.results || data)).toBe(true);
+    expect(Array.isArray(data.results)).toBe(true);
   });
 
   test('should get symbol info via API', async ({ request }) => {
     // Get a tracked symbol first
-    const symbolsResponse = await request.get(`${BASE_URL}/api/symbols?limit=1`);
+    const symbolsResponse = await request.get(`${BASE_URL}/api/symbols/paged?limit=1`);
     
     if (symbolsResponse.ok()) {
       const symbols = await symbolsResponse.json();
+      const items = symbols.items || [];
       
-      if (symbols.length > 0) {
-        const symbol = symbols[0].symbol;
+      if (items.length > 0) {
+        const symbol = items[0].symbol;
         
         const infoResponse = await request.get(`${BASE_URL}/api/dips/${symbol}/info`);
         expect(infoResponse.ok()).toBe(true);
@@ -218,13 +219,14 @@ test.describe('Symbol Management API', () => {
 
   test('should get symbol details', async ({ request }) => {
     // Get first symbol
-    const listResponse = await request.get(`${BASE_URL}/api/symbols?limit=1`);
+    const listResponse = await request.get(`${BASE_URL}/api/symbols/paged?limit=1`);
     
     if (listResponse.ok()) {
       const symbols = await listResponse.json();
+      const items = symbols.items || [];
       
-      if (symbols.length > 0) {
-        const symbol = symbols[0].symbol;
+      if (items.length > 0) {
+        const symbol = items[0].symbol;
         
         const detailResponse = await request.get(`${BASE_URL}/api/symbols/${symbol}`);
         expect(detailResponse.ok()).toBe(true);

@@ -13,7 +13,7 @@ from app.celery_app import celery_app
 from app.core.exceptions import ConflictError, NotFoundError
 from app.core.logging import get_logger
 from app.core.security import TokenData
-from app.database import AIPersona, Symbol, get_session
+from app.database import AIPersona, get_session
 from app.repositories import symbols_orm as symbol_repo
 from app.schemas.symbols import SymbolCreate, SymbolListResponse, SymbolResponse, SymbolUpdate
 from app.services.stock_info import get_stock_info

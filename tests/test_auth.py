@@ -84,10 +84,30 @@ class TestCredentialsEndpoint:
         )
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
-    def test_credentials_without_body_returns_422(self, client: TestClient, auth_headers: dict):
+    def test_credentials_without_body_returns_422(self, client: TestClient):
         """Update credentials without body returns validation error."""
-        # Note: This test would need mocked database to avoid connection errors
-        pass  # Skip actual test for now - validates structure exists
+        from datetime import UTC, datetime
+
+        from app.api.dependencies import require_user
+        from app.core.security import TokenData
+
+        async def override_require_user():
+            return TokenData(
+                sub="test_user",
+                exp=datetime.now(UTC),
+                iat=datetime.now(UTC),
+                iss="stonkmarket",
+                aud="stonkmarket-api",
+                jti="test-jti",
+                is_admin=False,
+            )
+
+        client.app.dependency_overrides[require_user] = override_require_user
+        try:
+            response = client.put("/auth/credentials", json={})
+            assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+        finally:
+            client.app.dependency_overrides.clear()
 
 
 class TestTokenGeneration:

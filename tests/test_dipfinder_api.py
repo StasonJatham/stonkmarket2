@@ -44,31 +44,22 @@ class TestDipFinderProtectedEndpoints:
 
 class TestDipFinderValidation:
     """Tests for request validation."""
-    
-    @pytest.fixture
-    def auth_headers(self) -> dict:
-        """Create auth headers for testing.
-        
-        Note: In real tests, this would create a proper JWT token.
-        For now, this is a placeholder.
-        """
-        # This would need proper token generation
-        return {"Authorization": "Bearer test-token"}
-    
-    def test_signals_empty_tickers(self, client: TestClient, auth_headers):
+
+    def test_signals_empty_tickers(self, client: TestClient):
         """Empty tickers parameter returns error."""
-        # This test would work with proper auth setup
-        pass  # Skip for now without proper auth mock
+        response = client.get("/dipfinder/signals?tickers=")
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
     
-    def test_signals_too_many_tickers(self, client: TestClient, auth_headers):
+    def test_signals_too_many_tickers(self, client: TestClient):
         """Too many tickers returns error."""
-        # Would test with more than 20 tickers
-        pass
+        tickers = ",".join([f"T{i}" for i in range(1, 22)])
+        response = client.get(f"/dipfinder/signals?tickers={tickers}")
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
     
-    def test_signals_invalid_window(self, client: TestClient, auth_headers):
+    def test_signals_invalid_window(self, client: TestClient):
         """Invalid window value returns error."""
-        # Would test with window < 7 or > 365
-        pass
+        response = client.get("/dipfinder/signals?tickers=AAPL&window=6")
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
 class TestDipFinderConfig:
