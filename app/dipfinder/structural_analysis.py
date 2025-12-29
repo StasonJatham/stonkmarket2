@@ -2,6 +2,9 @@
 
 Distinguishes between temporary dips (buying opportunities) and structural
 declines (value traps). Uses quarterly data trends and margin analysis.
+
+IMPORTANT: Uses locally stored fundamentals data from scheduled jobs,
+NOT ad-hoc yfinance fetches at runtime.
 """
 
 from __future__ import annotations
@@ -103,145 +106,103 @@ def _count_declining_periods(values: list[float | None]) -> int:
     return count
 
 
-async def analyze_fundamental_momentum(
-    symbol: str,
-    quarterly_financials: dict[str, Any] | None = None,
+def _extract_quarterly_series(
+    quarterly_data: dict[str, Any] | None,
+    field_name: str,
+) -> list[float | None]:
+    """
+    Extract a time series from stored quarterly financial data.
+    
+    The quarterly data is stored as a dict with date keys mapping to values,
+    or as a list of dicts with period info.
+    """
+    if not quarterly_data:
+        return []
+    
+    # Handle dict format: {"2024-09-30": value, "2024-06-30": value, ...}
+    if isinstance(quarterly_data, dict):
+        # Check if it's a nested structure with the field inside
+        if field_name in quarterly_data:
+            # Direct field in dict
+            value = quarterly_data.get(field_name)
+            if isinstance(value, dict):
+                # It's {date: value, date: value}
+                sorted_dates = sorted(value.keys(), reverse=True)
+                return [_safe_float(value.get(d)) for d in sorted_dates]
+            return [_safe_float(value)]
+        
+        # Maybe it's quarterly data keyed by date with field inside each
+        # e.g., {"2024-09-30": {"TotalRevenue": 123, ...}, ...}
+        sorted_dates = sorted(quarterly_data.keys(), reverse=True)
+        values = []
+        for d in sorted_dates:
+            period_data = quarterly_data.get(d)
+            if isinstance(period_data, dict):
+                values.append(_safe_float(period_data.get(field_name)))
+            else:
+                values.append(_safe_float(period_data))
+        return values if values else []
+    
+    # Handle list format
+    if isinstance(quarterly_data, list):
+        return [_safe_float(item.get(field_name)) if isinstance(item, dict) else None 
+                for item in quarterly_data]
+    
+    return []
+
+
+def analyze_fundamental_momentum_from_stored(
+    stored_fundamentals: dict[str, Any],
 ) -> FundamentalMomentum:
     """
-    Analyze fundamental momentum from quarterly financial data.
+    Analyze fundamental momentum from locally stored fundamentals data.
     
-    Uses up to 8 quarters of data to detect:
-    - Revenue/earnings trajectory (improving vs declining)
-    - Margin compression trends
-    - Structural decline patterns
+    Uses pre-fetched quarterly income statement data from the database.
+    Does NOT make any yfinance calls.
     
     Args:
-        symbol: Stock ticker
-        quarterly_financials: Pre-fetched quarterly data or None to fetch
+        stored_fundamentals: Dict from get_fundamentals_from_db() containing
+                            income_stmt_quarterly, revenue_growth, etc.
         
     Returns:
         FundamentalMomentum with trend analysis
     """
     result = FundamentalMomentum()
     
-    if quarterly_financials is None:
-        # Fetch from yfinance service
-        from app.services.data_providers import get_yfinance_service
-        svc = get_yfinance_service()
-        financials = await svc.get_financials(symbol)
-        if not financials:
-            result.data_quality = "unknown"
-            return result
-        quarterly_financials = financials.get("quarterly", {})
-    
-    income_stmt = quarterly_financials.get("income_statement", {})
-    
-    if not income_stmt:
+    if not stored_fundamentals:
         result.data_quality = "unknown"
         return result
     
-    # Extract quarterly values (yfinance returns most recent first)
-    # We need to handle the dict format from our yfinance service
-    revenues = []
-    net_incomes = []
-    gross_profits = []
-    operating_incomes = []
+    # Use pre-computed growth metrics when available
+    revenue_growth = _safe_float(stored_fundamentals.get("revenue_growth"))
+    earnings_growth = _safe_float(stored_fundamentals.get("earnings_growth"))
+    earnings_qtr_growth = _safe_float(stored_fundamentals.get("earnings_quarterly_growth"))
     
-    # The quarterly data is a single dict with the most recent quarter
-    # For full trend analysis, we'd need the raw DataFrame
-    # For now, use what's available
-    revenue = _safe_float(income_stmt.get("Total Revenue"))
-    net_income = _safe_float(income_stmt.get("Net Income"))
-    gross_profit = _safe_float(income_stmt.get("Gross Profit"))
-    operating_income = _safe_float(income_stmt.get("Operating Income"))
+    # Get quarterly income statement for detailed analysis
+    income_stmt_quarterly = stored_fundamentals.get("income_stmt_quarterly")
     
-    # Calculate margins if we have the data
-    gross_margin = None
-    operating_margin = None
-    if revenue and revenue > 0:
-        if gross_profit is not None:
-            gross_margin = gross_profit / revenue
-        if operating_income is not None:
-            operating_margin = operating_income / revenue
-    
-    # With single quarter data, we can only do limited analysis
-    # Flag as partial data quality
-    result.data_quality = "minimal"
-    result.quarters_analyzed = 1
-    
-    # Use YoY growth metrics from ticker info as proxy
-    # These are typically available and more reliable
-    return result
-
-
-async def analyze_fundamental_momentum_full(
-    symbol: str,
-) -> FundamentalMomentum:
-    """
-    Full fundamental momentum analysis using raw quarterly DataFrames.
-    
-    This fetches complete quarterly history and computes multi-quarter trends.
-    More expensive but more accurate than single-quarter analysis.
-    """
-    import yfinance as yf
-    from app.core.rate_limiter import get_yfinance_limiter
-    
-    result = FundamentalMomentum()
-    limiter = get_yfinance_limiter()
-    
-    if not limiter.acquire_sync():
-        logger.warning(f"Rate limited for {symbol} fundamental momentum")
-        return result
-    
-    try:
-        ticker = yf.Ticker(symbol)
-        income_stmt = ticker.quarterly_income_stmt
+    if income_stmt_quarterly:
+        # Extract time series
+        revenues = _extract_quarterly_series(income_stmt_quarterly, "TotalRevenue")
+        if not revenues:
+            revenues = _extract_quarterly_series(income_stmt_quarterly, "Total Revenue")
         
-        if income_stmt is None or income_stmt.empty:
-            result.data_quality = "unknown"
-            return result
+        net_incomes = _extract_quarterly_series(income_stmt_quarterly, "NetIncome")
+        if not net_incomes:
+            net_incomes = _extract_quarterly_series(income_stmt_quarterly, "Net Income")
         
-        # Get up to 8 quarters of data
-        n_quarters = min(8, income_stmt.shape[1])
+        gross_profits = _extract_quarterly_series(income_stmt_quarterly, "GrossProfit")
+        if not gross_profits:
+            gross_profits = _extract_quarterly_series(income_stmt_quarterly, "Gross Profit")
+        
+        operating_incomes = _extract_quarterly_series(income_stmt_quarterly, "OperatingIncome")
+        if not operating_incomes:
+            operating_incomes = _extract_quarterly_series(income_stmt_quarterly, "Operating Income")
+        
+        n_quarters = max(len(revenues), len(net_incomes))
         result.quarters_analyzed = n_quarters
         
-        # Extract revenue series
-        revenues = []
-        for i in range(n_quarters):
-            try:
-                rev = income_stmt.loc["Total Revenue"].iloc[i] if "Total Revenue" in income_stmt.index else None
-                revenues.append(_safe_float(rev))
-            except (KeyError, IndexError):
-                revenues.append(None)
-        
-        # Extract net income series
-        net_incomes = []
-        for i in range(n_quarters):
-            try:
-                ni = income_stmt.loc["Net Income"].iloc[i] if "Net Income" in income_stmt.index else None
-                net_incomes.append(_safe_float(ni))
-            except (KeyError, IndexError):
-                net_incomes.append(None)
-        
-        # Extract gross profit for margin calculation
-        gross_profits = []
-        for i in range(n_quarters):
-            try:
-                gp = income_stmt.loc["Gross Profit"].iloc[i] if "Gross Profit" in income_stmt.index else None
-                gross_profits.append(_safe_float(gp))
-            except (KeyError, IndexError):
-                gross_profits.append(None)
-        
-        # Extract operating income
-        operating_incomes = []
-        for i in range(n_quarters):
-            try:
-                oi = income_stmt.loc["Operating Income"].iloc[i] if "Operating Income" in income_stmt.index else None
-                operating_incomes.append(_safe_float(oi))
-            except (KeyError, IndexError):
-                operating_incomes.append(None)
-        
-        # Calculate trends
+        # Calculate trends from quarterly data
         if len(revenues) >= 2 and revenues[0] is not None and revenues[1] is not None:
             result.revenue_qoq_change = _compute_pct_change(revenues[0], revenues[1])
         
@@ -275,111 +236,169 @@ async def analyze_fundamental_momentum_full(
         
         # Margin trend = recent margin - older margin (in percentage points)
         if len(gross_margins) >= 4 and gross_margins[0] is not None and gross_margins[3] is not None:
-            result.gross_margin_trend = (gross_margins[0] - gross_margins[3]) * 100  # pp change
+            result.gross_margin_trend = (gross_margins[0] - gross_margins[3]) * 100
         
         if len(operating_margins) >= 4 and operating_margins[0] is not None and operating_margins[3] is not None:
             result.operating_margin_trend = (operating_margins[0] - operating_margins[3]) * 100
         
         result.margin_compression_quarters = _count_declining_periods(operating_margins)
-        
-        # Determine structural decline
-        decline_reasons = []
-        severity_score = 0
-        
-        # Revenue declining 3+ quarters = warning sign
-        if result.revenue_declining_quarters >= 3:
-            decline_reasons.append(f"Revenue declining {result.revenue_declining_quarters} consecutive quarters")
-            severity_score += 2
-        elif result.revenue_declining_quarters >= 2:
-            decline_reasons.append(f"Revenue declining {result.revenue_declining_quarters} consecutive quarters")
-            severity_score += 1
-        
-        # Earnings declining more than revenue = margin pressure
-        if result.earnings_declining_quarters >= 3:
-            decline_reasons.append(f"Earnings declining {result.earnings_declining_quarters} consecutive quarters")
-            severity_score += 2
-        
-        # Margin compression is the most serious sign
-        if result.operating_margin_trend is not None and result.operating_margin_trend < -3:
-            decline_reasons.append(f"Operating margin compressed {abs(result.operating_margin_trend):.1f}pp")
-            severity_score += 3
-        elif result.operating_margin_trend is not None and result.operating_margin_trend < -1:
-            severity_score += 1
-        
-        if result.gross_margin_trend is not None and result.gross_margin_trend < -3:
-            decline_reasons.append(f"Gross margin compressed {abs(result.gross_margin_trend):.1f}pp")
-            severity_score += 2
-        
-        # Large YoY revenue decline
-        if result.revenue_yoy_change is not None and result.revenue_yoy_change < -10:
-            decline_reasons.append(f"Revenue down {abs(result.revenue_yoy_change):.1f}% YoY")
-            severity_score += 2
-        
-        # Determine severity
-        if severity_score >= 6:
-            result.decline_severity = "severe"
-            result.is_structural_decline = True
-        elif severity_score >= 4:
-            result.decline_severity = "moderate"
-            result.is_structural_decline = True
-        elif severity_score >= 2:
-            result.decline_severity = "mild"
-            result.is_structural_decline = False  # Mild might still be a dip opportunity
-        else:
-            result.decline_severity = "none"
-        
-        result.decline_reasons = decline_reasons if decline_reasons else None
-        
-        # Compute momentum score (0-100, higher = better)
-        # Start at 50 (neutral), adjust based on trends
-        momentum = 50.0
-        
-        # Revenue trend
-        if result.revenue_yoy_change is not None:
-            if result.revenue_yoy_change > 20:
-                momentum += 15
-            elif result.revenue_yoy_change > 10:
-                momentum += 10
-            elif result.revenue_yoy_change > 0:
-                momentum += 5
-            elif result.revenue_yoy_change > -10:
-                momentum -= 5
-            elif result.revenue_yoy_change > -20:
-                momentum -= 10
-            else:
-                momentum -= 20
-        
-        # Earnings trend
-        if result.earnings_yoy_change is not None:
-            if result.earnings_yoy_change > 20:
-                momentum += 15
-            elif result.earnings_yoy_change > 0:
-                momentum += 8
-            elif result.earnings_yoy_change > -20:
-                momentum -= 8
-            else:
-                momentum -= 15
-        
-        # Margin trend
-        if result.operating_margin_trend is not None:
-            if result.operating_margin_trend > 2:
-                momentum += 10
-            elif result.operating_margin_trend > 0:
-                momentum += 5
-            elif result.operating_margin_trend > -2:
-                momentum -= 5
-            else:
-                momentum -= 15
-        
-        result.momentum_score = max(0, min(100, momentum))
         result.data_quality = "full" if n_quarters >= 4 else "partial"
+    else:
+        # Fall back to using just the growth metrics
+        result.data_quality = "minimal"
+        if revenue_growth is not None:
+            result.revenue_yoy_change = revenue_growth * 100  # Convert to percentage
+        if earnings_growth is not None:
+            result.earnings_yoy_change = earnings_growth * 100
+        if earnings_qtr_growth is not None:
+            result.earnings_qoq_change = earnings_qtr_growth * 100
+    
+    # Determine structural decline
+    _assess_structural_decline(result)
+    
+    # Compute momentum score
+    _compute_momentum_score(result, revenue_growth, earnings_growth)
+    
+    return result
+
+
+def _assess_structural_decline(result: FundamentalMomentum) -> None:
+    """Assess if the fundamental trends indicate structural decline."""
+    decline_reasons = []
+    severity_score = 0
+    
+    # Revenue declining 3+ quarters = warning sign
+    if result.revenue_declining_quarters >= 3:
+        decline_reasons.append(f"Revenue declining {result.revenue_declining_quarters} consecutive quarters")
+        severity_score += 2
+    elif result.revenue_declining_quarters >= 2:
+        decline_reasons.append(f"Revenue declining {result.revenue_declining_quarters} consecutive quarters")
+        severity_score += 1
+    
+    # Earnings declining more than revenue = margin pressure
+    if result.earnings_declining_quarters >= 3:
+        decline_reasons.append(f"Earnings declining {result.earnings_declining_quarters} consecutive quarters")
+        severity_score += 2
+    
+    # Margin compression is the most serious sign
+    if result.operating_margin_trend is not None and result.operating_margin_trend < -3:
+        decline_reasons.append(f"Operating margin compressed {abs(result.operating_margin_trend):.1f}pp")
+        severity_score += 3
+    elif result.operating_margin_trend is not None and result.operating_margin_trend < -1:
+        severity_score += 1
+    
+    if result.gross_margin_trend is not None and result.gross_margin_trend < -3:
+        decline_reasons.append(f"Gross margin compressed {abs(result.gross_margin_trend):.1f}pp")
+        severity_score += 2
+    
+    # Large YoY revenue decline
+    if result.revenue_yoy_change is not None and result.revenue_yoy_change < -10:
+        decline_reasons.append(f"Revenue down {abs(result.revenue_yoy_change):.1f}% YoY")
+        severity_score += 2
+    
+    # Determine severity
+    if severity_score >= 6:
+        result.decline_severity = "severe"
+        result.is_structural_decline = True
+    elif severity_score >= 4:
+        result.decline_severity = "moderate"
+        result.is_structural_decline = True
+    elif severity_score >= 2:
+        result.decline_severity = "mild"
+        result.is_structural_decline = False  # Mild might still be a dip opportunity
+    else:
+        result.decline_severity = "none"
+    
+    result.decline_reasons = decline_reasons if decline_reasons else None
+
+
+def _compute_momentum_score(
+    result: FundamentalMomentum,
+    revenue_growth: float | None,
+    earnings_growth: float | None,
+) -> None:
+    """Compute overall momentum score (0-100)."""
+    momentum = 50.0
+    
+    # Use YoY changes if available from quarterly data, otherwise use stored growth rates
+    rev_yoy = result.revenue_yoy_change
+    if rev_yoy is None and revenue_growth is not None:
+        rev_yoy = revenue_growth * 100
+    
+    earn_yoy = result.earnings_yoy_change
+    if earn_yoy is None and earnings_growth is not None:
+        earn_yoy = earnings_growth * 100
+    
+    # Revenue trend
+    if rev_yoy is not None:
+        if rev_yoy > 20:
+            momentum += 15
+        elif rev_yoy > 10:
+            momentum += 10
+        elif rev_yoy > 0:
+            momentum += 5
+        elif rev_yoy > -10:
+            momentum -= 5
+        elif rev_yoy > -20:
+            momentum -= 10
+        else:
+            momentum -= 20
+    
+    # Earnings trend
+    if earn_yoy is not None:
+        if earn_yoy > 20:
+            momentum += 15
+        elif earn_yoy > 0:
+            momentum += 8
+        elif earn_yoy > -20:
+            momentum -= 8
+        else:
+            momentum -= 15
+    
+    # Margin trend
+    if result.operating_margin_trend is not None:
+        if result.operating_margin_trend > 2:
+            momentum += 10
+        elif result.operating_margin_trend > 0:
+            momentum += 5
+        elif result.operating_margin_trend > -2:
+            momentum -= 5
+        else:
+            momentum -= 15
+    
+    result.momentum_score = max(0, min(100, momentum))
+
+
+async def analyze_fundamental_momentum(
+    symbol: str,
+    stored_fundamentals: dict[str, Any] | None = None,
+) -> FundamentalMomentum:
+    """
+    Analyze fundamental momentum for a symbol.
+    
+    Uses locally stored fundamentals from scheduled jobs.
+    Does NOT make ad-hoc yfinance calls.
+    
+    Args:
+        symbol: Stock ticker
+        stored_fundamentals: Pre-loaded fundamentals dict, or None to load from DB
         
-        return result
-        
-    except Exception as e:
-        logger.warning(f"Error analyzing fundamental momentum for {symbol}: {e}")
+    Returns:
+        FundamentalMomentum with trend analysis
+    """
+    if stored_fundamentals is None:
+        # Load from database (NOT ad-hoc yfinance fetch)
+        from app.services.fundamentals import get_fundamentals_from_db
+        stored_fundamentals = await get_fundamentals_from_db(symbol)
+    
+    if not stored_fundamentals:
+        # No stored data - return unknown
+        result = FundamentalMomentum()
         result.data_quality = "unknown"
+        logger.debug(f"No stored fundamentals for {symbol}, cannot analyze momentum")
         return result
+    
+    return analyze_fundamental_momentum_from_stored(stored_fundamentals)
 
 
 def is_dip_vs_structural_decline(
@@ -406,7 +425,7 @@ def is_dip_vs_structural_decline(
         elif momentum.decline_severity == "moderate":
             if dip_depth_pct >= 30:
                 return True, "Caution: Moderate fundamental issues but deep dip may be overdone"
-            return False, f"CAUTION: Moderate structural issues - wait for stabilization"
+            return False, "CAUTION: Moderate structural issues - wait for stabilization"
     
     # Not a structural decline
     if momentum.momentum_score >= 60:

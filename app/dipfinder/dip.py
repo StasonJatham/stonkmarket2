@@ -36,8 +36,13 @@ class DipMetrics:
     persist_days: int  # Days dip condition has held (below threshold)
     days_since_peak: int  # Days since the peak price was hit
 
+    # Volume confirmation (new fields)
+    volume_spike_ratio: float = 1.0  # Avg volume during dip vs normal (>1.5 = spike)
+    volume_confirmed: bool = False  # True if dip had significant volume confirmation
+    selloff_intensity: float = 0.0  # Volume-weighted price decline intensity
+
     # Flags
-    is_meaningful: bool  # Meets all dip criteria
+    is_meaningful: bool = False  # Meets all dip criteria
 
     def to_dict(self) -> dict:
         """Convert to dictionary."""
@@ -52,6 +57,9 @@ class DipMetrics:
             "typical_dip": round(self.typical_dip, 6),
             "persist_days": self.persist_days,
             "days_since_peak": self.days_since_peak,
+            "volume_spike_ratio": round(self.volume_spike_ratio, 2),
+            "volume_confirmed": self.volume_confirmed,
+            "selloff_intensity": round(self.selloff_intensity, 4),
             "is_meaningful": self.is_meaningful,
         }
 
@@ -197,6 +205,85 @@ def compute_typical_dip(
         return float(np.mean(positive_dips))
 
 
+def compute_volume_confirmation(
+    close_prices: np.ndarray,
+    volumes: np.ndarray | None,
+    dip_series: np.ndarray,
+    dip_threshold: float = 0.05,
+    lookback: int = 20,
+    volume_spike_threshold: float = 1.5,
+) -> tuple[float, bool, float]:
+    """
+    Compute volume confirmation metrics for a dip.
+
+    A confirmed dip should have higher-than-normal volume on down days,
+    indicating real selling pressure (capitulation) rather than just
+    low-volume drift.
+
+    Args:
+        close_prices: Array of closing prices
+        volumes: Array of trading volumes (optional)
+        dip_series: Pre-computed dip series
+        dip_threshold: Minimum dip to consider for volume analysis
+        lookback: Days to look back for average volume
+        volume_spike_threshold: Multiplier for volume spike detection
+
+    Returns:
+        (volume_spike_ratio, volume_confirmed, selloff_intensity)
+    """
+    if volumes is None or len(volumes) == 0:
+        return 1.0, False, 0.0
+
+    if len(close_prices) != len(volumes):
+        return 1.0, False, 0.0
+
+    n = len(close_prices)
+    if n < lookback + 5:
+        return 1.0, False, 0.0
+
+    # Calculate daily returns
+    returns = np.zeros(n)
+    returns[1:] = (close_prices[1:] - close_prices[:-1]) / close_prices[:-1]
+
+    # Get average volume over lookback period (excluding recent dip period)
+    avg_volume_period = max(0, n - lookback - 10)  # Go back before the dip
+    if avg_volume_period < 20:
+        avg_volume_period = 0
+    avg_volume = float(np.mean(volumes[avg_volume_period:n - 5]))
+
+    if avg_volume <= 0:
+        return 1.0, False, 0.0
+
+    # Find down days during dip period
+    dip_days = []
+    for i in range(max(0, n - 30), n):  # Last 30 days
+        if not np.isnan(dip_series[i]) and dip_series[i] >= dip_threshold:
+            if returns[i] < -0.005:  # Down at least 0.5%
+                dip_days.append(i)
+
+    if not dip_days:
+        return 1.0, False, 0.0
+
+    # Calculate average volume on dip down days vs normal
+    dip_day_volumes = [volumes[i] for i in dip_days]
+    avg_dip_volume = float(np.mean(dip_day_volumes))
+    volume_spike_ratio = avg_dip_volume / avg_volume
+
+    # Volume confirmed if spike ratio exceeds threshold
+    volume_confirmed = volume_spike_ratio >= volume_spike_threshold
+
+    # Selloff intensity: volume-weighted price decline
+    # Higher = more intense selling pressure
+    selloff_intensity = 0.0
+    for i in dip_days:
+        if returns[i] < 0:
+            # Contribution = |return| * (volume / avg_volume)
+            vol_weight = volumes[i] / avg_volume if avg_volume > 0 else 1.0
+            selloff_intensity += abs(returns[i]) * vol_weight
+
+    return float(volume_spike_ratio), volume_confirmed, float(selloff_intensity)
+
+
 def compute_persistence(
     close_prices: np.ndarray,
     dip_threshold: float,
@@ -233,6 +320,7 @@ def compute_dip_metrics(
     close_prices: np.ndarray,
     window: int,
     config: DipFinderConfig | None = None,
+    volumes: np.ndarray | None = None,
 ) -> DipMetrics:
     """
     Compute complete dip metrics for a ticker.
@@ -242,6 +330,7 @@ def compute_dip_metrics(
         close_prices: Array of closing prices (oldest first)
         window: Window size in days
         config: DipFinder configuration (uses defaults if None)
+        volumes: Optional array of trading volumes for volume confirmation
 
     Returns:
         DipMetrics with all computed values
@@ -292,6 +381,14 @@ def compute_dip_metrics(
     # Persistence
     persist_days = compute_persistence(close_prices, config.min_dip_abs, window)
 
+    # Volume confirmation
+    volume_spike_ratio, volume_confirmed, selloff_intensity = compute_volume_confirmation(
+        close_prices=close_prices,
+        volumes=volumes,
+        dip_series=dip_series,
+        dip_threshold=config.min_dip_abs,
+    )
+
     # Is meaningful check
     is_meaningful = (
         current_dip >= config.min_dip_abs
@@ -313,6 +410,9 @@ def compute_dip_metrics(
         typical_dip=typical_dip,
         persist_days=persist_days,
         days_since_peak=days_since_peak,
+        volume_spike_ratio=volume_spike_ratio,
+        volume_confirmed=volume_confirmed,
+        selloff_intensity=selloff_intensity,
         is_meaningful=is_meaningful,
     )
 

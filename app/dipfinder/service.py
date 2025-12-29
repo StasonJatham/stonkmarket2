@@ -457,7 +457,12 @@ class DipFinderService:
         # Compute stability metrics
         stability = compute_stability_score(ticker, stock_prices, info, self.config)
 
-        # Compute full signal
+        # Extract volume data for volume confirmation
+        volumes = None
+        if "Volume" in stock_df.columns:
+            volumes = stock_df["Volume"].dropna().to_numpy()
+
+        # Compute full signal (with volume data for confirmation)
         signal = compute_signal(
             ticker=ticker,
             stock_prices=stock_prices,
@@ -469,9 +474,98 @@ class DipFinderService:
             as_of_date=as_of_date.isoformat(),
             config=self.config,
             quant_context=quant_context,
+            volumes=volumes,
         )
 
+        # Compute enhanced analysis for meaningful dips
+        if signal.dip_metrics.is_meaningful:
+            try:
+                enhanced = await self._compute_enhanced_analysis(
+                    ticker=ticker,
+                    stock_df=stock_df,
+                    info=info,
+                    dip_pct=signal.dip_metrics.dip_pct,
+                )
+                signal.enhanced_analysis = enhanced
+            except Exception as e:
+                logger.warning(f"Failed to compute enhanced analysis for {ticker}: {e}")
+
         return signal
+
+    async def _compute_enhanced_analysis(
+        self,
+        ticker: str,
+        stock_df: pd.DataFrame,
+        info: dict[str, Any] | None,
+        dip_pct: float,
+    ) -> dict[str, Any]:
+        """
+        Compute enhanced dip analysis including structural, support/resistance,
+        sector-relative valuation, and earnings calendar data.
+
+        Uses locally stored fundamentals from scheduled jobs - no ad-hoc API calls.
+        """
+        from app.dipfinder.earnings_calendar import (
+            compute_earnings_penalty,
+            get_earnings_info_from_stored,
+        )
+        from app.dipfinder.sector_valuation import (
+            compute_sector_relative_valuation_from_stored,
+        )
+        from app.dipfinder.structural_analysis import (
+            analyze_fundamental_momentum_from_stored,
+            is_dip_vs_structural_decline,
+        )
+        from app.quant_engine.support_resistance import analyze_support_resistance
+        from app.services.fundamentals import get_fundamentals_from_db
+
+        enhanced: dict[str, Any] = {}
+
+        # Load stored fundamentals once - no ad-hoc API calls
+        stored_fundamentals = await get_fundamentals_from_db(ticker)
+        if stored_fundamentals is None:
+            stored_fundamentals = {}
+
+        # 1. Structural decline analysis (uses stored quarterly financials)
+        try:
+            momentum = analyze_fundamental_momentum_from_stored(stored_fundamentals)
+            is_buy_opp, explanation = is_dip_vs_structural_decline(momentum, dip_pct * 100)
+            enhanced["structural_analysis"] = {
+                "momentum": momentum.to_dict(),
+                "is_buy_opportunity": is_buy_opp,
+                "assessment": explanation,
+            }
+        except Exception as e:
+            logger.debug(f"Structural analysis failed for {ticker}: {e}")
+
+        # 2. Support/resistance analysis (uses price DataFrame, no API calls)
+        try:
+            sr_analysis = analyze_support_resistance(stock_df)
+            enhanced["support_resistance"] = sr_analysis.to_dict()
+        except Exception as e:
+            logger.debug(f"Support/resistance analysis failed for {ticker}: {e}")
+
+        # 3. Sector-relative valuation (uses stored fundamentals)
+        try:
+            sector_val = compute_sector_relative_valuation_from_stored(
+                ticker, stored_fundamentals
+            )
+            enhanced["sector_valuation"] = sector_val.to_dict()
+        except Exception as e:
+            logger.debug(f"Sector valuation failed for {ticker}: {e}")
+
+        # 4. Earnings calendar (uses stored fundamentals)
+        try:
+            earnings = get_earnings_info_from_stored(stored_fundamentals)
+            penalty = compute_earnings_penalty(earnings, 0)  # Base score for penalty calc
+            enhanced["earnings"] = {
+                **earnings.to_dict(),
+                "score_penalty": penalty,
+            }
+        except Exception as e:
+            logger.debug(f"Earnings calendar failed for {ticker}: {e}")
+
+        return enhanced
 
     async def _save_signal_to_db(self, signal: DipSignal) -> None:
         """Save signal to database."""

@@ -263,3 +263,117 @@ class DipFinderConfig:
 def get_dipfinder_config() -> DipFinderConfig:
     """Get cached DipFinder configuration from settings."""
     return DipFinderConfig.from_settings()
+
+
+def get_volatility_adjusted_thresholds(
+    historical_volatility: float | None = None,
+    atr_pct: float | None = None,
+) -> dict[str, float]:
+    """
+    Compute volatility-adjusted dip thresholds.
+
+    In high volatility regimes, a 10% dip is normal noise.
+    In low volatility regimes, a 5% dip is significant.
+
+    Args:
+        historical_volatility: Annualized volatility (e.g., 0.30 = 30%)
+        atr_pct: Average True Range as percentage of price
+
+    Returns:
+        Dict with adjusted thresholds:
+        - min_dip_abs: Volatility-adjusted minimum dip
+        - min_persist_days: Days of persistence required
+        - dip_percentile_threshold: Percentile threshold (unchanged)
+    """
+    base_config = get_dipfinder_config()
+
+    # Default thresholds
+    min_dip = base_config.min_dip_abs
+    persist_days = base_config.min_persist_days
+    percentile_thresh = base_config.dip_percentile_threshold
+
+    # Volatility regime classification
+    # Low vol: < 15% annualized → tighter thresholds
+    # Normal vol: 15-30% → default thresholds
+    # High vol: 30-50% → looser thresholds
+    # Extreme vol: > 50% → much looser thresholds
+
+    vol = historical_volatility or 0.25  # Default to 25% if unknown
+
+    if vol < 0.15:
+        # Low volatility: 5% dip is significant, require 3 days persistence
+        min_dip = 0.05
+        persist_days = 3
+    elif vol < 0.30:
+        # Normal volatility: use defaults (10%, 2 days)
+        min_dip = 0.10
+        persist_days = 2
+    elif vol < 0.50:
+        # High volatility: need 15% dip to be meaningful, but only 2 days
+        min_dip = 0.15
+        persist_days = 2
+    else:
+        # Extreme volatility: need 20% dip, but 1 day is enough (volatility provides confirmation)
+        min_dip = 0.20
+        persist_days = 1
+
+    # ATR-based adjustment (if available)
+    # If ATR is high relative to typical, adjust min_dip proportionally
+    if atr_pct is not None:
+        # Typical ATR is ~1-2% for stable stocks, 3-5% for volatile
+        atr_multiplier = max(1.0, atr_pct / 0.02)  # Scale by 2% baseline
+        atr_adjusted_dip = min(0.30, min_dip * min(1.5, atr_multiplier))
+        # Blend ATR adjustment with volatility adjustment
+        min_dip = (min_dip + atr_adjusted_dip) / 2
+
+    return {
+        "min_dip_abs": round(min_dip, 3),
+        "min_persist_days": persist_days,
+        "dip_percentile_threshold": percentile_thresh,
+        "volatility_regime": _classify_volatility_regime(vol),
+    }
+
+
+def _classify_volatility_regime(volatility: float) -> str:
+    """Classify market/stock volatility regime."""
+    if volatility < 0.15:
+        return "low"
+    elif volatility < 0.30:
+        return "normal"
+    elif volatility < 0.50:
+        return "high"
+    else:
+        return "extreme"
+
+
+def get_config_for_symbol(
+    symbol: str,
+    historical_volatility: float | None = None,
+    atr_pct: float | None = None,
+) -> DipFinderConfig:
+    """
+    Get volatility-adjusted configuration for a specific symbol.
+
+    Args:
+        symbol: Stock ticker
+        historical_volatility: Optional pre-computed volatility
+        atr_pct: Optional ATR as percentage
+
+    Returns:
+        DipFinderConfig with adjusted thresholds
+    """
+    base_config = get_dipfinder_config()
+
+    if historical_volatility is None and atr_pct is None:
+        # No volatility info, return base config
+        return base_config
+
+    adjusted = get_volatility_adjusted_thresholds(
+        historical_volatility=historical_volatility,
+        atr_pct=atr_pct,
+    )
+
+    return base_config.with_overrides(
+        min_dip_abs=adjusted["min_dip_abs"],
+        min_persist_days=adjusted["min_persist_days"],
+    )

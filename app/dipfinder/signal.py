@@ -6,8 +6,9 @@ into actionable signals with alert decisions.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any
 
 import numpy as np
 
@@ -100,9 +101,13 @@ class DipSignal:
     should_alert: bool
     reason: str  # Human-readable explanation
 
+    # Enhanced analysis (optional, populated when available)
+    # These provide deeper insights into dip quality
+    enhanced_analysis: dict[str, Any] | None = None  # Contains structural, support/resistance, sector, earnings data
+
     def to_dict(self) -> dict:
         """Convert to dictionary for API response."""
-        return {
+        result = {
             "ticker": self.ticker,
             "window": self.window,
             "benchmark": self.benchmark,
@@ -117,6 +122,10 @@ class DipSignal:
             "persist_days": self.dip_metrics.persist_days,
             "days_since_peak": self.dip_metrics.days_since_peak,
             "is_meaningful": self.dip_metrics.is_meaningful,
+            # Volume confirmation
+            "volume_spike_ratio": round(self.dip_metrics.volume_spike_ratio, 2),
+            "volume_confirmed": self.dip_metrics.volume_confirmed,
+            "selloff_intensity": round(self.dip_metrics.selloff_intensity, 4),
             # Market context
             "dip_mkt": round(self.market_context.dip_mkt, 6),
             "excess_dip": round(self.market_context.excess_dip, 6),
@@ -134,6 +143,12 @@ class DipSignal:
             "quality_factors": self.quality_metrics.to_dict(),
             "stability_factors": self.stability_metrics.to_dict(),
         }
+        
+        # Add enhanced analysis if available
+        if self.enhanced_analysis:
+            result["enhanced_analysis"] = self.enhanced_analysis
+        
+        return result
 
     def to_db_dict(self) -> dict:
         """Convert to dictionary for database storage."""
@@ -411,6 +426,7 @@ def compute_signal(
     as_of_date: str,
     config: DipFinderConfig | None = None,
     quant_context: QuantContext | None = None,
+    volumes: np.ndarray | None = None,
 ) -> DipSignal:
     """
     Compute complete dip signal for a ticker.
@@ -426,6 +442,7 @@ def compute_signal(
         as_of_date: Date string (ISO format)
         config: Configuration
         quant_context: Quant engine context for score adjustments
+        volumes: Optional volume data for volume confirmation
 
     Returns:
         Complete DipSignal
@@ -445,8 +462,8 @@ def compute_signal(
         w_quality = config.weight_quality
         w_stability = config.weight_stability
 
-    # Compute dip metrics
-    dip_metrics = compute_dip_metrics(ticker, stock_prices, window, config)
+    # Compute dip metrics (with volume data for confirmation)
+    dip_metrics = compute_dip_metrics(ticker, stock_prices, window, config, volumes=volumes)
 
     # Compute market context
     market_context = compute_market_context(
