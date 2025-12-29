@@ -427,11 +427,19 @@ def precompute_dip_entry_task(symbol: str) -> str:
     from app.quant_engine.dip_entry_optimizer import DipEntryOptimizer, get_dip_summary
     from app.repositories import price_history_orm as price_history_repo
     from app.repositories import quant_precomputed_orm as quant_repo
+    from app.repositories import symbols_orm
     
     logger = get_logger("jobs.precompute_dip_entry")
     
     async def _compute() -> str:
         symbol_upper = symbol.upper().strip()
+        
+        # Get symbol's min_dip_pct from DB
+        db_symbol = await symbols_orm.get_symbol(symbol_upper)
+        min_dip_threshold = None
+        if db_symbol and db_symbol.min_dip_pct:
+            # DB stores as decimal (0.15 = 15%), convert to percentage for optimizer (-15%)
+            min_dip_threshold = -float(db_symbol.min_dip_pct) * 100
         
         # Fetch price history (5 years)
         end_date = date.today()
@@ -444,9 +452,9 @@ def precompute_dip_entry_task(symbol: str) -> str:
         if df is None or df.empty or len(df) < 252:
             return f"Insufficient price history for {symbol_upper}"
         
-        # Run analysis
+        # Run analysis with symbol-specific min_dip_threshold
         optimizer = DipEntryOptimizer()
-        result = optimizer.analyze(df, symbol_upper, None)
+        result = optimizer.analyze(df, symbol_upper, None, min_dip_threshold=min_dip_threshold)
         summary = get_dip_summary(result)
         
         # Update quant_precomputed table

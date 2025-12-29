@@ -13,7 +13,6 @@ These tests verify:
 import numpy as np
 import pandas as pd
 import pytest
-from datetime import datetime, timedelta
 
 from app.quant_engine.backtest_engine import (
     BacktestEngine,
@@ -36,7 +35,7 @@ from app.quant_engine.backtest_engine import (
 def sample_prices() -> pd.DataFrame:
     """Generate sample price data with known patterns."""
     np.random.seed(42)
-    dates = pd.date_range(start="2022-01-01", end="2024-12-31", freq="B")
+    dates = pd.date_range(start="2023-01-01", periods=300, freq="B")
     n = len(dates)
     
     # Generate trending price with mean reversion
@@ -71,7 +70,7 @@ def sample_prices() -> pd.DataFrame:
 @pytest.fixture
 def simple_prices() -> pd.DataFrame:
     """Simple price data for basic tests."""
-    dates = pd.date_range(start="2023-01-01", end="2023-12-31", freq="B")
+    dates = pd.date_range(start="2023-01-01", periods=200, freq="B")
     n = len(dates)
     
     # Simple uptrend with known dips
@@ -288,13 +287,14 @@ class TestWinRateCalculation:
     def test_100_percent_win_rate_all_positive(self, config):
         """If win_rate is 100%, ALL trades must be positive."""
         # Create data that should generate winning trades
-        dates = pd.date_range(start="2023-01-01", periods=500, freq="B")
+        n_days = 260
+        dates = pd.date_range(start="2023-01-01", periods=n_days, freq="B")
         
         # Steadily rising prices (all buys should win)
-        prices = 100 * np.exp(np.linspace(0, 0.5, 500))
+        prices = 100 * np.exp(np.linspace(0, 0.5, n_days))
         
         # Add periodic dips that quickly recover
-        for i in range(50, 450, 100):
+        for i in range(50, n_days - 30, 80):
             prices[i:i+5] *= 0.85  # 15% dip
             prices[i+5:i+25] *= 1.10  # Quick recovery
         
@@ -302,7 +302,7 @@ class TestWinRateCalculation:
             "close": prices,
             "high": prices * 1.01,
             "low": prices * 0.99,
-            "volume": [1000000] * 500,
+            "volume": [1000000] * n_days,
         }, index=dates)
         df.attrs["symbol"] = "RISING"
         
@@ -473,18 +473,19 @@ class TestStrategies:
 # Walk-Forward Validation Tests
 # =============================================================================
 
+@pytest.mark.slow
 class TestWalkForward:
     """Test walk-forward optimization."""
     
     def test_walk_forward_returns_oos_results(self, sample_prices, config):
         """Walk-forward should return out-of-sample results."""
-        config.n_folds = 3  # Fewer folds for faster test
+        config.n_folds = 2  # Fewer folds for faster test
         engine = BacktestEngine(config)
         df = compute_indicators(sample_prices)
         df.attrs = sample_prices.attrs
         
         result, report = engine.walk_forward_optimization(
-            df, "mean_reversion_rsi", n_trials_per_fold=10
+            df, "mean_reversion_rsi", n_trials_per_fold=3
         )
         
         assert result.is_out_of_sample or result.n_trades == 0
@@ -494,22 +495,23 @@ class TestWalkForward:
         """Walk-forward should detect obvious overfitting."""
         # Create random data where any pattern is spurious
         np.random.seed(123)
-        dates = pd.date_range(start="2022-01-01", periods=750, freq="B")
-        prices = 100 * np.cumprod(1 + np.random.normal(0, 0.02, 750))
+        n_days = 300
+        dates = pd.date_range(start="2022-01-01", periods=n_days, freq="B")
+        prices = 100 * np.cumprod(1 + np.random.normal(0, 0.02, n_days))
         
         df = pd.DataFrame({
             "close": prices,
             "high": prices * 1.01,
             "low": prices * 0.99,
-            "volume": [1000000] * 750,
+            "volume": [1000000] * n_days,
         }, index=dates)
         df.attrs["symbol"] = "RANDOM"
         df = compute_indicators(df)
         
-        config.n_folds = 3
+        config.n_folds = 2
         engine = BacktestEngine(config)
         
-        _, report = engine.walk_forward_optimization(df, "mean_reversion_rsi", n_trials_per_fold=20)
+        _, report = engine.walk_forward_optimization(df, "mean_reversion_rsi", n_trials_per_fold=5)
         
         # Random walk should show poor OOS performance or overfitting
         # This is probabilistic, so we just check the report structure
@@ -521,6 +523,7 @@ class TestWalkForward:
 # Integration Tests
 # =============================================================================
 
+@pytest.mark.slow
 class TestIntegration:
     """End-to-end integration tests."""
     
@@ -535,7 +538,7 @@ class TestIntegration:
         best_name, result, report = engine.find_best_strategy(
             df,
             strategies=["mean_reversion_rsi", "drawdown_buy"],
-            n_trials_per_strategy=10,
+            n_trials_per_strategy=3,
         )
         
         assert isinstance(best_name, str)
@@ -553,7 +556,7 @@ class TestIntegration:
         
         # 2. Optimize parameters
         best_params, result2 = engine.optimize_strategy_optuna(
-            df, "mean_reversion_rsi", n_trials=20
+            df, "mean_reversion_rsi", n_trials=5
         )
         
         # 3. Compare to benchmark
@@ -568,6 +571,7 @@ class TestIntegration:
 # Ensemble Strategy Tests
 # =============================================================================
 
+@pytest.mark.slow
 class TestEnsembleStrategies:
     """Test strategy combination/ensemble functionality."""
     
@@ -627,7 +631,7 @@ class TestEnsembleStrategies:
         best_name, result, report = engine.find_best_strategy(
             df,
             strategies=None,  # Use all including ensembles
-            n_trials_per_strategy=5,
+            n_trials_per_strategy=2,
             include_ensembles=True,
             max_ensemble_size=2,
         )

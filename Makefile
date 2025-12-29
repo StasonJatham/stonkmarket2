@@ -53,14 +53,15 @@ quality: lint format-check typecheck ## Run all code quality checks
 # ============================================================================
 # Testing
 # ============================================================================
-test: ## Run all tests
+test: ## Run backend + Playwright tests
 	$(PYTEST) tests/ -v
+	$(MAKE) e2e
 
 test-cov: ## Run tests with coverage report
 	$(PYTEST) tests/ --cov=app --cov-report=term-missing --cov-report=html
 
 test-unit: ## Run unit tests only
-	$(PYTEST) tests/ -m "unit or not integration" -v
+	$(PYTEST) tests/ -m "unit or (not integration and not slow)" -v
 
 test-integration: ## Run integration tests only
 	$(PYTEST) tests/ -m integration -v

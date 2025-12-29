@@ -43,11 +43,36 @@ class ThresholdStats(BaseModel):
     threshold: float = Field(..., description="Dip threshold percentage (e.g., -10)")
     occurrences: int = Field(..., description="Number of times this dip occurred")
     per_year: float = Field(..., description="Average occurrences per year")
-    win_rate_60d: float = Field(..., description="Win rate after 60 days")
-    avg_return_60d: float = Field(..., description="Average return after 60 days")
+    # V2: Multi-period metrics (primary = 90 days)
+    win_rate: float = Field(default=0.0, description="Win rate after 90 days")
+    avg_return: float = Field(default=0.0, description="Average return after 90 days")
+    total_profit: float = Field(default=0.0, description="Total expected profit (N × avg_return)")
+    total_profit_compounded: float = Field(default=0.0, description="Compounded total profit")
+    sharpe_ratio: float = Field(default=0.0, description="Risk-adjusted return")
+    sortino_ratio: float = Field(default=0.0, description="Downside risk-adjusted return")
+    cvar: float = Field(default=0.0, description="Tail risk (worst 5% of returns)")
+    # Recovery metrics
     recovery_rate: float = Field(..., description="Recovery rate to previous high")
+    recovery_threshold_rate: float = Field(default=0.0, description="Recovery to entry threshold")
     avg_recovery_days: float = Field(..., description="Average days to recover")
-    entry_score: float = Field(..., description="Entry quality score (0-100)")
+    avg_days_to_threshold: float = Field(default=0.0, description="Days to recover to entry price")
+    avg_recovery_velocity: float = Field(default=0.0, description="Recovery speed (higher = faster)")
+    # Recovery-based profit metrics (sell at recovery strategy)
+    avg_return_at_recovery: float = Field(default=0.0, description="Avg return selling at recovery")
+    total_profit_at_recovery: float = Field(default=0.0, description="Compounded profit at recovery")
+    avg_days_at_recovery: float = Field(default=0.0, description="Avg days held until recovery")
+    # Risk metrics
+    max_further_drawdown: float = Field(default=0.0, description="Worst drawdown after entry")
+    avg_further_drawdown: float = Field(default=0.0, description="Average MAE (pain)")
+    prob_further_drop: float = Field(default=0.0, description="P(drops another 10%)")
+    continuation_risk: Literal["low", "medium", "high"] = Field(default="medium")
+    # Scores
+    entry_score: float = Field(..., description="V2 entry quality score")
+    legacy_entry_score: float = Field(default=0.0, description="Legacy entry score")
+    confidence: Literal["low", "medium", "high"] = Field(default="medium")
+    # Legacy (backward compat)
+    win_rate_60d: float = Field(default=0.0, description="Win rate after 60 days")
+    avg_return_60d: float = Field(default=0.0, description="Average return after 60 days")
 
 
 class DipEntryResponse(BaseModel):
@@ -63,12 +88,23 @@ class DipEntryResponse(BaseModel):
         ..., description="Current volatility regime"
     )
     
-    # Optimal entry
+    # Risk-adjusted optimal entry (less pain, better timing)
     optimal_dip_threshold: float = Field(
-        ..., description="Optimal dip threshold to buy (e.g., -15 for 15% dip)"
+        ..., description="Risk-adjusted optimal dip threshold (e.g., -15 for 15% dip)"
     )
     optimal_entry_price: float = Field(
-        ..., description="Price at which to set limit buy order"
+        ..., description="Risk-adjusted price for limit buy order"
+    )
+    
+    # Max profit optimal entry (more opportunities, higher total return)
+    max_profit_threshold: float = Field(
+        default=0.0, description="Max profit dip threshold"
+    )
+    max_profit_entry_price: float = Field(
+        default=0.0, description="Max profit price for limit buy order"
+    )
+    max_profit_total_return: float = Field(
+        default=0.0, description="Expected total return at max profit threshold"
     )
     
     # Current signal
@@ -89,6 +125,16 @@ class DipEntryResponse(BaseModel):
     fundamental_notes: list[str] = Field(
         default_factory=list, description="Fundamental analysis notes"
     )
+    
+    # V2 Analysis metadata
+    continuation_risk: Literal["low", "medium", "high"] = Field(
+        default="medium", description="Risk of continued decline"
+    )
+    data_years: float = Field(default=0.0, description="Years of data analyzed")
+    confidence: Literal["low", "medium", "high"] = Field(
+        default="medium", description="Analysis confidence level"
+    )
+    outlier_events: int = Field(default=0, description="Number of outlier events filtered")
     
     # Detailed threshold analysis
     threshold_analysis: list[ThresholdStats] = Field(

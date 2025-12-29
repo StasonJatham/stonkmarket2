@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-import pytest
 
 
 class TestTransactionCosts:
@@ -33,13 +32,13 @@ class TestTransactionCosts:
         # Create simple uptrending price series
         np.random.seed(42)
         prices = pd.Series(
-            100 * np.exp(np.cumsum(np.random.randn(500) * 0.01 + 0.001)),
-            index=pd.date_range("2020-01-01", periods=500)
+            100 * np.exp(np.cumsum(np.random.randn(260) * 0.01 + 0.001)),
+            index=pd.date_range("2020-01-01", periods=260)
         )
         
         # Create a simple signal that triggers periodically
         signal = pd.Series(
-            np.sin(np.arange(500) / 10) * 2,
+            np.sin(np.arange(len(prices)) / 10) * 2,
             index=prices.index
         )
         
@@ -85,8 +84,8 @@ class TestStatisticalTechScore:
         # Create test data
         np.random.seed(42)
         prices = pd.Series(
-            100 * np.exp(np.cumsum(np.random.randn(300) * 0.02 - 0.005)),
-            index=pd.date_range("2020-01-01", periods=300)
+            100 * np.exp(np.cumsum(np.random.randn(220) * 0.02 - 0.005)),
+            index=pd.date_range("2020-01-01", periods=220)
         )
         df = pd.DataFrame({"close": prices})
         df = compute_all_indicators(df)
@@ -175,8 +174,8 @@ class TestCorrelationAwareSignals:
         # Create price data
         np.random.seed(42)
         prices = pd.Series(
-            100 + np.cumsum(np.random.randn(200)),
-            index=pd.date_range("2020-01-01", periods=200)
+            100 + np.cumsum(np.random.randn(160)),
+            index=pd.date_range("2020-01-01", periods=160)
         )
         price_data = {"close": prices}
         
@@ -315,10 +314,10 @@ class TestSignalDecayTracking:
         
         np.random.seed(42)
         prices = pd.Series(
-            100 + np.cumsum(np.random.randn(300)),
-            index=pd.date_range("2020-01-01", periods=300)
+            100 + np.cumsum(np.random.randn(220)),
+            index=pd.date_range("2020-01-01", periods=220)
         )
-        signal = pd.Series(np.random.randn(300), index=prices.index)
+        signal = pd.Series(np.random.randn(len(prices)), index=prices.index)
         
         half_life = compute_signal_half_life(
             prices, signal, "below", 0.0, max_lag=30
@@ -332,15 +331,16 @@ class TestSignalDecayTracking:
         from app.quant_engine.signals import compute_signal_turnover_rate
         
         # Signal that flips frequently
+        n_days = 180
         signal = pd.Series(
-            np.sin(np.arange(252) / 5),  # Oscillates ~8 times in a year
-            index=pd.date_range("2020-01-01", periods=252)
+            np.sin(np.arange(n_days) / 5),  # Oscillates several times
+            index=pd.date_range("2020-01-01", periods=n_days)
         )
         
         turnover = compute_signal_turnover_rate(signal, "above", 0.0)
         
         assert turnover > 0  # Should have some turnover
-        assert turnover < 252  # But not flipping every day
+        assert turnover < n_days  # But not flipping every day
 
 
 class TestOOSAggregation:
@@ -352,10 +352,10 @@ class TestOOSAggregation:
         
         np.random.seed(42)
         prices = pd.Series(
-            100 + np.cumsum(np.random.randn(200)),
-            index=pd.date_range("2020-01-01", periods=200)
+            100 + np.cumsum(np.random.randn(160)),
+            index=pd.date_range("2020-01-01", periods=160)
         )
-        signal = pd.Series(np.random.randn(200), index=prices.index)
+        signal = pd.Series(np.random.randn(len(prices)), index=prices.index)
         
         returns = _get_individual_trade_returns(
             prices, signal, -1.0, "below", 10
@@ -376,11 +376,11 @@ class TestStockSpecificThresholds:
         np.random.seed(42)
         # Start at 100, rise, dip, recover, dip again
         base = np.concatenate([
-            np.linspace(100, 120, 80),   # Rise
-            np.linspace(120, 100, 40),   # Fall 16%
-            np.linspace(100, 115, 60),   # Recover
-            np.linspace(115, 92, 40),    # Fall 20%
-            np.linspace(92, 105, 50),    # Recover
+            np.linspace(100, 120, 70),   # Rise
+            np.linspace(120, 100, 35),   # Fall 16%
+            np.linspace(100, 115, 50),   # Recover
+            np.linspace(115, 92, 35),    # Fall 20%
+            np.linspace(92, 105, 40),    # Recover
             np.linspace(105, 90, 30),    # Current dip (14%)
         ])
         prices = pd.Series(base, index=pd.date_range("2020-01-01", periods=len(base)))

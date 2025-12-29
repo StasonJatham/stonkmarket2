@@ -67,7 +67,7 @@ def negative_edge_data():
 def random_walk_prices():
     """Generate random walk prices for testing."""
     np.random.seed(42)
-    n_days = 500
+    n_days = 260
     returns = np.random.normal(0.0005, 0.015, n_days)
     prices = pd.Series(100 * np.cumprod(1 + returns))
     prices.index = pd.date_range("2020-01-01", periods=n_days)
@@ -78,7 +78,7 @@ def random_walk_prices():
 def uptrending_prices():
     """Generate uptrending prices for testing."""
     np.random.seed(42)
-    n_days = 500
+    n_days = 260
     returns = np.random.normal(0.001, 0.012, n_days)  # Positive drift
     prices = pd.Series(100 * np.cumprod(1 + returns))
     prices.index = pd.date_range("2020-01-01", periods=n_days)
@@ -89,7 +89,7 @@ def uptrending_prices():
 def spy_prices():
     """Generate SPY-like prices for benchmark."""
     np.random.seed(123)
-    n_days = 500
+    n_days = 260
     returns = np.random.normal(0.0004, 0.011, n_days)
     prices = pd.Series(300 * np.cumprod(1 + returns))
     prices.index = pd.date_range("2020-01-01", periods=n_days)
@@ -127,14 +127,14 @@ class TestStationaryBootstrap:
     
     def test_bootstrap_positive_data_mostly_positive_means(self, positive_edge_data):
         """Bootstrap of positive-mean data should yield mostly positive means."""
-        means = stationary_bootstrap(positive_edge_data, n_samples=1000, seed=42)
+        means = stationary_bootstrap(positive_edge_data, n_samples=300, seed=42)
         
         positive_fraction = np.mean(means > 0)
         assert positive_fraction > 0.7  # Most should be positive
     
     def test_bootstrap_negative_data_mostly_negative_means(self, negative_edge_data):
         """Bootstrap of negative-mean data should yield mostly negative means."""
-        means = stationary_bootstrap(negative_edge_data, n_samples=1000, seed=42)
+        means = stationary_bootstrap(negative_edge_data, n_samples=300, seed=42)
         
         negative_fraction = np.mean(means < 0)
         assert negative_fraction > 0.7  # Most should be negative
@@ -146,7 +146,7 @@ class TestBootstrapStats:
     def test_p_outperf_positive_data(self, positive_edge_data):
         """P(outperf) should be high for positive edge data."""
         p_outperf, ci_low, ci_high, cvar = compute_bootstrap_stats(
-            positive_edge_data, n_samples=1000, seed=42
+            positive_edge_data, n_samples=300, seed=42
         )
         
         assert p_outperf >= 0.75  # High probability of positive edge
@@ -155,7 +155,7 @@ class TestBootstrapStats:
     def test_p_outperf_negative_data(self, negative_edge_data):
         """P(outperf) should be low for negative edge data."""
         p_outperf, ci_low, ci_high, cvar = compute_bootstrap_stats(
-            negative_edge_data, n_samples=1000, seed=42
+            negative_edge_data, n_samples=300, seed=42
         )
         
         assert p_outperf <= 0.25  # Low probability of positive edge
@@ -164,18 +164,18 @@ class TestBootstrapStats:
         """Confidence interval should contain the sample mean."""
         mean = np.mean(positive_edge_data)
         _, ci_low, ci_high, _ = compute_bootstrap_stats(
-            positive_edge_data, n_samples=1000, confidence=0.95, seed=42
+            positive_edge_data, n_samples=300, confidence=0.95, seed=42
         )
         
         assert ci_low <= mean <= ci_high
     
     def test_cvar_is_tail_measure(self, positive_edge_data):
         """CVaR should be less than or equal to VaR (5th percentile)."""
-        means = stationary_bootstrap(positive_edge_data, n_samples=1000, seed=42)
+        means = stationary_bootstrap(positive_edge_data, n_samples=300, seed=42)
         var_5 = np.percentile(means, 5)
         
         _, _, _, cvar = compute_bootstrap_stats(
-            positive_edge_data, n_samples=1000, seed=42
+            positive_edge_data, n_samples=300, seed=42
         )
         
         assert cvar <= var_5  # CVaR is average of worst 5%

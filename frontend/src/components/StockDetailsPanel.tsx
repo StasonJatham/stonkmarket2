@@ -799,8 +799,8 @@ export function StockDetailsPanel({
                         )}
                       </ReferenceDot>
                     );})}
-                    {/* Optimal Entry Price Line - shows where to set buy order */}
-                    {dipEntry && dipEntry.optimal_entry_price > 0 && (
+                    {/* Risk-Adjusted Entry Price Line (primary) */}
+                    {dipEntry && dipEntry.optimal_entry_price != null && dipEntry.optimal_entry_price > 0 && (
                       <ReferenceLine
                         y={dipEntry.optimal_entry_price}
                         stroke="var(--primary)"
@@ -809,11 +809,32 @@ export function StockDetailsPanel({
                         strokeOpacity={0.8}
                       >
                         <RechartsLabel
-                          value={`Entry $${dipEntry.optimal_entry_price.toFixed(2)}`}
+                          value={`Risk $${dipEntry.optimal_entry_price?.toFixed(2) ?? '—'}`}
                           position="right"
                           style={{
                             fontSize: 10,
                             fill: 'var(--primary)',
+                            fontWeight: 600,
+                          }}
+                        />
+                      </ReferenceLine>
+                    )}
+                    {/* Max Profit Entry Price Line (if different from risk-adjusted) */}
+                    {dipEntry && dipEntry.max_profit_entry_price != null && dipEntry.max_profit_entry_price > 0 && 
+                     dipEntry.max_profit_threshold !== dipEntry.optimal_dip_threshold && (
+                      <ReferenceLine
+                        y={dipEntry.max_profit_entry_price}
+                        stroke="var(--chart-2)"
+                        strokeWidth={2}
+                        strokeDasharray="3 3"
+                        strokeOpacity={0.7}
+                      >
+                        <RechartsLabel
+                          value={`Profit $${dipEntry.max_profit_entry_price?.toFixed(2) ?? '—'}`}
+                          position="left"
+                          style={{
+                            fontSize: 10,
+                            fill: 'var(--chart-2)',
                             fontWeight: 600,
                           }}
                         />
@@ -953,27 +974,47 @@ export function StockDetailsPanel({
                   </div>
                 )}
                 
-                {/* Dip Entry Card */}
-                {dipEntry && (
+                {/* Dip Entry Card - Dual Optimization */}
+                {dipEntry && dipEntry.optimal_entry_price != null && (
                   <div className={cn(
                     "p-3 rounded-lg border",
                     dipEntry.is_buy_now && "bg-success/10 border-success/30",
                     !dipEntry.is_buy_now && dipEntry.current_drawdown_pct <= -10 && "bg-amber-500/10 border-amber-500/30",
                     !dipEntry.is_buy_now && dipEntry.current_drawdown_pct > -10 && "bg-muted/30 border-border",
                   )}>
-                    <p className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
-                      <Target className="h-3 w-3" />
-                      Optimal Entry
-                    </p>
-                    <p className="text-xl font-bold text-primary">${dipEntry.optimal_entry_price.toFixed(2)}</p>
-                    <p className="text-sm text-muted-foreground">
-                      {dipEntry.optimal_dip_threshold}% dip level
-                    </p>
+                    {/* Risk-Adjusted Optimal */}
+                    <div className="mb-3">
+                      <p className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
+                        <Target className="h-3 w-3" />
+                        Risk-Adjusted Entry
+                      </p>
+                      <p className="text-xl font-bold text-primary">${dipEntry.optimal_entry_price?.toFixed(2) ?? '—'}</p>
+                      <p className="text-sm text-muted-foreground">
+                        {dipEntry.optimal_dip_threshold}% dip • Less pain
+                      </p>
+                    </div>
+                    
+                    {/* Max Profit Optimal (show if different from risk-adjusted) */}
+                    {dipEntry.max_profit_threshold !== undefined && 
+                     dipEntry.max_profit_threshold !== dipEntry.optimal_dip_threshold && (
+                      <div className="pt-2 border-t border-border/50">
+                        <p className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
+                          <TrendingUp className="h-3 w-3" />
+                          Max Profit Entry
+                        </p>
+                        <p className="text-lg font-bold text-chart-2">${dipEntry.max_profit_entry_price?.toFixed(2) ?? '—'}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {dipEntry.max_profit_threshold}% dip • {dipEntry.max_profit_total_return?.toFixed(0) || '—'}% total
+                        </p>
+                      </div>
+                    )}
+                    
+                    {/* Buy Signal */}
                     <p className={cn(
-                      "text-[10px] mt-1",
+                      "text-[10px] mt-2 pt-2 border-t border-border/50",
                       dipEntry.is_buy_now ? "text-success font-medium" : "text-muted-foreground"
                     )}>
-                      {dipEntry.is_buy_now ? "✓ Buy now" : `Wait for ${(dipEntry.optimal_entry_price - displayPrice).toFixed(2)} more drop`}
+                      {dipEntry.is_buy_now ? "✓ Buy now" : `Wait for $${(displayPrice - dipEntry.optimal_entry_price).toFixed(2)} more drop`}
                     </p>
                   </div>
                 )}

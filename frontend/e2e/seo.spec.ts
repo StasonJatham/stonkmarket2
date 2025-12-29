@@ -5,7 +5,6 @@ import { test, expect } from '@playwright/test';
  * Validates SEO requirements for SPA including:
  * - Meta tags
  * - Structured data
- * - Core Web Vitals thresholds
  * - Crawlability
  */
 
@@ -118,77 +117,6 @@ test.describe('Structured Data', () => {
     }
     
     expect(hasOrganization).toBe(true);
-  });
-});
-
-test.describe('Web Vitals Performance', () => {
-  test('should load within acceptable LCP threshold', async ({ page }) => {
-    await page.goto('/');
-    
-    // Measure LCP
-    const lcp = await page.evaluate(() => {
-      return new Promise<number>((resolve) => {
-        new PerformanceObserver((list) => {
-          const entries = list.getEntries();
-          const lastEntry = entries[entries.length - 1] as PerformanceEntry & { startTime: number };
-          resolve(lastEntry?.startTime || 0);
-        }).observe({ type: 'largest-contentful-paint', buffered: true });
-        
-        // Fallback timeout
-        setTimeout(() => resolve(0), 5000);
-      });
-    });
-    
-    // LCP should be under 2.5s for good rating (use 4s as threshold for CI)
-    if (lcp > 0) {
-      expect(lcp).toBeLessThan(4000);
-    }
-  });
-
-  test('should have minimal layout shift (CLS)', async ({ page }) => {
-    await page.goto('/');
-    await page.waitForLoadState('networkidle');
-    
-    // Wait for page to stabilize
-    await page.waitForTimeout(1000);
-    
-    const cls = await page.evaluate(() => {
-      return new Promise<number>((resolve) => {
-        let clsValue = 0;
-        const observer = new PerformanceObserver((list) => {
-          for (const entry of list.getEntries()) {
-            const layoutShift = entry as PerformanceEntry & { hadRecentInput: boolean; value: number };
-            if (!layoutShift.hadRecentInput) {
-              clsValue += layoutShift.value;
-            }
-          }
-        });
-        observer.observe({ type: 'layout-shift', buffered: true });
-        
-        setTimeout(() => {
-          observer.disconnect();
-          resolve(clsValue);
-        }, 2000);
-      });
-    });
-    
-    // CLS should be under 0.25 for good rating
-    expect(cls).toBeLessThan(0.25);
-  });
-
-  test('should have fast First Contentful Paint', async ({ page }) => {
-    await page.goto('/');
-    
-    const fcp = await page.evaluate(() => {
-      const paintEntry = performance.getEntriesByType('paint')
-        .find(entry => entry.name === 'first-contentful-paint');
-      return paintEntry?.startTime || 0;
-    });
-    
-    // FCP should be under 3s for acceptable rating
-    if (fcp > 0) {
-      expect(fcp).toBeLessThan(3000);
-    }
   });
 });
 

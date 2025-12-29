@@ -122,6 +122,10 @@ class DipEvent:
     days_to_threshold_recovery: int | None = None  # Days to hit recovery_win_threshold %
     recovery_velocity: float = 0.0  # recovery_pct / days (higher = faster bounce)
     
+    # Return at recovery (sell when price returns to entry price)
+    return_at_recovery: float = 0.0  # Return % when selling at break-even
+    days_held_to_recovery: int = 0  # Days held until break-even or max period
+    
     # Returns if bought at entry (keyed by holding period days)
     returns: dict[int, float | None] = field(default_factory=dict)  # {30: 5.2, 60: 8.1, 90: 12.3}
     max_return: float | None = None  # Max return within holding period
@@ -177,8 +181,14 @@ class DipThresholdStats:
     
     # Returns from buying at dip (keyed by holding period)
     avg_returns: dict[int, float] = field(default_factory=dict)  # {30: 5.2, 60: 8.1, 90: 12.3}
-    total_profit: dict[int, float] = field(default_factory=dict)  # N × avg_return for each period
+    total_profit: dict[int, float] = field(default_factory=dict)  # Simple sum: N × avg_return
+    total_profit_compounded: dict[int, float] = field(default_factory=dict)  # Compounded: (1+r1)*(1+r2)*...
     win_rates: dict[int, float] = field(default_factory=dict)  # {30: 60.0, 60: 70.0, 90: 75.0}
+    
+    # Recovery-based metrics (sell at recovery, not fixed hold)
+    avg_return_at_recovery: float = 0.0  # Avg return when selling at break-even
+    total_profit_at_recovery: float = 0.0  # Compounded return selling at recovery
+    avg_days_at_recovery: float = 0.0  # Avg days held until recovery
     
     # Recovery-based metrics (more meaningful than raw win rate)
     # recovery_threshold_rate uses config.recovery_win_threshold (default 80%)
@@ -693,6 +703,26 @@ class DipEntryOptimizer:
             near_earnings = False
             near_dividend = False
         
+        # Calculate return at recovery (sell when price returns to entry price)
+        # This is the realistic "sell at break-even" strategy
+        return_at_recovery = 0.0
+        days_held_to_recovery = 0
+        max_wait_days = max(self.config.holding_periods)  # Use max holding as timeout
+        
+        for day_offset in range(1, min(max_wait_days, len(close) - cross_idx)):
+            price_at_day = float(close.iloc[cross_idx + day_offset])
+            if price_at_day >= entry_price:
+                # Price recovered to entry - calculate actual return (may be slightly positive)
+                return_at_recovery = ((price_at_day / entry_price) - 1) * 100
+                days_held_to_recovery = day_offset
+                break
+        else:
+            # Did not recover within max_wait_days - calculate return at end of period
+            end_idx = min(cross_idx + max_wait_days, len(close) - 1)
+            final_price = float(close.iloc[end_idx])
+            return_at_recovery = ((final_price / entry_price) - 1) * 100
+            days_held_to_recovery = max_wait_days
+        
         return DipEvent(
             entry_date=entry_date if isinstance(entry_date, datetime) else datetime.now(),
             entry_price=entry_price,
@@ -707,6 +737,8 @@ class DipEntryOptimizer:
             recovery_days=recovery_days,
             days_to_threshold_recovery=days_to_threshold_recovery,
             recovery_velocity=recovery_velocity,
+            return_at_recovery=return_at_recovery,
+            days_held_to_recovery=days_held_to_recovery,
             returns=returns,
             max_return=max_return,
             volatility_percentile=vol_percentile,
@@ -874,6 +906,7 @@ class DipEntryOptimizer:
         # Return stats for each holding period
         avg_returns: dict[int, float] = {}
         total_profit: dict[int, float] = {}
+        total_profit_compounded: dict[int, float] = {}
         win_rates: dict[int, float] = {}
         sharpe_ratios: dict[int, float] = {}
         sortino_ratios: dict[int, float] = {}
@@ -884,7 +917,15 @@ class DipEntryOptimizer:
             if returns:
                 avg_ret = float(np.mean(returns))
                 avg_returns[period] = avg_ret
-                total_profit[period] = n * avg_ret  # N × avg_return
+                total_profit[period] = n * avg_ret  # Simple sum: N × avg_return
+                
+                # Compounded return: (1+r1) × (1+r2) × ... × (1+rn) - 1
+                # Convert percentages to decimals for compounding
+                compounded = 1.0
+                for r in returns:
+                    compounded *= (1 + r / 100)
+                total_profit_compounded[period] = (compounded - 1) * 100
+                
                 win_rates[period] = sum(1 for r in returns if r > 0) / len(returns) * 100
                 
                 # Sharpe ratio: mean / std (annualized for holding period)
@@ -903,10 +944,25 @@ class DipEntryOptimizer:
             else:
                 avg_returns[period] = 0.0
                 total_profit[period] = 0.0
+                total_profit_compounded[period] = 0.0
                 win_rates[period] = 0.0
                 sharpe_ratios[period] = 0.0
                 sortino_ratios[period] = 0.0
                 cvar[period] = 0.0
+        
+        # Recovery-based metrics (sell at break-even, not fixed hold period)
+        # This is the realistic "I'll sell when I break even" strategy
+        recovery_returns = [d.return_at_recovery for d in relevant_dips]
+        recovery_days_held = [d.days_held_to_recovery for d in relevant_dips]
+        
+        avg_return_at_recovery = float(np.mean(recovery_returns)) if recovery_returns else 0.0
+        avg_days_at_recovery = float(np.mean(recovery_days_held)) if recovery_days_held else 0.0
+        
+        # Compounded total profit at recovery
+        compounded_recovery = 1.0
+        for r in recovery_returns:
+            compounded_recovery *= (1 + r / 100)
+        total_profit_at_recovery = (compounded_recovery - 1) * 100
         
         # MAE (Maximum Adverse Excursion) statistics
         mae_values = [d.max_adverse_excursion for d in relevant_dips]
@@ -1105,7 +1161,12 @@ class DipEntryOptimizer:
             avg_recovery_velocity=avg_recovery_velocity,
             avg_returns=avg_returns,
             total_profit=total_profit,
+            total_profit_compounded=total_profit_compounded,
             win_rates=win_rates,
+            # Recovery-based metrics (sell at break-even strategy)
+            avg_return_at_recovery=avg_return_at_recovery,
+            total_profit_at_recovery=total_profit_at_recovery,
+            avg_days_at_recovery=avg_days_at_recovery,
             max_further_drawdown=max_further_drawdown,
             avg_further_drawdown=avg_further_drawdown,
             sharpe_ratios=sharpe_ratios,
@@ -1279,24 +1340,35 @@ class DipEntryOptimizer:
         
         # Filter to dips at or deeper than the symbol's minimum threshold
         # min_threshold is negative (e.g., -10), so we want threshold <= min_threshold
+        # Also require positive profit - negative profit is not "profit optimized"
         valid_stats = [
             s for s in stats
             if s.threshold_pct <= min_threshold  # Respect minimum dip threshold
             and s.n_occurrences >= 2  # Need at least 2 occurrences for any confidence
+            and s.total_profit_at_recovery > 0  # Must have positive profit
         ]
         
         if not valid_stats:
-            # Fallback to minimum threshold if nothing qualifies
+            # Fallback: try to find any threshold with positive profit (ignore min_threshold)
+            fallback_stats = [
+                s for s in stats
+                if s.n_occurrences >= 2
+                and s.total_profit_at_recovery > 0
+            ]
+            if fallback_stats:
+                # Pick the one with best profit among fallbacks
+                best = max(fallback_stats, key=lambda s: s.total_profit_at_recovery)
+                return best.threshold_pct, best.total_profit_at_recovery
+            # No positive profit thresholds - return minimum with 0 profit
             return min_threshold, 0.0
         
-        # Find threshold with highest total profit
-        primary_period = self.config.primary_holding_period
-        
+        # Find threshold with highest total profit at recovery (compounded)
         best_threshold = valid_stats[0].threshold_pct
         best_total_profit = 0.0
         
         for s in valid_stats:
-            total_profit = s.total_profit.get(primary_period, 0.0)
+            # Use recovery-based profit (sell at break-even), not fixed 90d hold
+            total_profit = s.total_profit_at_recovery
             
             if total_profit > best_total_profit:
                 best_total_profit = total_profit
@@ -1508,8 +1580,14 @@ def get_dip_summary(result: OptimalDipEntry) -> dict:
         "current_price": result.current_price,
         "recent_high": result.recent_high,
         "current_drawdown_pct": result.current_drawdown_pct,
+        # Risk-adjusted optimal (less pain, better timing)
         "optimal_dip_threshold": result.optimal_dip_threshold,
         "optimal_entry_price": result.optimal_entry_price,
+        # Max profit optimal (more opportunities, higher total return)
+        "max_profit_threshold": result.max_profit_threshold,
+        "max_profit_entry_price": result.max_profit_entry_price,
+        "max_profit_total_return": result.max_profit_total_return,
+        # Current opportunity
         "is_buy_now": result.is_buy_now,
         "buy_signal_strength": result.buy_signal_strength,
         "signal_reason": result.signal_reason,
@@ -1534,11 +1612,20 @@ def get_dip_summary(result: OptimalDipEntry) -> dict:
                 # V2: Use dict-based metrics with primary period fallback
                 "win_rate": s.win_rates.get(90, s.win_rates.get(60, 0.0)),
                 "avg_return": s.avg_returns.get(90, s.avg_returns.get(60, 0.0)),
+                "total_profit": s.total_profit.get(90, s.total_profit.get(60, 0.0)),
+                "total_profit_compounded": s.total_profit_compounded.get(90, s.total_profit_compounded.get(60, 0.0)),
                 "sharpe_ratio": s.sharpe_ratios.get(90, s.sharpe_ratios.get(60, 0.0)),
                 "sortino_ratio": s.sortino_ratios.get(90, s.sortino_ratios.get(60, 0.0)),
                 "cvar": s.cvar.get(90, s.cvar.get(60, 0.0)),
                 "recovery_rate": s.recovery_rate,
+                "recovery_threshold_rate": s.recovery_threshold_rate,
                 "avg_recovery_days": s.avg_recovery_days,
+                "avg_days_to_threshold": s.avg_days_to_threshold,
+                "avg_recovery_velocity": s.avg_recovery_velocity,
+                # Recovery-based metrics (sell at break-even strategy)
+                "avg_return_at_recovery": s.avg_return_at_recovery,
+                "total_profit_at_recovery": s.total_profit_at_recovery,
+                "avg_days_at_recovery": s.avg_days_at_recovery,
                 "max_further_drawdown": s.max_further_drawdown,
                 "avg_further_drawdown": s.avg_further_drawdown,
                 "prob_further_drop": s.prob_further_drop,

@@ -418,19 +418,27 @@ class TestDipEntryV2ApiOutput:
         summary = get_dip_summary(result)
         
         print("\n" + "="*70)
-        print("DIP SUMMARY API OUTPUT - NEW V2 FIELDS")
+        print("DIP SUMMARY API OUTPUT - DUAL OPTIMIZATION MODES")
         print("="*70)
-        print(f"continuation_risk: {summary.get('continuation_risk')}")
+        
+        # Display dual optimization thresholds
+        print(f"\n🎯 RISK-ADJUSTED OPTIMAL: {summary.get('optimal_dip_threshold'):.0f}%")
+        print(f"   Entry Price: ${summary.get('optimal_entry_price'):.2f}")
+        
+        print(f"\n💰 MAX PROFIT OPTIMAL: {summary.get('max_profit_threshold'):.0f}%")
+        print(f"   Entry Price: ${summary.get('max_profit_entry_price'):.2f}")
+        print(f"   Total Return: {summary.get('max_profit_total_return'):.1f}%")
+        
+        print(f"\ncontinuation_risk: {summary.get('continuation_risk')}")
         print(f"data_years: {summary.get('data_years')}")
         print(f"confidence: {summary.get('confidence')}")
         print(f"outlier_events: {len(summary.get('outlier_events', []))}")
         
         if summary.get('threshold_analysis'):
             first = summary['threshold_analysis'][0]
-            print(f"\nFirst threshold analysis entry:")
-            for key in ['sharpe_ratio', 'sortino_ratio', 'cvar', 'max_further_drawdown',
-                       'avg_further_drawdown', 'prob_further_drop', 'continuation_risk',
-                       'legacy_entry_score']:
+            print(f"\nFirst threshold analysis entry (new fields):")
+            for key in ['total_profit', 'recovery_threshold_rate', 'avg_days_to_threshold',
+                       'avg_recovery_velocity', 'sharpe_ratio', 'sortino_ratio', 'cvar']:
                 print(f"  {key}: {first.get(key)}")
         
         # Verify new fields exist
@@ -439,8 +447,17 @@ class TestDipEntryV2ApiOutput:
         assert 'confidence' in summary
         assert 'outlier_events' in summary
         
+        # Verify dual optimization fields
+        assert 'max_profit_threshold' in summary
+        assert 'max_profit_entry_price' in summary
+        assert 'max_profit_total_return' in summary
+        
         if summary.get('threshold_analysis'):
             ta = summary['threshold_analysis'][0]
+            assert 'total_profit' in ta
+            assert 'recovery_threshold_rate' in ta
+            assert 'avg_days_to_threshold' in ta
+            assert 'avg_recovery_velocity' in ta
             assert 'sharpe_ratio' in ta
             assert 'sortino_ratio' in ta
             assert 'continuation_risk' in ta

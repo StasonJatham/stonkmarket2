@@ -2913,11 +2913,36 @@ export interface DipThresholdStats {
   threshold: number;
   occurrences: number;
   per_year: number;
+  // V2: Multi-period metrics (primary = 90 days)
+  win_rate: number;
+  avg_return: number;
+  total_profit: number;  // N × avg_return - cumulative expected return (simple sum)
+  total_profit_compounded: number;  // (1+r1)*(1+r2)*... - compounded return
+  sharpe_ratio: number;
+  sortino_ratio: number;
+  cvar: number;  // Tail risk (worst 5% of returns)
+  // Recovery metrics
+  recovery_rate: number;
+  recovery_threshold_rate: number;  // Recovery to entry threshold (vs all-time high)
+  avg_recovery_days: number;
+  avg_days_to_threshold: number;  // Days to recover to entry price
+  avg_recovery_velocity: number;  // recovery_pct / days (higher = faster bounce)
+  // Recovery-based profit metrics (sell at break-even strategy)
+  avg_return_at_recovery: number;  // Avg return when selling at break-even
+  total_profit_at_recovery: number;  // Compounded return selling at recovery
+  avg_days_at_recovery: number;  // Avg days held until recovery
+  // Risk metrics
+  max_further_drawdown: number;
+  avg_further_drawdown: number;  // MAE - Maximum Adverse Excursion
+  prob_further_drop: number;  // Probability of dropping another 10%
+  continuation_risk: 'low' | 'medium' | 'high';
+  // Scores
+  entry_score: number;
+  legacy_entry_score: number;
+  confidence: 'low' | 'medium' | 'high';
+  // Legacy (backward compat)
   win_rate_60d: number;
   avg_return_60d: number;
-  recovery_rate: number;
-  avg_recovery_days: number;
-  entry_score: number;
 }
 
 export interface DipEntryResponse {
@@ -2926,15 +2951,26 @@ export interface DipEntryResponse {
   recent_high: number;
   current_drawdown_pct: number;
   volatility_regime: 'low' | 'normal' | 'high';
+  // Risk-adjusted optimal (less pain, better timing)
   optimal_dip_threshold: number;
   optimal_entry_price: number;
+  // Max profit optimal (more opportunities, higher total return)
+  max_profit_threshold: number;
+  max_profit_entry_price: number;
+  max_profit_total_return: number;
+  // Current signal
   is_buy_now: boolean;
   buy_signal_strength: number;
   signal_reason: string;
+  // Metadata
   typical_recovery_days: number;
   avg_dips_per_year: DipFrequency;
   fundamentals_healthy: boolean;
   fundamental_notes: string[];
+  continuation_risk: 'low' | 'medium' | 'high';
+  data_years: number;
+  confidence: 'low' | 'medium' | 'high';
+  outlier_events: number;
   threshold_analysis: DipThresholdStats[];
   analyzed_at: string;
 }
@@ -2947,11 +2983,23 @@ export async function getDipEntry(symbol: string): Promise<DipEntryResponse | nu
   const cacheKey = `dip-entry:${symbol}`;
   
   try {
-    return await apiCache.fetch(
+    const response = await apiCache.fetch(
       cacheKey,
-      () => fetchAPI<DipEntryResponse>(`/signals/dip-entry/${symbol}`),
+      () => fetchAPI<DipEntryResponse | { status: string }>(`/signals/dip-entry/${symbol}`),
       { ttl: CACHE_TTL.STOCK_INFO, staleWhileRevalidate: true }
     );
+    
+    // Handle 202 Accepted response (analysis pending)
+    if (response && 'status' in response && response.status === 'pending') {
+      return null;
+    }
+    
+    // Validate we have required fields
+    if (!response || !('optimal_entry_price' in response)) {
+      return null;
+    }
+    
+    return response as DipEntryResponse;
   } catch {
     return null;
   }

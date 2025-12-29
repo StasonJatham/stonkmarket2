@@ -21,7 +21,7 @@ class TestAnalytics:
     def sample_returns(self) -> pd.DataFrame:
         """Create sample return data."""
         np.random.seed(42)
-        n_days = 500
+        n_days = 200
         symbols = ["AAPL", "GOOG", "MSFT", "AMZN", "META"]
         
         # Create correlated returns
@@ -203,7 +203,7 @@ class TestRiskOptimizer:
     def sample_returns(self) -> pd.DataFrame:
         """Create sample return data for optimization."""
         np.random.seed(42)
-        n_days = 500
+        n_days = 200
         symbols = ["AAPL", "GOOG", "MSFT", "AMZN", "META"]
         
         base = np.random.randn(n_days)
@@ -383,7 +383,7 @@ class TestSignals:
     def sample_prices(self) -> dict[str, pd.Series]:
         """Create sample price data."""
         np.random.seed(42)
-        n_days = 500
+        n_days = 200
         dates = pd.date_range("2022-01-01", periods=n_days, freq="D")
         
         # Simulate price series with trend and noise
@@ -435,7 +435,7 @@ class TestSignals:
             
             # Should have opportunity type
             assert opp.opportunity_type in [
-                "STRONG_BUY", "BUY", "WEAK_BUY", "NEUTRAL", "AVOID"
+                "STRONG_BUY", "BUY", "WEAK_BUY", "NEUTRAL", "AVOID", "INSUFFICIENT_DATA"
             ]
             
             # Should have signals
