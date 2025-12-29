@@ -1155,8 +1155,12 @@ async def strategy_optimize_nightly_job() -> str:
         StrategyOptimizer, TradingConfig, RecencyConfig, FundamentalFilter,
         result_to_dict,
     )
+    from app.quant_engine.dip_entry_optimizer import DipEntryOptimizer
     
     logger.info("Starting strategy_optimize_nightly job")
+    
+    # Initialize dip entry optimizer for recovery time calculation
+    dip_optimizer = DipEntryOptimizer()
     
     try:
         # Get all active symbols
@@ -1239,6 +1243,15 @@ async def strategy_optimize_nightly_job() -> str:
                         n_trials=50,  # Reduced for batch processing
                     )
                     
+                    # Calculate typical recovery days from dip entry optimizer
+                    typical_recovery_days = None
+                    try:
+                        dip_entry_result = dip_optimizer.analyze(df, symbol, fundamentals)
+                        if dip_entry_result and dip_entry_result.typical_recovery_days > 0:
+                            typical_recovery_days = int(dip_entry_result.typical_recovery_days)
+                    except Exception as dip_err:
+                        logger.debug(f"[STRATEGY] Dip entry analysis failed for {symbol}: {dip_err}")
+                    
                     # Upsert to database
                     stmt = insert(StrategySignal).values(
                         symbol=symbol,
@@ -1265,6 +1278,7 @@ async def strategy_optimize_nightly_job() -> str:
                         is_statistically_valid=opt_result.is_statistically_valid,
                         recent_trades=opt_result.recent_trades,
                         indicators_used=opt_result.indicators_used,
+                        typical_recovery_days=typical_recovery_days,
                     ).on_conflict_do_update(
                         index_elements=["symbol"],
                         set_={
@@ -1291,6 +1305,7 @@ async def strategy_optimize_nightly_job() -> str:
                             "is_statistically_valid": opt_result.is_statistically_valid,
                             "recent_trades": opt_result.recent_trades,
                             "indicators_used": opt_result.indicators_used,
+                            "typical_recovery_days": typical_recovery_days,
                             "optimized_at": datetime.now(UTC),
                         }
                     )

@@ -110,6 +110,80 @@ const periods = [
   { label: '5Y', days: 1825 },
 ];
 
+/** Target number of points for all chart periods - keeps animations consistent */
+const NORMALIZED_CHART_POINTS = 180;
+
+/**
+ * Normalize chart data to a fixed number of points for consistent animations.
+ * Downsamples if too many points, upsamples (linear interpolation) if too few.
+ */
+function normalizeChartData<T extends { close: number; date: string }>(
+  data: T[], 
+  targetPoints: number = NORMALIZED_CHART_POINTS
+): T[] {
+  if (data.length === 0) return data;
+  if (data.length === targetPoints) return data;
+  
+  // Downsampling: use LTTB-like algorithm
+  if (data.length > targetPoints) {
+    const result: T[] = [data[0]];
+    const bucketSize = (data.length - 2) / (targetPoints - 2);
+    
+    for (let i = 1; i < targetPoints - 1; i++) {
+      const start = Math.floor((i - 1) * bucketSize) + 1;
+      const end = Math.floor(i * bucketSize) + 1;
+      
+      let maxDeviation = 0;
+      let selectedIdx = start;
+      const bucketSlice = data.slice(start, Math.min(end + 1, data.length - 1));
+      
+      if (bucketSlice.length > 0) {
+        const meanClose = bucketSlice.reduce((s, p) => s + p.close, 0) / bucketSlice.length;
+        bucketSlice.forEach((point, idx) => {
+          const deviation = Math.abs(point.close - meanClose);
+          if (deviation > maxDeviation) {
+            maxDeviation = deviation;
+            selectedIdx = start + idx;
+          }
+        });
+      }
+      
+      if (data[selectedIdx]) {
+        result.push(data[selectedIdx]);
+      }
+    }
+    
+    result.push(data[data.length - 1]);
+    return result;
+  }
+  
+  // Upsampling: use linear interpolation to fill gaps
+  const result: T[] = [];
+  const ratio = (data.length - 1) / (targetPoints - 1);
+  
+  for (let i = 0; i < targetPoints; i++) {
+    const srcIndex = i * ratio;
+    const lowerIdx = Math.floor(srcIndex);
+    const upperIdx = Math.min(Math.ceil(srcIndex), data.length - 1);
+    const fraction = srcIndex - lowerIdx;
+    
+    if (lowerIdx === upperIdx || fraction === 0) {
+      result.push(data[lowerIdx]);
+    } else {
+      // Interpolate between two points
+      const lower = data[lowerIdx];
+      const upper = data[upperIdx];
+      result.push({
+        ...lower,
+        close: lower.close + (upper.close - lower.close) * fraction,
+        // Keep the date from the lower point for interpolated values
+      });
+    }
+  }
+  
+  return result;
+}
+
 export function StockDetailsPanel({
   stock,
   chartData,
@@ -244,7 +318,11 @@ export function StockDetailsPanel({
   }, [chartPeriod, chartData]);
 
   const formattedChartData = useMemo(() => {
-    return chartData.map((point) => ({
+    // Normalize all periods to same number of points for consistent animations
+    // This ensures smooth morphing when switching between periods
+    const normalizedData = normalizeChartData(chartData, NORMALIZED_CHART_POINTS);
+    
+    return normalizedData.map((point) => ({
       ...point,
       displayDate: new Date(point.date).toLocaleDateString('en-US', {
         month: 'short',
@@ -311,9 +389,13 @@ export function StockDetailsPanel({
     });
   }, [formattedChartData, refHighIndex, currentPrice, refHighPrice]);
 
+  // Check if the stock has a valid optimized strategy (not just "dip" fallback)
+  const hasValidStrategy = strategySignal && strategySignal.strategy_name !== 'dip';
+
   // Find signal trigger points that match chart dates
   const signalPoints = useMemo(() => {
-    if (!showSignals || signalTriggers.length === 0 || formattedChartData.length === 0) return [];
+    // Don't show signals if strategy is "dip" (no real backtested signals)
+    if (!showSignals || !hasValidStrategy || signalTriggers.length === 0 || formattedChartData.length === 0) return [];
     
     // Create a map of date -> signal for quick lookup
     const signalMap = new Map<string, SignalTrigger>();
@@ -326,7 +408,7 @@ export function StockDetailsPanel({
         ...point,
         signal: signalMap.get(point.date)!,
       }));
-  }, [showSignals, signalTriggers, formattedChartData]);
+  }, [showSignals, hasValidStrategy, signalTriggers, formattedChartData]);
 
   const priceChange = useMemo(() => {
     if (chartData.length < 2) return 0;
@@ -440,7 +522,8 @@ export function StockDetailsPanel({
                   {stock.days_since_dip && (
                     <span className="text-muted-foreground">{stock.days_since_dip}d</span>
                   )}
-                  {/* Signals toggle */}
+                  {/* Signals toggle - only show if stock has valid strategy */}
+                  {hasValidStrategy && (
                   <div className="flex items-center gap-1.5 ml-1 border-l border-border pl-2">
                     <Zap className="h-3 w-3 text-success" />
                     <Switch
@@ -453,6 +536,7 @@ export function StockDetailsPanel({
                       <span className="text-muted-foreground">({signalTriggers.length})</span>
                     )}
                   </div>
+                  )}
                 </div>
               )}
             </div>

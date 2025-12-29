@@ -167,6 +167,9 @@ class OptimizationResult:
     # Recent trades
     recent_trades: list[dict]
     
+    # Dip entry analysis
+    typical_recovery_days: int | None = None  # From dip entry optimizer
+    
     # Optimization metadata
     optimization_timestamp: datetime = field(default_factory=datetime.now)
     indicators_used: list[str] = field(default_factory=list)

@@ -1161,6 +1161,9 @@ class StrategySignal(Base):
     # Validation
     is_statistically_valid: Mapped[bool] = mapped_column(Boolean, default=False)
     
+    # Recovery time (from dip entry optimizer)
+    typical_recovery_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    
     # Recent trades (last 5)
     recent_trades: Mapped[list] = mapped_column(JSONB, default=list)
     

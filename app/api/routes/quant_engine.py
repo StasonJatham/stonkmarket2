@@ -542,7 +542,7 @@ async def get_recommendations(
                 strategy_win_rate_val = float(strategy.win_rate) if strategy.win_rate else None
                 win_rate = float(strategy.win_rate) / 100 if strategy.win_rate else None  # Convert from pct
                 strategy_n_trades = strategy.n_trades if strategy.n_trades else 0
-                expected_recovery_days = None  # Not stored in StrategySignal
+                expected_recovery_days = getattr(strategy, 'typical_recovery_days', None)
             except Exception:
                 pass
         
@@ -743,23 +743,18 @@ async def get_recommendations(
     
     # Generate market message based on opportunity quality
     certified_count = sum(1 for r in recommendations if r.quant_gate_pass)
-    dip_entry_count = sum(1 for r in recommendations if r.quant_mode == "DIP_ENTRY")
-    hold_count = sum(1 for r in recommendations if r.quant_mode == "HOLD")
     top_score = recommendations[0].best_chance_score if recommendations else 0
     
-    # Simplified market message - no Mode A/B jargon
+    # Simplified market message - only show when nothing actionable
     market_message = None
     if certified_count > 0:
         if certified_count >= 3:
             market_message = None  # Plenty of opportunities, no message needed
         else:
             market_message = f"{certified_count} certified opportunity(ies) meet all quality criteria."
-    elif dip_entry_count > 0:
-        # Dip entries available but no certified buys
-        market_message = f"{dip_entry_count} dip recovery opportunity(ies) available. No certified buys today."
     elif top_score > 0:
         market_message = f"No actionable opportunities today. Top score: {top_score:.0f}/100."
-    # If all stocks are HOLD, show nothing special - this is normal
+    # If all stocks are HOLD or DIP_ENTRY, show nothing - the cards are self-explanatory
     
     # Legacy fallback for when quant_scores are not yet computed
     if not quant_score_map and buy_count == 0:

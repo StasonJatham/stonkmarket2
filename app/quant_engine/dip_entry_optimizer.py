@@ -150,14 +150,15 @@ class DipEntryOptimizer:
         print(f"Set limit order at: ${result.optimal_entry_price}")
     """
     
-    # Dip thresholds to test
-    DIP_THRESHOLDS = [-5, -7, -10, -12, -15, -18, -20, -25, -30]
+    # Dynamic thresholds: test every percentage from 1% to 50%
+    # This gives much finer granularity than preset buckets
+    DIP_THRESHOLDS = list(range(-1, -51, -1))  # [-1, -2, -3, ..., -50]
     
     def __init__(
         self,
         lookback_years: int = 5,
         recovery_max_days: int = 180,
-        min_dips_for_stats: int = 3,
+        min_dips_for_stats: int = 2,  # Lower threshold since we test more granular levels
     ):
         """
         Args:
