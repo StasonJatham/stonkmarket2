@@ -515,6 +515,11 @@ async def get_recommendations(
         # Calculate metrics from dip state (already in DB)
         dip_pct = float(dip.dip_percentage) if dip and dip.dip_percentage is not None else None
         current_price = float(dip.current_price) if dip and dip.current_price else 0
+        opportunity_type = dip.opportunity_type if dip and dip.opportunity_type else "NONE"
+        # Extreme Value Analysis (EVA) fields
+        is_tail_event = dip.is_tail_event if dip else False
+        return_period_years = float(dip.return_period_years) if dip and dip.return_period_years else None
+        regime_dip_percentile = float(dip.regime_dip_percentile) if dip and dip.regime_dip_percentile else None
         days_in_dip = None
         if dip and dip.dip_start_date:
             days_in_dip = (date.today() - dip.dip_start_date).days
@@ -715,6 +720,10 @@ async def get_recommendations(
             typical_dip_pct=typical_dip_pct,
             dip_vs_typical=dip_vs_typical,
             is_unusual_dip=is_unusual_dip,
+            opportunity_type=opportunity_type,
+            is_tail_event=is_tail_event,
+            return_period_years=return_period_years,
+            regime_dip_percentile=regime_dip_percentile,
             win_rate=win_rate,
             dip_score=dip_score,
             dip_bucket=_dip_bucket(dip_pct) if dip_pct else None,

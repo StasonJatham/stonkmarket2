@@ -193,6 +193,10 @@ class DipState(Base):
     dip_percentage: Mapped[Decimal | None] = mapped_column(Numeric(8, 4))
     dip_start_date: Mapped[date | None] = mapped_column(Date)
     opportunity_type: Mapped[str | None] = mapped_column(String(20), default="NONE")  # OUTLIER, BOUNCE, BOTH, NONE
+    # Extreme Value Analysis (EVA) fields
+    is_tail_event: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")  # Is this an extreme tail event?
+    return_period_years: Mapped[Decimal | None] = mapped_column(Numeric(6, 1))  # How rare? (years between similar events)
+    regime_dip_percentile: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))  # Percentile within normal regime
     # Legacy columns
     ref_high: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
     last_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))

@@ -9,7 +9,6 @@ from sqlalchemy import func, or_, select
 from app.core.logging import get_logger
 from app.database.connection import get_session
 from app.database.orm import DipAIAnalysis, DipState, Symbol
-from app.dipfinder.service import get_dipfinder_service
 from app.repositories import dip_votes_orm as dip_votes_repo
 from app.schemas.swipe import DipCard, DipStats, VoteCounts
 from app.services import stock_info
@@ -61,8 +60,9 @@ async def get_dip_card(symbol: str) -> DipCard | None:
     # Get opportunity_type - prefer cached value from DipState, fallback to computing
     opportunity_type = dip_state.opportunity_type or "NONE"
     if opportunity_type == "NONE":
-        # Try to compute if not cached
+        # Try to compute if not cached (lazy import to avoid circular dependency)
         try:
+            from app.dipfinder.service import get_dipfinder_service
             dipfinder = get_dipfinder_service()
             signal = await dipfinder.get_signal(symbol)
             if signal:
@@ -80,6 +80,9 @@ async def get_dip_card(symbol: str) -> DipCard | None:
         dip_pct=float(dip_state.dip_percentage) if dip_state.dip_percentage else 0,
         days_below=days_below,
         opportunity_type=opportunity_type,
+        is_tail_event=dip_state.is_tail_event,
+        return_period_years=float(dip_state.return_period_years) if dip_state.return_period_years else None,
+        regime_dip_percentile=float(dip_state.regime_dip_percentile) if dip_state.regime_dip_percentile else None,
         vote_counts=vote_counts,
         summary_ai=sym.summary_ai if sym else None,
         swipe_bio=ai_analysis.get("swipe_bio") if ai_analysis else None,
@@ -376,6 +379,9 @@ async def get_dip_cards_page(
                 dip_pct=float(dip_state.dip_percentage) if dip_state.dip_percentage else 0,
                 days_below=days_below,
                 opportunity_type=dip_state.opportunity_type or "NONE",
+                is_tail_event=dip_state.is_tail_event,
+                return_period_years=float(dip_state.return_period_years) if dip_state.return_period_years else None,
+                regime_dip_percentile=float(dip_state.regime_dip_percentile) if dip_state.regime_dip_percentile else None,
                 vote_counts=vote_counts,
                 summary_ai=sym.summary_ai if sym else None,
                 swipe_bio=ai.swipe_bio if ai else None,

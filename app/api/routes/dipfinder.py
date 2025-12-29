@@ -70,6 +70,9 @@ def _signal_to_response(signal, include_factors: bool = False) -> DipSignalRespo
         alert_level=signal.alert_level.value,
         should_alert=signal.should_alert,
         opportunity_type=signal.opportunity_type.value,
+        is_tail_event=signal.dip_metrics.is_tail_event,
+        return_period_years=signal.dip_metrics.return_period_years,
+        regime_dip_percentile=signal.dip_metrics.regime_dip_percentile,
         reason=signal.reason,
     )
 

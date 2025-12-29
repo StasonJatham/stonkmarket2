@@ -89,6 +89,11 @@ export interface StockCardData {
   typical_dip_pct?: number | null; // Stock's typical dip size as percentage
   dip_vs_typical?: number | null; // Current dip / typical dip ratio (>1.5 = unusual)
   is_unusual_dip?: boolean; // True if current dip is significantly larger than typical
+  opportunity_type?: 'OUTLIER' | 'BOUNCE' | 'BOTH' | 'NONE'; // Opportunity classification
+  // Extreme Value Analysis (EVA) fields
+  is_tail_event?: boolean; // True if current dip is an extreme tail event
+  return_period_years?: number | null; // How rare? (years between similar events)
+  regime_dip_percentile?: number | null; // Dip percentile within 'normal' regime
   win_rate?: number | null; // Historical win rate for similar signals
   
   // Technical signals
@@ -408,7 +413,12 @@ interface DipContextProps {
   typicalDipPct?: number | null;
   dipVsTypical?: number | null;
   isUnusualDip?: boolean;
+  opportunityType?: 'OUTLIER' | 'BOUNCE' | 'BOTH' | 'NONE';
   winRate?: number | null;
+  // Extreme Value Analysis (EVA) fields
+  isTailEvent?: boolean;
+  returnPeriodYears?: number | null;
+  regimeDipPercentile?: number | null;
 }
 
 // ============================================================================
@@ -420,7 +430,11 @@ function DipContext({
   typicalDipPct, 
   dipVsTypical, 
   isUnusualDip,
+  opportunityType,
   winRate,
+  isTailEvent,
+  returnPeriodYears,
+  regimeDipPercentile,
 }: DipContextProps) {
   const dipPct = depth * 100;
   
@@ -452,8 +466,33 @@ function DipContext({
     tooltipLines.push(`Persisting for ${days} days`);
   }
   
+  // Add EVA context if this is a tail event
+  if (isTailEvent && returnPeriodYears) {
+    if (returnPeriodYears >= 50) {
+      tooltipLines.push(`[RARE] Extreme event (once in 50+ years)`);
+    } else if (returnPeriodYears >= 10) {
+      tooltipLines.push(`[RARE] ~${Math.round(returnPeriodYears)}-year event`);
+    } else {
+      tooltipLines.push(`[UNUSUAL] ~${returnPeriodYears.toFixed(1)}-year event`);
+    }
+  }
+  
+  // Add regime percentile context
+  if (regimeDipPercentile !== null && regimeDipPercentile !== undefined) {
+    tooltipLines.push(`${regimeDipPercentile.toFixed(0)}th percentile in normal regime`);
+  }
+  
+  // Add opportunity type context to tooltip
+  if (opportunityType === 'OUTLIER') {
+    tooltipLines.push(`[OUTLIER] Stable stock at rare statistical discount`);
+  } else if (opportunityType === 'BOUNCE') {
+    tooltipLines.push(`[BOUNCE] Mean-reversion potential from significant dip`);
+  } else if (opportunityType === 'BOTH') {
+    tooltipLines.push(`[BOTH] Unusual dip with high bounce potential`);
+  }
+  
   if (isUnusualDip && dipVsTypical) {
-    tooltipLines.push(`[!] UNUSUAL: ${dipVsTypical.toFixed(1)}x larger than typical dip`);
+    tooltipLines.push(`${dipVsTypical.toFixed(1)}x larger than typical dip`);
   } else if (dipVsTypical) {
     tooltipLines.push(`${dipVsTypical.toFixed(1)}x vs typical dip (${typicalDipPct?.toFixed(1) || '?'}%)`);
   }
@@ -468,6 +507,19 @@ function DipContext({
   
   const tooltipContent = tooltipLines.join('. ');
   
+  // Determine which badge to show based on opportunity_type (preferred) or is_unusual_dip (fallback)
+  const showOpportunityBadge = opportunityType && opportunityType !== 'NONE';
+  
+  // Format return period for display
+  const formatReturnPeriod = (years: number | null | undefined): string => {
+    if (!years) return '';
+    if (years >= 50) return '50y+';
+    if (years >= 10) return `${Math.round(years)}y`;
+    if (years >= 1) return `${years.toFixed(1)}y`;
+    const months = Math.round(years * 12);
+    return months <= 1 ? '~mo' : `${months}mo`;
+  };
+  
   return (
     <InfoTooltip content={tooltipContent}>
       <div className="flex items-center gap-1 cursor-help">
@@ -475,17 +527,44 @@ function DipContext({
         <span className={cn('text-xs font-medium', severityColors[severity] || severityColors.moderate)}>
           {formatDipPercent(depth)}
         </span>
-        {isUnusualDip && (
+        {/* Show tail event badge if this is a rare event */}
+        {isTailEvent && returnPeriodYears && (
+          <span className="text-[9px] px-1 py-0.5 bg-rose-500/20 text-rose-500 rounded font-semibold">
+            {formatReturnPeriod(returnPeriodYears)} EVENT
+          </span>
+        )}
+        {/* Show opportunity type badge (OUTLIER/BOUNCE/BOTH) */}
+        {showOpportunityBadge && !isTailEvent ? (
+          opportunityType === 'OUTLIER' ? (
+            <span className="text-[9px] px-1 py-0.5 bg-blue-500/20 text-blue-500 rounded font-semibold">
+              OUTLIER
+            </span>
+          ) : opportunityType === 'BOUNCE' ? (
+            <span className="text-[9px] px-1 py-0.5 bg-emerald-500/20 text-emerald-500 rounded font-semibold">
+              BOUNCE
+            </span>
+          ) : opportunityType === 'BOTH' ? (
+            <span className="text-[9px] px-1 py-0.5 bg-purple-500/20 text-purple-500 rounded font-semibold">
+              BOTH
+            </span>
+          ) : null
+        ) : !isTailEvent && isUnusualDip ? (
           <span className="text-[9px] px-1 py-0.5 bg-amber-500/20 text-amber-500 rounded font-semibold">
             UNUSUAL
           </span>
+        ) : null}
+        {/* Show regime percentile if available and significant */}
+        {regimeDipPercentile !== null && regimeDipPercentile !== undefined && regimeDipPercentile >= 75 && !isTailEvent && (
+          <span className="text-[10px] text-muted-foreground">
+            P{Math.round(regimeDipPercentile)}
+          </span>
         )}
-        {expectedRecoveryDays && !isUnusualDip && (
+        {expectedRecoveryDays && !showOpportunityBadge && !isUnusualDip && !isTailEvent && (
           <span className="text-[10px] text-muted-foreground">
             ~{expectedRecoveryDays}d
           </span>
         )}
-        {days !== null && !expectedRecoveryDays && !isUnusualDip && (
+        {days !== null && !expectedRecoveryDays && !showOpportunityBadge && !isUnusualDip && !isTailEvent && (
           <span className="text-[10px] text-muted-foreground">
             ({days}d)
           </span>
@@ -494,7 +573,6 @@ function DipContext({
     </InfoTooltip>
   );
 }
-
 // ============================================================================
 // Mini Sparkline (Background Chart)
 // ============================================================================
@@ -643,7 +721,11 @@ export const StockCardV2 = memo(function StockCardV2({
               typicalDipPct={stock.typical_dip_pct}
               dipVsTypical={stock.dip_vs_typical}
               isUnusualDip={stock.is_unusual_dip}
+              opportunityType={stock.opportunity_type}
               winRate={stock.win_rate}
+              isTailEvent={stock.is_tail_event}
+              returnPeriodYears={stock.return_period_years}
+              regimeDipPercentile={stock.regime_dip_percentile}
             />
             
             {/* Sector Delta */}

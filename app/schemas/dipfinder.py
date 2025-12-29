@@ -148,6 +148,19 @@ class DipSignalResponse(BaseModel):
         default="NONE",
         description="Opportunity type: OUTLIER (conservative), BOUNCE (aggressive), BOTH, or NONE",
     )
+    # Extreme Value Analysis (EVA) fields
+    is_tail_event: bool = Field(
+        default=False,
+        description="True if this is an extreme tail event (beyond normal distribution)",
+    )
+    return_period_years: float | None = Field(
+        None,
+        description="How rare is this event? (years between similar events)",
+    )
+    regime_dip_percentile: float | None = Field(
+        None,
+        description="Dip percentile within 'normal' regime (excluding tail events)",
+    )
     reason: str = Field(..., description="Human-readable explanation")
 
     # Detailed factors (optional, included on request)

@@ -64,6 +64,7 @@ class OpportunityType(str, Enum):
     OUTLIER = "OUTLIER"  # Conservative: stable stock at rare statistical discount
     BOUNCE = "BOUNCE"  # Aggressive: volatile stock with mean-reversion potential
     BOTH = "BOTH"  # Qualifies for both strategies (rare)
+    STRATEGY = "STRATEGY"  # Active trading strategy signal (buy signal)
 
 
 class AlertLevel(str, Enum):

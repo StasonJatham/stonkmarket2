@@ -13,6 +13,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from .config import DipFinderConfig
+from .extreme_value import TailAnalysis, analyze_tail_events
 
 
 @dataclass
@@ -41,6 +42,12 @@ class DipMetrics:
     volume_confirmed: bool = False  # True if dip had significant volume confirmation
     selloff_intensity: float = 0.0  # Volume-weighted price decline intensity
 
+    # Extreme Value Analysis (EVA) fields
+    tail_threshold: float = 0.50  # Threshold separating normal from extreme dips
+    is_tail_event: bool = False  # Is current dip beyond the tail threshold?
+    return_period_years: float | None = None  # How rare? (years between similar events)
+    regime_dip_percentile: float = 50.0  # Percentile within "normal" regime only
+
     # Flags
     is_meaningful: bool = False  # Meets all dip criteria
 
@@ -60,6 +67,10 @@ class DipMetrics:
             "volume_spike_ratio": round(self.volume_spike_ratio, 2),
             "volume_confirmed": self.volume_confirmed,
             "selloff_intensity": round(self.selloff_intensity, 4),
+            "tail_threshold": round(self.tail_threshold, 4),
+            "is_tail_event": self.is_tail_event,
+            "return_period_years": round(self.return_period_years, 1) if self.return_period_years else None,
+            "regime_dip_percentile": round(self.regime_dip_percentile, 2),
             "is_meaningful": self.is_meaningful,
         }
 
@@ -389,6 +400,16 @@ def compute_dip_metrics(
         dip_threshold=config.min_dip_abs,
     )
 
+    # Extreme Value Analysis (EVA) - for proper tail event handling
+    # Use full dip_series for EVA (not just 365 days) to capture rare events
+    tail_analysis = analyze_tail_events(
+        dip_series=dip_series,
+        current_dip=current_dip,
+        threshold_percentile=95.0,
+        min_threshold=0.40,
+        max_threshold=0.70,
+    )
+
     # Is meaningful check
     is_meaningful = (
         current_dip >= config.min_dip_abs
@@ -413,6 +434,10 @@ def compute_dip_metrics(
         volume_spike_ratio=volume_spike_ratio,
         volume_confirmed=volume_confirmed,
         selloff_intensity=selloff_intensity,
+        tail_threshold=tail_analysis.tail_threshold,
+        is_tail_event=tail_analysis.is_tail_event,
+        return_period_years=tail_analysis.return_period_years,
+        regime_dip_percentile=tail_analysis.regime_dip_percentile,
         is_meaningful=is_meaningful,
     )
 

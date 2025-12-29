@@ -24,7 +24,6 @@ from app.core.logging import get_logger
 from app.dipfinder.signal import (
     compute_signal,
     AlertLevel,
-    OpportunityType,
 )
 from app.dipfinder.config import DipFinderConfig
 
@@ -42,6 +41,12 @@ class BacktestTrade:
     alert_level: str
     opportunity_type: str = "NONE"  # OUTLIER, BOUNCE, BOTH, NONE
     
+    # EVA metrics (Extreme Value Analysis)
+    is_tail_event: bool = False  # True if dip exceeds tail threshold
+    return_period_years: float | None = None  # How rare is this dip in years
+    regime_dip_percentile: float | None = None  # Percentile within normal regime
+    dip_pct: float = 0.0  # Current dip percentage
+    
     # Exit info (filled when trade closes)
     exit_date: datetime | None = None
     exit_price: float | None = None
@@ -57,7 +62,7 @@ class BacktestTrade:
 class SignalPerformance:
     """Performance metrics for a specific signal level."""
     
-    alert_level: str  # "STRONG", "GOOD", "ALL"
+    alert_level: str  # "STRONG", "GOOD", "ALL", "TAIL", "NORMAL"
     n_signals: int = 0
     n_trades: int = 0  # Signals that could be traded
     
@@ -86,6 +91,10 @@ class SignalPerformance:
     t_statistic: float = 0.0
     p_value: float = 1.0
     is_significant: bool = False  # p < 0.05
+    
+    # EVA-specific metrics
+    avg_return_period_years: float | None = None  # Avg rarity of traded dips
+    avg_regime_percentile: float | None = None  # Avg percentile within normal regime
 
 
 @dataclass
@@ -106,6 +115,15 @@ class DipfinderBacktestResult:
     # Performance by opportunity type
     outlier_signals: SignalPerformance | None = None
     bounce_signals: SignalPerformance | None = None
+    
+    # Performance by EVA classification (tail events vs normal)
+    tail_event_signals: SignalPerformance | None = None
+    normal_event_signals: SignalPerformance | None = None
+    
+    # EVA summary stats
+    n_tail_events: int = 0
+    tail_event_pct: float = 0.0  # % of trades that were tail events
+    avg_return_period_years: float | None = None
     
     # Baseline comparisons
     vs_buy_hold: float = 0.0  # Excess return vs buy-and-hold
@@ -261,6 +279,13 @@ def _compute_signal_performance(
     drawdown = (cumulative - running_max) / running_max
     max_dd = abs(np.min(drawdown)) * 100 if len(drawdown) > 0 else 0.0
     
+    # EVA metrics
+    return_periods = [t.return_period_years for t in trades if t.return_period_years is not None]
+    regime_percentiles = [t.regime_dip_percentile for t in trades if t.regime_dip_percentile is not None]
+    
+    avg_return_period = float(np.mean(return_periods)) if return_periods else None
+    avg_regime_pctl = float(np.mean(regime_percentiles)) if regime_percentiles else None
+    
     return SignalPerformance(
         alert_level=alert_level,
         n_signals=len(trades),
@@ -279,6 +304,8 @@ def _compute_signal_performance(
         t_statistic=float(t_stat),
         p_value=float(p_value),
         is_significant=p_value < 0.05,
+        avg_return_period_years=avg_return_period,
+        avg_regime_percentile=avg_regime_pctl,
     )
 
 
@@ -396,6 +423,11 @@ async def backtest_dipfinder_signals(
                     entry_score=signal.final_score,
                     alert_level=signal.alert_level.value,
                     opportunity_type=signal.opportunity_type.value,
+                    # EVA metrics from dip_metrics
+                    is_tail_event=signal.dip_metrics.is_tail_event,
+                    return_period_years=signal.dip_metrics.return_period_years,
+                    regime_dip_percentile=signal.dip_metrics.regime_dip_percentile,
+                    dip_pct=signal.dip_metrics.dip_pct,
                     exit_date=exit_date,
                     exit_price=exit_price,
                     exit_reason=exit_reason,
@@ -431,6 +463,19 @@ async def backtest_dipfinder_signals(
     outlier_perf = _compute_signal_performance(outlier_trades, "OUTLIER")
     bounce_perf = _compute_signal_performance(bounce_trades, "BOUNCE")
     
+    # Compute performance by EVA classification (tail events vs normal)
+    tail_trades = [t for t in all_trades if t.is_tail_event]
+    normal_trades = [t for t in all_trades if not t.is_tail_event]
+    
+    tail_perf = _compute_signal_performance(tail_trades, "TAIL")
+    normal_perf = _compute_signal_performance(normal_trades, "NORMAL")
+    
+    # EVA summary statistics
+    n_tail = len(tail_trades)
+    tail_pct = (n_tail / len(all_trades) * 100) if all_trades else 0.0
+    return_periods = [t.return_period_years for t in all_trades if t.return_period_years is not None]
+    avg_return_period = float(np.mean(return_periods)) if return_periods else None
+    
     # Walk-forward stability
     # In-sample = first half of folds, out-of-sample = second half
     mid = len(fold_results) // 2
@@ -456,6 +501,11 @@ async def backtest_dipfinder_signals(
         all_signals=all_perf,
         outlier_signals=outlier_perf,
         bounce_signals=bounce_perf,
+        tail_event_signals=tail_perf,
+        normal_event_signals=normal_perf,
+        n_tail_events=n_tail,
+        tail_event_pct=tail_pct,
+        avg_return_period_years=avg_return_period,
         in_sample_sharpe=in_sample_sharpe,
         out_of_sample_sharpe=out_of_sample_sharpe,
         sharpe_degradation_pct=sharpe_degradation,
@@ -485,6 +535,9 @@ def backtest_result_to_dict(result: DipfinderBacktestResult) -> dict:
             "sharpe_ratio": round(perf.sharpe_ratio, 2),
             "p_value": round(perf.p_value, 4),
             "is_significant": perf.is_significant,
+            # EVA metrics
+            "avg_return_period_years": round(perf.avg_return_period_years, 1) if perf.avg_return_period_years else None,
+            "avg_regime_percentile": round(perf.avg_regime_percentile, 1) if perf.avg_regime_percentile else None,
         }
     
     return {
@@ -497,6 +550,14 @@ def backtest_result_to_dict(result: DipfinderBacktestResult) -> dict:
         "all_signals": perf_to_dict(result.all_signals),
         "outlier_signals": perf_to_dict(result.outlier_signals),
         "bounce_signals": perf_to_dict(result.bounce_signals),
+        # EVA performance breakdown
+        "tail_event_signals": perf_to_dict(result.tail_event_signals),
+        "normal_event_signals": perf_to_dict(result.normal_event_signals),
+        # EVA summary
+        "n_tail_events": result.n_tail_events,
+        "tail_event_pct": round(result.tail_event_pct, 1),
+        "avg_return_period_years": round(result.avg_return_period_years, 1) if result.avg_return_period_years else None,
+        # Walk-forward
         "in_sample_sharpe": round(result.in_sample_sharpe, 2),
         "out_of_sample_sharpe": round(result.out_of_sample_sharpe, 2),
         "sharpe_degradation_pct": round(result.sharpe_degradation_pct, 1),

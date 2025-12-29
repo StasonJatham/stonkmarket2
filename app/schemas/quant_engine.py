@@ -279,6 +279,13 @@ class QuantRecommendation(BaseModel):
     typical_dip_pct: float | None = Field(None, description="Stock's typical dip size as percentage")
     dip_vs_typical: float | None = Field(None, description="Current dip / typical dip ratio (>1.5 = unusual)")
     is_unusual_dip: bool = Field(False, description="True if current dip is significantly larger than typical")
+    opportunity_type: str = Field("NONE", description="Opportunity classification: OUTLIER (stable at discount), BOUNCE (volatile with reversion potential), BOTH, or NONE")
+    
+    # Extreme Value Analysis (EVA) fields
+    is_tail_event: bool = Field(False, description="True if current dip is an extreme tail event (beyond normal distribution)")
+    return_period_years: float | None = Field(None, description="How rare is this dip? (years between similar events, e.g., '10-year event')")
+    regime_dip_percentile: float | None = Field(None, description="Dip percentile within 'normal' regime (excluding tail events)")
+    
     win_rate: float | None = Field(None, description="Historical win rate for similar signals")
     
     # Dip-based metrics

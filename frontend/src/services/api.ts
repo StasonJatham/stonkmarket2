@@ -983,6 +983,10 @@ export interface DipCard {
   dip_pct: number;
   days_below: number;
   min_dip_pct: number | null;
+  opportunity_type?: string; // 'OUTLIER' | 'BOUNCE' | 'BOTH' | 'NONE'
+  is_tail_event?: boolean;  // True if current dip is an extreme tail event
+  return_period_years?: number | null;  // How rare the dip is in years
+  regime_dip_percentile?: number | null;  // Dip percentile within normal regime only
   summary_ai: string | null;
   swipe_bio: string | null;
   ai_rating: 'strong_buy' | 'buy' | 'hold' | 'sell' | 'strong_sell' | null;
@@ -1204,6 +1208,11 @@ export interface QuantRecommendation {
   typical_dip_pct: number | null;  // Stock's typical dip size as percentage
   dip_vs_typical: number | null;  // Current dip / typical dip ratio (>1.5 = unusual)
   is_unusual_dip: boolean;  // True if current dip is significantly larger than typical
+  opportunity_type: 'OUTLIER' | 'BOUNCE' | 'BOTH' | 'NONE';  // Opportunity classification
+  // Extreme Value Analysis (EVA) fields
+  is_tail_event: boolean;  // True if current dip is an extreme tail event
+  return_period_years: number | null;  // How rare? (years between similar events)
+  regime_dip_percentile: number | null;  // Dip percentile within 'normal' regime
   win_rate: number | null;  // Historical win rate for similar signals
   // Dip metrics
   dip_score: number | null;
@@ -1353,6 +1362,11 @@ export interface StockCardData {
   typical_dip_pct?: number | null;  // Stock's typical dip size as percentage
   dip_vs_typical?: number | null;  // Current dip / typical dip ratio (>1.5 = unusual)
   is_unusual_dip?: boolean;  // True if current dip is significantly larger than typical
+  opportunity_type?: 'OUTLIER' | 'BOUNCE' | 'BOTH' | 'NONE';  // Opportunity classification
+  // Extreme Value Analysis (EVA) fields
+  is_tail_event?: boolean;  // True if current dip is an extreme tail event
+  return_period_years?: number | null;  // How rare? (years between similar events)
+  regime_dip_percentile?: number | null;  // Dip percentile within 'normal' regime
   win_rate?: number | null;  // Historical win rate for similar signals
   
   // Technical signals
@@ -1392,6 +1406,11 @@ export interface StockCardData {
   mu_hat?: number;
   uncertainty?: number;
   marginal_utility?: number;
+  
+  // Intrinsic Value / Valuation
+  intrinsic_value?: number | null;
+  upside_pct?: number | null;
+  valuation_status?: 'undervalued' | 'fair' | 'overvalued' | null;
   
   // APUS + DOUS Dual-Mode Scoring
   quant_mode?: 'CERTIFIED_BUY' | 'DIP_ENTRY' | 'HOLD' | 'DOWNTREND' | null;
@@ -1496,6 +1515,11 @@ export function quantToStockCardData(
     typical_dip_pct: rec.typical_dip_pct,
     dip_vs_typical: rec.dip_vs_typical,
     is_unusual_dip: rec.is_unusual_dip,
+    opportunity_type: rec.opportunity_type,
+    // Extreme Value Analysis (EVA) fields
+    is_tail_event: rec.is_tail_event,
+    return_period_years: rec.return_period_years,
+    regime_dip_percentile: rec.regime_dip_percentile,
     win_rate: rec.win_rate,
     top_signal: topSignal,
     sector_delta: rec.vs_sector_performance ?? null,

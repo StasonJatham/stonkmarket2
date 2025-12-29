@@ -35,6 +35,7 @@ async def upsert_dip_state(
     current_price: float,
     ath_price: float,
     dip_percentage: float,
+    opportunity_type: str | None = None,
 ) -> bool:
     """Create or update a dip state record.
     
@@ -43,6 +44,7 @@ async def upsert_dip_state(
         current_price: Current stock price
         ath_price: All-time high price
         dip_percentage: Percentage dip from ATH
+        opportunity_type: OUTLIER, BOUNCE, BOTH, or NONE
     
     Returns:
         True if upsert succeeded
@@ -50,21 +52,29 @@ async def upsert_dip_state(
     async with get_session() as session:
         now = datetime.utcnow()
 
-        stmt = insert(DipState).values(
-            symbol=symbol.upper(),
-            current_price=Decimal(str(current_price)),
-            ath_price=Decimal(str(ath_price)),
-            dip_percentage=Decimal(str(dip_percentage)),
-            first_seen=now,
-            last_updated=now,
-        ).on_conflict_do_update(
+        values = {
+            "symbol": symbol.upper(),
+            "current_price": Decimal(str(current_price)),
+            "ath_price": Decimal(str(ath_price)),
+            "dip_percentage": Decimal(str(dip_percentage)),
+            "first_seen": now,
+            "last_updated": now,
+        }
+        if opportunity_type is not None:
+            values["opportunity_type"] = opportunity_type
+
+        update_set = {
+            "current_price": Decimal(str(current_price)),
+            "ath_price": Decimal(str(ath_price)),
+            "dip_percentage": Decimal(str(dip_percentage)),
+            "last_updated": now,
+        }
+        if opportunity_type is not None:
+            update_set["opportunity_type"] = opportunity_type
+
+        stmt = insert(DipState).values(**values).on_conflict_do_update(
             index_elements=["symbol"],
-            set_={
-                "current_price": Decimal(str(current_price)),
-                "ath_price": Decimal(str(ath_price)),
-                "dip_percentage": Decimal(str(dip_percentage)),
-                "last_updated": now,
-            }
+            set_=update_set
         )
 
         await session.execute(stmt)

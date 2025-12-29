@@ -27,45 +27,6 @@ from app.database.orm import PriceHistory
 logger = get_logger("repositories.price_history_orm")
 
 
-# Maximum allowed deviation between Close and Adj Close (10%)
-# yfinance occasionally returns anomalous adj_close values that corrupt data
-MAX_ADJ_CLOSE_DEVIATION = 0.10
-
-
-def _validate_adj_close(close: float, adj_close: float | None, symbol: str, dt: date) -> float | None:
-    """Validate adjusted close price against close price.
-    
-    yfinance can return anomalous adjusted close values (e.g., 315 instead of 618).
-    This validation rejects adj_close values that differ by more than MAX_ADJ_CLOSE_DEVIATION.
-    
-    Args:
-        close: Regular close price
-        adj_close: Adjusted close price from yfinance
-        symbol: Stock ticker (for logging)
-        dt: Date of the price (for logging)
-    
-    Returns:
-        adj_close if valid, close if invalid (fallback), None if both missing
-    """
-    if adj_close is None or pd.isna(adj_close):
-        return None
-    
-    if close <= 0:
-        return None
-    
-    deviation = abs(adj_close - close) / close
-    
-    if deviation > MAX_ADJ_CLOSE_DEVIATION:
-        logger.warning(
-            f"Rejected anomalous adj_close for {symbol} on {dt}: "
-            f"adj_close={adj_close:.2f} vs close={close:.2f} (deviation={deviation:.1%}). "
-            f"Using close price instead."
-        )
-        return close
-    
-    return adj_close
-
-
 async def get_prices(
     symbol: str,
     start_date: date,
@@ -181,12 +142,18 @@ async def get_prices_as_dataframe(
     return df
 
 
-async def save_prices(symbol: str, df: pd.DataFrame) -> int:
+async def save_prices(symbol: str, df: pd.DataFrame, auto_adjusted: bool = True) -> int:
     """Save price data to database.
+    
+    IMPORTANT: When using yfinance with auto_adjust=True (the default), the Close
+    column already contains split-adjusted prices but there is no separate Adj Close
+    column. In this case, we store Close in BOTH the close and adj_close columns
+    to maintain consistency with the read path (get_close_column prefers Adj Close).
     
     Args:
         symbol: Stock ticker symbol
         df: DataFrame with OHLCV data
+        auto_adjusted: If True, Close is already adjusted (use for adj_close too)
     
     Returns:
         Number of rows saved
@@ -197,7 +164,6 @@ async def save_prices(symbol: str, df: pd.DataFrame) -> int:
     async with get_session() as session:
         count = 0
         skipped = 0
-        rejected_adj = 0
         for idx, row in df.iterrows():
             # Skip rows with NaN close values - they're not usable
             if pd.isna(row["Close"]):
@@ -206,15 +172,21 @@ async def save_prices(symbol: str, df: pd.DataFrame) -> int:
                 
             dt = idx.date() if hasattr(idx, "date") else idx
             close_val = float(row["Close"])
+            
+            # Determine adj_close value:
+            # 1. If Adj Close column exists and has value, use it
+            # 2. If auto_adjusted=True and no Adj Close, Close IS the adjusted price
+            # 3. Otherwise, set to None
             raw_adj = row.get("Adj Close")
-            raw_adj_float = float(raw_adj) if pd.notna(raw_adj) else None
+            if pd.notna(raw_adj):
+                adj_val = float(raw_adj)
+            elif auto_adjusted:
+                # With auto_adjust=True, Close is already adjusted
+                adj_val = close_val
+            else:
+                adj_val = None
             
-            # Validate adj_close - reject anomalous values from yfinance
-            validated_adj = _validate_adj_close(close_val, raw_adj_float, symbol, dt)
-            if validated_adj != raw_adj_float and raw_adj_float is not None:
-                rejected_adj += 1
-            
-            adj_decimal = Decimal(str(validated_adj)) if validated_adj is not None else None
+            adj_decimal = Decimal(str(adj_val)) if adj_val is not None else None
 
             stmt = insert(PriceHistory).values(
                 symbol=symbol.upper(),
@@ -243,7 +215,57 @@ async def save_prices(symbol: str, df: pd.DataFrame) -> int:
         await session.commit()
         if skipped > 0:
             logger.warning(f"Skipped {skipped} rows with NaN close for {symbol}")
-        if rejected_adj > 0:
-            logger.warning(f"Rejected {rejected_adj} anomalous adj_close values for {symbol}")
         logger.debug(f"Saved {count} price records for {symbol}")
         return count
+
+
+async def fix_null_adj_close(symbols: list[str] | None = None) -> int:
+    """Fix corrupted price data by copying close to adj_close where adj_close is NULL.
+    
+    This fixes the issue where yfinance auto_adjust=True returns adjusted OHLC
+    but no Adj Close column, causing adj_close to be stored as NULL while older
+    rows have adj_close set. The read path (get_close_column) prefers Adj Close
+    if any row has it, causing a mismatch between old and new data.
+    
+    Args:
+        symbols: List of symbols to fix, or None for all symbols
+    
+    Returns:
+        Number of rows fixed
+    """
+    from sqlalchemy import update
+    
+    async with get_session() as session:
+        if symbols:
+            # Fix specific symbols
+            normalized = [s.upper() for s in symbols]
+            stmt = (
+                update(PriceHistory)
+                .where(
+                    and_(
+                        PriceHistory.symbol.in_(normalized),
+                        PriceHistory.adj_close.is_(None),
+                        PriceHistory.close.isnot(None),
+                    )
+                )
+                .values(adj_close=PriceHistory.close)
+            )
+        else:
+            # Fix all symbols
+            stmt = (
+                update(PriceHistory)
+                .where(
+                    and_(
+                        PriceHistory.adj_close.is_(None),
+                        PriceHistory.close.isnot(None),
+                    )
+                )
+                .values(adj_close=PriceHistory.close)
+            )
+        
+        result = await session.execute(stmt)
+        await session.commit()
+        
+        fixed = result.rowcount
+        logger.info(f"Fixed {fixed} rows with NULL adj_close")
+        return fixed

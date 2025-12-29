@@ -353,6 +353,10 @@ async def upsert_dip_state_with_dates(
     ath_price: float,
     dip_percentage: float,
     dip_start_date: date | None = None,
+    opportunity_type: str | None = None,
+    is_tail_event: bool | None = None,
+    return_period_years: float | None = None,
+    regime_dip_percentile: float | None = None,
 ) -> None:
     """Create or update a dip state record.
     
@@ -362,28 +366,51 @@ async def upsert_dip_state_with_dates(
         ath_price: All-time high price
         dip_percentage: Percentage dip from ATH
         dip_start_date: When the dip started
+        opportunity_type: OUTLIER, BOUNCE, BOTH, or NONE
+        is_tail_event: True if this is an extreme tail event
+        return_period_years: How rare is this event (years between similar)
+        regime_dip_percentile: Percentile within normal regime
     """
     async with get_session() as session:
         now = datetime.now(UTC)
 
-        stmt = insert(DipState).values(
-            symbol=symbol.upper(),
-            current_price=Decimal(str(current_price)),
-            ath_price=Decimal(str(ath_price)),
-            dip_percentage=Decimal(str(dip_percentage)),
-            dip_start_date=dip_start_date,
-            first_seen=now,
-            last_updated=now,
-        ).on_conflict_do_update(
+        values = {
+            "symbol": symbol.upper(),
+            "current_price": Decimal(str(current_price)),
+            "ath_price": Decimal(str(ath_price)),
+            "dip_percentage": Decimal(str(dip_percentage)),
+            "dip_start_date": dip_start_date,
+            "first_seen": now,
+            "last_updated": now,
+        }
+        if opportunity_type is not None:
+            values["opportunity_type"] = opportunity_type
+        if is_tail_event is not None:
+            values["is_tail_event"] = is_tail_event
+        if return_period_years is not None:
+            values["return_period_years"] = Decimal(str(round(return_period_years, 1)))
+        if regime_dip_percentile is not None:
+            values["regime_dip_percentile"] = Decimal(str(round(regime_dip_percentile, 2)))
+
+        update_set = {
+            "current_price": Decimal(str(current_price)),
+            "ath_price": Decimal(str(ath_price)),
+            "dip_percentage": Decimal(str(dip_percentage)),
+            "dip_start_date": dip_start_date,
+            "last_updated": now,
+        }
+        if opportunity_type is not None:
+            update_set["opportunity_type"] = opportunity_type
+        if is_tail_event is not None:
+            update_set["is_tail_event"] = is_tail_event
+        if return_period_years is not None:
+            update_set["return_period_years"] = Decimal(str(round(return_period_years, 1)))
+        if regime_dip_percentile is not None:
+            update_set["regime_dip_percentile"] = Decimal(str(round(regime_dip_percentile, 2)))
+
+        stmt = insert(DipState).values(**values).on_conflict_do_update(
             index_elements=["symbol"],
-            set_={
-                "current_price": Decimal(str(current_price)),
-                "ath_price": Decimal(str(ath_price)),
-                "dip_percentage": Decimal(str(dip_percentage)),
-                # Always update dip_start_date - if stock recovered, it should be NULL
-                "dip_start_date": dip_start_date,
-                "last_updated": now,
-            }
+            set_=update_set
         )
 
         await session.execute(stmt)

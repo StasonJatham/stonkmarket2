@@ -550,6 +550,11 @@ async def prices_daily_job() -> str:
             if start_date >= today:
                 return
 
+            # Import dipfinder signal computation for opportunity_type
+            from app.dipfinder.signal import compute_signal, OpportunityType
+            from app.dipfinder.config import DipFinderConfig
+            dipfinder_config = DipFinderConfig()
+
             results = await yf_service.get_price_history_batch(symbols, start_date, today)
 
             for symbol in symbols:
@@ -592,9 +597,108 @@ async def prices_daily_job() -> str:
                         symbol, ath_price, dip_threshold
                     )
 
-                    # Update dip_state
+                    # Compute opportunity_type from dipfinder signal
+                    opportunity_type = "NONE"
+                    is_tail_event = False
+                    return_period_years = None
+                    regime_dip_percentile = None
+                    try:
+                        from app.dipfinder.fundamentals import QualityMetrics, compute_quality_score
+                        from app.dipfinder.stability import compute_stability_score
+                        from app.dipfinder.dip import compute_dip_series_windowed
+                        from app.dipfinder.extreme_value import analyze_tail_events
+                        from app.services.fundamentals import get_fundamentals_from_db
+                        from datetime import datetime
+                        
+                        stock_prices = prices[close_col].dropna().values
+                        volumes = prices.get("Volume", prices.get("volume"))
+                        volumes = volumes.fillna(0).values if volumes is not None else None
+                        
+                        if len(stock_prices) >= 50:
+                            # Try to get stored fundamentals (no yfinance call)
+                            stored_fundamentals = await get_fundamentals_from_db(symbol)
+                            info = stored_fundamentals if stored_fundamentals else None
+                            
+                            # Compute stability metrics with stored fundamentals
+                            stability_metrics = compute_stability_score(
+                                ticker=symbol,
+                                close_prices=stock_prices,
+                                info=info,
+                                config=dipfinder_config,
+                            )
+                            
+                            # Compute quality metrics with stored fundamentals
+                            quality_metrics = await compute_quality_score(
+                                ticker=symbol,
+                                info=info,
+                                config=dipfinder_config,
+                            )
+                            
+                            signal = compute_signal(
+                                ticker=symbol,
+                                stock_prices=stock_prices,
+                                benchmark_prices=stock_prices,  # Self as benchmark
+                                benchmark_ticker=symbol,
+                                window=dipfinder_config.window,
+                                quality_metrics=quality_metrics,
+                                stability_metrics=stability_metrics,
+                                as_of_date=datetime.now().strftime("%Y-%m-%d"),
+                                config=dipfinder_config,
+                                volumes=volumes,
+                            )
+                            opportunity_type = signal.opportunity_type.value
+                            
+                            # Compute Extreme Value Analysis (EVA) metrics
+                            try:
+                                dip_series = compute_dip_series_windowed(stock_prices, dipfinder_config.window)
+                                current_dip = float(dip_series[-1]) if len(dip_series) > 0 else 0.0
+                                
+                                tail_analysis = analyze_tail_events(
+                                    dip_series=dip_series,
+                                    current_dip=current_dip,
+                                    threshold_percentile=95.0,
+                                    min_threshold=0.40,
+                                    max_threshold=0.70,
+                                )
+                                is_tail_event = tail_analysis.is_tail_event
+                                return_period_years = tail_analysis.return_period_years
+                                regime_dip_percentile = tail_analysis.regime_dip_percentile
+                            except Exception as eva_err:
+                                logger.debug(f"EVA computation failed for {symbol}: {eva_err}")
+                    except Exception as e:
+                        logger.debug(f"Could not compute opportunity_type for {symbol}: {e}")
+
+                    # Check for active strategy signal (buy signal that beats buy & hold)
+                    try:
+                        from app.database.orm import StrategySignal
+                        from app.database.connection import get_session
+                        async with get_session() as ss:
+                            strategy = await ss.get(StrategySignal, symbol)
+                            # Removed extra get_session call
+                            from sqlalchemy import select
+                            stmt = select(StrategySignal).where(StrategySignal.symbol == symbol)
+                            result = await ss.execute(stmt)
+                            strategy = result.scalar_one_or_none()
+                            if (
+                                strategy is not None
+                                and strategy.has_active_signal
+                                and strategy.signal_type == "BUY"
+                                and strategy.beats_buy_hold
+                            ):
+                                # STRATEGY takes priority if dipfinder says NONE,
+                                # otherwise keep the dipfinder signal (they're complementary)
+                                if opportunity_type == "NONE":
+                                    opportunity_type = "STRATEGY"
+                    except Exception as strat_err:
+                        logger.debug(f"Could not check strategy signal for {symbol}: {strat_err}")
+
+                    # Update dip_state with opportunity_type and EVA fields
                     await jobs_repo.upsert_dip_state_with_dates(
-                        symbol, current_price, ath_price, dip_percentage, dip_start_date
+                        symbol, current_price, ath_price, dip_percentage, dip_start_date,
+                        opportunity_type=opportunity_type,
+                        is_tail_event=is_tail_event,
+                        return_period_years=return_period_years,
+                        regime_dip_percentile=regime_dip_percentile,
                     )
 
                     # Store new price history (only new rows)
