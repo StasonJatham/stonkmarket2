@@ -320,6 +320,9 @@ async def update_dip_entry(
     signal_reason: str,
     recovery_days: float,
     threshold_analysis: list[dict[str, Any]],
+    max_profit_threshold: float | None = None,
+    max_profit_price: float | None = None,
+    max_profit_total_return: float | None = None,
 ) -> None:
     """Update dip entry data for a single symbol."""
     async with get_session() as session:
@@ -327,6 +330,9 @@ async def update_dip_entry(
             "symbol": symbol,
             "dip_entry_optimal_threshold": Decimal(str(optimal_threshold)),
             "dip_entry_optimal_price": Decimal(str(optimal_price)),
+            "dip_entry_max_profit_threshold": Decimal(str(max_profit_threshold)) if max_profit_threshold else None,
+            "dip_entry_max_profit_price": Decimal(str(max_profit_price)) if max_profit_price else None,
+            "dip_entry_max_profit_total_return": Decimal(str(max_profit_total_return)) if max_profit_total_return else None,
             "dip_entry_is_buy_now": is_buy_now,
             "dip_entry_signal_strength": Decimal(str(signal_strength)),
             "dip_entry_signal_reason": signal_reason,
