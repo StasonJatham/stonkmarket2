@@ -86,12 +86,47 @@ async def require_user(
     request: Request,
     authorization: str | None = Header(default=None),
     session: str | None = Cookie(default=None),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ) -> TokenData:
     """
     Require authenticated user.
 
+    Supports authentication via:
+    1. JWT Bearer token (Authorization header)
+    2. Session cookie
+    3. API Key (X-API-Key header)
+
     Raises AuthenticationError if not authenticated or token is revoked.
     """
+    # First, try API key authentication
+    if x_api_key:
+        from app.repositories import user_api_keys_orm as api_keys_repo
+        from app.repositories import auth_user_orm as auth_repo
+
+        key_data = await api_keys_repo.validate_api_key(x_api_key)
+        if key_data:
+            # Get user info from the API key's user_id
+            user_id = key_data.get("user_id")
+            if user_id:
+                user = await auth_repo.get_user_by_id(user_id)
+                if user:
+                    # Create a TokenData-like object for API key auth
+                    return TokenData(
+                        sub=user.username,
+                        is_admin=user.is_admin,
+                        exp=0,  # API keys don't expire via JWT
+                        iat=0,
+                        iss="stonkmarket",
+                        aud="stonkmarket-api",
+                        jti=f"apikey:{key_data['id']}",
+                    )
+        # API key provided but invalid
+        raise AuthenticationError(
+            message="Invalid API key",
+            error_code="INVALID_API_KEY",
+        )
+
+    # Fall back to JWT token authentication
     token = _extract_token(authorization, session)
     if not token:
         raise AuthenticationError(

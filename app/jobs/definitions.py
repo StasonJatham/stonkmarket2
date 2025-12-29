@@ -33,6 +33,23 @@ if TYPE_CHECKING:
 logger = get_logger("jobs.definitions")
 
 
+def get_close_column(df: "pd.DataFrame") -> str:
+    """Get the best close column name, preferring adjusted close.
+    
+    Adjusted close accounts for stock splits and dividends, making
+    historical price comparisons accurate.
+    
+    Args:
+        df: Price DataFrame with Close and/or Adj Close columns
+        
+    Returns:
+        Column name to use ('Adj Close' if available, else 'Close')
+    """
+    if "Adj Close" in df.columns and df["Adj Close"].notna().any():
+        return "Adj Close"
+    return "Close"
+
+
 # =============================================================================
 # SYMBOL INGEST - Process new symbols (every 15 min)
 # =============================================================================
@@ -322,8 +339,9 @@ async def prices_daily_job() -> str:
                     if prices is None or prices.empty:
                         continue
 
-                    # Get last valid (non-NaN) close price
-                    valid_closes = prices["Close"].dropna()
+                    # Get last valid (non-NaN) close price (prefer adjusted close)
+                    close_col = get_close_column(prices)
+                    valid_closes = prices[close_col].dropna()
                     if valid_closes.empty:
                         continue
                     current_price = float(valid_closes.iloc[-1])
@@ -340,7 +358,7 @@ async def prices_daily_job() -> str:
 
                     # ATH from our price_history table (single source of truth)
                     ath_price = await jobs_repo.get_ath_price(
-                        symbol, fallback=float(prices["Close"].max())
+                        symbol, fallback=float(prices[close_col].max())
                     )
 
                     # Calculate dip percentage
@@ -368,6 +386,9 @@ async def prices_daily_job() -> str:
 
                     # Update price-based ratios daily
                     await update_price_based_metrics(symbol, current_price)
+                    
+                    # Ensure fetch_status is 'fetched' now that we have price data
+                    await symbols_repo.update_fetch_status(symbol, fetch_status="fetched")
 
                     updated_count += 1
                     days_in_dip = (date.today() - dip_start_date).days if dip_start_date else 0
@@ -485,23 +506,24 @@ async def cache_warmup_job() -> str:
                         # Get min_dip_pct for the symbol
                         min_dip_pct = await jobs_repo.get_symbol_min_dip_pct(symbol)
 
-                        # Build chart data
-                        ref_high = float(prices["Close"].max())
+                        # Build chart data (use adjusted close for accuracy)
+                        close_col = get_close_column(prices)
+                        ref_high = float(prices[close_col].max())
                         threshold = ref_high * (1.0 - min_dip_pct)
 
                         ref_high_date = None
                         dip_start_date = None
-                        if "Close" in prices.columns and not prices.empty:
-                            ref_high_idx = prices["Close"].idxmax()
+                        if close_col in prices.columns and not prices.empty:
+                            ref_high_idx = prices[close_col].idxmax()
                             ref_high_date = str(ref_high_idx.date()) if hasattr(ref_high_idx, "date") else str(ref_high_idx)
                             prices_after_peak = prices.loc[ref_high_idx:]
                             if len(prices_after_peak) > 1:
-                                dip_low_idx = prices_after_peak["Close"].idxmin()
+                                dip_low_idx = prices_after_peak[close_col].idxmin()
                                 dip_start_date = str(dip_low_idx.date()) if hasattr(dip_low_idx, "date") else str(dip_low_idx)
 
                         chart_points = []
                         for idx, row_data in prices.iterrows():
-                            close = float(row_data["Close"])
+                            close = float(row_data[close_col])
                             drawdown = (close - ref_high) / ref_high if ref_high > 0 else 0.0
                             chart_points.append({
                                 "date": str(idx.date()) if hasattr(idx, "date") else str(idx),
@@ -915,8 +937,9 @@ async def signals_daily_job() -> str:
             df = await price_history_repo.get_prices_as_dataframe(
                 symbol, start_date, end_date
             )
-            if df is not None and "Close" in df.columns:
-                price_dfs[symbol] = df["Close"]
+            if df is not None:
+                close_col = get_close_column(df)
+                price_dfs[symbol] = df[close_col]
 
         if not price_dfs:
             logger.warning("No price data available")
@@ -1006,8 +1029,9 @@ async def regime_daily_job() -> str:
             df = await price_history_repo.get_prices_as_dataframe(
                 symbol, start_date, end_date
             )
-            if df is not None and "Close" in df.columns:
-                price_dfs[symbol] = df["Close"]
+            if df is not None:
+                close_col = get_close_column(df)
+                price_dfs[symbol] = df[close_col]
 
         if not price_dfs:
             return "No price data"
@@ -1155,10 +1179,8 @@ async def strategy_optimize_nightly_job() -> str:
         spy_df = await price_history_repo.get_prices_as_dataframe("SPY", start_date, end_date)
         spy_prices = None
         if spy_df is not None and len(spy_df) > 0:
-            if "close" in spy_df.columns:
-                spy_prices = spy_df["close"]
-            elif "Close" in spy_df.columns:
-                spy_prices = spy_df["Close"]
+            spy_close_col = get_close_column(spy_df)
+            spy_prices = spy_df[spy_close_col]
         
         # Initialize optimizer
         optimizer = StrategyOptimizer(
@@ -1334,9 +1356,11 @@ async def quant_scoring_daily_job() -> str:
     from app.cache.cache import Cache
     from app.database.connection import get_session
     from app.database.orm import (
+        DipState,
         QuantScore,
         StrategySignal,
         StockFundamentals,
+        Symbol,
     )
     from app.repositories import symbols_orm as symbols_repo
     from app.quant_engine.scoring import (
@@ -1370,21 +1394,25 @@ async def quant_scoring_daily_job() -> str:
         spy_df = await price_history_repo.get_prices_as_dataframe("SPY", start_date, end_date)
         spy_prices = None
         if spy_df is not None and len(spy_df) > 0:
-            if "close" in spy_df.columns:
-                spy_prices = spy_df["close"]
-            elif "Close" in spy_df.columns:
-                spy_prices = spy_df["Close"]
-            elif "Adj Close" in spy_df.columns:
-                spy_prices = spy_df["Adj Close"]
+            spy_close_col = get_close_column(spy_df)
+            spy_prices = spy_df[spy_close_col]
         
         if spy_prices is None:
             logger.error("[SCORING] No SPY data available")
             return "No SPY data available"
         
+        # Compute SPY drawdown from 52w high for market normalization
+        spy_52w_window = min(252, len(spy_prices))
+        spy_52w_high = spy_prices.rolling(spy_52w_window).max().iloc[-1]
+        spy_current = spy_prices.iloc[-1]
+        spy_dip_pct = ((spy_52w_high - spy_current) / spy_52w_high * 100) if spy_52w_high > 0 else 0
+        logger.info(f"[SCORING] Market (SPY) is {spy_dip_pct:.1f}% below 52w high")
+        
         processed = 0
         failed = 0
         mode_a_count = 0
         mode_b_count = 0
+        mode_hold_count = 0
         
         async with get_session() as session:
             # Load all strategy signals (for weights)
@@ -1398,6 +1426,18 @@ async def quant_scoring_daily_job() -> str:
                 )
             )
             fundamentals_map = {f.symbol: f for f in result.scalars().all()}
+            
+            # Load dip state for all symbols
+            result = await session.execute(
+                select(DipState).where(DipState.symbol.in_(symbol_list))
+            )
+            dip_state_map = {d.symbol: d for d in result.scalars().all()}
+            
+            # Load min_dip_pct thresholds from symbols
+            result = await session.execute(
+                select(Symbol).where(Symbol.symbol.in_(symbol_list))
+            )
+            symbol_thresholds = {s.symbol: float(s.min_dip_pct or 0.15) for s in result.scalars().all()}
             
             # Count strategies tested for deflated Sharpe
             n_strategies_tested = len(strategy_map)
@@ -1419,12 +1459,8 @@ async def quant_scoring_daily_job() -> str:
                     # Build strategy weights from HISTORICAL signal triggers
                     # This computes actual backtested positions, not just current signal
                     if df is not None and len(df) > 0:
-                        if "close" in df.columns:
-                            prices_series = df["close"]
-                        elif "Close" in df.columns:
-                            prices_series = df["Close"]
-                        else:
-                            prices_series = df.iloc[:, 0]
+                        df_close_col = get_close_column(df)
+                        prices_series = df[df_close_col]
                         
                         # Generate historical weights from best signal
                         from app.quant_engine.scoring import generate_historical_weights
@@ -1467,11 +1503,45 @@ async def quant_scoring_daily_job() -> str:
                         config=config,
                     )
                     
+                    # Check if stock is actually in a qualifying dip
+                    dip_state = dip_state_map.get(symbol)
+                    min_dip_pct = symbol_thresholds.get(symbol, 0.15) * 100  # Convert to percentage
+                    dip_pct = float(dip_state.dip_percentage) if dip_state and dip_state.dip_percentage else 0
+                    
+                    # Normalize dip against market (SPY)
+                    # If market is down 10% and stock is down 20%, the stock-specific dip is 10%
+                    # This helps filter out market-wide corrections vs stock-specific opportunities
+                    normalized_dip_pct = max(0, dip_pct - spy_dip_pct)
+                    
+                    # Check how long the stock has been in this "dip"
+                    # If it's been more than 365 days, it's a downtrend, not a dip
+                    MAX_DIP_DAYS = 365
+                    days_in_dip = 0
+                    if dip_state and dip_state.dip_start_date:
+                        days_in_dip = (date.today() - dip_state.dip_start_date).days
+                    
+                    # Use normalized dip for entry decision
+                    # Stock must have a stock-specific dip (above market decline) to qualify
+                    is_in_dip = normalized_dip_pct >= min_dip_pct and days_in_dip <= MAX_DIP_DAYS
+                    is_downtrend = dip_pct >= min_dip_pct and days_in_dip > MAX_DIP_DAYS
+                    
+                    # Override mode if not in qualifying dip
+                    final_mode = result.mode
+                    if not result.gate_pass:
+                        if is_downtrend:
+                            final_mode = "DOWNTREND"  # Long-term decline, not a recoverable dip
+                        elif not is_in_dip:
+                            final_mode = "HOLD"  # Not a certified buy AND not in a qualifying dip
+                    
                     # Track modes
                     if result.gate_pass:
                         mode_a_count += 1
-                    else:
+                    elif is_in_dip:
                         mode_b_count += 1
+                    elif is_downtrend:
+                        mode_hold_count += 1  # Count downtrends with hold
+                    else:
+                        mode_hold_count += 1
                     
                     # Upsert to database
                     evidence_dict = result.evidence.to_dict() if result.evidence else None
@@ -1479,7 +1549,7 @@ async def quant_scoring_daily_job() -> str:
                     stmt = insert(QuantScore).values(
                         symbol=symbol,
                         best_score=Decimal(str(round(result.best_score, 2))),
-                        mode=result.mode,
+                        mode=final_mode,
                         score_a=Decimal(str(round(result.score_a, 2))),
                         score_b=Decimal(str(round(result.score_b, 2))),
                         gate_pass=result.gate_pass,
@@ -1507,7 +1577,7 @@ async def quant_scoring_daily_job() -> str:
                         index_elements=["symbol"],
                         set_={
                             "best_score": Decimal(str(round(result.best_score, 2))),
-                            "mode": result.mode,
+                            "mode": final_mode,
                             "score_a": Decimal(str(round(result.score_a, 2))),
                             "score_b": Decimal(str(round(result.score_b, 2))),
                             "gate_pass": result.gate_pass,
@@ -1559,7 +1629,7 @@ async def quant_scoring_daily_job() -> str:
         
         message = (
             f"Scored {processed} symbols ({failed} failed), "
-            f"Mode A (CERTIFIED_BUY): {mode_a_count}, Mode B (DIP_ENTRY): {mode_b_count}"
+            f"Mode A: {mode_a_count}, Dip Entry: {mode_b_count}, Hold: {mode_hold_count}"
         )
         logger.info(f"quant_scoring_daily: {message}")
         return message

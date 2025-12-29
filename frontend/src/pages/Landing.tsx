@@ -212,21 +212,33 @@ function FeaturedStockCard({
               <UITooltip>
                 <TooltipTrigger asChild>
                   <p className="text-muted-foreground text-xs inline-flex items-center gap-0.5 cursor-help">
-                    {rec.quant_mode === 'CERTIFIED_BUY' ? 'Certified' : rec.quant_mode === 'DIP_ENTRY' ? 'Dip Entry' : 'μ̂ (E[R])'} <HelpCircle className="h-3 w-3" />
+                    {rec.quant_mode === 'CERTIFIED_BUY' ? 'Certified' : 
+                     rec.quant_mode === 'DIP_ENTRY' ? 'Dip Entry' : 
+                     rec.quant_mode === 'HOLD' ? 'Hold' :
+                     rec.quant_mode === 'DOWNTREND' ? 'Downtrend' : 'μ̂ (E[R])'} <HelpCircle className="h-3 w-3" />
                   </p>
                 </TooltipTrigger>
                 <TooltipContent className="max-w-xs">
                   {rec.quant_mode === 'CERTIFIED_BUY' ? (
-                    <p>CERTIFIED BUY (APUS): Passed statistical validation gate. P(outperf) ≥ 75%, CI &gt; 0, DSR ≥ 0.50</p>
+                    <p>CERTIFIED BUY: Passed statistical validation gate. P(outperf) ≥ 75%, CI &gt; 0, DSR ≥ 0.50</p>
                   ) : rec.quant_mode === 'DIP_ENTRY' ? (
-                    <p>DIP ENTRY (DOUS): Alternative scoring via fundamentals, recovery probability, and valuation.</p>
+                    <p>DIP ENTRY: Stock is in a qualifying dip with recovery probability scoring.</p>
+                  ) : rec.quant_mode === 'HOLD' ? (
+                    <p>HOLD: Stock is not currently in a dip. No action recommended.</p>
+                  ) : rec.quant_mode === 'DOWNTREND' ? (
+                    <p>DOWNTREND: Stock has been declining for over a year. Avoid or wait for reversal confirmation.</p>
                   ) : (
                     <p>Expected return (μ̂) from Bayesian posterior estimation. Higher values indicate higher expected returns.</p>
                   )}
                 </TooltipContent>
               </UITooltip>
               {rec.quant_mode ? (
-                <p className={`font-mono font-bold ${rec.quant_mode === 'CERTIFIED_BUY' ? 'text-success' : 'text-amber-500'}`}>
+                <p className={`font-mono font-bold ${
+                  rec.quant_mode === 'CERTIFIED_BUY' ? 'text-success' : 
+                  rec.quant_mode === 'DIP_ENTRY' ? 'text-amber-500' :
+                  rec.quant_mode === 'HOLD' ? 'text-muted-foreground' :
+                  'text-red-500'
+                }`}>
                   {((rec.quant_mode === 'CERTIFIED_BUY' ? rec.quant_score_a : rec.quant_score_b) ?? 0).toFixed(0)}
                 </p>
               ) : (

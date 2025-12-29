@@ -238,6 +238,106 @@ async def autocomplete_symbols(
     return [SymbolAutocompleteResult(**r) for r in results]
 
 
+def calculate_intrinsic_value(
+    data: dict,
+    current_price: float | None = None,
+) -> dict:
+    """Calculate intrinsic value using multiple methods.
+    
+    Methods (in order of preference):
+    1. Analyst target price (if available with enough analysts)
+    2. PEG-based fair value (if PEG ratio available)
+    3. Graham Number (if P/E and Book Value available)
+    
+    Returns dict with: intrinsic_value, method, upside_pct, valuation_status
+    """
+    import math
+    
+    result = {
+        "intrinsic_value": None,
+        "intrinsic_value_method": None,
+        "upside_pct": None,
+        "valuation_status": None,
+    }
+    
+    if not current_price or current_price <= 0:
+        return result
+    
+    # Method 1: Analyst Target Price (most reliable if enough coverage)
+    target_price = data.get("target_mean_price")
+    num_analysts = data.get("num_analyst_opinions", 0)
+    if target_price and num_analysts and num_analysts >= 5:
+        result["intrinsic_value"] = round(target_price, 2)
+        result["intrinsic_value_method"] = "analyst"
+        upside = ((target_price / current_price) - 1) * 100
+        result["upside_pct"] = round(upside, 1)
+        if upside > 15:
+            result["valuation_status"] = "undervalued"
+        elif upside < -15:
+            result["valuation_status"] = "overvalued"
+        else:
+            result["valuation_status"] = "fair"
+        return result
+    
+    # Method 2: PEG-based fair value
+    # Fair P/E = Growth Rate (for PEG = 1), so Fair Price = EPS * Growth Rate
+    peg_ratio = data.get("peg_ratio")
+    pe_ratio = data.get("pe_ratio")
+    if peg_ratio and pe_ratio and peg_ratio > 0:
+        # Extract growth rate from PEG: PEG = PE / Growth, so Growth = PE / PEG
+        try:
+            peg_val = float(peg_ratio) if isinstance(peg_ratio, str) else peg_ratio
+            if peg_val > 0 and pe_ratio > 0:
+                growth_rate = pe_ratio / peg_val
+                # Fair P/E at PEG = 1 is the growth rate
+                fair_pe = growth_rate
+                # Current EPS = Current Price / P/E
+                eps = current_price / pe_ratio
+                fair_value = eps * fair_pe
+                if fair_value > 0:
+                    result["intrinsic_value"] = round(fair_value, 2)
+                    result["intrinsic_value_method"] = "peg"
+                    upside = ((fair_value / current_price) - 1) * 100
+                    result["upside_pct"] = round(upside, 1)
+                    if upside > 20:
+                        result["valuation_status"] = "undervalued"
+                    elif upside < -20:
+                        result["valuation_status"] = "overvalued"
+                    else:
+                        result["valuation_status"] = "fair"
+                    return result
+        except (ValueError, TypeError, ZeroDivisionError):
+            pass
+    
+    # Method 3: Graham Number (simplified intrinsic value)
+    # Graham Number = sqrt(22.5 * EPS * BVPS)
+    price_to_book = data.get("price_to_book")
+    if pe_ratio and price_to_book and pe_ratio > 0 and price_to_book > 0:
+        try:
+            ptb_val = float(price_to_book) if isinstance(price_to_book, str) else price_to_book
+            if ptb_val > 0:
+                eps = current_price / pe_ratio
+                bvps = current_price / ptb_val
+                # Graham Number = sqrt(22.5 * EPS * BVPS)
+                if eps > 0 and bvps > 0:
+                    graham = math.sqrt(22.5 * eps * bvps)
+                    result["intrinsic_value"] = round(graham, 2)
+                    result["intrinsic_value_method"] = "graham"
+                    upside = ((graham / current_price) - 1) * 100
+                    result["upside_pct"] = round(upside, 1)
+                    if upside > 25:
+                        result["valuation_status"] = "undervalued"
+                    elif upside < -25:
+                        result["valuation_status"] = "overvalued"
+                    else:
+                        result["valuation_status"] = "fair"
+                    return result
+        except (ValueError, TypeError, ZeroDivisionError):
+            pass
+    
+    return result
+
+
 class SymbolFundamentalsResponse(BaseModel):
     """Fundamentals data for a symbol."""
     symbol: str
@@ -258,6 +358,11 @@ class SymbolFundamentalsResponse(BaseModel):
     num_analyst_opinions: int | None = None
     beta: str | None = None
     next_earnings_date: str | None = None
+    # Intrinsic Value Estimates
+    intrinsic_value: float | None = None  # Calculated fair value per share
+    intrinsic_value_method: str | None = None  # Method used: 'graham', 'peg', 'dcf', 'analyst'
+    upside_pct: float | None = None  # Percentage upside to intrinsic value
+    valuation_status: str | None = None  # 'undervalued', 'fair', 'overvalued'
     # Domain detection
     domain: str | None = None  # bank, reit, insurer, utility, biotech, stock
     # Domain-specific metrics (Banks)
@@ -295,9 +400,14 @@ async def get_symbol_fundamentals(
         fetch_fundamentals_live,
         get_fundamentals_with_status,
     )
+    from app.repositories.dip_state_orm import get_dip_state
 
     symbol_upper = symbol.upper().strip()
     source = "database"
+
+    # Get current price from dip state for intrinsic value calculation
+    dip_state = await get_dip_state(symbol_upper)
+    current_price = float(dip_state.current_price) if dip_state and dip_state.current_price else None
 
     # Try database first (for tracked symbols)
     db_data, is_stale = await get_fundamentals_with_status(
@@ -381,6 +491,17 @@ async def get_symbol_fundamentals(
             details={"symbol": symbol_upper, "reason": "Symbol may be an ETF/index or not found"}
         )
 
+    # Calculate intrinsic value
+    # Need raw values (not formatted strings) for calculation
+    iv_data = {
+        "pe_ratio": db_data.get("pe_ratio") if db_data else data.get("pe_ratio"),
+        "peg_ratio": db_data.get("peg_ratio") if db_data else data.get("peg_ratio"),
+        "price_to_book": db_data.get("price_to_book") if db_data else data.get("price_to_book"),
+        "target_mean_price": db_data.get("target_mean_price") if db_data else data.get("target_mean_price"),
+        "num_analyst_opinions": db_data.get("num_analyst_opinions") if db_data else data.get("num_analyst_opinions"),
+    }
+    intrinsic = calculate_intrinsic_value(iv_data, current_price)
+
     return SymbolFundamentalsResponse(
         symbol=symbol_upper,
         pe_ratio=data.get("pe_ratio"),
@@ -415,6 +536,11 @@ async def get_symbol_fundamentals(
         loss_ratio=data.get("loss_ratio"),
         expense_ratio=data.get("expense_ratio"),
         combined_ratio=data.get("combined_ratio"),
+        # Intrinsic value estimates
+        intrinsic_value=intrinsic.get("intrinsic_value"),
+        intrinsic_value_method=intrinsic.get("intrinsic_value_method"),
+        upside_pct=intrinsic.get("upside_pct"),
+        valuation_status=intrinsic.get("valuation_status"),
         source=source,
         fetched_at=db_data.get("fetched_at").isoformat() if db_data and db_data.get("fetched_at") else None,
         expires_at=db_data.get("expires_at").isoformat() if db_data and db_data.get("expires_at") else None,

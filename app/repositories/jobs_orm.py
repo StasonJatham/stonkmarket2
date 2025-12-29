@@ -380,8 +380,8 @@ async def upsert_dip_state_with_dates(
                 "current_price": Decimal(str(current_price)),
                 "ath_price": Decimal(str(ath_price)),
                 "dip_percentage": Decimal(str(dip_percentage)),
-                # COALESCE equivalent - only update if new value is provided
-                "dip_start_date": func.coalesce(dip_start_date, DipState.dip_start_date),
+                # Always update dip_start_date - if stock recovered, it should be NULL
+                "dip_start_date": dip_start_date,
                 "last_updated": now,
             }
         )

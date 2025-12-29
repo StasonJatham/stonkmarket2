@@ -417,9 +417,16 @@ class DipFinderService:
             logger.warning(f"No price data for benchmark {benchmark}")
             return None
 
-        # Extract close prices as numpy arrays
-        stock_prices = stock_df["Close"].dropna().to_numpy()
-        benchmark_prices = benchmark_df["Close"].dropna().to_numpy()
+        # Extract close prices as numpy arrays (prefer adjusted close for accuracy)
+        def get_close_col(df: pd.DataFrame) -> str:
+            if "Adj Close" in df.columns and df["Adj Close"].notna().any():
+                return "Adj Close"
+            return "Close"
+        
+        stock_close_col = get_close_col(stock_df)
+        benchmark_close_col = get_close_col(benchmark_df)
+        stock_prices = stock_df[stock_close_col].dropna().to_numpy()
+        benchmark_prices = benchmark_df[benchmark_close_col].dropna().to_numpy()
 
         if len(stock_prices) < window:
             logger.warning(

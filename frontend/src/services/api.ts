@@ -293,6 +293,12 @@ export interface SymbolFundamentals {
   beta: string | null;
   next_earnings_date: string | null;
   
+  // Intrinsic value estimates
+  intrinsic_value: number | null;
+  intrinsic_value_method: 'analyst' | 'peg' | 'graham' | 'dcf' | null;
+  upside_pct: number | null;
+  valuation_status: 'undervalued' | 'fair' | 'overvalued' | null;
+  
   // Domain classification
   domain: DomainType;
   
@@ -1225,7 +1231,7 @@ export interface QuantRecommendation {
   best_chance_score: number;
   best_chance_reason: string | null;
   // APUS + DOUS Dual-Mode Scoring
-  quant_mode: 'CERTIFIED_BUY' | 'DIP_ENTRY' | null;  // Scoring mode
+  quant_mode: 'CERTIFIED_BUY' | 'DIP_ENTRY' | 'HOLD' | 'DOWNTREND' | null;  // Scoring mode
   quant_score_a: number | null;   // Mode A (APUS) score 0-100
   quant_score_b: number | null;   // Mode B (DOUS) score 0-100
   quant_gate_pass: boolean;       // Whether Mode A gate criteria passed
@@ -1384,7 +1390,7 @@ export interface StockCardData {
   marginal_utility?: number;
   
   // APUS + DOUS Dual-Mode Scoring
-  quant_mode?: 'CERTIFIED_BUY' | 'DIP_ENTRY' | null;
+  quant_mode?: 'CERTIFIED_BUY' | 'DIP_ENTRY' | 'HOLD' | 'DOWNTREND' | null;
   quant_score_a?: number | null;  // Mode A (APUS) score 0-100
   quant_score_b?: number | null;  // Mode B (DOUS) score 0-100
   quant_gate_pass?: boolean;

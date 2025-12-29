@@ -123,7 +123,7 @@ export interface StockCardData {
   marginal_utility?: number;
   
   // APUS + DOUS Dual-Mode Scoring
-  quant_mode?: 'CERTIFIED_BUY' | 'DIP_ENTRY' | null;
+  quant_mode?: 'CERTIFIED_BUY' | 'DIP_ENTRY' | 'HOLD' | 'DOWNTREND' | null;
   quant_score_a?: number | null;  // Mode A (APUS) score 0-100
   quant_score_b?: number | null;  // Mode B (DOUS) score 0-100
   quant_gate_pass?: boolean;
@@ -254,7 +254,12 @@ function calculateOpportunityScore(stock: StockCardData): number {
   return Math.max(0, Math.min(100, score));
 }
 
-function getOpportunityRating(score: number): 'strong_buy' | 'buy' | 'hold' | 'avoid' {
+function getOpportunityRating(score: number, mode?: string | null): 'strong_buy' | 'buy' | 'hold' | 'avoid' {
+  // If mode is HOLD or DOWNTREND, don't show as buy opportunity regardless of score
+  if (mode === 'HOLD' || mode === 'DOWNTREND') {
+    if (score >= 60) return 'hold';  // High score but not in dip = hold
+    return 'hold';
+  }
   if (score >= 75) return 'strong_buy';
   if (score >= 60) return 'buy';
   if (score >= 40) return 'hold';
@@ -402,88 +407,6 @@ interface DipContextProps {
 }
 
 // ============================================================================
-// Quant Mode Badge Component
-// ============================================================================
-
-interface QuantModeBadgeProps {
-  mode: 'CERTIFIED_BUY' | 'DIP_ENTRY' | null | undefined;
-  scoreA: number | null | undefined;
-  scoreB: number | null | undefined;
-  gatePass: boolean | undefined;
-  evidence: StockCardData['quant_evidence'];
-}
-
-function QuantModeBadge({ mode, scoreA, scoreB, gatePass, evidence }: QuantModeBadgeProps) {
-  if (!mode) return null;
-  
-  const isCertified = mode === 'CERTIFIED_BUY';
-  const score = isCertified ? scoreA : scoreB;
-  
-  // Build detailed tooltip
-  let tooltipLines: string[] = [];
-  
-  if (isCertified) {
-    tooltipLines.push('✓ Mode A: CERTIFIED BUY (APUS)');
-    tooltipLines.push(gatePass ? 'Statistical validation gate PASSED' : 'Gate check in progress');
-  } else {
-    tooltipLines.push('Mode B: DIP ENTRY (DOUS)');
-    tooltipLines.push(gatePass === false ? 'Mode A gate not passed' : 'Alternative scoring via fundamentals');
-  }
-  
-  if (score !== null && score !== undefined) {
-    tooltipLines.push(`Score: ${score.toFixed(0)}/100`);
-  }
-  
-  if (evidence) {
-    if (isCertified) {
-      tooltipLines.push(`P(outperf): ${(evidence.p_outperf * 100).toFixed(0)}%`);
-      tooltipLines.push(`95% CI: [${(evidence.ci_low * 100).toFixed(1)}%, ${(evidence.ci_high * 100).toFixed(1)}%]`);
-      tooltipLines.push(`DSR: ${evidence.dsr.toFixed(2)}`);
-      if (evidence.median_edge !== 0) {
-        tooltipLines.push(`Median edge: ${(evidence.median_edge * 100).toFixed(2)}%`);
-      }
-    } else {
-      tooltipLines.push(`P(recovery): ${(evidence.p_recovery * 100).toFixed(0)}%`);
-      tooltipLines.push(`Expected value: ${(evidence.expected_value * 100).toFixed(2)}%`);
-      tooltipLines.push(`Fund momentum: ${(evidence.fund_mom * 100).toFixed(0)}%`);
-      if (evidence.event_risk) {
-        tooltipLines.push('⚠️ Event risk (earnings/dividend within 7d)');
-      }
-    }
-  }
-  
-  const tooltipContent = tooltipLines.join('\n');
-  
-  return (
-    <InfoTooltip content={tooltipContent}>
-      <Badge
-        variant={isCertified ? 'default' : 'secondary'}
-        className={cn(
-          'gap-1 text-[10px] px-1.5 py-0 h-5 cursor-help font-semibold',
-          isCertified 
-            ? 'bg-emerald-500/20 text-emerald-600 hover:bg-emerald-500/30 border-emerald-500/30' 
-            : 'bg-amber-500/20 text-amber-600 hover:bg-amber-500/30 border-amber-500/30'
-        )}
-      >
-        {isCertified ? (
-          <>
-            <Target className="h-3 w-3" />
-            CERTIFIED
-          </>
-        ) : (
-          <>
-            <TrendingDown className="h-3 w-3" />
-            DIP ENTRY
-          </>
-        )}
-        {score !== null && score !== undefined && (
-          <span className="ml-0.5 font-mono">{score.toFixed(0)}</span>
-        )}
-      </Badge>
-    </InfoTooltip>
-  );
-}
-
 function DipContext({ 
   depth, 
   days, 
@@ -624,7 +547,7 @@ export const StockCardV2 = memo(function StockCardV2({
   
   // Calculate opportunity metrics
   const opportunityScore = stock.opportunity_score ?? calculateOpportunityScore(stock);
-  const opportunityRating = stock.opportunity_rating ?? getOpportunityRating(opportunityScore);
+  const opportunityRating = stock.opportunity_rating ?? getOpportunityRating(opportunityScore, stock.quant_mode);
   
   // Prepare chart data for sparkline
   const sparklineData = useMemo(() => {
@@ -743,26 +666,15 @@ export const StockCardV2 = memo(function StockCardV2({
           
           {/* Signals Row - only show unique info not shown elsewhere */}
           <div className="flex items-center gap-2 mt-2">
-            {/* Quant Mode Badge - show CERTIFIED_BUY or DIP_ENTRY */}
-            {stock.quant_mode && (
-              <QuantModeBadge
-                mode={stock.quant_mode}
-                scoreA={stock.quant_score_a}
-                scoreB={stock.quant_score_b}
-                gatePass={stock.quant_gate_pass}
-                evidence={stock.quant_evidence}
-              />
-            )}
-            
             {/* Technical Signal with description */}
             {stock.top_signal && <SignalBadge signal={stock.top_signal} />}
             
-            {/* Win Rate - only show if high and no signal badge already showing it */}
-            {!stock.top_signal && stock.win_rate && stock.win_rate >= 0.65 && (
+            {/* Win Rate - show if no signal badge */}
+            {!stock.top_signal && stock.win_rate && stock.win_rate >= 0.50 && (
               <InfoTooltip content={`Historical win rate: ${(stock.win_rate * 100).toFixed(0)}% of similar setups were profitable`}>
                 <Badge 
                   variant="outline" 
-                  className="gap-1 text-[10px] px-1.5 py-0 h-5 cursor-help border-emerald-500/50 text-emerald-600"
+                  className="gap-1 text-[10px] px-1.5 py-0 h-5 cursor-help border-primary/50 text-primary"
                 >
                   <Target className="h-3 w-3" />
                   {(stock.win_rate * 100).toFixed(0)}% Win

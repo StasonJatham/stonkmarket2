@@ -379,3 +379,15 @@ def dipfinder_refresh_all_task(benchmark: str | None = None) -> str:
 def quant_monthly_task() -> str:
     """Run monthly quant engine optimization for all portfolios."""
     return _run_job("quant_monthly")
+
+
+@celery_app.task(name="jobs.quant_scoring_daily")
+def quant_scoring_daily_task() -> str:
+    """Run daily quant scoring for all tracked symbols."""
+    return _run_job("quant_scoring_daily")
+
+
+@celery_app.task(name="jobs.strategy_optimize_nightly")
+def strategy_optimize_nightly_task() -> str:
+    """Run nightly strategy optimization for all symbols."""
+    return _run_job("strategy_optimize_nightly")

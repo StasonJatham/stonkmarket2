@@ -742,22 +742,24 @@ async def get_recommendations(
     avg_mu_hat = sum(r.mu_hat for r in recommendations) / len(recommendations) if recommendations else 0
     
     # Generate market message based on opportunity quality
-    # Count Mode A (certified) vs Mode B (dip entry) recommendations
     certified_count = sum(1 for r in recommendations if r.quant_gate_pass)
     dip_entry_count = sum(1 for r in recommendations if r.quant_mode == "DIP_ENTRY")
+    hold_count = sum(1 for r in recommendations if r.quant_mode == "HOLD")
     top_score = recommendations[0].best_chance_score if recommendations else 0
     
+    # Simplified market message - no Mode A/B jargon
     market_message = None
-    if top_score < 70:
-        # No certified opportunity today
-        market_message = "No certified opportunity today. Top score is {:.0f}/100.".format(top_score)
-    elif certified_count == 0:
-        if dip_entry_count > 0:
-            market_message = f"No certified buys (Mode A), but {dip_entry_count} dip entry opportunities (Mode B) available."
+    if certified_count > 0:
+        if certified_count >= 3:
+            market_message = None  # Plenty of opportunities, no message needed
         else:
-            market_message = "No high-conviction opportunities today. All strategies fail to beat both B&H and SPY benchmarks."
-    elif certified_count < 3:
-        market_message = f"Limited opportunities: {certified_count} certified buy(s) meet all quality criteria."
+            market_message = f"{certified_count} certified opportunity(ies) meet all quality criteria."
+    elif dip_entry_count > 0:
+        # Dip entries available but no certified buys
+        market_message = f"{dip_entry_count} dip recovery opportunity(ies) available. No certified buys today."
+    elif top_score > 0:
+        market_message = f"No actionable opportunities today. Top score: {top_score:.0f}/100."
+    # If all stocks are HOLD, show nothing special - this is normal
     
     # Legacy fallback for when quant_scores are not yet computed
     if not quant_score_map and buy_count == 0:

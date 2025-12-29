@@ -790,7 +790,7 @@ export function StockDetailsPanel({
             )}
 
             {/* Quick Stats Row */}
-            <div className="grid grid-cols-3 gap-2 mb-4">
+            <div className="grid grid-cols-2 gap-2 mb-4">
               <Tooltip>
                 <TooltipTrigger asChild>
                   <div className="p-3 rounded-lg bg-muted/50 text-center cursor-help">
@@ -804,74 +804,17 @@ export function StockDetailsPanel({
                 </TooltipContent>
               </Tooltip>
               
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className={cn(
-                    "p-3 rounded-lg text-center cursor-help",
-                    signalsResponse?.beats_buy_hold === false && signalTriggers.length > 0
-                      ? "bg-amber-500/10 border border-amber-500/30"
-                      : "bg-muted/50"
-                  )}>
-                    <p className="text-xs text-muted-foreground">Historical Win</p>
-                    <p className={cn(
-                      "text-lg font-bold",
-                      signalTriggers.length > 0 && signalsResponse?.actual_win_rate && signalsResponse.actual_win_rate > 0.6 
-                        ? "text-success" 
-                        : signalTriggers.length > 0 && signalsResponse?.actual_win_rate && signalsResponse.actual_win_rate < 0.5
-                        ? "text-danger"
-                        : "text-foreground"
-                    )}>
-                      {signalsResponse?.actual_win_rate !== undefined && signalTriggers.length > 0
-                        ? `${(signalsResponse.actual_win_rate * 100).toFixed(0)}%`
-                        : '—'}
-                    </p>
-                    <p className="text-[10px] text-muted-foreground">
-                      {signalsResponse?.beats_buy_hold === false && signalTriggers.length > 0
-                        ? 'B&H beats signals'
-                        : 'of trades won'}
-                    </p>
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent className="max-w-xs">
-                  {signalTriggers.length > 0 && signalsResponse ? (
-                    <div className="space-y-1">
-                      <p>{(signalsResponse.actual_win_rate * 100).toFixed(0)}% of the {signalsResponse.n_trades} visible trades were profitable.</p>
-                      <p className={signalsResponse.beats_buy_hold ? "text-success" : "text-amber-500"}>
-                        Signal Return: {signalsResponse.signal_return_pct.toFixed(1)}% vs Buy & Hold: {signalsResponse.buy_hold_return_pct.toFixed(1)}%
-                      </p>
-                      {!signalsResponse.beats_buy_hold && (
-                        <p className="text-amber-500 font-medium">⚠️ Buy & hold would have outperformed these signals</p>
-                      )}
-                    </div>
-                  ) : (
-                    <p>No historical signal data available</p>
-                  )}
-                </TooltipContent>
-              </Tooltip>
-              
+              {/* Persist Days */}
               <Tooltip>
                 <TooltipTrigger asChild>
                   <div className="p-3 rounded-lg bg-muted/50 text-center cursor-help">
-                    <p className="text-xs text-muted-foreground">Signal Return</p>
-                    <p className={cn(
-                      "text-lg font-bold",
-                      signalsResponse && signalsResponse.edge_vs_buy_hold_pct > 0 ? "text-success" : "text-danger"
-                    )}>
-                      {signalsResponse && signalTriggers.length > 0
-                        ? `${signalsResponse.signal_return_pct >= 0 ? '+' : ''}${signalsResponse.signal_return_pct.toFixed(0)}%`
-                        : '—'}
-                    </p>
-                    <p className="text-[10px] text-muted-foreground">
-                      {signalsResponse && signalTriggers.length > 0 
-                        ? `vs ${signalsResponse.buy_hold_return_pct.toFixed(0)}% B&H` 
-                        : 'total'}
-                    </p>
+                    <p className="text-xs text-muted-foreground">Days in Dip</p>
+                    <p className="text-lg font-bold">{stock.days_since_dip || 0}</p>
+                    <p className="text-[10px] text-muted-foreground">since dip started</p>
                   </div>
                 </TooltipTrigger>
-                <TooltipContent className="max-w-xs">
-                  <p>{signalsResponse && signalTriggers.length > 0 
-                    ? `Total return from ${signalsResponse.n_trades} signal trades: ${signalsResponse.signal_return_pct.toFixed(1)}%. Buy & hold over same period: ${signalsResponse.buy_hold_return_pct.toFixed(1)}%. Edge: ${signalsResponse.edge_vs_buy_hold_pct >= 0 ? '+' : ''}${signalsResponse.edge_vs_buy_hold_pct.toFixed(1)}%`
-                    : 'No signal return data available'}</p>
+                <TooltipContent>
+                  <p>Stock has been in this dip for {stock.days_since_dip || 0} days</p>
                 </TooltipContent>
               </Tooltip>
             </div>
@@ -1496,6 +1439,91 @@ export function StockDetailsPanel({
                     value={fundamentals?.target_mean_price ? `$${fundamentals.target_mean_price.toFixed(0)}` : '—'}
                   />
                 </div>
+                
+                {/* Valuation & Health Metrics */}
+                {fundamentals && (
+                  <div className="grid grid-cols-4 gap-2 text-center">
+                    <div className="p-2 rounded bg-muted/30">
+                      <p className="text-[10px] text-muted-foreground">P/B Ratio</p>
+                      <p className={cn(
+                        "text-sm font-medium",
+                        fundamentals.price_to_book && Number(fundamentals.price_to_book) < 1 ? "text-success" :
+                        fundamentals.price_to_book && Number(fundamentals.price_to_book) > 3 ? "text-warning" : ""
+                      )}>
+                        {fundamentals.price_to_book != null ? Number(fundamentals.price_to_book).toFixed(2) : '—'}
+                      </p>
+                    </div>
+                    <div className="p-2 rounded bg-muted/30">
+                      <p className="text-[10px] text-muted-foreground">D/E Ratio</p>
+                      <p className={cn(
+                        "text-sm font-medium",
+                        fundamentals.debt_to_equity && Number(fundamentals.debt_to_equity) < 0.5 ? "text-success" :
+                        fundamentals.debt_to_equity && Number(fundamentals.debt_to_equity) > 1.5 ? "text-danger" : ""
+                      )}>
+                        {fundamentals.debt_to_equity != null ? Number(fundamentals.debt_to_equity).toFixed(2) : '—'}
+                      </p>
+                    </div>
+                    <div className="p-2 rounded bg-muted/30">
+                      <p className="text-[10px] text-muted-foreground">Current Ratio</p>
+                      <p className={cn(
+                        "text-sm font-medium",
+                        fundamentals.current_ratio && Number(fundamentals.current_ratio) > 1.5 ? "text-success" :
+                        fundamentals.current_ratio && Number(fundamentals.current_ratio) < 1 ? "text-danger" : ""
+                      )}>
+                        {fundamentals.current_ratio != null ? Number(fundamentals.current_ratio).toFixed(2) : '—'}
+                      </p>
+                    </div>
+                    <div className="p-2 rounded bg-muted/30">
+                      <p className="text-[10px] text-muted-foreground">PEG Ratio</p>
+                      <p className={cn(
+                        "text-sm font-medium",
+                        fundamentals.peg_ratio && Number(fundamentals.peg_ratio) < 1 ? "text-success" :
+                        fundamentals.peg_ratio && Number(fundamentals.peg_ratio) > 2 ? "text-warning" : ""
+                      )}>
+                        {fundamentals.peg_ratio != null ? Number(fundamentals.peg_ratio).toFixed(2) : '—'}
+                      </p>
+                    </div>
+                  </div>
+                )}
+                
+                {/* Intrinsic Value Assessment */}
+                {fundamentals?.intrinsic_value && fundamentals?.upside_pct !== null && (
+                  <div className={cn(
+                    "p-3 rounded-lg border",
+                    fundamentals.valuation_status === 'undervalued'
+                      ? "bg-success/10 border-success/30" 
+                      : fundamentals.valuation_status === 'overvalued'
+                        ? "bg-danger/10 border-danger/30"
+                        : "bg-muted/30 border-border"
+                  )}>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium">
+                        Intrinsic Value 
+                        <span className="text-[10px] text-muted-foreground ml-1">
+                          ({fundamentals.intrinsic_value_method === 'analyst' 
+                            ? `${fundamentals.num_analyst_opinions || 0} analysts` 
+                            : fundamentals.intrinsic_value_method === 'peg' 
+                              ? 'PEG-based' 
+                              : fundamentals.intrinsic_value_method === 'graham'
+                                ? 'Graham #'
+                                : fundamentals.intrinsic_value_method})
+                        </span>
+                      </span>
+                      <span className={cn(
+                        "text-sm font-bold",
+                        fundamentals.valuation_status === 'undervalued' ? "text-success" : 
+                        fundamentals.valuation_status === 'overvalued' ? "text-danger" : ""
+                      )}>
+                        {(fundamentals.upside_pct ?? 0) >= 0 ? '+' : ''}{(fundamentals.upside_pct ?? 0).toFixed(1)}%
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground mt-1">
+                      Fair Value ${fundamentals.intrinsic_value.toFixed(2)} vs Current ${displayPrice.toFixed(2)}
+                      {fundamentals.valuation_status === 'undervalued' && " — Undervalued"}
+                      {fundamentals.valuation_status === 'overvalued' && " — Overvalued"}
+                    </p>
+                  </div>
+                )}
                 
                 {/* Growth & Returns */}
                 {fundamentals && (

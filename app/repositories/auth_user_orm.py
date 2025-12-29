@@ -63,6 +63,19 @@ async def get_user(username: str) -> AuthUser | None:
         return None
 
 
+async def get_user_by_id(user_id: int) -> AuthUser | None:
+    """Get a user by ID."""
+    async with get_session() as session:
+        result = await session.execute(
+            select(AuthUserORM).where(AuthUserORM.id == user_id)
+        )
+        user = result.scalar_one_or_none()
+
+        if user:
+            return AuthUser.from_orm(user)
+        return None
+
+
 async def upsert_user(username: str, password_hash: str) -> AuthUser | None:
     """Create or update a user."""
     now = datetime.now(UTC)
