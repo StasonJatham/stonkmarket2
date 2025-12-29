@@ -403,3 +403,57 @@ def dipfinder_daily_task() -> str:
 def data_backfill_task() -> str:
     """Run weekly comprehensive data backfill for all data gaps."""
     return _run_job("data_backfill")
+
+
+@celery_app.task(name="jobs.quant_analysis_nightly")
+def quant_analysis_nightly_task() -> str:
+    """Run nightly quant analysis pre-computation for all symbols."""
+    return _run_job("quant_analysis_nightly")
+
+
+@celery_app.task(name="jobs.market_analysis_hourly")
+def market_analysis_hourly_task() -> str:
+    """Run hourly market analysis and cache results."""
+    return _run_job("market_analysis_hourly")
+
+
+@celery_app.task(name="jobs.fetch_suggestion_data")
+def fetch_suggestion_data_task(symbol: str) -> str:
+    """Fetch stock data for a pending suggestion asynchronously."""
+    import asyncio
+    from app.services.suggestion_stock_info import get_stock_info_full_async
+    from app.repositories import suggestions_orm as suggestions_repo
+    from app.core.logging import get_logger
+    
+    logger = get_logger("jobs.fetch_suggestion_data")
+    
+    async def _fetch():
+        try:
+            # Fetch stock info
+            stock_info = await get_stock_info_full_async(symbol)
+            
+            # Update the suggestion with fetched data
+            await suggestions_repo.update_suggestion_fetch_data(
+                symbol=symbol,
+                company_name=stock_info.get("name"),
+                sector=stock_info.get("sector"),
+                summary=stock_info.get("summary"),
+                website=stock_info.get("website"),
+                ipo_year=stock_info.get("ipo_year"),
+                current_price=stock_info.get("current_price"),
+                ath_price=stock_info.get("ath_price"),
+                fetch_status=stock_info.get("fetch_status", "fetched"),
+                fetch_error=stock_info.get("fetch_error"),
+            )
+            
+            return f"Fetched data for {symbol}: {stock_info.get('name', 'Unknown')}"
+        except Exception as e:
+            logger.exception(f"Failed to fetch data for {symbol}: {e}")
+            await suggestions_repo.update_suggestion_fetch_data(
+                symbol=symbol,
+                fetch_status="error",
+                fetch_error=str(e),
+            )
+            return f"Failed to fetch data for {symbol}: {e}"
+    
+    return asyncio.get_event_loop().run_until_complete(_fetch())

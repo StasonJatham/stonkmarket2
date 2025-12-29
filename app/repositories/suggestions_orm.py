@@ -419,6 +419,54 @@ async def create_suggestion(
         return suggestion
 
 
+async def update_suggestion_fetch_data(
+    symbol: str,
+    company_name: str | None = None,
+    sector: str | None = None,
+    summary: str | None = None,
+    website: str | None = None,
+    ipo_year: int | None = None,
+    current_price: float | None = None,
+    ath_price: float | None = None,
+    fetch_status: str | None = None,
+    fetch_error: str | None = None,
+) -> bool:
+    """Update a suggestion with fetched stock data.
+    
+    Returns True if updated, False if suggestion not found.
+    """
+    async with get_session() as session:
+        result = await session.execute(
+            select(StockSuggestion).where(StockSuggestion.symbol == symbol.upper())
+        )
+        suggestion = result.scalar_one_or_none()
+        
+        if not suggestion:
+            return False
+        
+        if company_name is not None:
+            suggestion.company_name = company_name
+        if sector is not None:
+            suggestion.sector = sector
+        if summary is not None:
+            suggestion.summary = summary
+        if website is not None:
+            suggestion.website = website
+        if ipo_year is not None:
+            suggestion.ipo_year = ipo_year
+        if current_price is not None:
+            suggestion.current_price = Decimal(str(current_price))
+        if ath_price is not None:
+            suggestion.ath_price = Decimal(str(ath_price))
+        if fetch_status is not None:
+            suggestion.fetch_status = fetch_status
+        if fetch_error is not None:
+            suggestion.fetch_error = fetch_error
+        
+        await session.commit()
+        return True
+
+
 # =============================================================================
 # SYMBOL CHECKS
 # =============================================================================

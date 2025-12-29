@@ -88,6 +88,47 @@ async def has_price_history(symbol: str, min_days: int = 30) -> bool:
         return count >= min_days
 
 
+async def get_prices_batch(
+    symbols: Sequence[str],
+    start_date: date,
+    end_date: date,
+) -> dict[str, list[PriceHistory]]:
+    """Get price history for multiple symbols in a single query.
+    
+    Args:
+        symbols: List of stock ticker symbols
+        start_date: Start date (inclusive)
+        end_date: End date (inclusive)
+    
+    Returns:
+        Dict mapping symbol to list of PriceHistory objects ordered by date
+    """
+    if not symbols:
+        return {}
+    
+    normalized = [s.upper() for s in symbols]
+    
+    async with get_session() as session:
+        result = await session.execute(
+            select(PriceHistory)
+            .where(
+                and_(
+                    PriceHistory.symbol.in_(normalized),
+                    PriceHistory.date >= start_date,
+                    PriceHistory.date <= end_date,
+                )
+            )
+            .order_by(PriceHistory.symbol, PriceHistory.date.asc())
+        )
+        
+        # Group by symbol
+        prices_by_symbol: dict[str, list[PriceHistory]] = {s: [] for s in normalized}
+        for price in result.scalars().all():
+            prices_by_symbol[price.symbol].append(price)
+        
+        return prices_by_symbol
+
+
 async def get_latest_price_dates(symbols: Sequence[str]) -> dict[str, date]:
     """Get most recent price dates for multiple symbols."""
     normalized = [s.upper() for s in symbols]

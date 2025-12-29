@@ -744,6 +744,33 @@ async def prices_daily_job() -> str:
                     batch_start = today - timedelta(days=min_fetch_days)
                 await _process_batch(batch, batch_start)
 
+        # Update stock info cache for all symbols
+        # This caches 52w high/low, previous_close, avg_volume, pe_ratio, market_cap
+        # so the ranking endpoint doesn't need live yfinance calls
+        logger.info(f"Updating stock info cache for {len(tickers)} symbols")
+        
+        from app.services.stock_info import get_stock_info_batch_async
+        from app.repositories import symbols_orm as symbols_repo
+        
+        stock_info_map = await get_stock_info_batch_async(tickers)
+        
+        stock_info_updates = []
+        for symbol, info in stock_info_map.items():
+            if info:
+                stock_info_updates.append({
+                    "symbol": symbol,
+                    "fifty_two_week_low": info.get("fifty_two_week_low"),
+                    "fifty_two_week_high": info.get("fifty_two_week_high"),
+                    "previous_close": info.get("previous_close"),
+                    "avg_volume": info.get("avg_volume"),
+                    "pe_ratio": info.get("pe_ratio"),
+                    "market_cap": info.get("market_cap"),
+                })
+        
+        if stock_info_updates:
+            info_updated = await symbols_repo.batch_update_stock_info_cache(stock_info_updates)
+            logger.info(f"Updated stock info cache for {info_updated} symbols")
+
         # Also fetch latest benchmark data
         benchmarks = get_runtime_setting("benchmarks", [])
         benchmark_symbols = [b.get("symbol") for b in benchmarks if b.get("symbol")]
@@ -2051,3 +2078,367 @@ def _to_z(value: float | None, mean: float, std: float, invert: bool = False) ->
         return 0.0
     z = (float(value) - mean) / std if std != 0 else 0.0
     return -z if invert else z
+
+
+# =============================================================================
+# QUANT ANALYSIS NIGHTLY - Pre-compute all quant engine results
+# =============================================================================
+
+
+@register_job("quant_analysis_nightly")
+async def quant_analysis_nightly_job() -> str:
+    """
+    Pre-compute all quant engine analysis results for tracked symbols.
+    
+    This job runs nightly after market close and pre-computes:
+    - Signal backtest results (signal vs buy-and-hold comparison)
+    - Full trade strategies (optimized entry/exit)
+    - Signal combinations
+    - Dip analysis (overreaction vs falling knife)
+    - Current signals
+    
+    Results are stored in quant_precomputed table. API endpoints read from
+    here instead of computing inline.
+    
+    Schedule: Nightly after market close (e.g., 11:55 PM after other jobs)
+    """
+    from datetime import date, timedelta
+    
+    from app.repositories import symbols_orm as symbols_repo
+    from app.repositories import quant_precomputed_orm as quant_repo
+    from app.repositories import price_history_orm as price_history_repo
+    from app.quant_engine.signals import get_historical_triggers
+    from app.quant_engine.trade_engine import (
+        get_best_trade_strategy,
+        test_signal_combination,
+        analyze_dip,
+        get_current_signals,
+        SIGNAL_COMBINATIONS,
+    )
+    from app.services.data_providers.yfinance_service import get_yfinance_service
+
+    symbols_list = await symbols_repo.list_symbols()
+    tickers = [s.symbol for s in symbols_list if s.is_active]
+    
+    if not tickers:
+        return "No active symbols to process"
+    
+    logger.info(f"quant_analysis_nightly: Processing {len(tickers)} symbols")
+    
+    processed = 0
+    failed = 0
+    
+    # Fetch SPY prices once for benchmarking
+    yf_service = get_yfinance_service()
+    end_date = date.today()
+    start_date = end_date - timedelta(days=1260)
+    
+    spy_df = await price_history_repo.get_prices_as_dataframe("SPY", start_date, end_date)
+    spy_prices = None
+    if spy_df is not None and "Close" in spy_df.columns and len(spy_df) >= 60:
+        spy_prices = spy_df["Close"].dropna()
+    else:
+        # Try yfinance
+        try:
+            yf_results = await yf_service.get_price_history_batch(
+                ["SPY"], start_date, end_date
+            )
+            if "SPY" in yf_results:
+                df, _ = yf_results["SPY"]
+                if df is not None and "Close" in df.columns:
+                    spy_prices = df["Close"].dropna()
+        except Exception:
+            pass
+    
+    for symbol in tickers:
+        try:
+            # Fetch price data
+            df = await price_history_repo.get_prices_as_dataframe(
+                symbol, start_date, end_date
+            )
+            
+            if df is None or "Close" not in df.columns or len(df) < 60:
+                continue
+            
+            prices = df["Close"].dropna()
+            price_data = {"close": prices}
+            
+            data_start_date = prices.index[0].date() if hasattr(prices.index[0], 'date') else start_date
+            data_end_date = prices.index[-1].date() if hasattr(prices.index[-1], 'date') else end_date
+            
+            # 1. Signal Backtest
+            backtest_data = None
+            try:
+                triggers = get_historical_triggers(price_data, lookback_days=730)
+                if triggers:
+                    holding_days = triggers[0].holding_days if triggers else 20
+                    signal_name = triggers[0].signal_name if triggers else "Unknown"
+                    
+                    # Simulate trades
+                    total_return = 0.0
+                    wins = 0
+                    for trigger in triggers:
+                        try:
+                            entry_idx = prices.index.get_loc(trigger.date)
+                        except KeyError:
+                            try:
+                                entry_idx = prices.index.get_indexer([trigger.date], method='nearest')[0]
+                            except Exception:
+                                continue
+                        
+                        exit_idx = min(entry_idx + holding_days, len(prices) - 1)
+                        exit_price = float(prices.iloc[exit_idx])
+                        ret = ((exit_price / trigger.price) - 1) * 100
+                        total_return += ret
+                        if ret > 0:
+                            wins += 1
+                    
+                    n_trades = len(triggers)
+                    win_rate = wins / n_trades if n_trades > 0 else 0.0
+                    avg_return = total_return / n_trades if n_trades > 0 else 0.0
+                    
+                    # Buy-and-hold
+                    lookback_days = 730
+                    start_idx = max(0, len(prices) - lookback_days)
+                    bh_start = float(prices.iloc[start_idx])
+                    bh_end = float(prices.iloc[-1])
+                    buy_hold_return = ((bh_end / bh_start) - 1) * 100
+                    edge = total_return - buy_hold_return
+                    
+                    backtest_data = {
+                        "signal_name": signal_name,
+                        "n_trades": n_trades,
+                        "win_rate": win_rate,
+                        "total_return_pct": total_return,
+                        "avg_return_per_trade": avg_return,
+                        "holding_days": holding_days,
+                        "buy_hold_return_pct": buy_hold_return,
+                        "edge_pct": edge,
+                        "outperformed": edge > 0,
+                    }
+            except Exception as e:
+                logger.debug(f"Backtest failed for {symbol}: {e}")
+            
+            # 2. Full Trade Strategy
+            trade_data = None
+            try:
+                result, _ = get_best_trade_strategy(
+                    price_data, symbol, spy_prices=spy_prices, test_combinations=False
+                )
+                if result:
+                    trade_data = {
+                        "entry_signal": result.entry_signal_name,
+                        "entry_threshold": result.entry_threshold,
+                        "exit_signal": result.exit_strategy_name,
+                        "exit_threshold": result.exit_threshold,
+                        "n_trades": result.n_complete_trades,
+                        "win_rate": result.win_rate,
+                        "total_return_pct": result.total_return_pct,
+                        "avg_return_pct": result.avg_return_pct,
+                        "sharpe_ratio": result.sharpe_ratio,
+                        "buy_hold_return_pct": result.buy_hold_return_pct,
+                        "spy_return_pct": result.spy_return_pct,
+                        "beats_both": result.beats_both_benchmarks,
+                    }
+            except Exception as e:
+                logger.debug(f"Trade strategy failed for {symbol}: {e}")
+            
+            # 3. Signal Combinations
+            combinations_data = None
+            try:
+                combos = []
+                for combo_cfg in SIGNAL_COMBINATIONS:
+                    combo = test_signal_combination(price_data, combo_cfg, holding_days=20, min_signals=3)
+                    if combo is not None:
+                        combos.append({
+                            "name": combo.name,
+                            "component_signals": combo.component_signals,
+                            "logic": combo.logic,
+                            "win_rate": combo.win_rate,
+                            "avg_return_pct": combo.avg_return_pct,
+                            "n_signals": combo.n_signals,
+                            "improvement_vs_best_single": combo.improvement_vs_best_single,
+                        })
+                combos.sort(key=lambda c: c["win_rate"] * c["avg_return_pct"], reverse=True)
+                combinations_data = combos
+            except Exception as e:
+                logger.debug(f"Combinations failed for {symbol}: {e}")
+            
+            # 4. Dip Analysis
+            dip_data = None
+            try:
+                analysis = analyze_dip(price_data, symbol)
+                dip_type_str = analysis.dip_type.value if hasattr(analysis.dip_type, 'value') else str(analysis.dip_type)
+                dip_data = {
+                    "current_drawdown_pct": analysis.current_drawdown_pct,
+                    "typical_pct": analysis.typical_dip_pct,
+                    "max_historical_pct": analysis.max_historical_dip_pct,
+                    "zscore": analysis.dip_zscore,
+                    "type": dip_type_str,
+                    "action": analysis.action,
+                    "confidence": analysis.confidence,
+                    "reasoning": analysis.reasoning,
+                    "recovery_probability": analysis.recovery_probability,
+                }
+            except Exception as e:
+                logger.debug(f"Dip analysis failed for {symbol}: {e}")
+            
+            # 5. Current Signals
+            signals_data = None
+            try:
+                signals = get_current_signals(price_data, symbol)
+                signals_data = signals
+            except Exception as e:
+                logger.debug(f"Current signals failed for {symbol}: {e}")
+            
+            # Store all results
+            await quant_repo.upsert_all_quant_data(
+                symbol=symbol,
+                backtest=backtest_data,
+                trade_strategy=trade_data,
+                combinations=combinations_data,
+                dip_analysis=dip_data,
+                current_signals=signals_data,
+                data_start=data_start_date,
+                data_end=data_end_date,
+            )
+            
+            processed += 1
+            
+            if processed % 10 == 0:
+                logger.info(f"quant_analysis_nightly: Processed {processed}/{len(tickers)} symbols")
+            
+        except Exception as e:
+            logger.exception(f"quant_analysis_nightly: Failed for {symbol}: {e}")
+            failed += 1
+    
+    message = f"Pre-computed quant analysis for {processed}/{len(tickers)} symbols ({failed} failed)"
+    logger.info(f"quant_analysis_nightly: {message}")
+    return message
+
+
+# =============================================================================
+# MARKET ANALYSIS HOURLY - Cache market regime and correlation analysis
+# =============================================================================
+
+
+@register_job("market_analysis_hourly")
+async def market_analysis_hourly_job() -> str:
+    """
+    Pre-compute global market analysis and cache in Redis.
+    
+    This job runs hourly and pre-computes:
+    - Market regime detection (bull/bear, volatility level)
+    - Correlation analysis across tracked symbols
+    
+    Results are stored in Redis cache. API endpoint reads from cache.
+    
+    Schedule: Every hour
+    """
+    from datetime import date, timedelta
+    
+    import pandas as pd
+    
+    from app.cache.cache import Cache
+    from app.repositories import symbols_orm as symbols_repo
+    from app.repositories import price_history_orm as price_history_repo
+    from app.quant_engine.analytics import detect_regime, compute_correlation_analysis
+    from app.services.data_providers.yfinance_service import get_yfinance_service
+
+    symbols_list = await symbols_repo.list_symbols()
+    tickers = [s.symbol for s in symbols_list if s.is_active and s.symbol not in ("SPY", "^GSPC", "URTH")]
+    
+    if not tickers:
+        return "No active symbols to analyze"
+    
+    logger.info(f"market_analysis_hourly: Analyzing {len(tickers)} symbols")
+    
+    # Fetch price data for all symbols
+    end_date = date.today()
+    start_date = end_date - timedelta(days=400)
+    
+    price_dfs = {}
+    yf_service = get_yfinance_service()
+    
+    for symbol in tickers:
+        try:
+            df = await price_history_repo.get_prices_as_dataframe(
+                symbol, start_date, end_date
+            )
+            if df is not None and "Close" in df.columns and len(df) >= 60:
+                price_dfs[symbol] = df["Close"]
+        except Exception as e:
+            logger.debug(f"Failed to fetch prices for {symbol}: {e}")
+    
+    if len(price_dfs) < 3:
+        return "Insufficient data for market analysis"
+    
+    # Combine into single DataFrame
+    prices = pd.DataFrame(price_dfs)
+    
+    if prices.empty or len(prices) < 60:
+        return "Insufficient price history for analysis"
+    
+    # Compute returns
+    returns = prices.pct_change().dropna()
+    
+    # Detect regime
+    try:
+        regime = detect_regime(returns)
+    except Exception as e:
+        logger.error(f"Regime detection failed: {e}")
+        regime = None
+    
+    # Compute correlation analysis
+    try:
+        corr_analysis = compute_correlation_analysis(returns)
+    except Exception as e:
+        logger.error(f"Correlation analysis failed: {e}")
+        corr_analysis = None
+    
+    # Build result
+    def safe_float(val):
+        try:
+            import math
+            if val is None or (isinstance(val, float) and math.isnan(val)):
+                return 0.0
+            return float(val)
+        except (TypeError, ValueError):
+            return 0.0
+    
+    result = {
+        "analyzed_at": datetime.now(UTC).isoformat(),
+        "n_symbols": len(returns.columns),
+    }
+    
+    if regime:
+        result["regime"] = {
+            "current": regime.regime,
+            "trend": regime.trend,
+            "volatility": regime.volatility,
+            "description": regime.description,
+            "recommendation": regime.risk_budget_recommendation,
+        }
+    
+    if corr_analysis:
+        result["correlations"] = {
+            "average": safe_float(corr_analysis.average_correlation),
+            "n_clusters": corr_analysis.n_clusters,
+            "clusters": corr_analysis.clusters,
+            "stress_correlation": safe_float(corr_analysis.stress_correlation),
+        }
+    
+    if regime and corr_analysis:
+        result["insights"] = [
+            f"Market is in a {regime.regime} regime",
+            f"Average correlation: {corr_analysis.average_correlation:.0%}" if corr_analysis.average_correlation else "Correlation data unavailable",
+            f"Found {corr_analysis.n_clusters} correlation clusters",
+        ]
+    
+    # Cache the result
+    cache = Cache(prefix="market_analysis", default_ttl=3600)
+    await cache.set("global", result, ttl=3600)
+    
+    message = f"Computed market analysis for {len(returns.columns)} symbols"
+    logger.info(f"market_analysis_hourly: {message}")
+    return message

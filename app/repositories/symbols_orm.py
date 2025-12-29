@@ -334,3 +334,107 @@ async def get_symbol_summary_ai(symbol: str) -> str | None:
         )
         row = result.one_or_none()
         return row[0] if row else None
+
+
+async def update_stock_info_cache(
+    symbol: str,
+    *,
+    fifty_two_week_low: float | None = None,
+    fifty_two_week_high: float | None = None,
+    previous_close: float | None = None,
+    avg_volume: int | None = None,
+    pe_ratio: float | None = None,
+    market_cap: int | None = None,
+) -> bool:
+    """Update a symbol's cached stock info fields.
+    
+    Used by scheduled jobs to cache live market data.
+    
+    Args:
+        symbol: Stock symbol
+        fifty_two_week_low: 52-week low price
+        fifty_two_week_high: 52-week high price
+        previous_close: Previous day's close price
+        avg_volume: Average trading volume
+        pe_ratio: Price-to-earnings ratio
+        market_cap: Market capitalization
+        
+    Returns:
+        True if updated, False if symbol not found
+    """
+    from decimal import Decimal
+    
+    async with get_session() as session:
+        result = await session.execute(
+            select(Symbol).where(Symbol.symbol == symbol.upper())
+        )
+        sym = result.scalar_one_or_none()
+
+        if not sym:
+            return False
+
+        if fifty_two_week_low is not None:
+            sym.fifty_two_week_low = Decimal(str(fifty_two_week_low))
+        if fifty_two_week_high is not None:
+            sym.fifty_two_week_high = Decimal(str(fifty_two_week_high))
+        if previous_close is not None:
+            sym.previous_close = Decimal(str(previous_close))
+        if avg_volume is not None:
+            sym.avg_volume = avg_volume
+        if pe_ratio is not None:
+            sym.pe_ratio = Decimal(str(pe_ratio))
+        if market_cap is not None:
+            sym.market_cap = market_cap
+        
+        sym.stock_info_updated_at = datetime.utcnow()
+        await session.commit()
+        return True
+
+
+async def batch_update_stock_info_cache(updates: list[dict]) -> int:
+    """Batch update stock info cache for multiple symbols.
+    
+    Args:
+        updates: List of dicts with 'symbol' and optional fields:
+                 fifty_two_week_low, fifty_two_week_high, previous_close,
+                 avg_volume, pe_ratio, market_cap
+                 
+    Returns:
+        Number of symbols updated
+    """
+    from decimal import Decimal
+    
+    updated = 0
+    async with get_session() as session:
+        for upd in updates:
+            symbol = upd.get("symbol")
+            if not symbol:
+                continue
+                
+            result = await session.execute(
+                select(Symbol).where(Symbol.symbol == symbol.upper())
+            )
+            sym = result.scalar_one_or_none()
+            
+            if not sym:
+                continue
+            
+            if "fifty_two_week_low" in upd and upd["fifty_two_week_low"] is not None:
+                sym.fifty_two_week_low = Decimal(str(upd["fifty_two_week_low"]))
+            if "fifty_two_week_high" in upd and upd["fifty_two_week_high"] is not None:
+                sym.fifty_two_week_high = Decimal(str(upd["fifty_two_week_high"]))
+            if "previous_close" in upd and upd["previous_close"] is not None:
+                sym.previous_close = Decimal(str(upd["previous_close"]))
+            if "avg_volume" in upd and upd["avg_volume"] is not None:
+                sym.avg_volume = upd["avg_volume"]
+            if "pe_ratio" in upd and upd["pe_ratio"] is not None:
+                sym.pe_ratio = Decimal(str(upd["pe_ratio"]))
+            if "market_cap" in upd and upd["market_cap"] is not None:
+                sym.market_cap = upd["market_cap"]
+            
+            sym.stock_info_updated_at = datetime.utcnow()
+            updated += 1
+        
+        await session.commit()
+    
+    return updated

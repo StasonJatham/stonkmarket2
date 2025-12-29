@@ -23,7 +23,7 @@ from app.dipfinder.service import get_dipfinder_service  # For chart price data
 from app.repositories import dips_orm as dips_repo
 from app.schemas.dips import ChartPoint, DipStateResponse, RankingEntry, StockInfo
 from app.services.runtime_settings import get_cache_ttl, get_runtime_setting
-from app.services.stock_info import get_stock_info, get_stock_info_async
+from app.services.stock_info import get_stock_info
 
 
 router = APIRouter()
@@ -32,11 +32,6 @@ router = APIRouter()
 _ranking_cache = Cache(prefix="ranking", default_ttl=300)
 _chart_cache = Cache(prefix="chart", default_ttl=600)
 _info_cache = Cache(prefix="stockinfo", default_ttl=300)
-
-
-async def invalidate_stock_info_cache(symbol: str) -> None:
-    """Invalidate the stock info cache for a symbol."""
-    await _info_cache.delete(symbol.upper())
 
 
 def _validate_symbol_path(symbol: str = Path(..., min_length=1, max_length=10)) -> str:
@@ -92,33 +87,18 @@ async def _build_ranking(
         only includes stocks meeting their individual dip thresholds.
     """
     # Get all dip states with symbol info in one query
+    # Now includes cached stock info (52w low/high, previous_close, pe_ratio, etc.)
     rows = await dips_repo.get_ranking_data()
 
     if not rows:
         return [], []
 
-    # Fetch stock info for enrichment (52w low, market cap, etc)
-    symbols_list = [r["symbol"] for r in rows]
-
-    async def get_info(symbol: str):
-        return symbol, await get_stock_info_async(symbol)
-
-    info_tasks = [get_info(s) for s in symbols_list]
-    info_results = await asyncio.gather(*info_tasks, return_exceptions=True)
-    stock_info_map = {}
-    for result in info_results:
-        if isinstance(result, tuple):
-            sym, info = result
-            if info:
-                stock_info_map[sym] = info
-
-    # Build ranking entries from dip_state
+    # Build ranking entries from dip_state - using cached stock info from symbols table
     all_entries = []
     filtered_entries = []
 
     for row in rows:
         symbol = row["symbol"]
-        info = stock_info_map.get(symbol, {})
 
         # Calculate days in dip - prefer dip_start_date, fall back to first_seen
         days_in_dip = 0
@@ -136,21 +116,30 @@ async def _build_ranking(
             days_in_dip = (datetime.now(UTC) - first_seen).days
 
         dip_pct = float(row["dip_percentage"]) if row["dip_percentage"] else 0
+        
+        # Use cached stock info from symbols table (populated by prices_daily_job)
+        previous_close = float(row["previous_close"]) if row["previous_close"] else None
+        current_price = float(row["current_price"]) if row["current_price"] else None
+        
+        # Calculate change_percent from cached data if available
+        change_percent = None
+        if previous_close and current_price and previous_close > 0:
+            change_percent = ((current_price - previous_close) / previous_close) * 100
 
         entry = RankingEntry(
             symbol=symbol,
-            name=row["name"] or info.get("name") or symbol,
+            name=row["name"] or symbol,
             depth=dip_pct / 100,  # Convert percentage to decimal
             days_since_dip=days_in_dip,
-            last_price=float(row["current_price"]) if row["current_price"] else None,
-            previous_close=info.get("previous_close"),
-            change_percent=info.get("change_percent"),
-            high_52w=float(row["ath_price"]) if row["ath_price"] else info.get("fifty_two_week_high"),
-            low_52w=info.get("fifty_two_week_low"),
-            market_cap=info.get("market_cap"),
-            pe_ratio=info.get("pe_ratio"),
-            volume=info.get("avg_volume"),
-            sector=row["sector"] or info.get("sector"),
+            last_price=current_price,
+            previous_close=previous_close,
+            change_percent=change_percent,
+            high_52w=float(row["ath_price"]) if row["ath_price"] else (float(row["fifty_two_week_high"]) if row["fifty_two_week_high"] else None),
+            low_52w=float(row["fifty_two_week_low"]) if row["fifty_two_week_low"] else None,
+            market_cap=int(row["market_cap"]) if row["market_cap"] else None,
+            pe_ratio=float(row["pe_ratio"]) if row["pe_ratio"] else None,
+            volume=int(row["avg_volume"]) if row["avg_volume"] else None,
+            sector=row["sector"],
             symbol_type=row.get("symbol_type", "stock"),
             updated_at=row["last_updated"].isoformat() if row["last_updated"] else None,
         )
@@ -214,11 +203,13 @@ async def get_sector_etfs() -> CacheableResponse:
     # Get ETF symbols
     symbols = [etf["symbol"] for etf in sector_etfs if isinstance(etf, dict) and "symbol" in etf]
     
-    # Fetch price data for all ETFs
+    # Fetch price data for all ETFs in one batch query
     today = date.today()
     start_date = date(today.year, 1, 1)  # YTD start
     seven_days_ago = today - timedelta(days=7)
-    one_day_ago = today - timedelta(days=1)
+    
+    # Batch fetch all prices at once
+    all_prices = await price_history_repo.get_prices_batch(symbols, start_date, today)
     
     # Build result with price data
     results = []
@@ -233,40 +224,36 @@ async def get_sector_etfs() -> CacheableResponse:
             name=etf.get("name", ""),
         )
         
-        # Try to get price history for calculations
-        try:
-            prices = await price_history_repo.get_price_history(symbol, start_date, today)
-            if prices:
-                # Sort by date descending
-                sorted_prices = sorted(prices, key=lambda p: p.date, reverse=True)
-                
-                # Current price (most recent)
-                if sorted_prices:
-                    info.current_price = float(sorted_prices[0].close) if sorted_prices[0].close else None
-                
-                # YTD return (first price of year vs current)
-                if len(sorted_prices) > 1:
-                    ytd_prices = [p for p in sorted_prices if p.date >= start_date]
-                    if ytd_prices:
-                        oldest_ytd = min(ytd_prices, key=lambda p: p.date)
-                        if oldest_ytd.close and sorted_prices[0].close:
-                            info.ytd_pct = (float(sorted_prices[0].close) - float(oldest_ytd.close)) / float(oldest_ytd.close) * 100
-                
-                # 7-day change
-                week_prices = [p for p in sorted_prices if p.date >= seven_days_ago]
-                if len(week_prices) >= 2:
-                    oldest_week = min(week_prices, key=lambda p: p.date)
-                    if oldest_week.close and sorted_prices[0].close:
-                        info.change_7d_pct = (float(sorted_prices[0].close) - float(oldest_week.close)) / float(oldest_week.close) * 100
-                
-                # 1-day change
-                if len(sorted_prices) >= 2:
-                    prev_day = sorted_prices[1]
-                    if prev_day.close and sorted_prices[0].close:
-                        info.change_1d_pct = (float(sorted_prices[0].close) - float(prev_day.close)) / float(prev_day.close) * 100
-        except Exception:
-            # Price data not available yet - that's OK
-            pass
+        # Get prices from batch result
+        prices = all_prices.get(symbol.upper(), [])
+        if prices:
+            # Sort by date descending
+            sorted_prices = sorted(prices, key=lambda p: p.date, reverse=True)
+            
+            # Current price (most recent)
+            if sorted_prices:
+                info.current_price = float(sorted_prices[0].close) if sorted_prices[0].close else None
+            
+            # YTD return (first price of year vs current)
+            if len(sorted_prices) > 1:
+                ytd_prices = [p for p in sorted_prices if p.date >= start_date]
+                if ytd_prices:
+                    oldest_ytd = min(ytd_prices, key=lambda p: p.date)
+                    if oldest_ytd.close and sorted_prices[0].close:
+                        info.ytd_pct = (float(sorted_prices[0].close) - float(oldest_ytd.close)) / float(oldest_ytd.close) * 100
+            
+            # 7-day change
+            week_prices = [p for p in sorted_prices if p.date >= seven_days_ago]
+            if len(week_prices) >= 2:
+                oldest_week = min(week_prices, key=lambda p: p.date)
+                if oldest_week.close and sorted_prices[0].close:
+                    info.change_7d_pct = (float(sorted_prices[0].close) - float(oldest_week.close)) / float(oldest_week.close) * 100
+            
+            # 1-day change
+            if len(sorted_prices) >= 2:
+                prev_day = sorted_prices[1]
+                if prev_day.close and sorted_prices[0].close:
+                    info.change_1d_pct = (float(sorted_prices[0].close) - float(prev_day.close)) / float(prev_day.close) * 100
         
         results.append(info.model_dump())
     

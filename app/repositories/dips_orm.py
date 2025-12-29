@@ -25,7 +25,7 @@ async def get_ranking_data() -> list[dict]:
     """Get dip states with symbol info for ranking.
     
     Returns:
-        List of dicts with dip state and symbol data
+        List of dicts with dip state and symbol data including cached stock info
     """
     async with get_session() as session:
         result = await session.execute(
@@ -41,6 +41,13 @@ async def get_ranking_data() -> list[dict]:
                 Symbol.sector,
                 Symbol.min_dip_pct,
                 Symbol.symbol_type,
+                # Cached stock info columns
+                Symbol.fifty_two_week_low,
+                Symbol.fifty_two_week_high,
+                Symbol.previous_close,
+                Symbol.avg_volume,
+                Symbol.pe_ratio,
+                Symbol.market_cap,
             )
             .join(Symbol, Symbol.symbol == DipState.symbol)
             .where(Symbol.is_active == True)
@@ -61,6 +68,13 @@ async def get_ranking_data() -> list[dict]:
                 "sector": row.sector,
                 "min_dip_pct": row.min_dip_pct,
                 "symbol_type": row.symbol_type,
+                # Cached stock info
+                "fifty_two_week_low": row.fifty_two_week_low,
+                "fifty_two_week_high": row.fifty_two_week_high,
+                "previous_close": row.previous_close,
+                "avg_volume": row.avg_volume,
+                "pe_ratio": row.pe_ratio,
+                "market_cap": row.market_cap,
             }
             for row in rows
         ]

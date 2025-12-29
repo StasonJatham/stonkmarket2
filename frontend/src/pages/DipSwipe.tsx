@@ -41,7 +41,8 @@ import {
   TrendingUp,
   Building2,
   BarChart2,
-  // Award - currently unused
+  Loader2,
+  Sparkles,
 } from 'lucide-react';
 import { StockLogo } from '@/components/StockLogo';
 
@@ -400,16 +401,28 @@ function SwipeableCard({
               <Calendar className="h-3 w-3" /> Since {card.ipo_year}
             </Badge>
           )}
+          {card.ai_pending && (
+            <Badge variant="secondary" className="rounded-full text-xs px-2 py-0 flex items-center gap-1 animate-pulse">
+              <Sparkles className="h-3 w-3" /> AI Generating
+            </Badge>
+          )}
         </div>
 
         {/* Bio - flex-1 to take remaining space, larger text */}
         <div className="flex-1 px-4 py-3 border-t border-border/30 overflow-y-auto min-h-0">
-          <p className="text-base leading-relaxed text-foreground whitespace-pre-wrap">
-            {formatBioText(card.swipe_bio 
-              ? card.swipe_bio.replace(/^"|"$/g, '')
-              : `Looking for investors who appreciate a good dip. Currently ${formatDipPct(card.dip_pct)} off my peak. Swipe right if you see my potential!`
-            )}
-          </p>
+          {card.ai_pending ? (
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <span className="text-sm">Generating AI insights...</span>
+            </div>
+          ) : (
+            <p className="text-base leading-relaxed text-foreground whitespace-pre-wrap">
+              {formatBioText(card.swipe_bio 
+                ? card.swipe_bio.replace(/^"|"$/g, '')
+                : `Looking for investors who appreciate a good dip. Currently ${formatDipPct(card.dip_pct)} off my peak. Swipe right if you see my potential!`
+              )}
+            </p>
+          )}
           
           {/* AI Analysis - Expandable */}
           {card.ai_reasoning && (

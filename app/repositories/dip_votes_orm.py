@@ -259,6 +259,45 @@ async def get_user_votes_with_session(
     ]
 
 
+async def get_user_voted_symbols_with_session(
+    session: AsyncSession,
+    fingerprint: str,
+    symbols: Sequence[str],
+) -> set[str]:
+    """Get which symbols the user has voted on within cooldown period.
+    
+    This is a batch operation to avoid N+1 queries when checking
+    multiple symbols for vote status.
+    
+    Args:
+        session: Database session
+        fingerprint: User's fingerprint/vote_id
+        symbols: List of symbols to check
+        
+    Returns:
+        Set of symbols the user has voted on
+    """
+    if not symbols:
+        return set()
+    
+    cooldown_days = settings.vote_cooldown_days
+    cutoff = datetime.now(UTC) - timedelta(days=cooldown_days)
+    normalized = [s.upper() for s in symbols]
+    
+    result = await session.execute(
+        select(DipVote.symbol)
+        .where(
+            and_(
+                DipVote.symbol.in_(normalized),
+                DipVote.fingerprint == fingerprint,
+                DipVote.created_at > cutoff,
+            )
+        )
+        .distinct()
+    )
+    return set(row[0] for row in result.all())
+
+
 async def get_user_vote_for_symbol_with_session(
     session: AsyncSession,
     symbol: str,
@@ -489,3 +528,19 @@ async def delete_ai_analysis(symbol: str) -> bool:
         if deleted:
             logger.info(f"Deleted AI analysis for {symbol.upper()}")
         return deleted
+
+
+async def get_user_voted_symbols(fingerprint: str, symbols: Sequence[str]) -> set[str]:
+    """Get which symbols the user has voted on within cooldown period.
+    
+    Batch operation to avoid N+1 queries.
+    
+    Args:
+        fingerprint: User's fingerprint/vote_id
+        symbols: List of symbols to check
+        
+    Returns:
+        Set of symbols the user has voted on
+    """
+    async with get_session() as session:
+        return await get_user_voted_symbols_with_session(session, fingerprint, symbols)

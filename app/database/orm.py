@@ -158,6 +158,13 @@ class Symbol(Base):
     min_dip_pct: Mapped[Decimal] = mapped_column(Numeric(5, 4), default=Decimal("0.15"))
     min_days: Mapped[int] = mapped_column(Integer, default=5)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Cached stock info (refreshed daily by scheduled job)
+    fifty_two_week_low: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+    fifty_two_week_high: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+    previous_close: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+    avg_volume: Mapped[int | None] = mapped_column(BigInteger)
+    pe_ratio: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    stock_info_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Logo caching
     logo_light: Mapped[bytes | None] = mapped_column(LargeBinary)
     logo_dark: Mapped[bytes | None] = mapped_column(LargeBinary)
@@ -341,6 +348,7 @@ class DipAIAnalysis(Base):
     tokens_used: Mapped[int | None] = mapped_column(Integer)
     is_batch_generated: Mapped[bool] = mapped_column(Boolean, default=False)
     batch_job_id: Mapped[str | None] = mapped_column(String(100))
+    ai_pending: Mapped[bool] = mapped_column(Boolean, default=False)  # True when queued for batch, not yet completed
     generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -698,6 +706,7 @@ class AiAgentAnalysis(Base):
     overall_signal: Mapped[str] = mapped_column(String(20), nullable=False)  # strong_buy, buy, hold, sell, strong_sell
     overall_confidence: Mapped[int] = mapped_column(Integer, nullable=False)
     summary: Mapped[str | None] = mapped_column(Text)
+    agent_pending: Mapped[bool] = mapped_column(Boolean, default=False)  # True if batch queued but not completed
     analyzed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -1184,6 +1193,76 @@ class StrategySignal(Base):
         Index("idx_strategy_signals_signal", "signal_type"),
         Index("idx_strategy_signals_active", "has_active_signal", postgresql_where=text("has_active_signal = TRUE")),
         Index("idx_strategy_signals_beats", "beats_buy_hold", postgresql_where=text("beats_buy_hold = TRUE")),
+    )
+
+
+# =============================================================================
+# QUANT PRECOMPUTED RESULTS (Nightly Job Cache)
+# =============================================================================
+
+
+class QuantPrecomputed(Base):
+    """
+    Pre-computed quant analysis results for each symbol.
+    
+    Populated nightly by quant_analysis_job. API endpoints read from here
+    instead of computing heavy operations inline.
+    """
+    __tablename__ = "quant_precomputed"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(20), unique=True, nullable=False)
+    
+    # Signal Backtest Results
+    backtest_signal_name: Mapped[str | None] = mapped_column(String(100))
+    backtest_n_trades: Mapped[int | None] = mapped_column(Integer)
+    backtest_win_rate: Mapped[Decimal | None] = mapped_column(Numeric(5, 4))
+    backtest_total_return_pct: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    backtest_avg_return_per_trade: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    backtest_holding_days: Mapped[int | None] = mapped_column(Integer)
+    backtest_buy_hold_return_pct: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    backtest_edge_pct: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    backtest_outperformed: Mapped[bool] = mapped_column(Boolean, default=False)
+    
+    # Full Trade Strategy Results
+    trade_entry_signal: Mapped[str | None] = mapped_column(String(100))
+    trade_entry_threshold: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    trade_exit_signal: Mapped[str | None] = mapped_column(String(100))
+    trade_exit_threshold: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    trade_n_trades: Mapped[int | None] = mapped_column(Integer)
+    trade_win_rate: Mapped[Decimal | None] = mapped_column(Numeric(5, 4))
+    trade_total_return_pct: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    trade_avg_return_pct: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    trade_sharpe_ratio: Mapped[Decimal | None] = mapped_column(Numeric(8, 4))
+    trade_buy_hold_return_pct: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    trade_spy_return_pct: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    trade_beats_both: Mapped[bool] = mapped_column(Boolean, default=False)
+    
+    # Signal Combinations (JSONB for flexibility)
+    signal_combinations: Mapped[dict | None] = mapped_column(JSONB)
+    
+    # Dip Analysis Results
+    dip_current_drawdown_pct: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    dip_typical_pct: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    dip_max_historical_pct: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    dip_zscore: Mapped[Decimal | None] = mapped_column(Numeric(8, 4))
+    dip_type: Mapped[str | None] = mapped_column(String(30))  # OVERREACTION, NORMAL_VOLATILITY, FUNDAMENTAL_DECLINE
+    dip_action: Mapped[str | None] = mapped_column(String(20))  # STRONG_BUY, BUY, WAIT, AVOID
+    dip_confidence: Mapped[Decimal | None] = mapped_column(Numeric(5, 4))
+    dip_reasoning: Mapped[str | None] = mapped_column(Text)
+    dip_recovery_probability: Mapped[Decimal | None] = mapped_column(Numeric(5, 4))
+    
+    # Current Signals (JSONB for flexibility)
+    current_signals: Mapped[dict | None] = mapped_column(JSONB)
+    
+    # Metadata
+    computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    data_start: Mapped[date | None] = mapped_column(Date)
+    data_end: Mapped[date | None] = mapped_column(Date)
+
+    __table_args__ = (
+        Index("idx_quant_precomputed_symbol", "symbol"),
+        Index("idx_quant_precomputed_computed", "computed_at", postgresql_ops={"computed_at": "DESC"}),
     )
 
 

@@ -259,30 +259,28 @@ async def suggest_stock(
         if not can_suggest:
             raise ValidationError(message=reason, details={"symbol": symbol})
 
-    # Fetch stock info from yfinance
-    stock_info = await get_stock_info_full_async(symbol)
-
-    # If symbol is completely invalid (not rate limited), reject the suggestion
-    if stock_info["fetch_status"] == "invalid":
-        raise ValidationError(
-            message=stock_info["fetch_error"] or "Symbol not found",
-            details={"symbol": symbol}
-        )
-
-    # Create suggestion with fetched data (or with pending fetch status if rate limited)
+    # Create suggestion immediately with pending fetch status
+    # Data will be fetched asynchronously by the suggestion_fetch_job
     new_suggestion = await suggestions_repo.create_suggestion(
         symbol=symbol,
         fingerprint=fingerprint_hash,
-        company_name=stock_info["name"],
-        sector=stock_info["sector"],
-        summary=stock_info["summary"],
-        website=stock_info["website"],
-        ipo_year=stock_info["ipo_year"],
-        current_price=stock_info["current_price"],
-        ath_price=stock_info["ath_price"],
-        fetch_status=stock_info["fetch_status"],
-        fetch_error=stock_info["fetch_error"],
+        company_name=None,  # Will be fetched async
+        sector=None,
+        summary=None,
+        website=None,
+        ipo_year=None,
+        current_price=None,
+        ath_price=None,
+        fetch_status="pending",
+        fetch_error=None,
     )
+
+    # Queue background fetch task
+    try:
+        from app.celery_app import celery_app
+        celery_app.send_task("jobs.fetch_suggestion_data", args=[symbol])
+    except Exception as e:
+        logger.warning(f"Failed to queue suggestion fetch for {symbol}: {e}")
 
     # Record suggestion for rate limiting (skip for admins)
     if not is_admin:
@@ -299,25 +297,14 @@ async def suggest_stock(
         vote_type="up",
     )
 
-    response = {
+    return {
         "message": "Stock suggested successfully",
         "symbol": symbol,
         "vote_count": 1,
         "status": "pending",
+        "fetch_status": "pending",
+        "fetch_message": "Stock data is being fetched in the background",
     }
-
-    # Include fetch status info if not fully fetched
-    if stock_info["fetch_status"] == "rate_limited":
-        response["fetch_status"] = "rate_limited"
-        response["fetch_message"] = "Data will be fetched once rate limit resets"
-        if stock_info.get("fetch_error"):
-            response["fetch_error"] = stock_info["fetch_error"]
-    elif stock_info["fetch_status"] not in ("fetched", None):
-        response["fetch_status"] = stock_info["fetch_status"]
-        if stock_info.get("fetch_error"):
-            response["fetch_error"] = stock_info["fetch_error"]
-
-    return response
 
 
 @router.put("/{symbol}/vote", response_model=dict)

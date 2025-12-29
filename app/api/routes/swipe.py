@@ -86,15 +86,15 @@ async def get_dip_cards(
 
     # If exclude_voted, filter out cards the user has already voted on
     if exclude_voted:
-        # Compute vote_id for each symbol and check which have votes
-        voted_symbols = set()
-        for c in cards:
-            vote_id = get_vote_identifier(request, c.symbol)
-            vote = await dip_votes_repo.get_user_vote_for_symbol(c.symbol, vote_id)
-            if vote:
-                voted_symbols.add(c.symbol)
-        cards = [c for c in cards if c.symbol not in voted_symbols]
-        total = len(cards)
+        # Batch check which symbols user has voted on (avoids N+1 queries)
+        symbols = [c.symbol for c in cards]
+        # Use a consistent vote_id - just need the fingerprint from first card
+        # All cards use same request, so same fingerprint
+        if symbols:
+            vote_id = get_vote_identifier(request, symbols[0])
+            voted_symbols = await dip_votes_repo.get_user_voted_symbols(vote_id, symbols)
+            cards = [c for c in cards if c.symbol not in voted_symbols]
+            total = len(cards)
 
     return DipCardList(
         cards=cards,

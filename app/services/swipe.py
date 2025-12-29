@@ -13,7 +13,6 @@ from app.repositories import dip_votes_orm as dip_votes_repo
 from app.schemas.swipe import DipCard, DipStats, VoteCounts
 from app.services import stock_info
 from app.services.fundamentals import get_fundamentals_for_analysis
-from app.services.openai_client import generate_bio, rate_dip
 from app.services.statistical_rating import calculate_rating
 
 
@@ -95,98 +94,45 @@ async def get_dip_card(symbol: str) -> DipCard | None:
 
 async def get_dip_card_with_fresh_ai(symbol: str, force_refresh: bool = False) -> DipCard | None:
     """
-    Get dip card with fresh AI analysis (generates if needed or forced).
+    Get dip card, queueing AI generation via batch if needed.
 
-    This fetches stock info and generates AI content if not cached.
+    If AI content is missing, queues for batch processing and returns
+    the card with ai_pending=True. UI should show pending state.
     
     Args:
         symbol: Stock symbol
-        force_refresh: If True, regenerate AI even if cached
+        force_refresh: If True, re-queue AI for batch processing
         
     Returns:
-        DipCard with AI content populated.
+        DipCard with AI content if available, or ai_pending=True if queued.
         None if symbol not found in dip state.
     """
     card = await get_dip_card(symbol)
     if not card:
         return None
 
+    # Check if AI is pending
+    ai_pending = False
+    async with get_session() as session:
+        result = await session.execute(
+            select(DipAIAnalysis.ai_pending).where(DipAIAnalysis.symbol == symbol.upper())
+        )
+        row = result.scalar_one_or_none()
+        ai_pending = row is True
+
     # If AI analysis already cached and not forcing refresh, return as-is
     if card.swipe_bio and card.ai_rating and not force_refresh:
         return card
 
-    # Prefer local symbol data to avoid extra yfinance calls
-    info = None
-    name = card.name
-    sector = card.sector
-    summary = card.summary_ai
-    industry = card.industry
-    website = card.website
-    ipo_year = card.ipo_year
+    # If AI is already pending (queued for batch), return card with pending status
+    if ai_pending and not force_refresh:
+        return card.model_copy(update={"ai_pending": True})
 
-    if not (name and sector and summary):
-        info = await stock_info.get_stock_info_async(symbol)
-        if info:
-            name = info.get("name") or name
-            sector = info.get("sector") or sector
-            summary = info.get("summary") or summary
-            industry = info.get("industry") or industry
-            website = info.get("website") or website
-            ipo_year = info.get("ipo_year") or ipo_year
-
-    # Generate AI content only if missing or forced
-    bio = card.swipe_bio
-    rating_result = None
-    generated_ai = False
-
-    if force_refresh or not card.swipe_bio:
-        bio = await generate_bio(
-            symbol=symbol,
-            name=name,
-            sector=sector,
-            summary=summary,
-            dip_pct=card.dip_pct,
-        )
-        if bio:
-            generated_ai = True
-
-    if force_refresh or not card.ai_rating:
-        fundamentals = await get_fundamentals_for_analysis(symbol)
-        rating_result = await rate_dip(
-            symbol=symbol,
-            current_price=card.current_price,
-            ref_high=card.ref_high,
-            dip_pct=card.dip_pct,
-            days_below=card.days_below,
-            name=name,
-            sector=sector,
-            summary=summary,
-            **fundamentals,
-        )
-        if rating_result:
-            generated_ai = True
-
-    if generated_ai:
-        await dip_votes_repo.upsert_ai_analysis(
-            symbol=symbol,
-            swipe_bio=bio,
-            ai_rating=rating_result.get("rating") if rating_result else card.ai_rating,
-            ai_reasoning=rating_result.get("reasoning") if rating_result else card.ai_reasoning,
-            is_batch=False,
-        )
-
-    # Update card with fresh data
-    card = card.model_copy(update={
-        "name": name,
-        "sector": sector,
-        "industry": industry,
-        "website": website,
-        "ipo_year": ipo_year,
-        "swipe_bio": bio,
-        "ai_rating": rating_result.get("rating") if rating_result else card.ai_rating,
-        "ai_reasoning": rating_result.get("reasoning") if rating_result else card.ai_reasoning,
-        "ai_confidence": rating_result.get("confidence") if rating_result else card.ai_confidence,
-    })
+    # Queue for batch processing if AI is missing or forced
+    if force_refresh or not card.swipe_bio or not card.ai_rating:
+        from app.services.batch_scheduler import queue_ai_for_symbols
+        await queue_ai_for_symbols([symbol])
+        return card.model_copy(update={"ai_pending": True})
 
     return card
 
@@ -196,7 +142,7 @@ async def regenerate_ai_field(
     field: str,
 ) -> DipCard | None:
     """
-    Regenerate a swipe-specific AI field for a dip card.
+    Queue regeneration of a swipe-specific AI field via batch API.
 
     Args:
         symbol: Stock symbol
@@ -204,100 +150,19 @@ async def regenerate_ai_field(
                Note: 'summary' should use /symbols/{symbol}/ai/summary endpoint
 
     Returns:
-        Updated DipCard with the regenerated field.
+        DipCard with ai_pending=True (queued for batch processing).
         None if symbol not found in dip state.
     """
     card = await get_dip_card(symbol)
     if not card:
         return None
 
-    existing_ai = await dip_votes_repo.get_ai_analysis(symbol)
-    existing_bio = existing_ai.get("swipe_bio") if existing_ai else card.swipe_bio
-    existing_rating = existing_ai.get("ai_rating") if existing_ai else card.ai_rating
-    existing_reasoning = existing_ai.get("ai_reasoning") if existing_ai else card.ai_reasoning
+    # Queue for batch processing
+    from app.services.batch_scheduler import queue_ai_for_symbols
+    await queue_ai_for_symbols([symbol])
 
-    info = None
-    name = card.name
-    sector = card.sector
-    summary = card.summary_ai
-    industry = card.industry
-    website = card.website
-    ipo_year = card.ipo_year
-
-    if not (name and sector and summary):
-        info = await stock_info.get_stock_info_async(symbol)
-        if info:
-            name = info.get("name") or name
-            sector = info.get("sector") or sector
-            summary = info.get("summary") or summary
-            industry = info.get("industry") or industry
-            website = info.get("website") or website
-            ipo_year = info.get("ipo_year") or ipo_year
-
-    if field == "bio":
-        # Regenerate Swipe bio
-        bio = await generate_bio(
-            symbol=symbol,
-            name=name,
-            sector=sector,
-            summary=summary,
-            dip_pct=card.dip_pct,
-        )
-        if bio:
-            await dip_votes_repo.upsert_ai_analysis(
-                symbol=symbol,
-                swipe_bio=bio,
-                ai_rating=existing_rating,
-                ai_reasoning=existing_reasoning,
-                is_batch=False,
-            )
-            card = card.model_copy(update={
-                "swipe_bio": bio,
-                "ai_rating": existing_rating,
-                "ai_reasoning": existing_reasoning,
-            })
-
-    elif field == "rating":
-        # Get fundamentals for richer AI analysis
-        fundamentals = await get_fundamentals_for_analysis(symbol)
-
-        # Regenerate AI rating
-        rating_result = await rate_dip(
-            symbol=symbol,
-            current_price=card.current_price,
-            ref_high=card.ref_high,
-            dip_pct=card.dip_pct,
-            days_below=card.days_below,
-            name=name,
-            sector=sector,
-            summary=summary,
-            **fundamentals,  # Include all fundamental metrics
-        )
-        if rating_result:
-            await dip_votes_repo.upsert_ai_analysis(
-                symbol=symbol,
-                swipe_bio=existing_bio,
-                ai_rating=rating_result.get("rating"),
-                ai_reasoning=rating_result.get("reasoning"),
-                is_batch=False,
-            )
-            card = card.model_copy(update={
-                "swipe_bio": existing_bio,
-                "ai_rating": rating_result.get("rating"),
-                "ai_reasoning": rating_result.get("reasoning"),
-                "ai_confidence": rating_result.get("confidence"),
-            })
-
-    # Update card with stock info
-    card = card.model_copy(update={
-        "name": name,
-        "sector": sector,
-        "industry": industry,
-        "website": website,
-        "ipo_year": ipo_year,
-    })
-
-    return card
+    # Return card with pending status
+    return card.model_copy(update={"ai_pending": True})
 
 
 async def get_dip_cards_page(

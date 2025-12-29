@@ -530,6 +530,63 @@ def _aggregate_signals(verdicts: list[AgentVerdict]) -> tuple[SignalType, int, s
     return overall_signal, overall_confidence, summary
 
 
+async def queue_agent_analysis(symbol: str, force: bool = False) -> str | None:
+    """
+    Queue agent analysis for a symbol via OpenAI Batch API.
+    
+    Sets agent_pending=True and returns batch_id.
+    50% cheaper than real-time API calls.
+    
+    Args:
+        symbol: Stock symbol to analyze
+        force: Force re-analysis even if input unchanged
+        
+    Returns:
+        batch_id if queued, None if skipped or failed
+    """
+    symbol = symbol.upper()
+    
+    # Check if already pending
+    async with get_session() as session:
+        result = await session.execute(
+            select(AiAgentAnalysis.agent_pending).where(AiAgentAnalysis.symbol == symbol)
+        )
+        row = result.scalar_one_or_none()
+        if row is True and not force:
+            logger.info(f"Agent analysis already pending for {symbol}")
+            return None
+    
+    # Submit batch
+    batch_result = await submit_agent_batch([symbol])
+    if not batch_result:
+        logger.warning(f"Failed to queue agent analysis for {symbol}")
+        return None
+    
+    batch_id, _ = batch_result
+    
+    # Mark as pending in DB (create placeholder if needed)
+    async with get_session() as session:
+        stmt = insert(AiAgentAnalysis).values(
+            symbol=symbol,
+            verdicts=[],
+            overall_signal="hold",
+            overall_confidence=0,
+            summary="Analysis pending...",
+            analyzed_at=datetime.now(UTC),
+            expires_at=datetime.now(UTC) + timedelta(days=7),
+            agent_pending=True,
+        )
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["symbol"],
+            set_={"agent_pending": True},
+        )
+        await session.execute(stmt)
+        await session.commit()
+    
+    logger.info(f"Queued agent analysis for {symbol}: batch {batch_id}")
+    return batch_id
+
+
 async def run_agent_analysis(
     symbol: str,
     agents: list[str] | None = None,
@@ -616,7 +673,7 @@ async def run_agent_analysis(
     return result
 
 
-async def _store_agent_analysis(result: AgentAnalysisResult) -> None:
+async def _store_agent_analysis(result: AgentAnalysisResult, agent_pending: bool = False) -> None:
     """Store agent analysis result in database."""
     # Serialize verdicts to JSON
     verdicts_json = [
@@ -642,6 +699,7 @@ async def _store_agent_analysis(result: AgentAnalysisResult) -> None:
             summary=result.summary,
             analyzed_at=result.analyzed_at,
             expires_at=expires_at,
+            agent_pending=agent_pending,
         )
         stmt = stmt.on_conflict_do_update(
             index_elements=["symbol"],
@@ -652,6 +710,7 @@ async def _store_agent_analysis(result: AgentAnalysisResult) -> None:
                 "summary": stmt.excluded.summary,
                 "analyzed_at": stmt.excluded.analyzed_at,
                 "expires_at": stmt.excluded.expires_at,
+                "agent_pending": stmt.excluded.agent_pending,
             },
         )
         await session.execute(stmt)
@@ -696,6 +755,7 @@ async def get_agent_analysis(symbol: str, max_age_hours: int = 168) -> dict[str,
         "summary": row.summary,
         "analyzed_at": row.analyzed_at.isoformat() if row.analyzed_at else None,
         "expires_at": row.expires_at.isoformat() if row.expires_at else None,
+        "agent_pending": row.agent_pending,
     }
 
 
@@ -998,8 +1058,8 @@ async def collect_agent_batch(batch_id: str) -> dict[str, AgentAnalysisResult]:
             analyzed_at=datetime.now(UTC),
         )
 
-        # Store in database
-        await _store_agent_analysis(result)
+        # Store in database and clear pending flag
+        await _store_agent_analysis(result, agent_pending=False)
         final_results[symbol] = result
 
     return final_results

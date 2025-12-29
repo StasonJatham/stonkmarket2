@@ -1097,130 +1097,45 @@ class SignalBacktestResponse(BaseModel):
     description="""
     Compare the performance of buying on signal triggers vs simple buy-and-hold.
     
-    Shows each trade made by the signal strategy and calculates total returns
-    to compare against buying at the start and holding until the end.
+    Returns pre-computed results from the nightly quant analysis job.
+    Results are refreshed daily after market close.
     """,
 )
 async def get_signal_backtest(
     symbol: str,
     lookback_days: int = Query(default=730, ge=90, le=1825, description="Days to backtest"),
 ) -> SignalBacktestResponse:
-    """Backtest signal strategy vs buy-and-hold."""
-    from app.quant_engine.signals import get_historical_triggers
+    """Get pre-computed signal backtest results."""
+    from app.repositories import quant_precomputed_orm as quant_repo
     
     symbol = symbol.strip().upper()
     
-    # Fetch price data - use same 5-year window as signals scanner for consistent optimization
-    prices_df = await _fetch_prices_for_symbols([symbol], lookback_days=1260)
+    # Get pre-computed results from database
+    cached = await quant_repo.get_precomputed(symbol)
     
-    if prices_df.empty or symbol not in prices_df.columns:
-        raise HTTPException(status_code=404, detail=f"No price data for {symbol}")
-    
-    prices = prices_df[symbol].dropna()
-    
-    if len(prices) < 60:
-        raise HTTPException(status_code=400, detail=f"Insufficient price data for {symbol}")
-    
-    # Convert to dict format expected by signals module
-    price_data = {"close": prices}
-    
-    # Get historical triggers - only return triggers within the backtest period
-    triggers = get_historical_triggers(price_data, lookback_days=lookback_days)
-    
-    if not triggers:
-        # No signals triggered, just return buy-and-hold
-        start_price = float(prices.iloc[-lookback_days] if len(prices) > lookback_days else prices.iloc[0])
-        end_price = float(prices.iloc[-1])
-        buy_hold_return = ((end_price / start_price) - 1) * 100
-        
+    if cached and cached.backtest_signal_name:
         return SignalBacktestResponse(
             symbol=symbol,
-            period_start=str(prices.index[-lookback_days if len(prices) > lookback_days else 0].date()),
-            period_end=str(prices.index[-1].date()),
-            signal_name="No signals",
-            n_trades=0,
-            win_rate=0.0,
-            total_return_pct=0.0,
-            avg_return_per_trade=0.0,
-            holding_days_per_trade=0,
-            trades=[],
-            buy_hold_return_pct=buy_hold_return,
-            buy_hold_start_price=start_price,
-            buy_hold_end_price=end_price,
-            signal_edge_pct=-buy_hold_return,
-            signal_outperformed=False,
+            period_start=str(cached.data_start) if cached.data_start else "",
+            period_end=str(cached.data_end) if cached.data_end else "",
+            signal_name=cached.backtest_signal_name or "Unknown",
+            n_trades=cached.backtest_n_trades or 0,
+            win_rate=float(cached.backtest_win_rate) if cached.backtest_win_rate else 0.0,
+            total_return_pct=float(cached.backtest_total_return_pct) if cached.backtest_total_return_pct else 0.0,
+            avg_return_per_trade=float(cached.backtest_avg_return_per_trade) if cached.backtest_avg_return_per_trade else 0.0,
+            holding_days_per_trade=cached.backtest_holding_days or 0,
+            trades=[],  # Historical trades not cached for performance
+            buy_hold_return_pct=float(cached.backtest_buy_hold_return_pct) if cached.backtest_buy_hold_return_pct else 0.0,
+            buy_hold_start_price=0.0,  # Not cached
+            buy_hold_end_price=0.0,  # Not cached
+            signal_edge_pct=float(cached.backtest_edge_pct) if cached.backtest_edge_pct else 0.0,
+            signal_outperformed=cached.backtest_outperformed,
         )
     
-    # Get the best signal's holding period
-    holding_days = triggers[0].holding_days if triggers else 20
-    signal_name = triggers[0].signal_name if triggers else "Unknown"
-    
-    # Simulate trades
-    trades: list[SignalTradeResponse] = []
-    total_signal_return = 0.0
-    
-    for trigger in triggers:
-        entry_date = trigger.date
-        entry_price = trigger.price
-        
-        # Find exit date (holding_days later)
-        try:
-            entry_idx = prices.index.get_loc(entry_date)
-        except KeyError:
-            # Try to find closest date
-            try:
-                entry_idx = prices.index.get_indexer([entry_date], method='nearest')[0]
-            except Exception:
-                continue
-        
-        exit_idx = min(entry_idx + holding_days, len(prices) - 1)
-        exit_date = str(prices.index[exit_idx].date())
-        exit_price = float(prices.iloc[exit_idx])
-        
-        return_pct = ((exit_price / entry_price) - 1) * 100
-        won = return_pct > 0
-        
-        trades.append(SignalTradeResponse(
-            entry_date=entry_date,
-            exit_date=exit_date,
-            entry_price=entry_price,
-            exit_price=exit_price,
-            return_pct=return_pct,
-            signal_name=trigger.signal_name,
-            won=won,
-        ))
-        
-        total_signal_return += return_pct
-    
-    # Calculate aggregate stats
-    n_trades = len(trades)
-    win_rate = sum(1 for t in trades if t.won) / n_trades if n_trades > 0 else 0.0
-    avg_return = total_signal_return / n_trades if n_trades > 0 else 0.0
-    
-    # Buy-and-hold comparison
-    start_idx = max(0, len(prices) - lookback_days)
-    start_price = float(prices.iloc[start_idx])
-    end_price = float(prices.iloc[-1])
-    buy_hold_return = ((end_price / start_price) - 1) * 100
-    
-    signal_edge = total_signal_return - buy_hold_return
-    
-    return SignalBacktestResponse(
-        symbol=symbol,
-        period_start=str(prices.index[start_idx].date()),
-        period_end=str(prices.index[-1].date()),
-        signal_name=signal_name,
-        n_trades=n_trades,
-        win_rate=win_rate,
-        total_return_pct=total_signal_return,
-        avg_return_per_trade=avg_return,
-        holding_days_per_trade=holding_days,
-        trades=trades,
-        buy_hold_return_pct=buy_hold_return,
-        buy_hold_start_price=start_price,
-        buy_hold_end_price=end_price,
-        signal_edge_pct=signal_edge,
-        signal_outperformed=signal_edge > 0,
+    # No cached data - return empty response (job will populate it)
+    raise HTTPException(
+        status_code=404,
+        detail=f"No backtest data for {symbol}. Data is computed nightly after market close."
     )
 
 
@@ -1332,85 +1247,55 @@ class CurrentSignalsResponse(BaseModel):
     description="""
     Get the best complete trade strategy for a stock: optimized entry signal + exit signal.
     
-    This answers:
-    - "What's the best entry signal for this stock?"
-    - "What's the best exit strategy (RSI overbought, profit target, trailing stop)?"
-    - "Does this strategy beat buy-and-hold AND SPY?"
-    
-    The system tests all entry signals against all exit strategies and finds
-    the combination that maximizes total return while beating both benchmarks.
-    
-    **Mathematical Proof of Exit Timing:**
-    - `exit_predictability`: How consistent is the holding period (low std dev = predictable)
-    - `upside_captured_pct`: What % of potential gain was captured by the exit signal
-    - If exit_predictability > 0.5 and upside_captured > 80%, the exit timing is proven reliable
+    Returns pre-computed results from the nightly quant analysis job.
+    Results are refreshed daily after market close.
     """,
 )
 async def get_full_trade_strategy(
     symbol: str,
 ) -> FullTradeResponse:
-    """Get optimized full trade strategy with entry AND exit signals, benchmarked vs SPY."""
-    from app.quant_engine.trade_engine import get_best_trade_strategy
+    """Get pre-computed full trade strategy results."""
+    from app.repositories import quant_precomputed_orm as quant_repo
     
     symbol = symbol.strip().upper()
     
-    # Fetch stock prices AND SPY for benchmarking
-    prices_df = await _fetch_prices_for_symbols([symbol, "SPY"], lookback_days=1260)
+    # Get pre-computed results from database
+    cached = await quant_repo.get_precomputed(symbol)
     
-    if prices_df.empty or symbol not in prices_df.columns:
-        raise NotFoundError(f"No price data for {symbol}")
+    if cached and cached.trade_entry_signal:
+        return FullTradeResponse(
+            symbol=symbol,
+            entry_signal_name=cached.trade_entry_signal or "Unknown",
+            entry_threshold=float(cached.trade_entry_threshold) if cached.trade_entry_threshold else 0.0,
+            entry_description="",
+            exit_strategy_name=cached.trade_exit_signal or "Unknown",
+            exit_threshold=float(cached.trade_exit_threshold) if cached.trade_exit_threshold else 0.0,
+            exit_description="",
+            n_complete_trades=cached.trade_n_trades or 0,
+            win_rate=float(cached.trade_win_rate) if cached.trade_win_rate else 0.0,
+            avg_return_pct=float(cached.trade_avg_return_pct) if cached.trade_avg_return_pct else 0.0,
+            total_return_pct=float(cached.trade_total_return_pct) if cached.trade_total_return_pct else 0.0,
+            max_return_pct=0.0,  # Not cached
+            max_drawdown_pct=0.0,  # Not cached
+            avg_holding_days=0.0,  # Not cached
+            sharpe_ratio=float(cached.trade_sharpe_ratio) if cached.trade_sharpe_ratio else 0.0,
+            buy_hold_return_pct=float(cached.trade_buy_hold_return_pct) if cached.trade_buy_hold_return_pct else 0.0,
+            spy_return_pct=float(cached.trade_spy_return_pct) if cached.trade_spy_return_pct else 0.0,
+            edge_vs_buy_hold_pct=(float(cached.trade_total_return_pct) - float(cached.trade_buy_hold_return_pct)) if cached.trade_total_return_pct and cached.trade_buy_hold_return_pct else 0.0,
+            edge_vs_spy_pct=(float(cached.trade_total_return_pct) - float(cached.trade_spy_return_pct)) if cached.trade_total_return_pct and cached.trade_spy_return_pct else 0.0,
+            beats_both_benchmarks=cached.trade_beats_both,
+            exit_predictability=0.0,  # Not cached
+            upside_captured_pct=0.0,  # Not cached
+            trades=[],  # Historical trades not cached for performance
+            current_buy_signal=False,
+            current_sell_signal=False,
+            days_since_last_signal=0,
+        )
     
-    price_data = {"close": prices_df[symbol].dropna()}
-    
-    # Get SPY prices for benchmark comparison
-    spy_prices = prices_df["SPY"].dropna() if "SPY" in prices_df.columns else None
-    
-    result, _ = get_best_trade_strategy(
-        price_data, symbol, spy_prices=spy_prices, test_combinations=False
-    )
-    
-    if result is None:
-        raise NotFoundError(f"Insufficient data for trade analysis of {symbol}")
-    
-    return FullTradeResponse(
-        symbol=result.symbol,
-        entry_signal_name=result.entry_signal_name,
-        entry_threshold=result.entry_threshold,
-        entry_description=result.entry_description,
-        exit_strategy_name=result.exit_strategy_name,
-        exit_threshold=result.exit_threshold,
-        exit_description=result.exit_description,
-        n_complete_trades=result.n_complete_trades,
-        win_rate=result.win_rate,
-        avg_return_pct=result.avg_return_pct,
-        total_return_pct=result.total_return_pct,
-        max_return_pct=result.max_return_pct,
-        max_drawdown_pct=result.max_drawdown_pct,
-        avg_holding_days=result.avg_holding_days,
-        sharpe_ratio=result.sharpe_ratio,
-        buy_hold_return_pct=result.buy_hold_return_pct,
-        spy_return_pct=result.spy_return_pct,
-        edge_vs_buy_hold_pct=result.edge_vs_buy_hold_pct,
-        edge_vs_spy_pct=result.edge_vs_spy_pct,
-        beats_both_benchmarks=result.beats_both_benchmarks,
-        exit_predictability=result.exit_predictability,
-        upside_captured_pct=result.upside_captured_pct,
-        trades=[
-            TradeCycleResponse(
-                entry_date=t.entry_date,
-                exit_date=t.exit_date,
-                entry_price=t.entry_price,
-                exit_price=t.exit_price,
-                return_pct=t.return_pct,  # Already in percentage from trade_engine
-                holding_days=t.holding_days,
-                entry_signal=t.entry_signal,
-                exit_signal=t.exit_signal,
-            )
-            for t in result.trades[-20:]  # Last 20 trades
-        ],
-        current_buy_signal=result.current_buy_signal,
-        current_sell_signal=result.current_sell_signal,
-        days_since_last_signal=result.days_since_last_signal,
+    # No cached data
+    raise HTTPException(
+        status_code=404,
+        detail=f"No trade strategy data for {symbol}. Data is computed nightly after market close."
     )
 
 
@@ -1419,48 +1304,38 @@ async def get_full_trade_strategy(
     response_model=list[CombinedSignalResponse],
     summary="Test signal combinations",
     description="""
-    Test combinations of signals (e.g., RSI + Drawdown together).
+    Get pre-computed signal combination results.
     
-    This answers:
-    - "Do multiple signals together work better than individual signals?"
-    - "What's the best signal combination for this stock?"
-    
-    Tests AND/OR combinations of indicators.
+    Returns pre-computed results from the nightly quant analysis job.
+    Results are refreshed daily after market close.
     """,
 )
 async def get_signal_combinations(
     symbol: str,
 ) -> list[CombinedSignalResponse]:
-    """Test signal combinations for a stock."""
-    from app.quant_engine.trade_engine import test_signal_combination, SIGNAL_COMBINATIONS
+    """Get pre-computed signal combinations for a stock."""
+    from app.repositories import quant_precomputed_orm as quant_repo
     
     symbol = symbol.strip().upper()
     
-    prices_df = await _fetch_prices_for_symbols([symbol], lookback_days=1260)
+    # Get pre-computed results from database
+    cached = await quant_repo.get_precomputed(symbol)
     
-    if prices_df.empty or symbol not in prices_df.columns:
-        return []
-    
-    price_data = {"close": prices_df[symbol].dropna()}
-    
-    results = []
-    for combo_cfg in SIGNAL_COMBINATIONS:
-        combo = test_signal_combination(price_data, combo_cfg, holding_days=20, min_signals=3)
-        if combo is not None:
+    if cached and cached.signal_combinations:
+        results = []
+        for combo in cached.signal_combinations:
             results.append(CombinedSignalResponse(
-                name=combo.name,
-                component_signals=combo.component_signals,
-                logic=combo.logic,
-                win_rate=combo.win_rate,
-                avg_return_pct=combo.avg_return_pct,
-                n_signals=combo.n_signals,
-                improvement_vs_best_single=combo.improvement_vs_best_single,
+                name=combo.get("name", "Unknown"),
+                component_signals=combo.get("component_signals", []),
+                logic=combo.get("logic", ""),
+                win_rate=combo.get("win_rate", 0.0),
+                avg_return_pct=combo.get("avg_return_pct", 0.0),
+                n_signals=combo.get("n_signals", 0),
+                improvement_vs_best_single=combo.get("improvement_vs_best_single", 0.0),
             ))
+        return results
     
-    # Sort by EV
-    results.sort(key=lambda c: c.win_rate * c.avg_return_pct, reverse=True)
-    
-    return results
+    return []
 
 
 @global_router.get(
@@ -1468,59 +1343,49 @@ async def get_signal_combinations(
     response_model=DipAnalysisResponse,
     summary="Analyze if dip is overreaction or falling knife",
     description="""
-    Analyze whether the current dip is an overreaction (buy opportunity) or a falling knife (avoid!).
+    Get pre-computed dip analysis results.
     
-    This answers the critical question: **"Should I buy this dip or am I catching a falling knife?"**
-    
-    Analysis includes:
-    - **Historical comparison**: Is this a 20% dip on a stock that typically dips 15%? (unusual)
-    - **Technical score**: RSI, MACD, Bollinger Bands, Z-Score - are we oversold?
-    - **Trend analysis**: Is the long-term trend broken? (below SMA 200)
-    - **Volume confirmation**: High volume on dip = capitulation (bullish)
-    - **Momentum divergence**: Price down but RSI up = potential reversal
-    
-    Classification:
-    - **OVERREACTION** → BUY/STRONG_BUY - Dip is larger than typical, technicals supportive
-    - **NORMAL_VOLATILITY** → WAIT - Dip is within normal range
-    - **FUNDAMENTAL_DECLINE** → AVOID - This is a falling knife!
+    Returns pre-computed results from the nightly quant analysis job.
+    Results are refreshed daily after market close.
     """,
 )
 async def get_dip_analysis(
     symbol: str,
 ) -> DipAnalysisResponse:
-    """Analyze if current dip is overreaction or falling knife."""
-    from app.quant_engine.trade_engine import analyze_dip
+    """Get pre-computed dip analysis results."""
+    from app.repositories import quant_precomputed_orm as quant_repo
     
     symbol = symbol.strip().upper()
     
-    prices_df = await _fetch_prices_for_symbols([symbol], lookback_days=1260)
+    # Get pre-computed results from database
+    cached = await quant_repo.get_precomputed(symbol)
     
-    if prices_df.empty or symbol not in prices_df.columns:
-        raise NotFoundError(f"No price data for {symbol}")
+    if cached and cached.dip_type:
+        return DipAnalysisResponse(
+            symbol=symbol,
+            current_drawdown_pct=float(cached.dip_current_drawdown_pct) if cached.dip_current_drawdown_pct else 0.0,
+            typical_dip_pct=float(cached.dip_typical_pct) if cached.dip_typical_pct else 0.0,
+            max_historical_dip_pct=float(cached.dip_max_historical_pct) if cached.dip_max_historical_pct else 0.0,
+            dip_zscore=float(cached.dip_zscore) if cached.dip_zscore else 0.0,
+            is_unusually_deep=abs(float(cached.dip_zscore)) > 1.5 if cached.dip_zscore else False,
+            deviation_from_typical=(float(cached.dip_current_drawdown_pct) - float(cached.dip_typical_pct)) if cached.dip_current_drawdown_pct and cached.dip_typical_pct else 0.0,
+            technical_score=0.0,  # Not cached
+            trend_broken=False,  # Not cached
+            volume_confirmation=False,  # Not cached
+            momentum_divergence=False,  # Not cached
+            dip_type=cached.dip_type or "NORMAL_VOLATILITY",
+            confidence=float(cached.dip_confidence) if cached.dip_confidence else 0.5,
+            action=cached.dip_action or "WAIT",
+            reasoning=cached.dip_reasoning or "",
+            recovery_probability=float(cached.dip_recovery_probability) if cached.dip_recovery_probability else 0.5,
+            expected_return_if_buy=0.0,  # Not cached
+            expected_loss_if_knife=0.0,  # Not cached
+        )
     
-    price_data = {"close": prices_df[symbol].dropna()}
-    
-    analysis = analyze_dip(price_data, symbol)
-    
-    return DipAnalysisResponse(
-        symbol=analysis.symbol,
-        current_drawdown_pct=analysis.current_drawdown_pct,
-        typical_dip_pct=analysis.typical_dip_pct,
-        max_historical_dip_pct=analysis.max_historical_dip_pct,
-        dip_zscore=analysis.dip_zscore,
-        is_unusually_deep=analysis.is_unusually_deep,
-        deviation_from_typical=analysis.deviation_from_typical,
-        technical_score=analysis.technical_score,
-        trend_broken=analysis.trend_broken,
-        volume_confirmation=analysis.volume_confirmation,
-        momentum_divergence=analysis.momentum_divergence,
-        dip_type=analysis.dip_type.value if hasattr(analysis.dip_type, 'value') else str(analysis.dip_type),
-        confidence=analysis.confidence,
-        action=analysis.action,
-        reasoning=analysis.reasoning,
-        recovery_probability=analysis.recovery_probability,
-        expected_return_if_buy=analysis.expected_return_if_buy,
-        expected_loss_if_knife=analysis.expected_loss_if_knife,
+    # No cached data
+    raise HTTPException(
+        status_code=404,
+        detail=f"No dip analysis data for {symbol}. Data is computed nightly after market close."
     )
 
 
@@ -1529,45 +1394,40 @@ async def get_dip_analysis(
     response_model=CurrentSignalsResponse,
     summary="Get current real-time buy and sell signals",
     description="""
-    Get current actionable buy and sell signals for a stock.
+    Get pre-computed current signals for a stock.
     
-    This answers:
-    - "Should I buy or sell right now?"
-    - "Which buy signals are currently active?"
-    - "Are there any sell signals (RSI overbought, etc.)?"
-    
-    Returns an overall action recommendation: STRONG_BUY, BUY, HOLD, SELL, STRONG_SELL.
+    Returns pre-computed results from the nightly quant analysis job.
+    Results are refreshed daily after market close.
     """,
 )
 async def get_current_signals(
     symbol: str,
 ) -> CurrentSignalsResponse:
-    """Get current real-time buy and sell signals."""
-    from app.quant_engine.trade_engine import get_current_signals
+    """Get pre-computed current signals."""
+    from app.repositories import quant_precomputed_orm as quant_repo
     
     symbol = symbol.strip().upper()
     
-    prices_df = await _fetch_prices_for_symbols([symbol], lookback_days=252)
+    # Get pre-computed results from database
+    cached = await quant_repo.get_precomputed(symbol)
     
-    if prices_df.empty or symbol not in prices_df.columns:
+    if cached and cached.current_signals:
+        signals = cached.current_signals
         return CurrentSignalsResponse(
             symbol=symbol,
-            buy_signals=[],
-            sell_signals=[],
-            overall_action="HOLD",
-            reasoning="No price data",
+            buy_signals=signals.get("buy_signals", []),
+            sell_signals=signals.get("sell_signals", []),
+            overall_action=signals.get("overall_action", "HOLD"),
+            reasoning=signals.get("reasoning", ""),
         )
     
-    price_data = {"close": prices_df[symbol].dropna()}
-    
-    signals = get_current_signals(price_data, symbol)
-    
+    # No cached data - return empty
     return CurrentSignalsResponse(
         symbol=symbol,
-        buy_signals=signals["buy_signals"],
-        sell_signals=signals["sell_signals"],
-        overall_action=signals["overall_action"],
-        reasoning=signals["reasoning"],
+        buy_signals=[],
+        sell_signals=[],
+        overall_action="HOLD",
+        reasoning="No cached signals. Data is computed nightly.",
     )
 
 
@@ -1581,135 +1441,73 @@ async def get_current_signals(
     response_model=SignalScanResponse,
     summary="Scan stocks for buy opportunities",
     description="""
-    Scan all tracked stocks for technical buy signals with per-stock optimization.
+    Get cached technical buy signal scan results.
     
-    This endpoint answers:
-    - "Which stock should I buy next?"
-    - "What's the optimal holding period after this signal?"
-    - "Which dip is a statistical overreaction?"
+    This endpoint returns pre-computed results from the daily signal scanner job.
+    Results are refreshed nightly after market close (10 PM UTC).
     
-    It tests 14 technical signals (RSI, Z-score, MACD, Bollinger Bands, SMA, etc.)
-    for each stock, optimizes the threshold and holding period parameters,
-    and ranks stocks by their current buy opportunity score.
-    
-    Each signal includes:
-    - optimal_threshold: Best signal threshold for this specific stock
-    - optimal_holding_days: Best holding period after signal triggers
-    - win_rate: Historical success rate at optimal parameters
-    - avg_return_pct: Average return when buying on this signal
+    Returns:
+    - Top stocks ranked by buy opportunity score
+    - Active buy signals for each stock
+    - Optimal holding periods based on backtesting
     """,
 )
 async def scan_signals() -> SignalScanResponse:
-    """Scan all stocks for technical buy signals with per-stock optimization."""
-    from app.repositories import symbols_orm as symbols_repo
+    """Get cached signal scan results from the daily job."""
+    from app.cache.cache import Cache
     
+    cache = Cache(prefix="signals", default_ttl=86400)
     holding_days_options = [5, 10, 20, 40, 60]
     
-    symbols = await symbols_repo.list_symbols()
+    # Try to get cached results
+    cached = await cache.get("daily_scan")
     
-    if not symbols:
+    if cached:
+        # Build response from cache
+        stocks = []
+        for opp in cached.get("opportunities", []):
+            stocks.append(StockSignalResponse(
+                symbol=opp["symbol"],
+                name=opp.get("name", opp["symbol"]),
+                buy_score=opp.get("buy_score", 0),
+                opportunity_type=opp.get("opportunity_type"),
+                opportunity_reason=opp.get("opportunity_reason"),
+                current_price=opp.get("current_price"),
+                price_vs_52w_high_pct=opp.get("price_vs_52w_high_pct"),
+                price_vs_52w_low_pct=opp.get("price_vs_52w_low_pct"),
+                zscore_20d=opp.get("zscore_20d"),
+                zscore_60d=opp.get("zscore_60d"),
+                rsi_14=opp.get("rsi_14"),
+                best_signal_name=opp.get("best_signal_name"),
+                best_holding_days=opp.get("best_holding_days"),
+                best_expected_return=opp.get("best_expected_return"),
+                signals=[],  # Full signals not cached for performance
+                active_buy_signals=[],
+            ))
+        
+        scanned_at_str = cached.get("scanned_at", str(datetime.now().date()))
+        try:
+            scanned_at = datetime.fromisoformat(scanned_at_str)
+        except (ValueError, TypeError):
+            scanned_at = datetime.now()
+        
+        total_active = sum(opp.get("n_active_signals", 0) for opp in cached.get("opportunities", []))
+        
         return SignalScanResponse(
-            scanned_at=datetime.now(),
+            scanned_at=scanned_at,
             holding_days_tested=holding_days_options,
-            stocks=[],
-            top_opportunities=[],
-            n_active_signals=0,
+            stocks=stocks,
+            top_opportunities=[s.symbol for s in stocks[:3] if s.buy_score > 0],
+            n_active_signals=total_active,
         )
     
-    # Build symbol list (exclude benchmarks)
-    symbol_list = [s.symbol for s in symbols if s.symbol not in ("SPY", "^GSPC", "URTH")]
-    symbol_names = {s.symbol: s.name or s.symbol for s in symbols}
-    
-    # Fetch price data
-    prices_df = await _fetch_prices_for_symbols(symbol_list, lookback_days=1260)
-    
-    if prices_df.empty:
-        return SignalScanResponse(
-            scanned_at=datetime.now(),
-            holding_days_tested=holding_days_options,
-            stocks=[],
-            top_opportunities=[],
-            n_active_signals=0,
-        )
-    
-    # Convert DataFrame to dict of Series
-    price_data = {col: prices_df[col].dropna() for col in prices_df.columns}
-    
-    # Run signal scanner with optimization
-    opportunities = scan_all_stocks(price_data, symbol_names, holding_days_options)
-    
-    # Convert to response
-    stocks = []
-    total_active_signals = 0
-    
-    for opp in opportunities:
-        signal_responses = [
-            SignalResultResponse(
-                name=sig.name,
-                description=sig.description,
-                value=sig.current_value,
-                is_buy_signal=sig.is_buy_signal,
-                strength=sig.signal_strength,
-                optimal_threshold=sig.optimal_threshold,
-                optimal_holding_days=sig.optimal_holding_days,
-                win_rate=sig.win_rate,
-                avg_return_pct=sig.avg_return_pct,
-                max_return_pct=sig.max_return_pct,
-                min_return_pct=sig.min_return_pct,
-                n_signals=sig.n_signals,
-                improvement_pct=sig.improvement_pct,
-            )
-            for sig in opp.signals
-        ]
-        
-        active_signal_responses = [
-            SignalResultResponse(
-                name=sig.name,
-                description=sig.description,
-                value=sig.current_value,
-                is_buy_signal=sig.is_buy_signal,
-                strength=sig.signal_strength,
-                optimal_threshold=sig.optimal_threshold,
-                optimal_holding_days=sig.optimal_holding_days,
-                win_rate=sig.win_rate,
-                avg_return_pct=sig.avg_return_pct,
-                max_return_pct=sig.max_return_pct,
-                min_return_pct=sig.min_return_pct,
-                n_signals=sig.n_signals,
-                improvement_pct=sig.improvement_pct,
-            )
-            for sig in opp.active_signals
-        ]
-        
-        total_active_signals += len(opp.active_signals)
-        
-        stocks.append(StockSignalResponse(
-            symbol=opp.symbol,
-            name=opp.name,
-            buy_score=opp.buy_score,
-            opportunity_type=opp.opportunity_type,
-            opportunity_reason=opp.opportunity_reason,
-            current_price=opp.current_price,
-            price_vs_52w_high_pct=opp.price_vs_52w_high_pct,
-            price_vs_52w_low_pct=opp.price_vs_52w_low_pct,
-            zscore_20d=opp.zscore_20d,
-            zscore_60d=opp.zscore_60d,
-            rsi_14=opp.rsi_14,
-            best_signal_name=opp.best_signal_name,
-            best_holding_days=opp.best_holding_days,
-            best_expected_return=opp.best_expected_return,
-            signals=signal_responses,
-            active_buy_signals=active_signal_responses,
-        ))
-    
-    top_opportunities = [s.symbol for s in stocks[:3] if s.buy_score > 0]
-    
+    # No cache - return empty (job will populate it)
     return SignalScanResponse(
         scanned_at=datetime.now(),
         holding_days_tested=holding_days_options,
-        stocks=stocks,
-        top_opportunities=top_opportunities,
-        n_active_signals=total_active_signals,
+        stocks=[],
+        top_opportunities=[],
+        n_active_signals=0,
     )
 
 
@@ -1724,65 +1522,25 @@ async def scan_signals() -> SignalScanResponse:
     description="""
     Get market-wide risk analysis for all tracked symbols.
     
-    Provides:
-    - Current market regime (bull/bear, high/low volatility)
-    - Average correlation across assets
-    - Diversification opportunities
-    - Sector concentration warnings
+    Returns pre-computed results from the hourly market analysis job.
+    Results are refreshed every hour.
     """,
 )
 async def get_market_analysis() -> dict[str, Any]:
-    """Get global market analysis."""
-    from app.repositories import symbols_orm as symbols_repo
-    from app.quant_engine.analytics import detect_regime, compute_correlation_analysis
+    """Get cached global market analysis."""
+    from app.cache.cache import Cache
     
-    symbols = await symbols_repo.list_symbols()
+    cache = Cache(prefix="market_analysis", default_ttl=3600)
     
-    if not symbols:
-        return {
-            "analyzed_at": datetime.now().isoformat(),
-            "status": "no_data",
-            "message": "No symbols tracked",
-        }
+    # Try to get cached results
+    cached = await cache.get("global")
     
-    symbol_list = [s.symbol for s in symbols if s.symbol not in ("SPY", "^GSPC", "URTH")]
+    if cached:
+        return cached
     
-    prices = await _fetch_prices_for_symbols(symbol_list, lookback_days=400)
-    
-    if prices.empty or len(prices) < 60:
-        return {
-            "analyzed_at": datetime.now().isoformat(),
-            "status": "insufficient_data",
-            "message": "Insufficient price history",
-        }
-    
-    returns = _compute_returns(prices)
-    
-    # Detect regime
-    regime = detect_regime(returns)
-    
-    # Compute correlation analysis
-    corr_analysis = compute_correlation_analysis(returns)
-    
+    # No cache - return empty (job will populate it)
     return {
         "analyzed_at": datetime.now().isoformat(),
-        "n_symbols": len(returns.columns),
-        "regime": {
-            "current": regime.regime,
-            "trend": regime.trend,
-            "volatility": regime.volatility,
-            "description": regime.description,
-            "recommendation": regime.risk_budget_recommendation,
-        },
-        "correlations": {
-            "average": _safe_float(corr_analysis.average_correlation),
-            "n_clusters": corr_analysis.n_clusters,
-            "clusters": corr_analysis.clusters,
-            "stress_correlation": _safe_float(corr_analysis.stress_correlation),
-        },
-        "insights": [
-            f"Market is in a {regime.regime} regime",
-            f"Average correlation: {corr_analysis.average_correlation:.0%}",
-            f"Found {corr_analysis.n_clusters} correlation clusters",
-        ],
+        "status": "computing",
+        "message": "Market analysis is computed hourly. Please try again later.",
     }

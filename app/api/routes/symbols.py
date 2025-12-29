@@ -959,6 +959,7 @@ class AgentAnalysisResponse(BaseModel):
     bullish_count: int = 0
     bearish_count: int = 0
     neutral_count: int = 0
+    agent_pending: bool = False
     analyzed_at: str | None = None
     expires_at: str | None = None
 
@@ -982,7 +983,7 @@ async def get_agent_analysis_endpoint(
     force_refresh: bool = Query(False, description="Force new analysis even if cached"),
 ) -> AgentAnalysisResponse:
     """Get AI agent analysis for a symbol."""
-    from app.services.ai_agents import get_agent_analysis, run_agent_analysis
+    from app.services.ai_agents import get_agent_analysis, queue_agent_analysis
 
     # Verify symbol exists
     sym = await symbol_repo.get_symbol(symbol)
@@ -993,51 +994,35 @@ async def get_agent_analysis_endpoint(
     personas_with_avatars = await get_personas_with_avatars()
 
     # Get existing analysis
-    if not force_refresh:
-        analysis = await get_agent_analysis(symbol)
-        if analysis:
-            # Add avatar URLs to verdicts (only if persona has avatar)
-            analysis_resp = dict(analysis)
-            if "verdicts" in analysis_resp:
-                for v in analysis_resp["verdicts"]:
-                    v["avatar_url"] = get_avatar_url(v.get("agent_id", ""), personas_with_avatars)
-                # Compute signal counts from verdicts
-                bullish, bearish, neutral = _compute_signal_counts(analysis_resp["verdicts"])
-                analysis_resp["bullish_count"] = bullish
-                analysis_resp["bearish_count"] = bearish
-                analysis_resp["neutral_count"] = neutral
-            return AgentAnalysisResponse(**analysis_resp)
+    analysis = await get_agent_analysis(symbol)
+    
+    if analysis and not force_refresh:
+        # Return existing analysis (may be pending)
+        analysis_resp = dict(analysis)
+        if "verdicts" in analysis_resp:
+            for v in analysis_resp["verdicts"]:
+                v["avatar_url"] = get_avatar_url(v.get("agent_id", ""), personas_with_avatars)
+            bullish, bearish, neutral = _compute_signal_counts(analysis_resp["verdicts"])
+            analysis_resp["bullish_count"] = bullish
+            analysis_resp["bearish_count"] = bearish
+            analysis_resp["neutral_count"] = neutral
+        return AgentAnalysisResponse(**analysis_resp)
 
-    # Run new analysis
-    result = await run_agent_analysis(symbol)
-    if not result:
-        raise NotFoundError(f"Could not generate agent analysis for {symbol}")
-
-    # Build verdict responses
-    verdict_responses = [
-        AgentVerdictResponse(
-            agent_id=v.agent_id,
-            agent_name=v.agent_name,
-            signal=v.signal,
-            confidence=v.confidence,
-            reasoning=v.reasoning,
-            key_factors=v.key_factors,
-            avatar_url=get_avatar_url(v.agent_id, personas_with_avatars),
-        )
-        for v in result.verdicts
-    ]
-    bullish, bearish, neutral = _compute_signal_counts(verdict_responses)
-
+    # No analysis or force refresh - queue via batch API
+    await queue_agent_analysis(symbol, force=force_refresh)
+    
+    # Return pending response
     return AgentAnalysisResponse(
-        symbol=result.symbol,
-        verdicts=verdict_responses,
-        overall_signal=result.overall_signal,
-        overall_confidence=result.overall_confidence,
-        summary=result.summary,
-        bullish_count=bullish,
-        bearish_count=bearish,
-        neutral_count=neutral,
-        analyzed_at=result.analyzed_at.isoformat() if result.analyzed_at else None,
+        symbol=symbol,
+        verdicts=[],
+        overall_signal="hold",
+        overall_confidence=0,
+        summary="Analysis queued, check back soon...",
+        bullish_count=0,
+        bearish_count=0,
+        neutral_count=0,
+        agent_pending=True,
+        analyzed_at=None,
     )
 
 
@@ -1051,49 +1036,31 @@ async def get_agent_analysis_endpoint(
 async def refresh_agent_analysis_endpoint(
     symbol: str = Depends(_validate_symbol_path),
 ) -> AgentAnalysisResponse:
-    """Regenerate AI agent analysis for a symbol."""
-    from app.services.ai_agents import run_agent_analysis
+    """Regenerate AI agent analysis for a symbol via batch API."""
+    from app.services.ai_agents import queue_agent_analysis
 
     # Verify symbol exists
     sym = await symbol_repo.get_symbol(symbol)
     if not sym:
         raise NotFoundError(f"Symbol {symbol} not found")
 
-    # Get personas that have avatars
-    personas_with_avatars = await get_personas_with_avatars()
+    # Queue via batch API (50% cheaper)
+    batch_id = await queue_agent_analysis(symbol, force=True)
+    
+    logger.info(f"Queued agent analysis refresh for {symbol}: batch {batch_id}")
 
-    # Run new analysis
-    result = await run_agent_analysis(symbol)
-    if not result:
-        raise NotFoundError(f"Could not generate agent analysis for {symbol}")
-
-    logger.info(f"Refreshed agent analysis for {symbol}: {result.overall_signal} ({result.overall_confidence}%)")
-
-    # Build verdict responses
-    verdict_responses = [
-        AgentVerdictResponse(
-            agent_id=v.agent_id,
-            agent_name=v.agent_name,
-            signal=v.signal,
-            confidence=v.confidence,
-            reasoning=v.reasoning,
-            key_factors=v.key_factors,
-            avatar_url=get_avatar_url(v.agent_id, personas_with_avatars),
-        )
-        for v in result.verdicts
-    ]
-    bullish, bearish, neutral = _compute_signal_counts(verdict_responses)
-
+    # Return pending response
     return AgentAnalysisResponse(
-        symbol=result.symbol,
-        verdicts=verdict_responses,
-        overall_signal=result.overall_signal,
-        overall_confidence=result.overall_confidence,
-        summary=result.summary,
-        bullish_count=bullish,
-        bearish_count=bearish,
-        neutral_count=neutral,
-        analyzed_at=result.analyzed_at.isoformat() if result.analyzed_at else None,
+        symbol=symbol,
+        verdicts=[],
+        overall_signal="hold",
+        overall_confidence=0,
+        summary="Analysis queued, check back soon...",
+        bullish_count=0,
+        bearish_count=0,
+        neutral_count=0,
+        agent_pending=True,
+        analyzed_at=None,
     )
 
 
@@ -1159,7 +1126,7 @@ async def refresh_symbol_full(
     Use sparingly - triggers multiple API calls and AI generations.
     """
     from app.services.logo_service import LogoTheme, get_logo
-    from app.services.ai_agents import run_agent_analysis
+    from app.services.ai_agents import queue_agent_analysis
     
     symbol_upper = symbol.upper().strip()
     tasks_triggered = []
@@ -1228,14 +1195,14 @@ async def refresh_symbol_full(
         tasks_triggered.append("ai_analysis:queued")
         logger.info(f"Queued {symbol_upper} for AI analysis regeneration")
     
-    # 5. Refresh AI agents (immediate)
+    # 5. Refresh AI agents via batch API (non-blocking)
     if refresh_ai_agents:
         try:
-            result = await run_agent_analysis(symbol_upper)
-            tasks_triggered.append(f"ai_agents:{result.overall_signal}")
-            logger.info(f"Refreshed AI agents for {symbol_upper}: {result.overall_signal}")
+            await queue_agent_analysis(symbol_upper, force=True)
+            tasks_triggered.append("ai_agents:queued")
+            logger.info(f"Queued AI agents batch for {symbol_upper}")
         except Exception as e:
-            logger.warning(f"Failed to refresh AI agents for {symbol_upper}: {e}")
+            logger.warning(f"Failed to queue AI agents for {symbol_upper}: {e}")
             tasks_triggered.append(f"ai_agents:failed ({e})")
     
     return FullRefreshResponse(

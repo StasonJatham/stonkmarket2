@@ -27,8 +27,6 @@ from app.services.openai_client import (
     TaskType,
     check_batch,
     collect_batch,
-    generate_bio,
-    rate_dip,
     submit_batch,
 )
 from app.services.statistical_rating import calculate_rating
@@ -477,7 +475,7 @@ async def _process_batch_results(
 
 
 async def _store_dip_analysis(symbol: str, content: dict | str, batch_id: str) -> None:
-    """Store AI rating analysis for a dip."""
+    """Store AI rating analysis for a dip and clear pending flag."""
     # Handle both dict (from RATING batch) and legacy string formats
     if isinstance(content, dict):
         rating = content.get("rating")  # String like "buy", "hold", "sell"
@@ -498,6 +496,7 @@ async def _store_dip_analysis(symbol: str, content: dict | str, batch_id: str) -
             model_used="gpt-5-mini",
             is_batch_generated=True,
             batch_job_id=batch_id,
+            ai_pending=False,  # Clear pending flag
             generated_at=datetime.now(UTC),
             expires_at=expires_at,
         )
@@ -508,6 +507,7 @@ async def _store_dip_analysis(symbol: str, content: dict | str, batch_id: str) -
                 "rating_reasoning": stmt.excluded.rating_reasoning,
                 "is_batch_generated": True,
                 "batch_job_id": stmt.excluded.batch_job_id,
+                "ai_pending": False,  # Clear pending flag
                 "generated_at": datetime.now(UTC),
                 "expires_at": stmt.excluded.expires_at,
             },
@@ -525,13 +525,17 @@ async def run_realtime_analysis_for_new_stock(
     dip_percentage: float | None = None,
 ) -> dict:
     """
-    Run real-time AI analysis for a newly added stock.
+    Queue AI analysis for a newly added stock via batch API.
 
     Called when a stock is approved from suggestions and added to dips.
+    Uses batch API (50% cheaper) - caller should handle pending UI state.
+    
+    Returns immediately with pending status. AI content will be available
+    after batch processing completes (typically within 15-30 minutes).
     """
     from app.services import stock_info
 
-    logger.info(f"Running real-time AI analysis for new stock: {symbol}")
+    logger.info(f"Queueing batch AI analysis for new stock: {symbol}")
 
     try:
         # Fetch stock info for context
@@ -541,68 +545,145 @@ async def run_realtime_analysis_for_new_stock(
         summary = info.get("summary") if info else None
         pe_ratio = info.get("pe_ratio") if info else None
 
-        # Generate bio
-        bio = await generate_bio(
-            symbol=symbol,
-            name=name,
-            sector=sector,
-            summary=summary,
-            dip_pct=dip_percentage,
-        )
-
-        # Get rating
-        rating_data = await rate_dip(
-            symbol=symbol,
-            current_price=current_price,
-            ref_high=ath_price,
-            dip_pct=dip_percentage,
-            days_below=0,  # New stock
-            name=name,
-            sector=sector,
-            summary=summary,
-            pe_ratio=pe_ratio,
-        )
-
-        # Store the analysis
-        expires_at = datetime.now(UTC) + timedelta(days=7)
-
+        # Mark as pending in database
         async with get_session() as session:
             stmt = insert(DipAIAnalysis).values(
                 symbol=symbol.upper(),
-                swipe_bio=bio,
-                ai_rating=rating_data.get("rating") if rating_data else None,
-                rating_reasoning=rating_data.get("reasoning", "") if rating_data else "",
-                model_used="gpt-5-mini",
-                is_batch_generated=False,
+                ai_pending=True,
+                is_batch_generated=True,
                 generated_at=datetime.now(UTC),
-                expires_at=expires_at,
             )
             stmt = stmt.on_conflict_do_update(
                 index_elements=["symbol"],
                 set_={
-                    "swipe_bio": stmt.excluded.swipe_bio,
-                    "ai_rating": stmt.excluded.ai_rating,
-                    "rating_reasoning": stmt.excluded.rating_reasoning,
-                    "is_batch_generated": False,
-                    "generated_at": datetime.now(UTC),
-                    "expires_at": stmt.excluded.expires_at,
+                    "ai_pending": True,
+                    "is_batch_generated": True,
                 },
             )
             await session.execute(stmt)
             await session.commit()
 
-        logger.info(f"Completed real-time analysis for {symbol}")
+        # Prepare batch item
+        fundamentals = {}
+        try:
+            from app.services.fundamentals import get_fundamentals_for_analysis
+            fundamentals = await get_fundamentals_for_analysis(symbol)
+        except Exception:
+            pass
+
+        batch_item = {
+            "symbol": symbol,
+            "name": name,
+            "sector": sector,
+            "summary": summary,
+            "current_price": current_price,
+            "ref_high": ath_price,
+            "dip_pct": dip_percentage,
+            "days_below": 0,
+            "pe_ratio": pe_ratio,
+            **fundamentals,
+        }
+
+        # Submit to batch API
+        batch_id = await submit_batch(task=TaskType.RATING, items=[batch_item])
+        bio_batch_id = await submit_batch(task=TaskType.BIO, items=[batch_item])
+
+        logger.info(f"Queued batch AI for {symbol}: rating={batch_id}, bio={bio_batch_id}")
 
         return {
             "symbol": symbol,
-            "bio": bio,
-            "rating": rating_data.get("rating") if rating_data else None,
-            "reasoning": rating_data.get("reasoning", "") if rating_data else "",
+            "status": "pending",
+            "batch_id": batch_id,
+            "bio_batch_id": bio_batch_id,
         }
 
     except Exception as e:
-        logger.error(f"Failed to run real-time analysis for {symbol}: {e}")
-        return {"symbol": symbol, "error": str(e)}
+        logger.error(f"Failed to queue batch analysis for {symbol}: {e}")
+        return {"symbol": symbol, "status": "error", "error": str(e)}
+
+
+async def queue_ai_for_symbols(symbols: list[str]) -> dict:
+    """
+    Queue AI analysis for multiple symbols via batch API.
+    
+    This is the primary entry point for queueing AI content generation.
+    Marks symbols as pending and submits to OpenAI Batch API.
+    
+    Args:
+        symbols: List of symbols to queue for AI analysis
+        
+    Returns:
+        Dict with batch_ids and pending count
+    """
+    from app.services import stock_info
+    from app.services.fundamentals import get_fundamentals_for_analysis
+    from app.repositories import dip_state_repo
+    
+    if not symbols:
+        return {"pending": 0, "batch_ids": []}
+    
+    logger.info(f"Queueing batch AI analysis for {len(symbols)} symbols")
+    
+    # Mark all as pending
+    async with get_session() as session:
+        for symbol in symbols:
+            stmt = insert(DipAIAnalysis).values(
+                symbol=symbol.upper(),
+                ai_pending=True,
+                is_batch_generated=True,
+                generated_at=datetime.now(UTC),
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["symbol"],
+                set_={
+                    "ai_pending": True,
+                },
+            )
+            await session.execute(stmt)
+        await session.commit()
+    
+    # Build batch items
+    batch_items = []
+    for symbol in symbols:
+        try:
+            dip_state = await dip_state_repo.get_dip_state(symbol)
+            info = await stock_info.get_stock_info_async(symbol)
+            fundamentals = await get_fundamentals_for_analysis(symbol)
+            
+            batch_items.append({
+                "symbol": symbol,
+                "name": info.get("name") if info else None,
+                "sector": info.get("sector") if info else None,
+                "summary": info.get("summary") if info else None,
+                "current_price": float(dip_state.current_price) if dip_state and dip_state.current_price else None,
+                "ref_high": float(dip_state.ath_price) if dip_state and dip_state.ath_price else None,
+                "dip_pct": float(dip_state.dip_percentage) if dip_state and dip_state.dip_percentage else None,
+                "days_below": 0,
+                **fundamentals,
+            })
+        except Exception as e:
+            logger.warning(f"Failed to prepare batch item for {symbol}: {e}")
+    
+    if not batch_items:
+        return {"pending": 0, "batch_ids": []}
+    
+    # Submit batches
+    batch_ids = []
+    try:
+        rating_batch_id = await submit_batch(task=TaskType.RATING, items=batch_items)
+        if rating_batch_id:
+            batch_ids.append(rating_batch_id)
+        
+        bio_batch_id = await submit_batch(task=TaskType.BIO, items=batch_items)
+        if bio_batch_id:
+            batch_ids.append(bio_batch_id)
+    except Exception as e:
+        logger.error(f"Failed to submit batch: {e}")
+    
+    return {
+        "pending": len(batch_items),
+        "batch_ids": batch_ids,
+    }
 
 
 # ============================================================================

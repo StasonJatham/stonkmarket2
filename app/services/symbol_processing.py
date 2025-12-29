@@ -11,7 +11,7 @@ from app.repositories import dip_state_orm as dip_state_repo
 from app.repositories import dip_votes_orm as dip_votes_repo
 from app.repositories import suggestions_orm as suggestions_repo
 from app.repositories import symbols_orm as symbols_repo
-from app.services.openai_client import generate_bio, rate_dip, summarize_company
+from app.services.openai_client import summarize_company
 from app.services.runtime_settings import get_runtime_setting
 from app.services.statistical_rating import calculate_rating
 from app.services.stock_info import get_stock_info_async
@@ -155,90 +155,34 @@ async def process_new_symbol(symbol: str) -> None:
         else:
             logger.info("[NEW SYMBOL] Step 5: Skipped AI summary (no description or too short)")
 
-        # Step 6/7: Generate AI content only if missing
+        # Step 6/7: Queue AI content for batch processing (50% cheaper than real-time)
         existing_ai = await dip_votes_repo.get_ai_analysis(symbol)
         existing_bio = existing_ai.get("swipe_bio") if existing_ai else None
         existing_rating = existing_ai.get("ai_rating") if existing_ai else None
-        existing_reasoning = existing_ai.get("ai_reasoning") if existing_ai else None
 
-        bio = existing_bio
-        rating_data = None
-        generated_ai = False
-
-        if not existing_bio:
+        if not existing_bio or not existing_rating:
             try:
-                bio = await generate_bio(
-                    symbol=symbol,
-                    name=name,
-                    sector=sector,
-                    summary=full_summary,
-                    dip_pct=dip_pct,
-                )
-                if bio:
-                    steps_completed.append("ai_bio")
-                    generated_ai = True
-                    logger.info("[NEW SYMBOL] Step 6: Generated AI bio")
-                else:
-                    logger.warning("[NEW SYMBOL] Step 6: No AI bio generated (OpenAI not configured?)")
+                from app.services.batch_scheduler import queue_ai_for_symbols
+                await queue_ai_for_symbols([symbol])
+                steps_completed.append("ai_queued")
+                logger.info("[NEW SYMBOL] Step 6/7: Queued AI bio+rating for batch processing")
             except Exception as exc:
-                logger.warning(f"[NEW SYMBOL] Step 6 FAILED: AI bio error for {symbol}: {exc}")
+                logger.warning(f"[NEW SYMBOL] Step 6/7 FAILED: Could not queue AI batch: {exc}")
         else:
-            logger.info("[NEW SYMBOL] Step 6: Skipped AI bio (already cached)")
+            logger.info("[NEW SYMBOL] Step 6/7: Skipped AI (already cached)")
 
-        if not existing_rating:
-            try:
-                fundamentals = await get_fundamentals_for_analysis(symbol)
-                rating_data = await rate_dip(
-                    symbol=symbol,
-                    current_price=current_price,
-                    ref_high=ath_price,
-                    dip_pct=dip_pct,
-                    days_below=0,
-                    name=name,
-                    sector=sector,
-                    summary=full_summary,
-                    **fundamentals,
-                )
-                if rating_data:
-                    steps_completed.append("ai_rating")
-                    generated_ai = True
-                    logger.info("[NEW SYMBOL] Step 7: Generated AI rating")
-            except Exception as exc:
-                logger.warning(f"[NEW SYMBOL] Step 7 FAILED: AI rating error for {symbol}: {exc}")
-        else:
-            logger.info("[NEW SYMBOL] Step 7: Skipped AI rating (already cached)")
-
-        # Step 8: Store AI analysis if we generated anything new
-        if generated_ai:
-            try:
-                await dip_votes_repo.upsert_ai_analysis(
-                    symbol=symbol.upper(),
-                    swipe_bio=bio,
-                    ai_rating=rating_data.get("rating") if rating_data else existing_rating,
-                    ai_reasoning=rating_data.get("reasoning") if rating_data else existing_reasoning,
-                    is_batch=False,
-                )
-                steps_completed.append("ai_store")
-                logger.info("[NEW SYMBOL] Step 8: Stored AI analysis")
-            except Exception as exc:
-                logger.warning(f"[NEW SYMBOL] Step 8 FAILED: Could not store AI analysis: {exc}")
-
-        # Step 8.5: Run AI agent analysis
+        # Step 8.5: Queue AI agent analysis via batch (if not already queued)
         try:
-            from app.services.ai_agents import run_agent_analysis
+            from app.services.ai_agents import submit_agent_batch
 
-            agent_result = await run_agent_analysis(symbol)
-            if agent_result:
-                steps_completed.append("ai_agents")
-                logger.info(
-                    "[NEW SYMBOL] Step 8.5: AI agents: %s (%s%%)",
-                    agent_result.overall_signal,
-                    agent_result.overall_confidence,
-                )
+            batch_result = await submit_agent_batch([symbol])
+            if batch_result:
+                steps_completed.append("ai_agents_queued")
+                logger.info("[NEW SYMBOL] Step 8.5: Queued AI agents for batch processing")
             else:
-                logger.warning("[NEW SYMBOL] Step 8.5: No agent analysis generated")
+                logger.warning("[NEW SYMBOL] Step 8.5: Could not queue agent batch")
         except Exception as exc:
-            logger.warning(f"[NEW SYMBOL] Step 8.5 FAILED: AI agents error for {symbol}: {exc}")
+            logger.warning(f"[NEW SYMBOL] Step 8.5 FAILED: AI agents queue error for {symbol}: {exc}")
 
         # Step 9: Invalidate caches
         try:
@@ -402,66 +346,23 @@ async def process_approved_symbol(symbol: str) -> None:
             existing_ai = await dip_votes_repo.get_ai_analysis(symbol)
             existing_bio = existing_ai.get("swipe_bio") if existing_ai else None
             existing_rating = existing_ai.get("ai_rating") if existing_ai else None
-            existing_reasoning = existing_ai.get("ai_reasoning") if existing_ai else None
 
-            bio = existing_bio
-            rating_data = None
-            generated_ai = False
-
-            if not existing_bio:
-                bio = await generate_bio(
-                    symbol=symbol,
-                    dip_pct=dip_pct,
-                )
-                if bio:
-                    generated_ai = True
+            if not existing_bio or not existing_rating:
+                try:
+                    from app.services.batch_scheduler import queue_ai_for_symbols
+                    await queue_ai_for_symbols([symbol])
+                    logger.info(f"Queued AI content for {symbol} via batch API")
+                except Exception as exc:
+                    logger.warning(f"Failed to queue AI batch for {symbol}: {exc}")
             else:
-                logger.info(f"Skipped AI bio for {symbol} (already cached)")
-
-            if not existing_rating:
-                rating_data = await rate_dip(
-                    symbol=symbol,
-                    current_price=current_price,
-                    ref_high=ath_price,
-                    dip_pct=dip_pct,
-                )
-                if rating_data:
-                    generated_ai = True
-            else:
-                logger.info(f"Skipped AI rating for {symbol} (already cached)")
-
-            if generated_ai:
-                await dip_votes_repo.upsert_ai_analysis(
-                    symbol=symbol,
-                    swipe_bio=bio,
-                    ai_rating=rating_data.get("rating") if rating_data else existing_rating,
-                    ai_reasoning=rating_data.get("reasoning") if rating_data else existing_reasoning,
-                    is_batch=False,
-                )
-                logger.info(
-                    "Generated AI content for %s: bio=%s, rating=%s",
-                    symbol,
-                    "yes" if bio else "no",
-                    rating_data.get("rating") if rating_data else existing_rating or "none",
-                )
-            else:
-                logger.info(f"No AI generation needed for {symbol}")
+                logger.info(f"AI content already cached for {symbol}")
 
             try:
-                from app.services.ai_agents import run_agent_analysis
-
-                agent_result = await run_agent_analysis(symbol)
-                if agent_result:
-                    logger.info(
-                        "AI agents for %s: %s (%s%%)",
-                        symbol,
-                        agent_result.overall_signal,
-                        agent_result.overall_confidence,
-                    )
-                else:
-                    logger.warning(f"No agent analysis generated for {symbol}")
+                from app.services.ai_agents import submit_agent_batch
+                await submit_agent_batch([symbol])
+                logger.info(f"Queued AI agents for {symbol} via batch API")
             except Exception as exc:
-                logger.warning(f"AI agents error for {symbol}: {exc}")
+                logger.warning(f"AI agents queue error for {symbol}: {exc}")
         else:
             logger.info(f"AI enrichment disabled, skipping AI content generation for {symbol}")
 
