@@ -2426,7 +2426,6 @@ export interface Portfolio {
   name: string;
   description?: string | null;
   base_currency: string;
-  cash_balance?: number | null;
   is_active: boolean;
   created_at: string;
   updated_at?: string | null;
@@ -2585,7 +2584,6 @@ export async function createPortfolio(payload: {
   name: string;
   description?: string;
   base_currency?: string;
-  cash_balance?: number;
 }): Promise<Portfolio> {
   const result = await fetchAPI<Portfolio>('/portfolios', {
     method: 'POST',
@@ -2601,7 +2599,6 @@ export async function updatePortfolio(
     name: string;
     description: string;
     base_currency: string;
-    cash_balance: number;
     is_active: boolean;
   }>
 ): Promise<Portfolio> {

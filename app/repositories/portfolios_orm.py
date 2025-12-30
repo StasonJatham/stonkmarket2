@@ -31,7 +31,6 @@ def _portfolio_to_dict(p: Portfolio) -> dict[str, Any]:
         "name": p.name,
         "description": p.description,
         "base_currency": p.base_currency,
-        "cash_balance": p.cash_balance,
         "is_active": p.is_active,
         "created_at": p.created_at,
         "updated_at": p.updated_at,
@@ -44,7 +43,6 @@ async def create_portfolio(
     *,
     description: str | None = None,
     base_currency: str = "USD",
-    cash_balance: Decimal | float | int = 0,
 ) -> dict[str, Any]:
     """Create a new portfolio."""
     async with get_session() as session:
@@ -53,7 +51,6 @@ async def create_portfolio(
             name=name,
             description=description,
             base_currency=base_currency,
-            cash_balance=Decimal(str(cash_balance)),
             is_active=True,
         )
         session.add(portfolio)
@@ -105,7 +102,6 @@ async def update_portfolio(
     name: str | None = None,
     description: str | None = None,
     base_currency: str | None = None,
-    cash_balance: Decimal | float | int | None = None,
     is_active: bool | None = None,
 ) -> dict[str, Any] | None:
     """Update a portfolio."""
@@ -126,8 +122,6 @@ async def update_portfolio(
             portfolio.description = description
         if base_currency is not None:
             portfolio.base_currency = base_currency
-        if cash_balance is not None:
-            portfolio.cash_balance = Decimal(str(cash_balance))
         if is_active is not None:
             portfolio.is_active = is_active
 

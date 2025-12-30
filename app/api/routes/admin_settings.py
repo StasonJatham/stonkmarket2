@@ -498,3 +498,53 @@ async def revert_settings_change(
         reverted_setting_key=setting_key,
         restored_value=restored_value,
     )
+
+
+# =============================================================================
+# FINANCIAL UNIVERSE (FinanceDatabase)
+# =============================================================================
+
+
+@router.get(
+    "/universe/stats",
+    summary="Get financial universe statistics",
+    description="Get statistics about the FinanceDatabase universe (130K+ symbols).",
+)
+async def get_universe_stats(
+    user: TokenData = Depends(require_admin),
+) -> dict:
+    """Get counts and last update time for the financial universe."""
+    from app.services.financedatabase_service import get_universe_stats
+    
+    return await get_universe_stats()
+
+
+@router.post(
+    "/universe/sync",
+    summary="Trigger universe sync",
+    description="Manually trigger a sync from FinanceDatabase. Usually runs weekly.",
+)
+async def trigger_universe_sync(
+    user: TokenData = Depends(require_admin),
+) -> dict:
+    """Trigger manual universe sync from FinanceDatabase."""
+    from app.services.financedatabase_service import ingest_universe
+    
+    logger.info(f"Manual universe sync triggered by {user.username}")
+    
+    try:
+        stats = await ingest_universe()
+        total = sum(stats.values())
+        
+        return {
+            "success": True,
+            "message": f"Synced {total} symbols from FinanceDatabase",
+            "stats": stats,
+        }
+    except Exception as e:
+        logger.exception(f"Universe sync failed: {e}")
+        return {
+            "success": False,
+            "message": str(e),
+            "stats": {},
+        }

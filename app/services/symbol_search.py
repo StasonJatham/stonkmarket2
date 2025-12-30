@@ -44,7 +44,7 @@ from sqlalchemy.exc import ProgrammingError
 
 from app.core.logging import get_logger
 from app.database.connection import get_session
-from app.database.orm import StockFundamentals, Symbol, SymbolSearchLog, SymbolSearchResult
+from app.database.orm import FinancialUniverse, StockFundamentals, Symbol, SymbolSearchLog, SymbolSearchResult
 from app.services.data_providers import get_yfinance_service
 
 
@@ -122,7 +122,11 @@ async def _search_local_db(
     """
     Search local database for symbols with cursor pagination.
     
-    Searches both symbols table and symbol_search_results table.
+    Search order (priority):
+    1. symbols table (tracked stocks - highest priority)
+    2. financial_universe table (FinanceDatabase - 130K+ symbols)
+    3. symbol_search_results table (previously cached API results)
+    
     Returns combined results sorted by relevance, with pagination support.
     
     Args:
@@ -137,16 +141,29 @@ async def _search_local_db(
     normalized = _normalize_query(query)
     fetch_limit = limit * 5
 
-    def _base_score(symbol: str, name: str | None) -> float:
+    def _base_score(symbol: str, name: str | None, source: str = "local") -> float:
         symbol_upper = (symbol or "").upper()
         name_upper = (name or "").upper()
+        
+        # Base score based on match quality
         if symbol_upper == normalized:
-            return 1.00
-        if symbol_upper.startswith(normalized):
-            return 0.90
-        if normalized in name_upper:
-            return 0.70
-        return 0.50
+            base = 1.00  # Exact symbol match
+        elif symbol_upper.startswith(normalized):
+            base = 0.90  # Symbol prefix
+        elif normalized in symbol_upper:
+            base = 0.80  # Symbol contains
+        elif name_upper.startswith(normalized):
+            base = 0.75  # Name starts with
+        elif normalized in name_upper:
+            base = 0.65  # Name contains
+        else:
+            base = 0.50  # Fuzzy match only
+        
+        # Source priority boost (tracked symbols get +5% boost)
+        if source == "local":
+            base = min(1.0, base + 0.05)
+        
+        return base
 
     def _build_symbol_stmt(use_similarity: bool):
         columns = [
@@ -173,6 +190,46 @@ async def _search_local_db(
             select(*columns)
             .where(Symbol.is_active == True)
             .where(or_(*conditions))
+            .limit(fetch_limit)
+        )
+
+    def _build_universe_stmt(use_similarity: bool):
+        """Search FinanceDatabase universe for broader coverage."""
+        columns = [
+            FinancialUniverse.id.label("id"),
+            FinancialUniverse.symbol.label("symbol"),
+            FinancialUniverse.name.label("name"),
+            FinancialUniverse.sector.label("sector"),
+            FinancialUniverse.asset_class.label("asset_class"),
+            FinancialUniverse.country.label("country"),
+            FinancialUniverse.exchange.label("exchange"),
+            FinancialUniverse.market_cap_category.label("market_cap_category"),
+        ]
+        if use_similarity:
+            columns.append(func.similarity(FinancialUniverse.name, normalized).label("name_similarity"))
+        else:
+            columns.append(literal(0).label("name_similarity"))
+
+        conditions = [
+            FinancialUniverse.symbol.ilike(f"{normalized}%"),
+            FinancialUniverse.name.ilike(f"%{normalized}%"),
+        ]
+        if use_similarity:
+            conditions.append(func.similarity(FinancialUniverse.name, normalized) > 0.2)
+
+        # Exclude symbols already in our tracked symbols
+        tracked_symbols = select(Symbol.symbol).where(Symbol.is_active == True)
+
+        return (
+            select(*columns)
+            .where(FinancialUniverse.is_active == True)
+            .where(~FinancialUniverse.symbol.in_(tracked_symbols))
+            .where(or_(*conditions))
+            # Prioritize equities and ETFs over other asset classes
+            .order_by(
+                # Put equity/etf first
+                (FinancialUniverse.asset_class.in_(["equity", "etf"])).desc(),
+            )
             .limit(fetch_limit)
         )
 
@@ -212,12 +269,14 @@ async def _search_local_db(
     async with get_session() as session:
         try:
             symbol_rows = (await session.execute(_build_symbol_stmt(use_trigram))).mappings().all()
+            universe_rows = (await session.execute(_build_universe_stmt(use_trigram))).mappings().all()
             cached_rows = (await session.execute(_build_cached_stmt(use_trigram))).mappings().all()
         except ProgrammingError as exc:
             if use_trigram:
                 logger.warning(f"pg_trgm unavailable, falling back to basic search: {exc}")
                 use_trigram = False
                 symbol_rows = (await session.execute(_build_symbol_stmt(False))).mappings().all()
+                universe_rows = (await session.execute(_build_universe_stmt(False))).mappings().all()
                 cached_rows = (await session.execute(_build_cached_stmt(False))).mappings().all()
             else:
                 raise
@@ -225,8 +284,9 @@ async def _search_local_db(
     results = []
     seen_symbols = set()
 
+    # 1. Tracked symbols (highest priority)
     for r in symbol_rows:
-        base = _base_score(r["symbol"], r["name"])
+        base = _base_score(r["symbol"], r["name"], source="local")
         name_similarity = float(r.get("name_similarity") or 0)
         final_score = base * 0.7 + name_similarity * 0.3 if use_trigram else base
         results.append(
@@ -244,10 +304,51 @@ async def _search_local_db(
         )
         seen_symbols.add(r["symbol"])
 
+    # 2. FinanceDatabase universe (comprehensive coverage)
+    for r in universe_rows:
+        if r["symbol"] in seen_symbols:
+            continue
+        base = _base_score(r["symbol"], r["name"], source="universe")
+        name_similarity = float(r.get("name_similarity") or 0)
+        final_score = base * 0.7 + name_similarity * 0.3 if use_trigram else base
+        
+        # Map asset_class to quote_type
+        asset_class = r.get("asset_class", "equity")
+        quote_type_map = {
+            "equity": "EQUITY",
+            "etf": "ETF",
+            "fund": "MUTUALFUND",
+            "index": "INDEX",
+            "crypto": "CRYPTOCURRENCY",
+            "currency": "CURRENCY",
+            "moneymarket": "MONEYMARKET",
+        }
+        quote_type = quote_type_map.get(asset_class, "EQUITY")
+        
+        results.append(
+            {
+                "id": r["id"],
+                "symbol": r["symbol"],
+                "name": r["name"],
+                "sector": r["sector"],
+                "quote_type": quote_type,
+                "market_cap": None,  # Universe doesn't store numeric market_cap
+                "pe_ratio": None,
+                "source": "universe",
+                "score": round(final_score, 3),
+                # Extra metadata for frontend
+                "country": r.get("country"),
+                "exchange": r.get("exchange"),
+                "market_cap_category": r.get("market_cap_category"),
+            }
+        )
+        seen_symbols.add(r["symbol"])
+
+    # 3. Cached API results (lowest priority - already queried from yfinance)
     for r in cached_rows:
         if r["symbol"] in seen_symbols:
             continue
-        base = float(r.get("confidence_score") or _base_score(r["symbol"], r["name"]))
+        base = float(r.get("confidence_score") or _base_score(r["symbol"], r["name"], source="cached"))
         name_similarity = float(r.get("name_similarity") or 0)
         final_score = base * 0.7 + name_similarity * 0.3 if use_trigram else base
         results.append(
@@ -485,6 +586,42 @@ async def lookup_symbol(symbol: str) -> dict[str, Any] | None:
             "quote_type": (cached_row.quote_type or "EQUITY").upper(),
             "market_cap": float(cached_row.market_cap) if cached_row.market_cap else None,
             "source": "cached",
+            "valid": True,
+        }
+
+    # Check financial universe (FinanceDatabase)
+    async with get_session() as session:
+        result = await session.execute(
+            select(FinancialUniverse).where(
+                FinancialUniverse.symbol == symbol,
+                FinancialUniverse.is_active == True,
+            )
+        )
+        universe_row = result.scalar_one_or_none()
+
+    if universe_row:
+        # Map asset_class to quote_type
+        quote_type_map = {
+            "equity": "EQUITY",
+            "etf": "ETF",
+            "fund": "MUTUALFUND",
+            "index": "INDEX",
+            "crypto": "CRYPTOCURRENCY",
+            "currency": "CURRENCY",
+            "moneymarket": "MONEYMARKET",
+        }
+        quote_type = quote_type_map.get(universe_row.asset_class, "EQUITY")
+        
+        return {
+            "symbol": universe_row.symbol,
+            "name": universe_row.name,
+            "sector": universe_row.sector,
+            "quote_type": quote_type,
+            "market_cap": None,
+            "country": universe_row.country,
+            "exchange": universe_row.exchange,
+            "industry": universe_row.industry,
+            "source": "universe",
             "valid": True,
         }
 

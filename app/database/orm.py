@@ -937,6 +937,93 @@ class SymbolSearchLog(Base):
 
 
 # =============================================================================
+# FINANCIAL UNIVERSE (from FinanceDatabase)
+# =============================================================================
+
+
+class FinancialUniverse(Base):
+    """Comprehensive financial instrument universe from FinanceDatabase.
+    
+    Contains ~130K symbols across asset classes:
+    - Equities (~24K) - stocks with sector/industry/country metadata
+    - ETFs (~3K) - category/family groupings
+    - Funds (~31K) - mutual funds with category info
+    - Indices (~62K) - market indices
+    - Cryptos (~3K) - cryptocurrencies
+    - Currencies (~3K) - forex pairs
+    - Moneymarkets (~1K) - money market instruments
+    
+    Used for:
+    - Fast local autocomplete/search before API calls
+    - Symbol validation without external API
+    - Sector/industry/country faceting
+    - ISIN/CUSIP/FIGI identifier resolution
+    
+    Synced weekly from financedatabase Python package.
+    """
+    __tablename__ = "financial_universe"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(30), unique=True, nullable=False)
+    name: Mapped[str | None] = mapped_column(String(255))
+    
+    # Asset classification
+    asset_class: Mapped[str] = mapped_column(String(20), nullable=False)  # equity, etf, fund, index, crypto, currency, moneymarket
+    
+    # Sector/Industry (primarily for equities)
+    sector: Mapped[str | None] = mapped_column(String(100))  # e.g., "Technology", "Health Care"
+    industry_group: Mapped[str | None] = mapped_column(String(150))  # e.g., "Software & Services"
+    industry: Mapped[str | None] = mapped_column(String(150))  # e.g., "Systems Software"
+    
+    # For ETFs/Funds: category groupings
+    category_group: Mapped[str | None] = mapped_column(String(100))  # ETF/Fund category group
+    category: Mapped[str | None] = mapped_column(String(100))  # ETF/Fund category
+    family: Mapped[str | None] = mapped_column(String(100))  # Fund family (e.g., "Vanguard")
+    
+    # Market/Exchange info
+    exchange: Mapped[str | None] = mapped_column(String(50))  # Exchange code (e.g., "NYQ", "NMS")
+    market: Mapped[str | None] = mapped_column(String(100))  # Market name (e.g., "NASDAQ")
+    country: Mapped[str | None] = mapped_column(String(100))  # Country of domicile
+    currency: Mapped[str | None] = mapped_column(String(10))  # Trading currency
+    
+    # Unique identifiers for cross-referencing
+    isin: Mapped[str | None] = mapped_column(String(12))  # International Securities Identification Number
+    cusip: Mapped[str | None] = mapped_column(String(9))  # US/Canada identifier
+    figi: Mapped[str | None] = mapped_column(String(12))  # Bloomberg FIGI
+    composite_figi: Mapped[str | None] = mapped_column(String(12))  # Composite FIGI
+    
+    # Size classification
+    market_cap_category: Mapped[str | None] = mapped_column(String(20))  # mega, large, mid, small, micro
+    
+    # Business summary (truncated for space efficiency)
+    summary: Mapped[str | None] = mapped_column(Text)
+    
+    # Metadata
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    source_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # When FinanceDB data was updated
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "asset_class IN ('equity', 'etf', 'fund', 'index', 'crypto', 'currency', 'moneymarket')",
+            name="ck_universe_asset_class",
+        ),
+        Index("idx_universe_symbol", "symbol"),
+        Index("idx_universe_name", "name"),  # For LIKE searches; trigram GIN added via migration
+        Index("idx_universe_asset_class", "asset_class"),
+        Index("idx_universe_sector", "sector"),
+        Index("idx_universe_industry", "industry"),
+        Index("idx_universe_country", "country"),
+        Index("idx_universe_exchange", "exchange"),
+        Index("idx_universe_isin", "isin", postgresql_where=text("isin IS NOT NULL")),
+        Index("idx_universe_cusip", "cusip", postgresql_where=text("cusip IS NOT NULL")),
+        Index("idx_universe_figi", "figi", postgresql_where=text("figi IS NOT NULL")),
+        Index("idx_universe_active", "is_active", "asset_class"),
+    )
+
+
+# =============================================================================
 # PORTFOLIOS & HOLDINGS
 # =============================================================================
 
@@ -950,7 +1037,6 @@ class Portfolio(Base):
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     base_currency: Mapped[str] = mapped_column(String(10), default="USD")
-    cash_balance: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), default=Decimal("0.0"))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

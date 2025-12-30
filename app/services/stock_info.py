@@ -2,6 +2,7 @@
 
 Provides stock info in the format expected by the StockInfo schema.
 Uses the unified yfinance service for all API calls.
+Uses FinancialUniverse as fallback for sector/country when yfinance data is missing.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ from typing import Any
 from app.core.logging import get_logger
 from app.schemas.dips import StockInfo
 from app.services.data_providers import get_yfinance_service
+from app.services import financedatabase_service
 
 
 logger = get_logger("services.stock_info")
@@ -28,14 +30,48 @@ def is_index_or_etf(symbol: str, quote_type: str | None = None) -> bool:
     return False
 
 
+async def _enrich_from_universe(symbol: str, info: dict[str, Any]) -> dict[str, Any]:
+    """Enrich stock info with sector/country from FinancialUniverse if missing.
+    
+    Falls back to local universe data when yfinance doesn't return sector/country.
+    This is common for non-US stocks or when yfinance has incomplete data.
+    """
+    # Only look up universe if sector or country is missing
+    if info.get("sector") and info.get("country"):
+        return info
+    
+    try:
+        universe_data = await financedatabase_service.get_by_symbol(symbol)
+        if universe_data:
+            if not info.get("sector") and universe_data.get("sector"):
+                info["sector"] = universe_data["sector"]
+                logger.debug(f"Enriched {symbol} sector from universe: {universe_data['sector']}")
+            if not info.get("country") and universe_data.get("country"):
+                info["country"] = universe_data["country"]
+                logger.debug(f"Enriched {symbol} country from universe: {universe_data['country']}")
+            if not info.get("industry") and universe_data.get("industry"):
+                info["industry"] = universe_data["industry"]
+    except Exception as e:
+        logger.warning(f"Failed to enrich {symbol} from universe: {e}")
+    
+    return info
+
+
 async def get_stock_info(symbol: str) -> StockInfo | None:
-    """Fetch detailed stock info using unified yfinance service."""
+    """Fetch detailed stock info using unified yfinance service.
+    
+    Enriches with FinancialUniverse data as fallback for sector/country.
+    """
     info = await _yf_service.get_ticker_info(symbol)
     if not info:
         return None
 
     # Use is_etf flag from unified service (detected from quote_type)
     is_etf = info.get("is_etf", False)
+    
+    # Enrich with universe data for sector/country/industry if missing (only for non-ETFs)
+    if not is_etf:
+        info = await _enrich_from_universe(symbol, info)
 
     return StockInfo(
         symbol=info["symbol"],
@@ -65,15 +101,22 @@ async def get_stock_info(symbol: str) -> StockInfo | None:
         num_analyst_opinions=None if is_etf else info.get("num_analyst_opinions"),
     )
 
-
 async def get_stock_info_with_prices(symbol: str) -> dict[str, Any] | None:
-    """Fetch stock info including current price and ATH."""
+    """Fetch stock info including current price and ATH.
+    
+    Enriches with FinancialUniverse data as fallback for sector/country.
+    """
     info = await _yf_service.get_ticker_info(symbol)
     if not info:
         return None
 
     # Use is_etf flag from unified service (detected from quote_type)
     is_etf = info.get("is_etf", False)
+    
+    # Enrich with universe data for sector/country/industry if missing (only for non-ETFs)
+    if not is_etf:
+        info = await _enrich_from_universe(symbol, info)
+    
     current_price = info.get("current_price") or 0
     previous_close = info.get("previous_close") or 0
     ath_price = info.get("fifty_two_week_high") or 0
@@ -88,6 +131,7 @@ async def get_stock_info_with_prices(symbol: str) -> dict[str, Any] | None:
         "name": info["name"],
         "sector": None if is_etf else info.get("sector"),
         "industry": None if is_etf else info.get("industry"),
+        "country": info.get("country"),  # Added country field
         "market_cap": info.get("market_cap"),
         "current_price": float(current_price),
         "previous_close": float(previous_close) if previous_close else None,

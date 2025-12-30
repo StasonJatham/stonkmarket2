@@ -25,11 +25,15 @@
   --ring: oklch(0.708 0 0);
   --success: oklch(0.6 0.2 142);
   --danger: oklch(0.577 0.245 27.325);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
+  /* Chart colors: colorblind-safe palette based on Wong (2011) - distinct under all color vision types */
+  --chart-1: oklch(0.55 0.17 250);   /* Blue - primary, safe anchor */
+  --chart-2: oklch(0.70 0.16 65);    /* Orange - distinct from blue */
+  --chart-3: oklch(0.60 0.13 195);   /* Sky blue - lighter blue variant */
+  --chart-4: oklch(0.75 0.14 85);    /* Yellow - high lightness */
+  --chart-5: oklch(0.50 0.18 25);    /* Vermillion/rust - distinct from orange */
+  --chart-6: oklch(0.55 0.15 310);   /* Purple/reddish purple */
+  --chart-7: oklch(0.70 0.00 0);     /* Gray - neutral fallback */
+  --chart-8: oklch(0.45 0.12 170);   /* Teal - for extended palette */
 }
 
 .dark {
@@ -53,22 +57,44 @@
   --ring: oklch(0.556 0 0);
   --success: oklch(0.65 0.2 142);
   --danger: oklch(0.704 0.191 22.216);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
+  /* Chart colors: colorblind-safe palette for dark mode - slightly lighter/more saturated */
+  --chart-1: oklch(0.60 0.18 250);   /* Blue - brighter for dark bg */
+  --chart-2: oklch(0.75 0.17 65);    /* Orange - brighter */
+  --chart-3: oklch(0.65 0.14 195);   /* Sky blue */
+  --chart-4: oklch(0.80 0.15 85);    /* Yellow */
+  --chart-5: oklch(0.55 0.19 25);    /* Vermillion */
+  --chart-6: oklch(0.60 0.16 310);   /* Purple */
+  --chart-7: oklch(0.75 0.00 0);     /* Gray */
+  --chart-8: oklch(0.50 0.13 170);   /* Teal */
 }
 
-/* Colorblind-safe mode: use blue/orange instead of green/red */
+/* Colorblind-safe mode: blue/orange for success/danger, plus optimized chart colors */
 .colorblind {
   --success: oklch(0.65 0.2 250); /* Blue */
   --danger: oklch(0.7 0.2 60); /* Orange */
+  /* Higher contrast chart colors for enhanced colorblind accessibility */
+  --chart-1: oklch(0.50 0.20 250);   /* Deep blue */
+  --chart-2: oklch(0.72 0.18 60);    /* Orange */
+  --chart-3: oklch(0.75 0.10 200);   /* Light sky */
+  --chart-4: oklch(0.80 0.16 90);    /* Yellow */
+  --chart-5: oklch(0.45 0.20 20);    /* Dark vermillion */
+  --chart-6: oklch(0.50 0.18 305);   /* Purple */
+  --chart-7: oklch(0.65 0.00 0);     /* Mid gray */
+  --chart-8: oklch(0.40 0.15 175);   /* Dark teal */
 }
 
 .colorblind.dark {
   --success: oklch(0.7 0.18 250); /* Lighter blue for dark mode */
   --danger: oklch(0.75 0.18 60); /* Lighter orange for dark mode */
+  /* Brighter chart colors for dark mode colorblind */
+  --chart-1: oklch(0.60 0.20 250);   /* Bright blue */
+  --chart-2: oklch(0.78 0.18 60);    /* Bright orange */
+  --chart-3: oklch(0.70 0.12 200);   /* Sky */
+  --chart-4: oklch(0.85 0.16 90);    /* Bright yellow */
+  --chart-5: oklch(0.58 0.20 20);    /* Vermillion */
+  --chart-6: oklch(0.60 0.18 305);   /* Purple */
+  --chart-7: oklch(0.80 0.00 0);     /* Light gray */
+  --chart-8: oklch(0.55 0.15 175);   /* Teal */
 }
 
 /* Custom colors override - applied via JS when user picks colors */
@@ -110,6 +136,9 @@
   --color-chart-3: var(--chart-3);
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
+  --color-chart-6: var(--chart-6);
+  --color-chart-7: var(--chart-7);
+  --color-chart-8: var(--chart-8);
 }
 
 @layer base {

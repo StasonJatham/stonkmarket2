@@ -78,6 +78,7 @@ import {
   TrendingUp,
   TrendingDown,
   DollarSign,
+  Info,
   Upload,
   PieChart as PieChartIcon,
   BarChart3,
@@ -86,6 +87,49 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { BulkImportModal } from '@/components/BulkImportModal';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
+
+/** Retail investor-friendly metric explanations */
+const METRIC_TOOLTIPS = {
+  cagr: 'Compound Annual Growth Rate – Your average yearly return if gains were reinvested. Think of it as "how much your money grew per year on average."',
+  sharpe: 'Risk-adjusted return measure. Above 1.0 is good, above 2.0 is excellent. Higher means better returns for the risk taken.',
+  sortino: 'Like Sharpe, but only counts bad volatility (losses). Higher is better – it shows how well you\'re rewarded for downside risk.',
+  volatility: 'How much your portfolio bounces around. Lower volatility = smoother ride, higher = more ups and downs.',
+  maxDrawdown: 'The worst peak-to-trough drop your portfolio experienced. A -20% drawdown means you lost 20% from a high point before recovering.',
+  beta: 'How much your portfolio moves with the market. Beta of 1.0 = moves like the market. Below 1 = less volatile, above 1 = more volatile.',
+} as const;
+
+/** Metric display with info tooltip for retail investors */
+function MetricWithTooltip({ 
+  label, 
+  value, 
+  tooltipKey 
+}: { 
+  label: string; 
+  value: string; 
+  tooltipKey: keyof typeof METRIC_TOOLTIPS 
+}) {
+  return (
+    <div>
+      <div className="flex items-center gap-1">
+        <p className="text-xs text-muted-foreground">{label}</p>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Info className="h-3 w-3 text-muted-foreground/60 cursor-help" />
+          </TooltipTrigger>
+          <TooltipContent side="top" className="max-w-[280px]">
+            <p>{METRIC_TOOLTIPS[tooltipKey]}</p>
+          </TooltipContent>
+        </Tooltip>
+      </div>
+      <p className="font-semibold">{value}</p>
+    </div>
+  );
+}
 
 const container = {
   hidden: { opacity: 0 },
@@ -101,12 +145,14 @@ const item = {
 };
 
 const CHART_COLORS = [
-  'hsl(var(--chart-1))',
-  'hsl(var(--chart-2))',
-  'hsl(var(--chart-3))',
-  'hsl(var(--chart-4))',
-  'hsl(var(--chart-5))',
-  'hsl(var(--chart-6))',
+  'var(--chart-1)',
+  'var(--chart-2)',
+  'var(--chart-3)',
+  'var(--chart-4)',
+  'var(--chart-5)',
+  'var(--chart-6)',
+  'var(--chart-7)',
+  'var(--chart-8)',
 ];
 
 const RISK_SEVERITY_STYLES: Record<string, string> = {
@@ -163,7 +209,6 @@ export function PortfolioPage() {
   const [editingPortfolio, setEditingPortfolio] = useState<Portfolio | null>(null);
   const [portfolioName, setPortfolioName] = useState('');
   const [portfolioCurrency, setPortfolioCurrency] = useState('USD');
-  const [portfolioCash, setPortfolioCash] = useState('0');
 
   // Holding dialog
   const [holdingDialogOpen, setHoldingDialogOpen] = useState(false);
@@ -204,6 +249,51 @@ export function PortfolioPage() {
       setIsLoading(false);
     }
   }, []);
+
+  const loadRiskAnalytics = useCallback(async (portfolioId: number) => {
+    deferStateUpdate(() => setIsRiskAnalyticsLoading(true));
+    setRiskAnalyticsError(null);
+    try {
+      const data = await getPortfolioRiskAnalytics(portfolioId);
+      setRiskAnalytics(data);
+    } catch (err) {
+      setRiskAnalyticsError(err instanceof Error ? err.message : 'Failed to load portfolio insights');
+      setRiskAnalytics(null);
+    } finally {
+      setIsRiskAnalyticsLoading(false);
+    }
+  }, []);
+
+  const loadToolAnalytics = useCallback(
+    async (portfolioId: number, tools: string[], forceRefresh = false) => {
+      deferStateUpdate(() => setIsToolAnalyticsLoading(true));
+      setToolAnalyticsError(null);
+      try {
+        const data = await runPortfolioAnalytics(portfolioId, {
+          tools,
+          force_refresh: forceRefresh,
+        });
+        setToolAnalytics((previous) => mergeAnalyticsResults(previous, data));
+        if (data.job_id) {
+          setToolAnalyticsJob({
+            job_id: data.job_id,
+            portfolio_id: portfolioId,
+            status: data.job_status || 'pending',
+            tools: data.scheduled_tools.length ? data.scheduled_tools : tools,
+            results_count: 0,
+            created_at: new Date().toISOString(),
+          });
+        } else {
+          setToolAnalyticsJob(null);
+        }
+      } catch (err) {
+        setToolAnalyticsError(err instanceof Error ? err.message : 'Failed to run analytics tools');
+      } finally {
+        setIsToolAnalyticsLoading(false);
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     loadPortfolios();
@@ -306,11 +396,13 @@ export function PortfolioPage() {
         && currentPrice
         ? ((currentPrice - holding.avg_cost) / holding.avg_cost) * 100
         : null;
+      // ETFs typically have no sector/country - show "Diversified" instead of "Unknown"
+      const isLikelyETF = !info?.sector && !info?.country;
       return {
         ...holding,
         name: info?.name ?? null,
-        sector: info?.sector ?? 'Unknown',
-        country: info?.country ?? 'Unknown',
+        sector: info?.sector ?? (isLikelyETF ? 'Diversified' : 'Unknown'),
+        country: info?.country ?? (isLikelyETF ? 'Global' : 'Unknown'),
         currentPrice,
         marketValue,
         costBasis,
@@ -338,15 +430,13 @@ export function PortfolioPage() {
 
     const investedValue = holdingSnapshots.reduce((sum, holding) => sum + holding.marketValue, 0);
     const totalCost = holdingSnapshots.reduce((sum, holding) => sum + holding.costBasis, 0);
-    const cashBalance = detail.cash_balance || 0;
-    const totalValue = investedValue + cashBalance;
-    const totalCostWithCash = totalCost + cashBalance;
-    const gainLoss = totalValue - totalCostWithCash;
-    const gainLossPercent = totalCostWithCash > 0 ? (gainLoss / totalCostWithCash) * 100 : 0;
+    const totalValue = investedValue;
+    const gainLoss = totalValue - totalCost;
+    const gainLossPercent = totalCost > 0 ? (gainLoss / totalCost) * 100 : 0;
 
     return {
       totalValue,
-      totalCost: totalCostWithCash,
+      totalCost,
       gainLoss,
       gainLossPercent,
       investedValue,
@@ -449,56 +539,10 @@ export function PortfolioPage() {
       .slice(0, 8);
   }, [allocationResult]);
 
-  const loadRiskAnalytics = useCallback(async (portfolioId: number) => {
-    deferStateUpdate(() => setIsRiskAnalyticsLoading(true));
-    setRiskAnalyticsError(null);
-    try {
-      const data = await getPortfolioRiskAnalytics(portfolioId);
-      setRiskAnalytics(data);
-    } catch (err) {
-      setRiskAnalyticsError(err instanceof Error ? err.message : 'Failed to load portfolio insights');
-      setRiskAnalytics(null);
-    } finally {
-      setIsRiskAnalyticsLoading(false);
-    }
-  }, []);
-
-  const loadToolAnalytics = useCallback(
-    async (portfolioId: number, tools: string[], forceRefresh = false) => {
-      deferStateUpdate(() => setIsToolAnalyticsLoading(true));
-      setToolAnalyticsError(null);
-      try {
-        const data = await runPortfolioAnalytics(portfolioId, {
-          tools,
-          force_refresh: forceRefresh,
-        });
-        setToolAnalytics((previous) => mergeAnalyticsResults(previous, data));
-        if (data.job_id) {
-          setToolAnalyticsJob({
-            job_id: data.job_id,
-            portfolio_id: portfolioId,
-            status: data.job_status || 'pending',
-            tools: data.scheduled_tools.length ? data.scheduled_tools : tools,
-            results_count: 0,
-            created_at: new Date().toISOString(),
-          });
-        } else {
-          setToolAnalyticsJob(null);
-        }
-      } catch (err) {
-        setToolAnalyticsError(err instanceof Error ? err.message : 'Failed to run analytics tools');
-      } finally {
-        setIsToolAnalyticsLoading(false);
-      }
-    },
-    []
-  );
-
   function openCreateDialog() {
     setEditingPortfolio(null);
     setPortfolioName('');
     setPortfolioCurrency('USD');
-    setPortfolioCash('0');
     setPortfolioDialogOpen(true);
   }
 
@@ -507,7 +551,6 @@ export function PortfolioPage() {
     setEditingPortfolio(selectedPortfolio);
     setPortfolioName(selectedPortfolio.name);
     setPortfolioCurrency(selectedPortfolio.base_currency);
-    setPortfolioCash(String(selectedPortfolio.cash_balance ?? 0));
     setPortfolioDialogOpen(true);
   }
 
@@ -518,13 +561,11 @@ export function PortfolioPage() {
         await updatePortfolio(editingPortfolio.id, {
           name: portfolioName.trim(),
           base_currency: portfolioCurrency.trim(),
-          cash_balance: Number(portfolioCash || 0),
         });
       } else {
         const created = await createPortfolio({
           name: portfolioName.trim(),
           base_currency: portfolioCurrency.trim(),
-          cash_balance: Number(portfolioCash || 0),
         });
         setSelectedId(created.id);
       }
@@ -636,7 +677,7 @@ export function PortfolioPage() {
   );
 
   return (
-    <div className="mx-auto w-full max-w-4xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
+    <div className="mx-auto w-full max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       {/* Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
@@ -707,7 +748,7 @@ export function PortfolioPage() {
 
       {/* Stats Cards */}
       {selectedPortfolio && (
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
           <Card>
             <CardContent className="pt-6">
               <div className="flex items-center gap-3">
@@ -721,31 +762,18 @@ export function PortfolioPage() {
               </div>
             </CardContent>
           </Card>
-          <Card>
+          <Card className="sm:col-span-2 lg:col-span-1">
             <CardContent className="pt-6">
               <div className="flex items-center gap-3">
-                <div className="rounded-lg bg-muted p-2">
-                  <DollarSign className="h-5 w-5 text-muted-foreground" />
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Cash Balance</p>
-                  <p className="text-xl font-semibold">{formatCurrency(detail?.cash_balance || 0)}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center gap-3">
-                <div className={`rounded-lg p-2 ${portfolioStats.gainLoss >= 0 ? 'bg-green-500/10' : 'bg-red-500/10'}`}>
+                <div className={`rounded-lg p-2 ${portfolioStats.gainLoss >= 0 ? 'bg-success/10' : 'bg-danger/10'}`}>
                   {portfolioStats.gainLoss >= 0 
-                    ? <TrendingUp className="h-5 w-5 text-green-600" />
-                    : <TrendingDown className="h-5 w-5 text-red-600" />
+                    ? <TrendingUp className="h-5 w-5 text-success" />
+                    : <TrendingDown className="h-5 w-5 text-danger" />
                   }
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Gain/Loss</p>
-                  <p className={`text-xl font-semibold ${portfolioStats.gainLoss >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                  <p className={`text-xl font-semibold ${portfolioStats.gainLoss >= 0 ? 'text-success' : 'text-danger'}`}>
                     {portfolioStats.gainLoss >= 0 ? '+' : ''}{formatCurrency(portfolioStats.gainLoss)}
                   </p>
                   <p className="text-xs text-muted-foreground">
@@ -759,7 +787,7 @@ export function PortfolioPage() {
       )}
 
       {selectedPortfolio && (
-        <div className="grid gap-4 lg:grid-cols-3">
+        <div className="grid gap-4 grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="flex items-center gap-2 text-base">
@@ -822,52 +850,46 @@ export function PortfolioPage() {
               )}
               {!isToolAnalyticsLoading && (
                 <div className="grid grid-cols-2 gap-3 text-sm">
-                  <div>
-                    <p className="text-xs text-muted-foreground">CAGR</p>
-                    <p className="font-semibold">
-                      {performanceMetrics.cagr !== null
-                        ? `${(performanceMetrics.cagr * 100).toFixed(1)}%`
-                        : '—'}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Sharpe</p>
-                    <p className="font-semibold">
-                      {performanceMetrics.sharpe !== null
-                        ? performanceMetrics.sharpe.toFixed(2)
-                        : '—'}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Sortino</p>
-                    <p className="font-semibold">
-                      {performanceMetrics.sortino !== null
-                        ? performanceMetrics.sortino.toFixed(2)
-                        : '—'}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Volatility</p>
-                    <p className="font-semibold">
-                      {performanceMetrics.volatility !== null
-                        ? `${(performanceMetrics.volatility * 100).toFixed(1)}%`
-                        : '—'}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Max Drawdown</p>
-                    <p className="font-semibold">
-                      {performanceMetrics.maxDrawdown !== null
-                        ? `${(performanceMetrics.maxDrawdown * 100).toFixed(1)}%`
-                        : '—'}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Beta</p>
-                    <p className="font-semibold">
-                      {performanceMetrics.beta !== null ? performanceMetrics.beta.toFixed(2) : '—'}
-                    </p>
-                  </div>
+                  <MetricWithTooltip
+                    label="CAGR"
+                    tooltipKey="cagr"
+                    value={performanceMetrics.cagr !== null
+                      ? `${(performanceMetrics.cagr * 100).toFixed(1)}%`
+                      : '—'}
+                  />
+                  <MetricWithTooltip
+                    label="Sharpe"
+                    tooltipKey="sharpe"
+                    value={performanceMetrics.sharpe !== null
+                      ? performanceMetrics.sharpe.toFixed(2)
+                      : '—'}
+                  />
+                  <MetricWithTooltip
+                    label="Sortino"
+                    tooltipKey="sortino"
+                    value={performanceMetrics.sortino !== null
+                      ? performanceMetrics.sortino.toFixed(2)
+                      : '—'}
+                  />
+                  <MetricWithTooltip
+                    label="Volatility"
+                    tooltipKey="volatility"
+                    value={performanceMetrics.volatility !== null
+                      ? `${(performanceMetrics.volatility * 100).toFixed(1)}%`
+                      : '—'}
+                  />
+                  <MetricWithTooltip
+                    label="Max Drawdown"
+                    tooltipKey="maxDrawdown"
+                    value={performanceMetrics.maxDrawdown !== null
+                      ? `${(performanceMetrics.maxDrawdown * 100).toFixed(1)}%`
+                      : '—'}
+                  />
+                  <MetricWithTooltip
+                    label="Beta"
+                    tooltipKey="beta"
+                    value={performanceMetrics.beta !== null ? performanceMetrics.beta.toFixed(2) : '—'}
+                  />
                 </div>
               )}
               {toolAnalyticsError && (
@@ -991,7 +1013,7 @@ export function PortfolioPage() {
       )}
 
       {selectedPortfolio && (
-        <div className="grid gap-4 lg:grid-cols-2">
+        <div className="grid gap-4 grid-cols-1 md:grid-cols-2">
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="flex items-center gap-2 text-base">
@@ -1002,12 +1024,12 @@ export function PortfolioPage() {
             </CardHeader>
             <CardContent>
               {sectorAllocation.length > 0 ? (
-                <div className="flex flex-col gap-4 lg:flex-row">
+                <div className="flex flex-col gap-4 md:flex-row md:items-center">
                   <ChartContainer
-                    config={{ value: { label: 'Allocation', color: 'hsl(var(--chart-1))' } }}
-                    className="h-[220px] w-full"
+                    config={{ value: { label: 'Allocation', color: 'var(--chart-1)' } }}
+                    className="h-[200px] w-full md:h-[220px] md:w-[220px] md:flex-shrink-0"
                   >
-                    <ResponsiveContainer width="100%" height={220}>
+                    <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
                         <ChartTooltip
                           content={
@@ -1025,8 +1047,8 @@ export function PortfolioPage() {
                           data={sectorAllocation}
                           dataKey="value"
                           nameKey="name"
-                          innerRadius={60}
-                          outerRadius={90}
+                          innerRadius={50}
+                          outerRadius={80}
                         >
                           {sectorAllocation.map((entry, index) => (
                             <Cell key={entry.name} fill={CHART_COLORS[index % CHART_COLORS.length]} />
@@ -1035,12 +1057,16 @@ export function PortfolioPage() {
                       </PieChart>
                     </ResponsiveContainer>
                   </ChartContainer>
-                  <div className="space-y-2 text-xs">
-                    {sectorAllocation.map((entry) => (
-                      <div key={entry.name} className="flex items-center justify-between gap-2">
-                        <span className="font-medium">{entry.name}</span>
-                        <span className="text-muted-foreground">
-                          {entry.percent.toFixed(1)}% • {formatCurrency(entry.value)}
+                  <div className="flex-1 space-y-1.5 text-xs">
+                    {sectorAllocation.map((entry, index) => (
+                      <div key={entry.name} className="flex items-center gap-2">
+                        <div 
+                          className="h-3 w-3 rounded-sm flex-shrink-0" 
+                          style={{ backgroundColor: CHART_COLORS[index % CHART_COLORS.length] }}
+                        />
+                        <span className="font-medium flex-1 truncate">{entry.name}</span>
+                        <span className="text-muted-foreground tabular-nums">
+                          {entry.percent.toFixed(1)}%
                         </span>
                       </div>
                     ))}
@@ -1062,12 +1088,12 @@ export function PortfolioPage() {
             </CardHeader>
             <CardContent>
               {countryAllocation.length > 0 ? (
-                <div className="flex flex-col gap-4 lg:flex-row">
+                <div className="flex flex-col gap-4 md:flex-row md:items-center">
                   <ChartContainer
-                    config={{ value: { label: 'Allocation', color: 'hsl(var(--chart-2))' } }}
-                    className="h-[220px] w-full"
+                    config={{ value: { label: 'Allocation', color: 'var(--chart-2)' } }}
+                    className="h-[200px] w-full md:h-[220px] md:w-[220px] md:flex-shrink-0"
                   >
-                    <ResponsiveContainer width="100%" height={220}>
+                    <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
                         <ChartTooltip
                           content={
@@ -1085,8 +1111,8 @@ export function PortfolioPage() {
                           data={countryAllocation}
                           dataKey="value"
                           nameKey="name"
-                          innerRadius={60}
-                          outerRadius={90}
+                          innerRadius={50}
+                          outerRadius={80}
                         >
                           {countryAllocation.map((entry, index) => (
                             <Cell key={entry.name} fill={CHART_COLORS[index % CHART_COLORS.length]} />
@@ -1095,12 +1121,16 @@ export function PortfolioPage() {
                       </PieChart>
                     </ResponsiveContainer>
                   </ChartContainer>
-                  <div className="space-y-2 text-xs">
-                    {countryAllocation.map((entry) => (
-                      <div key={entry.name} className="flex items-center justify-between gap-2">
-                        <span className="font-medium">{entry.name}</span>
-                        <span className="text-muted-foreground">
-                          {entry.percent.toFixed(1)}% • {formatCurrency(entry.value)}
+                  <div className="flex-1 space-y-1.5 text-xs">
+                    {countryAllocation.map((entry, index) => (
+                      <div key={entry.name} className="flex items-center gap-2">
+                        <div 
+                          className="h-3 w-3 rounded-sm flex-shrink-0" 
+                          style={{ backgroundColor: CHART_COLORS[index % CHART_COLORS.length] }}
+                        />
+                        <span className="font-medium flex-1 truncate">{entry.name}</span>
+                        <span className="text-muted-foreground tabular-nums">
+                          {entry.percent.toFixed(1)}%
                         </span>
                       </div>
                     ))}
@@ -1115,7 +1145,7 @@ export function PortfolioPage() {
       )}
 
       {selectedPortfolio && (
-        <div className="grid gap-4 lg:grid-cols-2">
+        <div className="grid gap-4 grid-cols-1 md:grid-cols-2">
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="flex items-center gap-2 text-base">
@@ -1127,17 +1157,17 @@ export function PortfolioPage() {
             <CardContent>
               {topHoldings.length > 0 ? (
                 <ChartContainer
-                  config={{ value: { label: 'Value', color: 'hsl(var(--chart-1))' } }}
-                  className="h-[240px] w-full"
+                  config={{ value: { label: 'Value', color: 'var(--chart-1)' } }}
+                  className="h-[200px] w-full sm:h-[240px]"
                 >
-                  <ResponsiveContainer width="100%" height={240}>
+                  <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={topHoldings.map((holding) => ({
                       symbol: holding.symbol,
                       value: holding.marketValue,
                     }))}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-                      <XAxis dataKey="symbol" tick={{ fontSize: 10 }} />
-                      <YAxis tickFormatter={(value) => `${Math.round(value / 1000)}k`} width={50} />
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                      <XAxis dataKey="symbol" tick={{ fontSize: 10 }} interval={0} angle={-45} textAnchor="end" height={50} />
+                      <YAxis tickFormatter={(value) => `${Math.round(value / 1000)}k`} width={45} />
                       <ChartTooltip
                         content={
                           <ChartTooltipContent
@@ -1145,7 +1175,7 @@ export function PortfolioPage() {
                           />
                         }
                       />
-                      <Bar dataKey="value" fill="hsl(var(--chart-1))" radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="value" fill="var(--chart-1)" radius={[4, 4, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 </ChartContainer>
@@ -1166,14 +1196,14 @@ export function PortfolioPage() {
             <CardContent>
               {riskContributionData.length > 0 ? (
                 <ChartContainer
-                  config={{ value: { label: 'Risk %', color: 'hsl(var(--chart-2))' } }}
-                  className="h-[240px] w-full"
+                  config={{ value: { label: 'Risk %', color: 'var(--chart-2)' } }}
+                  className="h-[200px] w-full sm:h-[240px]"
                 >
-                  <ResponsiveContainer width="100%" height={240}>
+                  <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={riskContributionData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-                      <XAxis dataKey="symbol" tick={{ fontSize: 10 }} />
-                      <YAxis tickFormatter={(value) => `${value.toFixed(0)}%`} width={45} />
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                      <XAxis dataKey="symbol" tick={{ fontSize: 10 }} interval={0} angle={-45} textAnchor="end" height={50} />
+                      <YAxis tickFormatter={(value) => `${value.toFixed(0)}%`} width={40} />
                       <ChartTooltip
                         content={
                           <ChartTooltipContent
@@ -1181,7 +1211,7 @@ export function PortfolioPage() {
                           />
                         }
                       />
-                      <Bar dataKey="value" fill="hsl(var(--chart-2))" radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="value" fill="var(--chart-2)" radius={[4, 4, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 </ChartContainer>
@@ -1299,16 +1329,16 @@ export function PortfolioPage() {
                     <p className="text-sm font-semibold mb-2">Current vs Target Weights</p>
                     <ChartContainer
                       config={{
-                        current: { label: 'Current', color: 'hsl(var(--chart-3))' },
-                        target: { label: 'Target', color: 'hsl(var(--chart-1))' },
+                        current: { label: 'Current', color: 'var(--chart-3)' },
+                        target: { label: 'Target', color: 'var(--chart-1)' },
                       }}
-                      className="h-[220px] w-full"
+                      className="h-[180px] w-full sm:h-[220px]"
                     >
-                      <ResponsiveContainer width="100%" height={220}>
+                      <ResponsiveContainer width="100%" height="100%">
                         <BarChart data={allocationWeightData}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-                          <XAxis dataKey="symbol" tick={{ fontSize: 10 }} />
-                          <YAxis tickFormatter={(value) => `${value.toFixed(0)}%`} width={45} />
+                          <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                          <XAxis dataKey="symbol" tick={{ fontSize: 10 }} interval={0} angle={-45} textAnchor="end" height={50} />
+                          <YAxis tickFormatter={(value) => `${value.toFixed(0)}%`} width={40} />
                           <ChartTooltip
                             content={
                               <ChartTooltipContent
@@ -1316,8 +1346,8 @@ export function PortfolioPage() {
                               />
                             }
                           />
-                          <Bar dataKey="current" fill="hsl(var(--chart-3))" radius={[4, 4, 0, 0]} />
-                          <Bar dataKey="target" fill="hsl(var(--chart-1))" radius={[4, 4, 0, 0]} />
+                          <Bar dataKey="current" fill="var(--chart-3)" radius={[4, 4, 0, 0]} />
+                          <Bar dataKey="target" fill="var(--chart-1)" radius={[4, 4, 0, 0]} />
                         </BarChart>
                       </ResponsiveContainer>
                     </ChartContainer>
@@ -1350,14 +1380,14 @@ export function PortfolioPage() {
                   </Button>
                 </div>
                 <ChartContainer
-                  config={{ value: { label: 'Weight', color: 'hsl(var(--chart-2))' } }}
-                  className="h-[200px] w-full mt-3"
+                  config={{ value: { label: 'Weight', color: 'var(--chart-2)' } }}
+                  className="h-[160px] w-full sm:h-[200px] mt-3"
                 >
-                  <ResponsiveContainer width="100%" height={200}>
+                  <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={skfolioWeights}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-                      <XAxis dataKey="symbol" tick={{ fontSize: 10 }} />
-                      <YAxis tickFormatter={(value) => `${value.toFixed(0)}%`} width={45} />
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                      <XAxis dataKey="symbol" tick={{ fontSize: 10 }} interval={0} angle={-45} textAnchor="end" height={50} />
+                      <YAxis tickFormatter={(value) => `${value.toFixed(0)}%`} width={40} />
                       <ChartTooltip
                         content={
                           <ChartTooltipContent
@@ -1365,7 +1395,7 @@ export function PortfolioPage() {
                           />
                         }
                       />
-                      <Bar dataKey="value" fill="hsl(var(--chart-2))" radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="value" fill="var(--chart-2)" radius={[4, 4, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 </ChartContainer>
@@ -1551,15 +1581,6 @@ export function PortfolioPage() {
                     <SelectItem value="CAD">CAD</SelectItem>
                   </SelectContent>
                 </Select>
-              </div>
-              <div>
-                <Label>Cash Balance</Label>
-                <Input 
-                  type="number"
-                  value={portfolioCash} 
-                  onChange={(e) => setPortfolioCash(e.target.value)}
-                  placeholder="0.00"
-                />
               </div>
             </div>
           </div>

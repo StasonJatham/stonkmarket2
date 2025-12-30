@@ -330,6 +330,72 @@ async def weekly_ai_pipeline_job() -> str:
 
 
 # =============================================================================
+# UNIVERSE SYNC - Sync FinanceDatabase to local (weekly, before data_backfill)
+# =============================================================================
+
+
+@register_job("universe_sync")
+async def universe_sync_job() -> str:
+    """
+    Sync FinanceDatabase to local financial_universe table.
+    
+    This provides a comprehensive local database of ~130K financial instruments:
+    - Equities (~24K) - with sector, industry, country metadata
+    - ETFs (~3K) - with category and family info
+    - Funds (~31K) - mutual funds with category info
+    - Indices (~62K) - market indices
+    - Cryptos (~3K) - cryptocurrencies
+    - Currencies (~3K) - forex pairs
+    - Moneymarkets (~1K) - money market instruments
+    
+    Benefits:
+    - Fast local autocomplete/search (no API calls)
+    - Symbol validation without external API
+    - Sector/industry/country faceting
+    - ISIN/CUSIP/FIGI identifier resolution
+    
+    Schedule: Sunday 1:30 AM UTC (before weekly_ai_pipeline)
+    Runtime: ~2-5 minutes (depends on network)
+    """
+    job_start = time.monotonic()
+    
+    from app.services.financedatabase_service import ingest_universe
+    
+    logger.info("Starting universe sync from FinanceDatabase...")
+    
+    try:
+        # Ingest all asset classes
+        stats = await ingest_universe()
+        
+        total = sum(stats.values())
+        duration_ms = int((time.monotonic() - job_start) * 1000)
+        
+        message = f"Synced {total} symbols from FinanceDatabase"
+        
+        # Structured success log
+        log_job_success(
+            "universe_sync",
+            message,
+            total_symbols=total,
+            equities=stats.get("equity", 0),
+            etfs=stats.get("etf", 0),
+            funds=stats.get("fund", 0),
+            indices=stats.get("index", 0),
+            cryptos=stats.get("crypto", 0),
+            currencies=stats.get("currency", 0),
+            moneymarkets=stats.get("moneymarket", 0),
+            duration_ms=duration_ms,
+        )
+        
+        return message
+        
+    except Exception as e:
+        duration_ms = int((time.monotonic() - job_start) * 1000)
+        logger.exception(f"universe_sync failed after {duration_ms}ms: {e}")
+        raise
+
+
+# =============================================================================
 # SYMBOL INGEST - Process new symbols (every 15 min)
 # =============================================================================
 

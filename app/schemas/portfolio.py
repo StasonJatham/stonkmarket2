@@ -14,7 +14,6 @@ class PortfolioCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=120)
     description: str | None = Field(default=None, max_length=2000)
     base_currency: str = Field(default="USD", max_length=10)
-    cash_balance: float | None = Field(default=0.0, ge=0.0)
 
 
 class PortfolioUpdateRequest(BaseModel):
@@ -23,7 +22,6 @@ class PortfolioUpdateRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     description: str | None = Field(default=None, max_length=2000)
     base_currency: str | None = Field(default=None, max_length=10)
-    cash_balance: float | None = Field(default=None, ge=0.0)
     is_active: bool | None = None
 
 
@@ -35,7 +33,6 @@ class PortfolioResponse(BaseModel):
     name: str
     description: str | None = None
     base_currency: str
-    cash_balance: float | None = None
     is_active: bool
     created_at: datetime
     updated_at: datetime | None = None

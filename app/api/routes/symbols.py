@@ -219,23 +219,41 @@ class SymbolAutocompleteResult(BaseModel):
     """Simple result for autocomplete."""
     symbol: str
     name: str | None = None
+    quote_type: str | None = None  # EQUITY, ETF, INDEX, etc.
+    sector: str | None = None
+    country: str | None = None
+    exchange: str | None = None
+    source: str | None = None  # local, universe, cached
 
 
 @router.get(
     "/autocomplete/{partial}",
     response_model=list[SymbolAutocompleteResult],
     summary="Autocomplete symbols",
-    description="Get autocomplete suggestions for partial symbol/name input. Optimized for speed.",
+    description="Get autocomplete suggestions for partial symbol/name input. Optimized for speed. Returns results from tracked symbols, FinanceDatabase universe (130K+ instruments), and cached API results.",
 )
 async def autocomplete_symbols(
     partial: str = Path(..., min_length=1, max_length=20, description="Partial input"),
     limit: int = Query(5, ge=1, le=10, description="Maximum suggestions"),
 ) -> list[SymbolAutocompleteResult]:
     """Get autocomplete suggestions for symbol input."""
-    from app.services.symbol_search import get_symbol_suggestions
+    from app.services.symbol_search import _search_local_db
 
-    results = await get_symbol_suggestions(partial, limit=limit)
-    return [SymbolAutocompleteResult(**r) for r in results]
+    # Use the full search to get richer metadata
+    results, _ = await _search_local_db(partial, limit=limit)
+    
+    return [
+        SymbolAutocompleteResult(
+            symbol=r["symbol"],
+            name=r.get("name"),
+            quote_type=r.get("quote_type"),
+            sector=r.get("sector"),
+            country=r.get("country"),
+            exchange=r.get("exchange"),
+            source=r.get("source"),
+        )
+        for r in results
+    ]
 
 
 def calculate_intrinsic_value(

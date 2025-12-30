@@ -120,13 +120,13 @@ async def upsert_cronjob(
     async with get_session() as session:
         stmt = insert(CronJobORM).values(
             name=name,
-            cron_expression=cron_expr,
+            cron=cron_expr,
             config=config,
             is_active=True,
         ).on_conflict_do_update(
             index_elements=["name"],
             set_={
-                "cron_expression": cron_expr,
+                "cron": cron_expr,
                 "updated_at": now,
                 **({"config": config} if description else {}),
             },

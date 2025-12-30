@@ -174,7 +174,6 @@ def _compute_returns(series: pd.Series) -> pd.Series:
 def _compute_portfolio_values(
     holdings: list[dict[str, Any]],
     prices_by_symbol: dict[str, pd.DataFrame],
-    cash_balance: float,
 ) -> pd.Series:
     frames = []
     for holding in holdings:
@@ -192,8 +191,6 @@ def _compute_portfolio_values(
     combined = pd.concat(frames, axis=1).sort_index()
     combined = combined.ffill()
     portfolio_values = combined.sum(axis=1)
-    if cash_balance:
-        portfolio_values = portfolio_values + float(cash_balance)
     return portfolio_values
 
 
@@ -221,6 +218,9 @@ async def build_portfolio_context(
     holdings = await portfolios_repo.list_holdings(portfolio_id)
     if not holdings:
         raise ValueError("Portfolio has no holdings")
+    
+    # Default benchmark to SPY for beta calculation
+    benchmark = benchmark or "SPY"
 
     end_date = end_date or date.today()
     start_date = start_date or (end_date - timedelta(days=365))
@@ -231,7 +231,6 @@ async def build_portfolio_context(
     portfolio_values = _compute_portfolio_values(
         holdings,
         prices_by_symbol,
-        float(portfolio.get("cash_balance") or 0),
     )
 
     returns = _compute_returns(portfolio_values)
