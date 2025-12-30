@@ -21,6 +21,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { ComparisonChart } from '@/components/ComparisonChart';
+import { DipThresholdChart } from '@/components/DipThresholdChart';
 import { 
   TrendingUp, 
   TrendingDown, 
@@ -1018,6 +1019,19 @@ export function StockDetailsPanel({
                     </p>
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* Dip Threshold Analysis Chart */}
+            {dipEntry && dipEntry.threshold_analysis && dipEntry.threshold_analysis.length > 0 && (
+              <div className="mb-4">
+                <DipThresholdChart
+                  thresholdStats={dipEntry.threshold_analysis}
+                  optimalThreshold={dipEntry.optimal_dip_threshold}
+                  maxProfitThreshold={dipEntry.max_profit_threshold || dipEntry.optimal_dip_threshold}
+                  currentDrawdown={dipEntry.current_drawdown_pct}
+                  height={220}
+                />
               </div>
             )}
 

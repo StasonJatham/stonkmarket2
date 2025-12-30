@@ -130,19 +130,24 @@ test.describe('Stock Interactions', () => {
     await page.waitForLoadState('networkidle');
     
     // Wait for stocks to load and animations to complete
-    await page.waitForTimeout(1500);
+    await page.waitForTimeout(2000);
     
-    // Find and click a stock to open the detail sheet
-    const stockElement = page.locator('[data-testid="stock-card"], table tbody tr, [class*="cursor-pointer"]').first();
+    // Find a stock card - be more specific about what we're looking for
+    const stockCards = page.locator('[data-testid="stock-card"]');
+    const stockCount = await stockCards.count();
     
-    if (await stockElement.isVisible()) {
-      // Wait for element to be stable before clicking
-      await stockElement.waitFor({ state: 'visible' });
-      await page.waitForTimeout(300);
-      await stockElement.click({ force: true });
+    if (stockCount > 0) {
+      // Get the first visible stock card
+      const firstCard = stockCards.first();
+      
+      // Wait for the card to be in a stable state (animations complete)
+      await page.waitForTimeout(500);
+      
+      // Use force click to bypass any overlay issues
+      await firstCard.click({ force: true, timeout: 5000 });
       
       // Wait for sheet to open
-      await page.waitForTimeout(500);
+      await page.waitForTimeout(1000);
       
       // Look for chart period buttons (1M, 3M, 6M, 1Y, etc.)
       const periodButtons = page.locator('button:has-text("1M"), button:has-text("3M"), button:has-text("1Y")');

@@ -62,6 +62,8 @@ export function StockLogo({
           src={logoUrl}
           alt={`${symbol} logo`}
           className={cn('w-full h-full object-contain rounded-lg', config.padding)}
+          loading="lazy"
+          decoding="async"
           onError={() => setLogoError(true)}
         />
       ) : showFallbackIcon ? (
