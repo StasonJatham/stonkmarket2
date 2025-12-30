@@ -7,7 +7,7 @@ Provides a clean interface with typed Pydantic models for the hedge_fund module.
 
 import asyncio
 import logging
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 from app.hedge_fund.schemas import (
@@ -21,6 +21,39 @@ from app.services.data_providers import get_yfinance_service
 
 
 logger = logging.getLogger(__name__)
+
+
+def _sorted_period_keys(keys: list[Any]) -> list[Any]:
+    def _key(item: Any) -> datetime:
+        try:
+            return datetime.fromisoformat(str(item))
+        except (ValueError, TypeError):
+            return datetime.min
+    return sorted(keys, key=_key, reverse=True)
+
+
+def _latest_value(value: Any) -> float | None:
+    if isinstance(value, dict):
+        for key in _sorted_period_keys(list(value.keys())):
+            v = value.get(key)
+            if v is not None:
+                try:
+                    return float(v)
+                except (ValueError, TypeError):
+                    return None
+        return None
+    if isinstance(value, list):
+        for item in value:
+            if item is not None:
+                try:
+                    return float(item)
+                except (ValueError, TypeError):
+                    return None
+        return None
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return None
 
 
 # =============================================================================
@@ -84,29 +117,30 @@ def _calculate_domain_metrics(
 
     if domain == "bank":
         # Net Interest Income
-        nii = income.get("Net Interest Income")
+        nii = _latest_value(income.get("Net Interest Income"))
         if nii:
             metrics["net_interest_income"] = nii
 
             # Calculate NIM proxy: NII (annualized) / Total Assets
-            total_assets = balance.get("Total Assets")
+            total_assets = _latest_value(balance.get("Total Assets"))
             if total_assets and total_assets > 0:
                 metrics["net_interest_margin"] = (nii * 4) / total_assets
 
     elif domain == "reit":
         # FFO = Net Income + Depreciation
-        net_income = income.get("Net Income")
+        net_income = _latest_value(income.get("Net Income"))
         depreciation = (
             cashflow.get("Depreciation Amortization Depletion") or
             cashflow.get("Depreciation And Amortization")
         )
+        depreciation = _latest_value(depreciation)
 
         if net_income is not None and depreciation is not None:
             ffo = net_income + depreciation
             metrics["ffo"] = ffo * 4  # Annualize
 
-            shares = info.get("shares_outstanding") or info.get("sharesOutstanding")
-            current_price = info.get("current_price") or info.get("regularMarketPrice")
+            shares = _latest_value(info.get("shares_outstanding") or info.get("sharesOutstanding"))
+            current_price = _latest_value(info.get("current_price") or info.get("regularMarketPrice"))
 
             if shares and shares > 0:
                 ffo_per_share = (ffo * 4) / shares
@@ -117,11 +151,11 @@ def _calculate_domain_metrics(
 
     elif domain == "insurer":
         # Loss Ratio = Losses / Premiums (approximated by revenue)
-        loss_expense = (
+        loss_expense = _latest_value(
             income.get("Net Policyholder Benefits And Claims") or
             income.get("Loss Adjustment Expense")
         )
-        revenue = (
+        revenue = _latest_value(
             income.get("Total Revenue") or
             income.get("Operating Revenue")
         )

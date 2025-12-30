@@ -119,7 +119,9 @@ export interface StockInfo {
   name: string | null;
   sector: string | null;
   industry: string | null;
+  country: string | null;
   market_cap: number | null;
+  current_price: number | null;
   pe_ratio: number | null;
   forward_pe: number | null;
   peg_ratio: number | null;
@@ -159,6 +161,17 @@ export interface CronJob {
   description: string | null;
   next_run?: string | null;
   next_runs?: string[] | null;
+  // Pipeline metadata
+  pipeline?: string | null;
+  pipeline_step?: number | null;
+  is_scheduled?: boolean;
+  // Stats (from CronJobWithStatsResponse)
+  last_run?: string | null;
+  last_status?: string | null;
+  last_duration_ms?: number | null;
+  run_count?: number;
+  error_count?: number;
+  last_error?: string | null;
 }
 
 export interface CronLogEntry {
@@ -166,6 +179,7 @@ export interface CronLogEntry {
   status: string;
   message: string | null;
   created_at: string;
+  duration_ms?: number | null;
 }
 
 export interface CronLogsResponse {
@@ -2477,6 +2491,92 @@ export interface PortfolioAnalyticsJob {
   completed_at?: string | null;
 }
 
+export interface PortfolioRiskHighlight {
+  title: string;
+  detail: string;
+  severity: 'low' | 'medium' | 'high';
+  confidence: 'medium' | 'high';
+}
+
+export interface PortfolioRiskHighlightEntry {
+  symbol: string;
+  sector: string | null;
+  domain: string | null;
+  highlights: PortfolioRiskHighlight[];
+}
+
+export interface PortfolioRiskAnalyticsResponse {
+  portfolio_id: number;
+  analyzed_at: string;
+  total_value_eur: number;
+  n_positions: number;
+  risk_score: number;
+  summary: {
+    risk_score: number;
+    risk_label: string;
+    headline: string;
+  };
+  risk: {
+    volatility_explanation: string;
+    bad_day_loss: string;
+    crash_loss: string;
+    worst_ever: string;
+  };
+  diversification: {
+    effective_positions: string;
+    quality: string;
+    warnings: string[];
+  };
+  market: {
+    current_regime: string;
+    recommendation: string;
+    explanation: string;
+  };
+  insights: string[];
+  action_items: string[];
+  risk_highlights?: PortfolioRiskHighlightEntry[];
+  raw: {
+    portfolio_volatility: number;
+    var_95: number;
+    cvar_95: number;
+    max_drawdown: number;
+    effective_n: number;
+    diversification_ratio: number;
+    regime: string;
+    risk_contributions: Record<string, number>;
+  };
+}
+
+export interface PortfolioAllocationRecommendation {
+  portfolio_id: number;
+  method: string;
+  inflow_eur: number;
+  portfolio_value_eur: number;
+  confidence: string;
+  explanation: string;
+  risk_improvement: string;
+  current_risk: {
+    volatility: number;
+    label: string;
+  };
+  optimal_risk: {
+    volatility: number;
+    label: string;
+    diversification_ratio: number;
+  };
+  trades: Array<{
+    symbol: string;
+    action: string;
+    amount_eur: number;
+    current_weight_pct: number;
+    target_weight_pct: number;
+    reason: string;
+  }>;
+  current_weights: Record<string, number>;
+  target_weights: Record<string, number>;
+  warnings: string[];
+}
+
 export async function getPortfolios(): Promise<Portfolio[]> {
   return fetchAPI<Portfolio[]>('/portfolios');
 }
@@ -2592,6 +2692,31 @@ export async function getPortfolioAnalyticsJob(
 ): Promise<PortfolioAnalyticsJob> {
   return fetchAPI<PortfolioAnalyticsJob>(
     `/portfolios/${portfolioId}/analytics/jobs/${jobId}`
+  );
+}
+
+export async function getPortfolioRiskAnalytics(
+  portfolioId: number
+): Promise<PortfolioRiskAnalyticsResponse> {
+  return fetchAPI<PortfolioRiskAnalyticsResponse>(`/portfolios/${portfolioId}/analytics`);
+}
+
+export async function getPortfolioAllocationRecommendation(
+  portfolioId: number,
+  params: {
+    inflow_eur: number;
+    method?: string;
+  }
+): Promise<PortfolioAllocationRecommendation> {
+  const searchParams = new URLSearchParams({
+    inflow_eur: String(params.inflow_eur),
+  });
+  if (params.method) {
+    searchParams.append('method', params.method);
+  }
+  return fetchAPI<PortfolioAllocationRecommendation>(
+    `/portfolios/${portfolioId}/allocate?${searchParams.toString()}`,
+    { method: 'POST' }
   );
 }
 

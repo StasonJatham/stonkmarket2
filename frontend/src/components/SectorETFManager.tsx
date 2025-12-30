@@ -2,15 +2,12 @@ import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { SectorETFConfig } from '@/services/api';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
@@ -26,74 +23,9 @@ import {
   Plus, 
   Trash2, 
   Edit2, 
-  Building2,
-  Loader2
+  Building2
 } from 'lucide-react';
-
-interface SectorETFFormProps {
-  formSector: string;
-  setFormSector: (v: string) => void;
-  formSymbol: string;
-  setFormSymbol: (v: string) => void;
-  formName: string;
-  setFormName: (v: string) => void;
-  onSubmit: () => void;
-  submitLabel: string;
-  isSubmitting?: boolean;
-}
-
-function SectorETFForm({
-  formSector, setFormSector,
-  formSymbol, setFormSymbol,
-  formName, setFormName,
-  onSubmit, submitLabel,
-  isSubmitting
-}: SectorETFFormProps) {
-  return (
-    <div className="space-y-4">
-      <div className="space-y-2">
-        <Label>Sector Name</Label>
-        <Input
-          value={formSector}
-          onChange={(e) => setFormSector(e.target.value)}
-          placeholder="Technology, Healthcare, Financials..."
-        />
-        <p className="text-xs text-muted-foreground">Match the sector name from Yahoo Finance</p>
-      </div>
-      
-      <div className="space-y-2">
-        <Label>ETF Symbol</Label>
-        <Input
-          value={formSymbol}
-          onChange={(e) => setFormSymbol(e.target.value.toUpperCase())}
-          placeholder="XLK, XLV, XLF..."
-          className="font-mono"
-        />
-        <p className="text-xs text-muted-foreground">Sector ETF ticker symbol</p>
-      </div>
-
-      <div className="space-y-2">
-        <Label>Display Name</Label>
-        <Input
-          value={formName}
-          onChange={(e) => setFormName(e.target.value)}
-          placeholder="Technology Select Sector SPDR"
-        />
-      </div>
-
-      <DialogFooter>
-        <Button 
-          type="button" 
-          onClick={onSubmit} 
-          disabled={!formSector.trim() || !formSymbol.trim() || !formName.trim() || isSubmitting}
-        >
-          {isSubmitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-          {submitLabel}
-        </Button>
-      </DialogFooter>
-    </div>
-  );
-}
+import { ConfigForm, type ConfigField } from '@/components/ConfigForm';
 
 interface SectorETFManagerProps {
   sectorEtfs: SectorETFConfig[];
@@ -205,6 +137,37 @@ export function SectorETFManager({ sectorEtfs, onChange, onSave }: SectorETFMana
     }
   }
 
+  const formFields: ConfigField[] = [
+    {
+      id: 'sector-name',
+      label: 'Sector Name',
+      value: formSector,
+      onChange: setFormSector,
+      placeholder: 'Technology, Healthcare, Financials...',
+      helperText: 'Match the sector name from Yahoo Finance',
+    },
+    {
+      id: 'sector-etf-symbol',
+      label: 'ETF Symbol',
+      value: formSymbol,
+      onChange: setFormSymbol,
+      placeholder: 'XLK, XLV, XLF...',
+      helperText: 'Sector ETF ticker symbol',
+      inputProps: { className: 'font-mono' },
+      transform: (value) => value.toUpperCase(),
+    },
+    {
+      id: 'sector-etf-name',
+      label: 'Display Name',
+      value: formName,
+      onChange: setFormName,
+      placeholder: 'Technology Select Sector SPDR',
+    },
+  ];
+  const isFormValid = Boolean(
+    formSector.trim() && formSymbol.trim() && formName.trim()
+  );
+
   return (
     <Card>
       <CardHeader>
@@ -233,16 +196,12 @@ export function SectorETFManager({ sectorEtfs, onChange, onSave }: SectorETFMana
                   Add a new sector-to-ETF mapping for performance benchmarking.
                 </DialogDescription>
               </DialogHeader>
-              <SectorETFForm
-                formSector={formSector}
-                setFormSector={setFormSector}
-                formSymbol={formSymbol}
-                setFormSymbol={setFormSymbol}
-                formName={formName}
-                setFormName={setFormName}
+              <ConfigForm
+                fields={formFields}
                 onSubmit={handleAdd}
                 submitLabel="Add Sector ETF"
                 isSubmitting={isSaving}
+                isValid={isFormValid}
               />
             </DialogContent>
           </Dialog>
@@ -330,16 +289,12 @@ export function SectorETFManager({ sectorEtfs, onChange, onSave }: SectorETFMana
                 Update the ETF mapping for this sector.
               </DialogDescription>
             </DialogHeader>
-            <SectorETFForm
-              formSector={formSector}
-              setFormSector={setFormSector}
-              formSymbol={formSymbol}
-              setFormSymbol={setFormSymbol}
-              formName={formName}
-              setFormName={setFormName}
+            <ConfigForm
+              fields={formFields}
               onSubmit={handleEdit}
               submitLabel="Save Changes"
               isSubmitting={isSaving}
+              isValid={isFormValid}
             />
           </DialogContent>
         </Dialog>

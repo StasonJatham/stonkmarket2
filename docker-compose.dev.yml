@@ -149,6 +149,40 @@ services:
     networks:
       - stonkmarket
 
+  celery-worker-2:
+    build:
+      context: .
+      dockerfile: Dockerfile.celery
+    container_name: stonkmarket-celery-worker-2-dev
+    command: >
+      celery -A app.celery_app.celery_app worker
+      --loglevel=INFO
+      --events
+      --concurrency=${CELERY_CONCURRENCY:-4}
+      --prefetch-multiplier=1
+      --queues=high,default,low
+      -O fair
+      --hostname=worker2@%h
+    env_file:
+      - .env.production
+    environment:
+      - ENVIRONMENT=development
+      - DEBUG=true
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://valkey:6379/1}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://valkey:6379/1}
+      - CELERY_CRON_SYNC_SECONDS=${CELERY_CRON_SYNC_SECONDS:-30}
+    volumes:
+      - ./app:/app/app:ro
+      - ./alembic:/app/alembic:ro
+      - ./alembic.ini:/app/alembic.ini:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    networks:
+      - stonkmarket
+
   celery-worker-batch:
     build:
       context: .
@@ -230,6 +264,8 @@ services:
       - ./app:/app/app:ro
     depends_on:
       celery-worker:
+        condition: service_started
+      celery-worker-2:
         condition: service_started
       celery-worker-batch:
         condition: service_started

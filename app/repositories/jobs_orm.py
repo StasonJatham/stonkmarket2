@@ -329,6 +329,62 @@ async def get_active_symbol_tickers() -> list[str]:
     return list(tickers)
 
 
+async def ensure_sector_etfs_exist() -> int:
+    """Ensure all sector ETFs from runtime settings exist in the symbols table.
+    
+    This creates any missing sector ETFs as symbols with symbol_type='etf'.
+    Should be called at the start of the market close pipeline to prevent
+    foreign key violations when updating dip_state for sector ETFs.
+    
+    Returns:
+        Number of sector ETFs created
+    """
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    from app.services.runtime_settings import get_runtime_setting
+    
+    sector_etfs = get_runtime_setting("sector_etfs", [])
+    if not sector_etfs:
+        return 0
+    
+    # Collect unique ETF symbols with their metadata
+    etf_data: dict[str, dict] = {}
+    for etf in sector_etfs:
+        if isinstance(etf, dict) and "symbol" in etf:
+            symbol = etf["symbol"]
+            if symbol not in etf_data:
+                etf_data[symbol] = {
+                    "symbol": symbol,
+                    "name": etf.get("name", f"{symbol} ETF"),
+                    "sector": etf.get("sector"),
+                    "symbol_type": "etf",
+                    "is_active": True,
+                    "min_dip_pct": Decimal("0.10"),  # Lower threshold for ETFs
+                    "min_days": 3,
+                }
+    
+    if not etf_data:
+        return 0
+    
+    created_count = 0
+    async with get_session() as session:
+        for symbol, data in etf_data.items():
+            # Use INSERT ... ON CONFLICT DO NOTHING to avoid duplicates
+            stmt = pg_insert(Symbol).values(**data).on_conflict_do_nothing(
+                index_elements=["symbol"]
+            )
+            result = await session.execute(stmt)
+            if result.rowcount > 0:
+                created_count += 1
+                logger.info(f"Created sector ETF symbol: {symbol}")
+        
+        await session.commit()
+    
+    if created_count > 0:
+        logger.info(f"Created {created_count} sector ETF symbols")
+    
+    return created_count
+
+
 async def get_symbol_dip_thresholds() -> dict[str, float]:
     """Get min_dip_pct for all active symbols.
     

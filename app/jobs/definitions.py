@@ -8,13 +8,10 @@ Job Categories:
    - portfolio_worker: Process analytics queue
    - cache_warmup: Pre-cache chart data
 
-2. DAILY MARKET DATA (after market close, Mon-Fri)
-   - signals_daily: Technical signal scanner (10 PM)
-   - regime_daily: Market regime detection (10:30 PM)
-   - prices_daily: Fetch closing prices (11 PM)
-   - strategy_nightly: Backtest & optimize (11:30 PM)
-   - quant_scoring_daily: Quant metrics (11:45 PM)
-   - dipfinder_daily: Dip signals (11:50 PM)
+2. DAILY MARKET CLOSE PIPELINE (single orchestrator, Mon-Fri 10 PM UTC)
+   - market_close_pipeline: Runs all steps sequentially, each waits for previous
+     Steps: prices → signals → regime → strategy → quant_scoring → dipfinder → quant_analysis
+   - Individual jobs exist for manual retries but are NOT scheduled
 
 3. WEEKLY AI ANALYSIS (Sunday morning)
    - ai_personas_weekly: Warren Buffett, Peter Lynch etc.
@@ -33,6 +30,7 @@ Job Categories:
 
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -47,6 +45,31 @@ if TYPE_CHECKING:
     import pandas as pd
 
 logger = get_logger("jobs.definitions")
+
+
+def log_job_success(job_name: str, message: str, **metrics: Any) -> None:
+    """Log a structured job success message with metrics.
+    
+    Args:
+        job_name: Name of the job (e.g., "cache_warmup")
+        message: Human-readable summary message
+        **metrics: Key-value pairs of metrics to include in structured log
+    
+    Example:
+        log_job_success("cache_warmup", "Warmed 60 chart caches",
+            items_warmed=60, symbols_cached=20, duration_ms=1234)
+    """
+    # Build structured log data
+    log_data = {
+        "job": job_name,
+        "status": "success",
+        **metrics,
+    }
+    
+    # Log with structured data for JSON parsing, and human message for text logs
+    # The message format is: "job_name completed: message | metrics_json"
+    metrics_str = " ".join(f"{k}={v}" for k, v in metrics.items())
+    logger.info(f"{job_name} completed: {message} | {metrics_str}", extra={"extra_fields": log_data})
 
 
 def get_close_column(df: "pd.DataFrame") -> str:
@@ -64,6 +87,246 @@ def get_close_column(df: "pd.DataFrame") -> str:
     if "Adj Close" in df.columns and df["Adj Close"].notna().any():
         return "Adj Close"
     return "Close"
+
+
+# =============================================================================
+# MARKET CLOSE PIPELINE - Orchestrates all daily analysis jobs
+# =============================================================================
+# This is the ONLY scheduled daily job. It runs each step sequentially,
+# waiting for completion before starting the next. No timing issues!
+# =============================================================================
+
+# Pipeline steps in execution order
+MARKET_CLOSE_PIPELINE_STEPS = [
+    "prices_daily",        # 1. Fetch closing prices - MUST be first
+    "fundamentals_daily",  # 2. Refresh fundamentals (earnings-driven, smart)
+    "signals_daily",       # 3. Technical signals (needs prices)
+    "regime_daily",        # 4. Market regime detection (needs prices)
+    "strategy_nightly",    # 5. Strategy optimization (needs prices + signals)
+    "quant_scoring_daily", # 6. Quant scoring (needs prices + signals)
+    "dipfinder_daily",     # 7. DipFinder + entry optimizer (needs quant scores)
+    "quant_analysis_nightly",  # 8. Pre-compute quant results - MUST be last
+]
+
+
+@register_job("market_close_pipeline")
+async def market_close_pipeline_job() -> str:
+    """
+    Daily market close pipeline - orchestrates all analysis jobs sequentially.
+    
+    This is the SINGLE SCHEDULED JOB for daily market analysis.
+    Each step waits for the previous to complete - no timing issues!
+    
+    Pipeline:
+    1. prices_daily - Fetch closing prices (required for all others)
+    2. fundamentals_daily - Refresh fundamentals (earnings-driven)
+    3. signals_daily - Technical signal scanner
+    4. regime_daily - Market regime detection
+    5. strategy_nightly - Strategy optimization & backtesting
+    6. quant_scoring_daily - Quant metrics computation
+    7. dipfinder_daily - DipFinder signals + entry optimizer
+    8. quant_analysis_nightly - Pre-compute all quant results for API
+    
+    Each step is tracked with timing. If a step fails, the pipeline
+    continues with remaining steps but reports the failure.
+    
+    Schedule: Mon-Fri at 10 PM UTC (after US market close)
+    """
+    import time
+    from app.jobs.executor import execute_job
+    from app.repositories import cronjobs_orm as cron_repo
+    
+    logger.info("=" * 60)
+    logger.info("MARKET CLOSE PIPELINE - Starting")
+    logger.info("=" * 60)
+    
+    results = []
+    total_start = time.monotonic()
+    
+    for step_num, job_name in enumerate(MARKET_CLOSE_PIPELINE_STEPS, 1):
+        step_start = time.monotonic()
+        logger.info(f"[PIPELINE] Step {step_num}/{len(MARKET_CLOSE_PIPELINE_STEPS)}: {job_name}")
+        
+        try:
+            # Execute the job directly (not via Celery task to ensure sequential)
+            message = await execute_job(job_name)
+            duration_s = time.monotonic() - step_start
+            
+            # Update job stats
+            try:
+                await cron_repo.update_job_stats(job_name, "ok", int(duration_s * 1000))
+            except Exception:
+                pass
+            
+            results.append({
+                "step": step_num,
+                "job": job_name,
+                "status": "ok",
+                "duration_s": round(duration_s, 1),
+                "message": message[:100] if message else "Done",
+            })
+            logger.info(f"[PIPELINE] ✓ {job_name} completed in {duration_s:.1f}s")
+            
+        except Exception as e:
+            duration_s = time.monotonic() - step_start
+            error_msg = str(e)[:200]
+            
+            # Update job stats with error
+            try:
+                await cron_repo.update_job_stats(job_name, "error", int(duration_s * 1000), error_msg)
+            except Exception:
+                pass
+            
+            results.append({
+                "step": step_num,
+                "job": job_name,
+                "status": "error",
+                "duration_s": round(duration_s, 1),
+                "message": error_msg,
+            })
+            logger.error(f"[PIPELINE] ✗ {job_name} FAILED after {duration_s:.1f}s: {error_msg}")
+            # Continue with next step - don't abort entire pipeline
+    
+    total_duration = time.monotonic() - total_start
+    total_duration_ms = int(total_duration * 1000)
+    
+    # Summary
+    ok_count = sum(1 for r in results if r["status"] == "ok")
+    error_count = sum(1 for r in results if r["status"] == "error")
+    
+    logger.info("=" * 60)
+    logger.info(f"MARKET CLOSE PIPELINE - Completed in {total_duration:.1f}s")
+    logger.info(f"Results: {ok_count} succeeded, {error_count} failed")
+    for r in results:
+        status_icon = "✓" if r["status"] == "ok" else "✗"
+        logger.info(f"  {status_icon} {r['job']}: {r['duration_s']}s - {r['message'][:50]}")
+    logger.info("=" * 60)
+    
+    summary = f"Pipeline: {ok_count}/{len(MARKET_CLOSE_PIPELINE_STEPS)} steps OK in {total_duration:.0f}s"
+    if error_count > 0:
+        failed_jobs = [r["job"] for r in results if r["status"] == "error"]
+        summary += f" (FAILED: {', '.join(failed_jobs)})"
+    
+    # Structured success log
+    log_job_success(
+        "market_close_pipeline",
+        summary,
+        steps_total=len(MARKET_CLOSE_PIPELINE_STEPS),
+        steps_ok=ok_count,
+        steps_failed=error_count,
+        duration_ms=total_duration_ms,
+        failed_steps=[r["job"] for r in results if r["status"] == "error"],
+        step_durations={r["job"]: r["duration_s"] for r in results},
+    )
+    
+    return summary
+
+
+# =============================================================================
+# WEEKLY AI PIPELINE - Orchestrated AI analysis (Sunday morning)
+# =============================================================================
+
+WEEKLY_AI_PIPELINE_STEPS = [
+    "data_backfill",       # 1. Fill any data gaps first
+    "ai_personas_weekly",  # 2. Generate AI investor personas
+    "ai_bios_weekly",      # 3. Generate swipe bios
+]
+
+
+@register_job("weekly_ai_pipeline")
+async def weekly_ai_pipeline_job() -> str:
+    """
+    Weekly AI pipeline - orchestrates weekly maintenance and AI jobs.
+    
+    This ensures proper ordering:
+    1. data_backfill - Fill ALL data gaps (sectors, summaries, prices, etc.)
+    2. ai_personas_weekly - Warren Buffett, Peter Lynch etc. analysis
+    3. ai_bios_weekly - Fun "dating profile" style descriptions
+    
+    Each step waits for previous to complete. If data_backfill fails,
+    AI jobs still run but may have incomplete data.
+    
+    Schedule: Sunday 2 AM UTC
+    """
+    import time
+    from app.jobs.executor import execute_job
+    from app.repositories import cronjobs_orm as cron_repo
+    
+    logger.info("=" * 60)
+    logger.info("WEEKLY AI PIPELINE - Starting")
+    logger.info("=" * 60)
+    
+    results = []
+    total_start = time.monotonic()
+    
+    for step_num, job_name in enumerate(WEEKLY_AI_PIPELINE_STEPS, 1):
+        step_start = time.monotonic()
+        logger.info(f"[WEEKLY AI] Step {step_num}/{len(WEEKLY_AI_PIPELINE_STEPS)}: {job_name}")
+        
+        try:
+            message = await execute_job(job_name)
+            duration_s = time.monotonic() - step_start
+            
+            try:
+                await cron_repo.update_job_stats(job_name, "ok", int(duration_s * 1000))
+            except Exception:
+                pass
+            
+            results.append({
+                "step": step_num,
+                "job": job_name,
+                "status": "ok",
+                "duration_s": round(duration_s, 1),
+                "message": message[:100] if message else "Done",
+            })
+            logger.info(f"[WEEKLY AI] ✓ {job_name} completed in {duration_s:.1f}s")
+            
+        except Exception as e:
+            duration_s = time.monotonic() - step_start
+            error_msg = str(e)[:200]
+            
+            try:
+                await cron_repo.update_job_stats(job_name, "error", int(duration_s * 1000), error_msg)
+            except Exception:
+                pass
+            
+            results.append({
+                "step": step_num,
+                "job": job_name,
+                "status": "error",
+                "duration_s": round(duration_s, 1),
+                "message": error_msg,
+            })
+            logger.error(f"[WEEKLY AI] ✗ {job_name} FAILED after {duration_s:.1f}s: {error_msg}")
+    
+    total_duration = time.monotonic() - total_start
+    total_duration_ms = int(total_duration * 1000)
+    
+    ok_count = sum(1 for r in results if r["status"] == "ok")
+    error_count = sum(1 for r in results if r["status"] == "error")
+    
+    logger.info("=" * 60)
+    logger.info(f"WEEKLY AI PIPELINE - Completed in {total_duration:.1f}s")
+    logger.info(f"Results: {ok_count} succeeded, {error_count} failed")
+    logger.info("=" * 60)
+    
+    summary = f"Weekly AI: {ok_count}/{len(WEEKLY_AI_PIPELINE_STEPS)} steps OK in {total_duration:.0f}s"
+    if error_count > 0:
+        failed_jobs = [r["job"] for r in results if r["status"] == "error"]
+        summary += f" (FAILED: {', '.join(failed_jobs)})"
+    
+    # Structured success log
+    log_job_success(
+        "weekly_ai_pipeline",
+        summary,
+        steps_total=len(WEEKLY_AI_PIPELINE_STEPS),
+        steps_ok=ok_count,
+        steps_failed=error_count,
+        duration_ms=total_duration_ms,
+        failed_steps=[r["job"] for r in results if r["status"] == "error"],
+    )
+    
+    return summary
 
 
 # =============================================================================
@@ -102,13 +365,22 @@ async def symbol_ingest_job() -> str:
     from app.services.stock_info import get_stock_info_batch_async
 
     BATCH_SIZE = 20
-    logger.info("Starting initial_data_ingest job")
+    logger.info("Starting symbol_ingest job")
+    job_start = time.monotonic()
 
     try:
         # Get pending symbols from the queue
         rows = await jobs_repo.get_pending_ingest_symbols(BATCH_SIZE)
 
         if not rows:
+            log_job_success(
+                "symbol_ingest",
+                "No symbols in queue",
+                symbols_processed=0,
+                symbols_failed=0,
+                queue_remaining=0,
+                duration_ms=int((time.monotonic() - job_start) * 1000),
+            )
             return "No symbols in queue"
 
         symbols = [row.symbol for row in rows]
@@ -252,14 +524,27 @@ async def symbol_ingest_job() -> str:
             await symbols_cache.invalidate_pattern("*")
 
         remaining = await jobs_repo.get_ingest_queue_count()
+        duration_ms = int((time.monotonic() - job_start) * 1000)
         message = f"Processed {processed}/{len(symbols)} ({failed} failed), {remaining} remaining"
         if batch_id:
             message += f", AI batch: {batch_id}"
-        logger.info(f"[INGEST] {message}")
+        
+        # Structured success log
+        log_job_success(
+            "symbol_ingest",
+            message,
+            symbols_processed=processed,
+            symbols_failed=failed,
+            symbols_total=len(symbols),
+            ai_items_submitted=len(ai_items),
+            ai_batch_id=batch_id,
+            queue_remaining=remaining,
+            duration_ms=duration_ms,
+        )
         return message
 
     except Exception as e:
-        logger.error(f"initial_data_ingest failed: {e}", exc_info=True)
+        logger.error(f"symbol_ingest failed: {e}", exc_info=True)
         raise
 
 
@@ -317,6 +602,7 @@ async def data_backfill_job() -> str:
     from app.services.stock_info import get_stock_info_async
     
     logger.info("Starting data_backfill job")
+    job_start = time.monotonic()
     
     stats = {
         "sectors": 0,
@@ -333,6 +619,8 @@ async def data_backfill_job() -> str:
         tickers = [s.symbol for s in all_symbols if s.symbol not in ("SPY", "^GSPC", "URTH")]
         
         if not tickers:
+            log_job_success("data_backfill", "No symbols to backfill",
+                            total_filled=0, symbols_checked=0, duration_ms=int((time.monotonic() - job_start) * 1000))
             return "No symbols to backfill"
         
         logger.info(f"[BACKFILL] Checking {len(tickers)} symbols for data gaps")
@@ -477,13 +765,28 @@ async def data_backfill_job() -> str:
         
         # Build summary message
         filled = sum(stats.values())
+        duration_ms = int((time.monotonic() - job_start) * 1000)
         message = (
             f"Backfilled {filled} data gaps: "
             f"{stats['sectors']} sectors, {stats['summaries']} summaries, "
             f"{stats['prices']} prices, {stats['fundamentals']} fundamentals, "
             f"{stats['quant_scores']} quant scores, {stats['dipfinder']} dipfinder"
         )
-        logger.info(f"[BACKFILL] {message}")
+        
+        # Structured success log
+        log_job_success(
+            "data_backfill",
+            message,
+            total_filled=filled,
+            symbols_checked=len(tickers),
+            sectors_filled=stats["sectors"],
+            summaries_filled=stats["summaries"],
+            prices_filled=stats["prices"],
+            fundamentals_filled=stats["fundamentals"],
+            quant_scores_filled=stats["quant_scores"],
+            dipfinder_filled=stats["dipfinder"],
+            duration_ms=duration_ms,
+        )
         return message
         
     except Exception as e:
@@ -502,15 +805,26 @@ async def prices_daily_job() -> str:
     from datetime import date
 
     from app.cache.cache import Cache
+    from app.repositories import symbols_orm as symbols_repo
     from app.services.data_providers import get_yfinance_service
     from app.services.runtime_settings import get_runtime_setting
 
     logger.info("Starting prices_daily job")
+    job_start = time.monotonic()
 
     try:
+        # Ensure sector ETFs exist in symbols table before processing
+        # This prevents FK violations when updating dip_state for sector ETFs
+        created_etfs = await jobs_repo.ensure_sector_etfs_exist()
+        if created_etfs > 0:
+            logger.info(f"Created {created_etfs} missing sector ETF symbols")
+
         tickers = await jobs_repo.get_active_symbol_tickers()
 
         if not tickers:
+            log_job_success("prices_daily", "No active symbols",
+                            symbols_updated=0, symbols_changed=0, benchmarks_updated=0,
+                            duration_ms=int((time.monotonic() - job_start) * 1000))
             return "No active symbols"
 
         yf_service = get_yfinance_service()
@@ -801,8 +1115,22 @@ async def prices_daily_job() -> str:
         else:
             logger.info("No data changes detected, skipping cache invalidation")
 
+        duration_ms = int((time.monotonic() - job_start) * 1000)
         message = f"Updated {updated_count}/{len(tickers)} symbols ({len(changed_symbols)} changed), {benchmark_count} benchmarks"
-        logger.info(f"prices_daily: {message}")
+        
+        # Structured success log
+        log_job_success(
+            "prices_daily",
+            message,
+            symbols_total=len(tickers),
+            symbols_updated=updated_count,
+            symbols_changed=len(changed_symbols),
+            benchmarks_updated=benchmark_count,
+            sector_etfs_created=created_etfs,
+            full_refresh_count=len(full_refresh),
+            incremental_count=len(incremental),
+            duration_ms=duration_ms,
+        )
         return message
 
     except Exception as e:
@@ -825,6 +1153,7 @@ async def cache_warmup_job() -> str:
     from app.services.runtime_settings import get_runtime_setting
 
     logger.info("Starting cache_warmup job")
+    job_start = time.monotonic()
 
     try:
         # Get top 20 active symbols ordered by dip percentage
@@ -897,8 +1226,18 @@ async def cache_warmup_job() -> str:
                     logger.warning(f"Failed to cache {symbol}:{days}: {e}")
                     continue
 
+        duration_ms = int((time.monotonic() - job_start) * 1000)
         message = f"Warmed up {cached_count} chart caches for {len(all_symbols)} symbols"
-        logger.info(f"cache_warmup: {message}")
+        
+        # Structured success log
+        log_job_success(
+            "cache_warmup",
+            message,
+            items_warmed=cached_count,
+            symbols_cached=len(all_symbols),
+            periods_per_symbol=len(periods),
+            duration_ms=duration_ms,
+        )
         return message
 
     except Exception as e:
@@ -919,6 +1258,7 @@ async def ai_bios_weekly_job() -> str:
     )
 
     logger.info("Starting ai_bios_weekly job")
+    job_start = time.monotonic()
 
     try:
         # Process any completed batches first
@@ -927,8 +1267,17 @@ async def ai_bios_weekly_job() -> str:
         # Schedule new batch
         batch_id = await schedule_batch_swipe_bios()
 
+        duration_ms = int((time.monotonic() - job_start) * 1000)
         message = f"Batch: {batch_id or 'none needed'}, processed: {processed}"
-        logger.info(f"ai_bios_weekly: {message}")
+        
+        # Structured success log
+        log_job_success(
+            "ai_bios_weekly",
+            message,
+            batch_id=batch_id,
+            items_processed=processed,
+            duration_ms=duration_ms,
+        )
         return message
 
     except Exception as e:
@@ -949,12 +1298,21 @@ async def ai_batch_poll_job() -> str:
     from app.services.batch_scheduler import process_completed_batch_jobs
 
     logger.info("Starting ai_batch_poll job")
+    job_start = time.monotonic()
 
     try:
         processed = await process_completed_batch_jobs()
 
+        duration_ms = int((time.monotonic() - job_start) * 1000)
         message = f"Polled batches, processed: {processed}"
-        logger.info(f"ai_batch_poll: {message}")
+        
+        # Structured success log
+        log_job_success(
+            "ai_batch_poll",
+            message,
+            items_processed=processed,
+            duration_ms=duration_ms,
+        )
         return message
 
     except Exception as e:
@@ -962,12 +1320,70 @@ async def ai_batch_poll_job() -> str:
         raise
 
 
-@register_job("fundamentals_monthly")
-async def fundamentals_monthly_job() -> str:
+@register_job("batch_watchdog")
+async def batch_watchdog_job() -> str:
+    """
+    Batch job watchdog - expires stale batch jobs and reports health.
+    
+    Actions:
+    1. Mark jobs stuck in pending/in_progress for >24h as 'expired'
+    2. Log warnings for stale jobs (useful for alerting)
+    3. Return health summary
+    
+    Schedule: Every hour
+    """
+    from app.repositories import api_usage_orm
+    
+    logger.info("Starting batch_watchdog job")
+    job_start = time.monotonic()
+    
+    try:
+        # Expire stale jobs (>24h old)
+        expired_jobs = await api_usage_orm.expire_stale_batch_jobs(max_age_hours=24)
+        
+        # Get current health metrics
+        health = await api_usage_orm.get_batch_job_health()
+        
+        if expired_jobs:
+            logger.warning(
+                f"batch_watchdog: Expired {len(expired_jobs)} stale jobs: "
+                f"{[j['batch_id'] for j in expired_jobs]}"
+            )
+        
+        if health.get("has_stale_jobs"):
+            logger.warning(
+                f"batch_watchdog: Oldest pending job is {health['oldest_pending_hours']}h old"
+            )
+        
+        pending = health.get("status_counts", {}).get("pending", 0)
+        in_progress = health.get("status_counts", {}).get("in_progress", 0)
+        
+        duration_ms = int((time.monotonic() - job_start) * 1000)
+        message = f"Batch watchdog: expired={len(expired_jobs)}, pending={pending}, in_progress={in_progress}"
+        
+        # Structured success log
+        log_job_success(
+            "batch_watchdog",
+            message,
+            expired_count=len(expired_jobs),
+            pending_count=pending,
+            in_progress_count=in_progress,
+            has_stale_jobs=health.get("has_stale_jobs", False),
+            duration_ms=duration_ms,
+        )
+        return message
+        
+    except Exception as e:
+        logger.error(f"batch_watchdog failed: {e}")
+        raise
+
+
+@register_job("fundamentals_daily")
+async def fundamentals_daily_job() -> str:
     """
     Refresh stock fundamentals and financial statements from Yahoo Finance.
 
-    Change-driven refresh criteria:
+    Smart, earnings-driven refresh criteria:
     1. Basic fundamentals never fetched
     2. Basic fundamentals expired (>30 days old)
     3. Earnings date has passed since last fetch (new quarterly data available)
@@ -975,13 +1391,14 @@ async def fundamentals_monthly_job() -> str:
     5. Financial statements stale (>90 days old) - statements change less frequently
     6. Next earnings date is within 7 days (pre-fetch for upcoming data)
 
-    Schedule: Monthly 1st at 2am UTC
+    Runs daily as part of market_close_pipeline but only refreshes what's needed.
     """
     from datetime import datetime, timedelta
 
     from app.services.fundamentals import refresh_all_fundamentals
 
-    logger.info("Starting fundamentals_monthly job")
+    logger.info("Starting fundamentals_daily job")
+    job_start = time.monotonic()
 
     try:
         # Find symbols that need refresh based on multiple criteria
@@ -1044,8 +1461,16 @@ async def fundamentals_monthly_job() -> str:
             logger.debug(f"Skipping {symbol}: fresh data (age={age_days}d, financials_age={financials_age_days}d)")
 
         if not symbols_to_refresh:
+            duration_ms = int((time.monotonic() - job_start) * 1000)
             message = "No symbols need fundamentals refresh"
-            logger.info(f"fundamentals_monthly: {message}")
+            log_job_success(
+                "fundamentals_daily",
+                message,
+                symbols_refreshed=0,
+                symbols_failed=0,
+                symbols_skipped=len(rows),
+                duration_ms=duration_ms,
+            )
             return message
 
         logger.info(f"Refreshing fundamentals for {len(symbols_to_refresh)} symbols")
@@ -1113,12 +1538,25 @@ async def fundamentals_monthly_job() -> str:
             include_calendar_for=include_calendar_for,
         )
 
+        duration_ms = int((time.monotonic() - job_start) * 1000)
         message = f"Fundamentals refresh: {result['refreshed']} updated, {result['failed']} failed, {result['skipped']} skipped"
-        logger.info(f"fundamentals_monthly: {message}")
+        
+        # Structured success log
+        log_job_success(
+            "fundamentals_daily",
+            message,
+            symbols_refreshed=result["refreshed"],
+            symbols_failed=result["failed"],
+            symbols_skipped=result["skipped"],
+            refresh_reasons=reasons,
+            with_financials=len(include_financials_for),
+            with_calendar=len(include_calendar_for),
+            duration_ms=duration_ms,
+        )
         return message
 
     except Exception as e:
-        logger.error(f"fundamentals_monthly failed: {e}")
+        logger.error(f"fundamentals_daily failed: {e}")
         raise
 
 
@@ -1163,6 +1601,7 @@ async def ai_personas_weekly_job() -> str:
     from app.services.batch_scheduler import process_completed_batch_jobs
 
     logger.info("Starting ai_personas_weekly job")
+    job_start = time.monotonic()
 
     try:
         # Process any completed agent batches first
@@ -1175,8 +1614,19 @@ async def ai_personas_weekly_job() -> str:
         submitted = result.get("submitted", 0)
         skipped = result.get("skipped", 0)
 
+        duration_ms = int((time.monotonic() - job_start) * 1000)
         message = f"Batch: {batch_id or 'none needed'}, submitted: {submitted}, skipped: {skipped}, processed: {processed}"
-        logger.info(f"ai_personas_weekly: {message}")
+        
+        # Structured success log
+        log_job_success(
+            "ai_personas_weekly",
+            message,
+            batch_id=batch_id,
+            submitted_count=submitted,
+            skipped_count=skipped,
+            processed_count=processed,
+            duration_ms=duration_ms,
+        )
         return message
 
     except Exception as e:
@@ -1192,28 +1642,44 @@ async def cleanup_daily_job() -> str:
     Schedule: Daily midnight
     """
     logger.info("Starting cleanup_daily job")
+    job_start = time.monotonic()
 
     try:
         # Rejected suggestions > 7 days
-        await jobs_repo.cleanup_expired_suggestions()
+        suggestions_cleaned = await jobs_repo.cleanup_expired_suggestions()
 
         # Pending suggestions > 30 days
-        await jobs_repo.cleanup_stale_pending_suggestions()
+        stale_suggestions = await jobs_repo.cleanup_stale_pending_suggestions()
 
         # Expired AI analyses
-        await jobs_repo.cleanup_expired_ai_analyses()
+        ai_analyses = await jobs_repo.cleanup_expired_ai_analyses()
 
         # Expired AI agent analyses
-        await jobs_repo.cleanup_expired_agent_analyses()
+        agent_analyses = await jobs_repo.cleanup_expired_agent_analyses()
 
         # Expired cached symbol search results
-        await jobs_repo.cleanup_expired_symbol_search_results()
+        search_results = await jobs_repo.cleanup_expired_symbol_search_results()
 
         # Expired user API keys
-        await jobs_repo.cleanup_expired_api_keys()
+        api_keys = await jobs_repo.cleanup_expired_api_keys()
 
-        message = "Cleanup completed"
-        logger.info(f"cleanup_daily: {message}")
+        total_cleaned = (suggestions_cleaned or 0) + (stale_suggestions or 0) + (ai_analyses or 0) + (agent_analyses or 0) + (search_results or 0) + (api_keys or 0)
+        duration_ms = int((time.monotonic() - job_start) * 1000)
+        message = f"Cleanup completed: {total_cleaned} items removed"
+        
+        # Structured success log
+        log_job_success(
+            "cleanup_daily",
+            message,
+            total_cleaned=total_cleaned,
+            suggestions_cleaned=suggestions_cleaned or 0,
+            stale_suggestions=stale_suggestions or 0,
+            ai_analyses=ai_analyses or 0,
+            agent_analyses=agent_analyses or 0,
+            search_results=search_results or 0,
+            api_keys_expired=api_keys or 0,
+            duration_ms=duration_ms,
+        )
         return message
 
     except Exception as e:
@@ -1231,11 +1697,20 @@ async def portfolio_worker_job() -> str:
     from app.portfolio.jobs import process_pending_jobs
 
     logger.info("Starting portfolio_worker job")
+    job_start = time.monotonic()
 
     try:
         processed = await process_pending_jobs(limit=3)
+        duration_ms = int((time.monotonic() - job_start) * 1000)
         message = f"Processed {processed} portfolio analytics jobs"
-        logger.info(f"portfolio_worker: {message}")
+        
+        # Structured success log
+        log_job_success(
+            "portfolio_worker",
+            message,
+            jobs_processed=processed,
+            duration_ms=duration_ms,
+        )
         return message
     except Exception as e:
         logger.error(f"portfolio_worker failed: {e}")
@@ -1262,6 +1737,7 @@ async def signals_daily_job() -> str:
     from app.repositories import symbols_orm as symbols_repo
 
     logger.info("Starting signals_daily job")
+    job_start = time.monotonic()
 
     cache = Cache(prefix="signals", default_ttl=86400)  # 24 hour TTL
 
@@ -1331,8 +1807,19 @@ async def signals_daily_job() -> str:
         total_active = sum(len(opp.active_signals) for opp in opportunities)
         strong_buys = sum(1 for opp in opportunities if opp.opportunity_type == "STRONG_BUY")
 
+        duration_ms = int((time.monotonic() - job_start) * 1000)
         message = f"Scanned {len(opportunities)} stocks, {strong_buys} strong buys, {total_active} active signals"
-        logger.info(f"signals_daily: {message}")
+        
+        # Structured success log
+        log_job_success(
+            "signals_daily",
+            message,
+            symbols_scanned=len(opportunities),
+            strong_buys=strong_buys,
+            active_signals=total_active,
+            with_price_data=len(price_dfs),
+            duration_ms=duration_ms,
+        )
         return message
 
     except Exception as e:
@@ -1346,15 +1833,19 @@ async def dipfinder_daily_job() -> str:
     Daily DipFinder signal refresh for all tracked symbols.
     
     Computes dip metrics, scores, and enhanced analysis for each symbol.
+    Also runs dip entry optimizer to find optimal buy thresholds.
     Must run AFTER quant_scoring_daily since DipFinder requires quant scores.
     
     Schedule: Daily at 11:50 PM UTC (after quant_scoring_daily at 11:45 PM)
     """
+    from datetime import date
+    
     from app.dipfinder.config import get_dipfinder_config
     from app.dipfinder.service import DipFinderService
     from app.repositories import symbols_orm as symbols_repo
     
     logger.info("Starting dipfinder_daily job")
+    job_start = time.monotonic()
     
     try:
         # Get all tracked symbols
@@ -1398,7 +1889,81 @@ async def dipfinder_daily_job() -> str:
         
         message = f"Processed {processed} signals, {skipped} skipped (no quant score), {failed} failed"
         logger.info(f"[DIPFINDER] {message}")
-        return message
+        
+        # Phase 2: Run dip entry optimizer for all symbols
+        from datetime import timedelta
+        from app.quant_engine.dip_entry_optimizer import DipEntryOptimizer, get_dip_summary
+        from app.repositories import price_history_orm as price_history_repo
+        from app.repositories import quant_precomputed_orm as quant_repo
+        
+        logger.info(f"[DIP_ENTRY] Starting dip entry optimization for {len(tickers)} symbols")
+        
+        dip_entry_processed = 0
+        dip_entry_skipped = 0
+        dip_entry_failed = 0
+        end_date = date.today()
+        start_date = end_date - timedelta(days=1825)  # 5 years
+        
+        for ticker in tickers:
+            try:
+                # Get symbol's min_dip_pct from DB
+                db_symbol = next((s for s in symbols_list if s.symbol == ticker), None)
+                min_dip_threshold = None
+                if db_symbol and db_symbol.min_dip_pct:
+                    min_dip_threshold = -float(db_symbol.min_dip_pct) * 100
+                
+                # Fetch price history
+                df = await price_history_repo.get_prices_as_dataframe(ticker, start_date, end_date)
+                
+                if df is None or df.empty or len(df) < 252:
+                    dip_entry_skipped += 1
+                    continue
+                
+                # Run optimizer
+                optimizer = DipEntryOptimizer()
+                result = optimizer.analyze(df, ticker, None, min_dip_threshold=min_dip_threshold)
+                summary = get_dip_summary(result)
+                
+                # Update quant_precomputed table
+                await quant_repo.update_dip_entry(
+                    symbol=ticker,
+                    optimal_threshold=summary["optimal_dip_threshold"],
+                    optimal_price=summary["optimal_entry_price"],
+                    max_profit_threshold=summary["max_profit_threshold"],
+                    max_profit_price=summary["max_profit_entry_price"],
+                    max_profit_total_return=summary["max_profit_total_return"],
+                    is_buy_now=summary["is_buy_now"],
+                    signal_strength=summary["buy_signal_strength"],
+                    signal_reason=summary["signal_reason"],
+                    recovery_days=summary["typical_recovery_days"],
+                    threshold_analysis=summary["threshold_analysis"],
+                )
+                dip_entry_processed += 1
+                
+            except Exception as e:
+                logger.debug(f"[DIP_ENTRY] Failed to process {ticker}: {e}")
+                dip_entry_failed += 1
+        
+        dip_entry_message = f"Dip entry: {dip_entry_processed} optimized, {dip_entry_skipped} skipped, {dip_entry_failed} failed"
+        logger.info(f"[DIP_ENTRY] {dip_entry_message}")
+        
+        duration_ms = int((time.monotonic() - job_start) * 1000)
+        full_message = f"{message} | {dip_entry_message}"
+        
+        # Structured success log
+        log_job_success(
+            "dipfinder_daily",
+            full_message,
+            signals_processed=processed,
+            signals_skipped=skipped,
+            signals_failed=failed,
+            dip_entries_optimized=dip_entry_processed,
+            dip_entries_skipped=dip_entry_skipped,
+            dip_entries_failed=dip_entry_failed,
+            symbols_total=len(tickers),
+            duration_ms=duration_ms,
+        )
+        return full_message
         
     except Exception as e:
         logger.error(f"dipfinder_daily failed: {e}", exc_info=True)
@@ -1425,6 +1990,7 @@ async def regime_daily_job() -> str:
     from app.repositories import symbols_orm as symbols_repo
 
     logger.info("Starting regime_daily job")
+    job_start = time.monotonic()
 
     cache = Cache(prefix="market", default_ttl=86400)
 
@@ -1434,7 +2000,8 @@ async def regime_daily_job() -> str:
         if not symbols_list:
             return "No symbols tracked"
 
-        symbol_list = [
+        # Get all symbols except market indices for asset returns
+        asset_symbols = [
             s.symbol for s in symbols_list 
             if s.symbol not in ("SPY", "^GSPC", "URTH")
         ]
@@ -1442,8 +2009,19 @@ async def regime_daily_job() -> str:
         end_date = date.today()
         start_date = end_date - timedelta(days=400)
 
+        # Get SPY as market returns
+        spy_df = await price_history_repo.get_prices_as_dataframe(
+            "SPY", start_date, end_date
+        )
+        if spy_df is None or len(spy_df) < 60:
+            return "Insufficient SPY data for regime detection"
+        
+        spy_close = get_close_column(spy_df)
+        market_returns = spy_df[spy_close].pct_change().dropna()
+
+        # Get asset price data
         price_dfs: dict[str, pd.Series] = {}
-        for symbol in symbol_list:
+        for symbol in asset_symbols:
             df = await price_history_repo.get_prices_as_dataframe(
                 symbol, start_date, end_date
             )
@@ -1452,37 +2030,50 @@ async def regime_daily_job() -> str:
                 price_dfs[symbol] = df[close_col]
 
         if not price_dfs:
-            return "No price data"
+            return "No asset price data"
 
         prices = pd.DataFrame(price_dfs).dropna(how="all").ffill()
         
         if len(prices) < 60:
-            return "Insufficient data"
+            return "Insufficient asset data"
 
-        returns = prices.pct_change().dropna()
+        asset_returns = prices.pct_change().dropna()
 
-        # Detect regime
-        regime = detect_regime(returns)
+        # Detect regime - requires market_returns (Series) and asset_returns (DataFrame)
+        regime = detect_regime(market_returns, asset_returns)
 
         # Correlation analysis
-        corr = compute_correlation_analysis(returns)
+        corr = compute_correlation_analysis(asset_returns)
 
         cache_data = {
             "as_of": str(date.today()),
             "regime": regime.regime,
-            "trend": regime.trend,
-            "volatility": regime.volatility,
-            "description": regime.description,
+            "trend": "bull" if regime.is_bull else "bear",
+            "volatility": "high" if regime.is_high_vol else "low",
+            "description": regime.regime_description,
             "recommendation": regime.risk_budget_recommendation,
-            "avg_correlation": corr.average_correlation,
+            "avg_correlation": corr.avg_correlation,
             "n_clusters": corr.n_clusters,
-            "stress_correlation": corr.stress_correlation,
+            "stress_correlation": corr.stress_avg_correlation,
         }
 
         await cache.set("regime", cache_data)
 
-        message = f"Regime: {regime.regime}, Avg Corr: {corr.average_correlation:.1%}"
-        logger.info(f"regime_daily: {message}")
+        duration_ms = int((time.monotonic() - job_start) * 1000)
+        message = f"Regime: {regime.regime}, Avg Corr: {corr.avg_correlation:.1%}"
+        
+        # Structured success log
+        log_job_success(
+            "regime_daily",
+            message,
+            regime=regime.regime,
+            trend="bull" if regime.is_bull else "bear",
+            volatility="high" if regime.is_high_vol else "low",
+            avg_correlation=round(corr.avg_correlation, 4),
+            n_clusters=corr.n_clusters,
+            symbols_analyzed=len(price_dfs),
+            duration_ms=duration_ms,
+        )
         return message
 
     except Exception as e:
@@ -1511,6 +2102,7 @@ async def quant_monthly_job() -> str:
     from app.repositories import symbols_orm as symbols_repo
 
     logger.info("Starting quant_monthly job")
+    job_start = time.monotonic()
 
     try:
         # Get all tracked symbols
@@ -1518,6 +2110,9 @@ async def quant_monthly_job() -> str:
         symbol_list = [s.symbol for s in symbols if s.symbol not in ("SPY", "^GSPC", "URTH")]
 
         if not symbol_list:
+            log_job_success("quant_monthly", "No symbols to process",
+                            caches_cleared=0, symbols_count=0,
+                            duration_ms=int((time.monotonic() - job_start) * 1000))
             return "No symbols to process"
 
         cache = Cache()
@@ -1527,9 +2122,17 @@ async def quant_monthly_job() -> str:
         await cache.delete("quant:signals")
         await cache.delete("regime")
 
-        # Log completion
+        duration_ms = int((time.monotonic() - job_start) * 1000)
         message = f"Cleared quant caches for {len(symbol_list)} symbols, ready for fresh calculations"
-        logger.info(f"quant_monthly: {message}")
+        
+        # Structured success log
+        log_job_success(
+            "quant_monthly",
+            message,
+            caches_cleared=3,
+            symbols_count=len(symbol_list),
+            duration_ms=duration_ms,
+        )
         return message
 
     except Exception as e:
@@ -1576,6 +2179,7 @@ async def strategy_nightly_job() -> str:
     from app.quant_engine.dip_entry_optimizer import DipEntryOptimizer
     
     logger.info("Starting strategy_nightly job")
+    job_start = time.monotonic()
     
     # Initialize dip entry optimizer for recovery time calculation
     dip_optimizer = DipEntryOptimizer()
@@ -1747,8 +2351,19 @@ async def strategy_nightly_job() -> str:
         cache = Cache()
         await cache.delete("strategy_signals:*")
         
+        duration_ms = int((time.monotonic() - job_start) * 1000)
         message = f"Optimized strategies for {processed} symbols ({failed} failed), saved {signals_saved} signals"
-        logger.info(f"strategy_nightly: {message}")
+        
+        # Structured success log
+        log_job_success(
+            "strategy_nightly",
+            message,
+            symbols_optimized=processed,
+            symbols_failed=failed,
+            signals_saved=signals_saved,
+            symbols_total=len(symbol_list),
+            duration_ms=duration_ms,
+        )
         return message
         
     except Exception as e:
@@ -1803,6 +2418,7 @@ async def quant_scoring_daily_job() -> str:
     )
     
     logger.info("Starting quant_scoring_daily job")
+    job_start = time.monotonic()
     
     try:
         # Get all active symbols
@@ -2060,11 +2676,24 @@ async def quant_scoring_daily_job() -> str:
         recs_cache = Cache(prefix="recommendations", default_ttl=300)
         await recs_cache.invalidate_pattern("*")
         
+        duration_ms = int((time.monotonic() - job_start) * 1000)
         message = (
             f"Scored {processed} symbols ({failed} failed), "
             f"Mode A: {mode_a_count}, Dip Entry: {mode_b_count}, Hold: {mode_hold_count}"
         )
-        logger.info(f"quant_scoring_daily: {message}")
+        
+        # Structured success log
+        log_job_success(
+            "quant_scoring_daily",
+            message,
+            symbols_scored=processed,
+            symbols_failed=failed,
+            mode_a_count=mode_a_count,
+            mode_b_count=mode_b_count,
+            mode_hold_count=mode_hold_count,
+            symbols_total=len(symbol_list),
+            duration_ms=duration_ms,
+        )
         return message
         
     except Exception as e:
@@ -2117,10 +2746,16 @@ async def quant_analysis_nightly_job() -> str:
     )
     from app.services.data_providers.yfinance_service import get_yfinance_service
 
+    logger.info("Starting quant_analysis_nightly job")
+    job_start = time.monotonic()
+
     symbols_list = await symbols_repo.list_symbols()
     tickers = [s.symbol for s in symbols_list if s.is_active]
     
     if not tickers:
+        log_job_success("quant_analysis_nightly", "No active symbols to process",
+                        symbols_processed=0, symbols_failed=0,
+                        duration_ms=int((time.monotonic() - job_start) * 1000))
         return "No active symbols to process"
     
     logger.info(f"quant_analysis_nightly: Processing {len(tickers)} symbols")
@@ -2376,133 +3011,16 @@ async def quant_analysis_nightly_job() -> str:
             logger.exception(f"quant_analysis_nightly: Failed for {symbol}: {e}")
             failed += 1
     
+    duration_ms = int((time.monotonic() - job_start) * 1000)
     message = f"Pre-computed quant analysis for {processed}/{len(tickers)} symbols ({failed} failed)"
-    logger.info(f"quant_analysis_nightly: {message}")
-    return message
-
-
-# =============================================================================
-# MARKET ANALYSIS HOURLY - Cache market regime and correlation analysis
-# =============================================================================
-
-
-@register_job("market_analysis_hourly")
-async def market_analysis_hourly_job() -> str:
-    """
-    Pre-compute global market analysis and cache in Redis.
     
-    This job runs hourly and pre-computes:
-    - Market regime detection (bull/bear, volatility level)
-    - Correlation analysis across tracked symbols
-    
-    Results are stored in Redis cache. API endpoint reads from cache.
-    
-    Schedule: Every hour
-    """
-    from datetime import date, timedelta
-    
-    import pandas as pd
-    
-    from app.cache.cache import Cache
-    from app.repositories import symbols_orm as symbols_repo
-    from app.repositories import price_history_orm as price_history_repo
-    from app.quant_engine.analytics import detect_regime, compute_correlation_analysis
-    from app.services.data_providers.yfinance_service import get_yfinance_service
-
-    symbols_list = await symbols_repo.list_symbols()
-    tickers = [s.symbol for s in symbols_list if s.is_active and s.symbol not in ("SPY", "^GSPC", "URTH")]
-    
-    if not tickers:
-        return "No active symbols to analyze"
-    
-    logger.info(f"market_analysis_hourly: Analyzing {len(tickers)} symbols")
-    
-    # Fetch price data for all symbols
-    end_date = date.today()
-    start_date = end_date - timedelta(days=400)
-    
-    price_dfs = {}
-    yf_service = get_yfinance_service()
-    
-    for symbol in tickers:
-        try:
-            df = await price_history_repo.get_prices_as_dataframe(
-                symbol, start_date, end_date
-            )
-            if df is not None and "Close" in df.columns and len(df) >= 60:
-                price_dfs[symbol] = df["Close"]
-        except Exception as e:
-            logger.debug(f"Failed to fetch prices for {symbol}: {e}")
-    
-    if len(price_dfs) < 3:
-        return "Insufficient data for market analysis"
-    
-    # Combine into single DataFrame
-    prices = pd.DataFrame(price_dfs)
-    
-    if prices.empty or len(prices) < 60:
-        return "Insufficient price history for analysis"
-    
-    # Compute returns
-    returns = prices.pct_change().dropna()
-    
-    # Detect regime
-    try:
-        regime = detect_regime(returns)
-    except Exception as e:
-        logger.error(f"Regime detection failed: {e}")
-        regime = None
-    
-    # Compute correlation analysis
-    try:
-        corr_analysis = compute_correlation_analysis(returns)
-    except Exception as e:
-        logger.error(f"Correlation analysis failed: {e}")
-        corr_analysis = None
-    
-    # Build result
-    def safe_float(val):
-        try:
-            import math
-            if val is None or (isinstance(val, float) and math.isnan(val)):
-                return 0.0
-            return float(val)
-        except (TypeError, ValueError):
-            return 0.0
-    
-    result = {
-        "analyzed_at": datetime.now(UTC).isoformat(),
-        "n_symbols": len(returns.columns),
-    }
-    
-    if regime:
-        result["regime"] = {
-            "current": regime.regime,
-            "trend": regime.trend,
-            "volatility": regime.volatility,
-            "description": regime.description,
-            "recommendation": regime.risk_budget_recommendation,
-        }
-    
-    if corr_analysis:
-        result["correlations"] = {
-            "average": safe_float(corr_analysis.average_correlation),
-            "n_clusters": corr_analysis.n_clusters,
-            "clusters": corr_analysis.clusters,
-            "stress_correlation": safe_float(corr_analysis.stress_correlation),
-        }
-    
-    if regime and corr_analysis:
-        result["insights"] = [
-            f"Market is in a {regime.regime} regime",
-            f"Average correlation: {corr_analysis.average_correlation:.0%}" if corr_analysis.average_correlation else "Correlation data unavailable",
-            f"Found {corr_analysis.n_clusters} correlation clusters",
-        ]
-    
-    # Cache the result
-    cache = Cache(prefix="market_analysis", default_ttl=3600)
-    await cache.set("global", result, ttl=3600)
-    
-    message = f"Computed market analysis for {len(returns.columns)} symbols"
-    logger.info(f"market_analysis_hourly: {message}")
+    # Structured success log
+    log_job_success(
+        "quant_analysis_nightly",
+        message,
+        symbols_processed=processed,
+        symbols_failed=failed,
+        symbols_total=len(tickers),
+        duration_ms=duration_ms,
+    )
     return message

@@ -225,7 +225,7 @@ class TestJobDefinitions:
             "cache_warmup",
             "ai_bios_weekly",
             "ai_batch_poll",
-            "fundamentals_monthly",
+            "fundamentals_daily",
             "ai_personas_weekly",
             "cleanup_daily",
             "portfolio_worker",

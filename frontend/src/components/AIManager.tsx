@@ -34,7 +34,6 @@ import {
   Eye,
   FileText,
 } from 'lucide-react';
-import { BatchJobsPanel } from '@/components/BatchJobsPanel';
 import { DataTableControls } from '@/components/ui/data-table-controls';
 
 export function AIManager() {
@@ -291,9 +290,6 @@ export function AIManager() {
 
   return (
     <div className="space-y-6">
-      {/* Batch Jobs Panel */}
-      <BatchJobsPanel />
-      
       {/* AI Content Manager */}
       <Card>
       <CardHeader>

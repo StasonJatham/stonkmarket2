@@ -193,8 +193,8 @@ async def get_dip_entry(
         # Get current price from dip_state
         dip_state = await dip_state_repo.get_dip_state(symbol)
         current_price = float(dip_state.current_price) if dip_state and dip_state.current_price else 0.0
-        recent_high = float(dip_state.peak_price) if dip_state and dip_state.peak_price else 0.0
-        current_drawdown = float(dip_state.dip_pct) if dip_state and dip_state.dip_pct else 0.0
+        recent_high = float(dip_state.ref_high) if dip_state and dip_state.ref_high else 0.0
+        current_drawdown = float(dip_state.dip_percentage) if dip_state and dip_state.dip_percentage else 0.0
         
         return DipEntryResponse(
             symbol=symbol,

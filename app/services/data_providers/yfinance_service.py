@@ -278,6 +278,7 @@ class YFinanceService:
                 "exchange": info.get("exchange"),
                 "currency": info.get("currency"),
                 "website": info.get("website"),
+                "country": info.get("country"),
                 "sector": None if is_etf else info.get("sector"),
                 "industry": None if is_etf else info.get("industry"),
                 "summary": info.get("longBusinessSummary"),
@@ -619,43 +620,94 @@ class YFinanceService:
                         pass
                 return extracted
 
+            def normalize_period_key(value: Any) -> str:
+                if isinstance(value, pd.Timestamp):
+                    return value.date().isoformat()
+                if isinstance(value, datetime):
+                    return value.date().isoformat()
+                if isinstance(value, date):
+                    return value.isoformat()
+                return str(value)
+
+            def sort_period_keys(keys: list[str]) -> list[str]:
+                def _key(item: str) -> datetime:
+                    try:
+                        return datetime.fromisoformat(item)
+                    except (ValueError, TypeError):
+                        return datetime.min
+                return sorted(keys, key=_key, reverse=True)
+
+            def extract_series(df: pd.DataFrame, max_periods: int = 12) -> dict[str, dict[str, float]]:
+                if df is None or df.empty:
+                    return {}
+                series: dict[str, dict[str, float]] = {}
+                normalized_cols = [normalize_period_key(col) for col in df.columns]
+                normalized_df = df.copy()
+                normalized_df.columns = normalized_cols
+                for metric in normalized_df.index:
+                    try:
+                        row = normalized_df.loc[metric]
+                        values = {
+                            col: float(val)
+                            for col, val in row.items()
+                            if pd.notna(val)
+                        }
+                    except (KeyError, TypeError, ValueError):
+                        continue
+                    if values:
+                        ordered = sort_period_keys(list(values.keys()))[:max_periods]
+                        series[str(metric)] = {key: values[key] for key in ordered}
+                return series
+
             # Quarterly statements
             try:
                 result["quarterly"]["income_statement"] = extract_latest(ticker.quarterly_income_stmt)
+                result["quarterly"]["income_statement_series"] = extract_series(ticker.quarterly_income_stmt)
             except Exception as e:
                 logger.debug(f"quarterly_income_stmt failed for {symbol}: {e}")
                 result["quarterly"]["income_statement"] = {}
+                result["quarterly"]["income_statement_series"] = {}
 
             try:
                 result["quarterly"]["balance_sheet"] = extract_latest(ticker.quarterly_balance_sheet)
+                result["quarterly"]["balance_sheet_series"] = extract_series(ticker.quarterly_balance_sheet)
             except Exception as e:
                 logger.debug(f"quarterly_balance_sheet failed for {symbol}: {e}")
                 result["quarterly"]["balance_sheet"] = {}
+                result["quarterly"]["balance_sheet_series"] = {}
 
             try:
                 result["quarterly"]["cash_flow"] = extract_latest(ticker.quarterly_cashflow)
+                result["quarterly"]["cash_flow_series"] = extract_series(ticker.quarterly_cashflow)
             except Exception as e:
                 logger.debug(f"quarterly_cashflow failed for {symbol}: {e}")
                 result["quarterly"]["cash_flow"] = {}
+                result["quarterly"]["cash_flow_series"] = {}
 
             # Annual statements
             try:
                 result["annual"]["income_statement"] = extract_latest(ticker.income_stmt)
+                result["annual"]["income_statement_series"] = extract_series(ticker.income_stmt, max_periods=8)
             except Exception as e:
                 logger.debug(f"income_stmt failed for {symbol}: {e}")
                 result["annual"]["income_statement"] = {}
+                result["annual"]["income_statement_series"] = {}
 
             try:
                 result["annual"]["balance_sheet"] = extract_latest(ticker.balance_sheet)
+                result["annual"]["balance_sheet_series"] = extract_series(ticker.balance_sheet, max_periods=8)
             except Exception as e:
                 logger.debug(f"balance_sheet failed for {symbol}: {e}")
                 result["annual"]["balance_sheet"] = {}
+                result["annual"]["balance_sheet_series"] = {}
 
             try:
                 result["annual"]["cash_flow"] = extract_latest(ticker.cashflow)
+                result["annual"]["cash_flow_series"] = extract_series(ticker.cashflow, max_periods=8)
             except Exception as e:
                 logger.debug(f"cashflow failed for {symbol}: {e}")
                 result["annual"]["cash_flow"] = {}
+                result["annual"]["cash_flow_series"] = {}
 
             # Log what we found for debugging
             q_income_count = len(result["quarterly"]["income_statement"])

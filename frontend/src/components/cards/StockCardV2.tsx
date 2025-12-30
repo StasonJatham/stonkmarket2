@@ -11,7 +11,7 @@
  * - Domain analysis result
  */
 
-import { useMemo, memo, useCallback, useEffect, useState } from 'react';
+import { useMemo, memo, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { AreaChart, Area, ResponsiveContainer } from 'recharts';
 import { CHART_MINI_ANIMATION } from '@/lib/chartConfig';
@@ -41,25 +41,35 @@ import { useTheme } from '@/context/ThemeContext';
 // Get chart colors respecting theme and colorblind mode
 function useChartColors() {
   const { colorblindMode, customColors } = useTheme();
-  const [colors, setColors] = useState({ success: '#22c55e', danger: '#ef4444' });
-  
-  useEffect(() => {
+
+  return useMemo(() => {
+    if (typeof window === 'undefined') {
+      if (colorblindMode) {
+        return { success: '#3b82f6', danger: '#f97316' };
+      }
+      if (customColors) {
+        return { success: customColors.up, danger: customColors.down };
+      }
+      return { success: '#22c55e', danger: '#ef4444' };
+    }
+
     // Read computed colors from CSS variables (respects theme and colorblind mode)
     const root = document.documentElement;
     const success = getComputedStyle(root).getPropertyValue('--success').trim();
     const danger = getComputedStyle(root).getPropertyValue('--danger').trim();
-    
+
     if (success && danger) {
-      setColors({ success, danger });
-    } else if (colorblindMode) {
-      // Fallback colorblind colors
-      setColors({ success: '#3b82f6', danger: '#f97316' }); // Blue/Orange
-    } else if (customColors) {
-      setColors({ success: customColors.up, danger: customColors.down });
+      return { success, danger };
     }
+    if (colorblindMode) {
+      return { success: '#3b82f6', danger: '#f97316' };
+    }
+    if (customColors) {
+      return { success: customColors.up, danger: customColors.down };
+    }
+
+    return { success: '#22c55e', danger: '#ef4444' };
   }, [colorblindMode, customColors]);
-  
-  return colors;
 }
 
 // ============================================================================
@@ -458,7 +468,7 @@ function DipContext({
   };
   
   // Build detailed tooltip
-  let tooltipLines: string[] = [
+  const tooltipLines: string[] = [
     `${dipPct.toFixed(1)}% below recent high`,
   ];
   

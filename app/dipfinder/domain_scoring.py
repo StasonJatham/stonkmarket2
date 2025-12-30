@@ -111,6 +111,21 @@ def _safe_float(value: Any) -> float | None:
         return None
 
 
+def _latest_value(value: Any) -> float | None:
+    if isinstance(value, dict):
+        for key in sorted(value.keys(), reverse=True):
+            v = value.get(key)
+            if v is not None:
+                return _safe_float(v)
+        return None
+    if isinstance(value, list):
+        for item in value:
+            if item is not None:
+                return _safe_float(item)
+        return None
+    return _safe_float(value)
+
+
 # Key mappings: normalized key -> list of possible yfinance/alternative keys
 _KEY_ALIASES: dict[str, list[str]] = {
     "profit_margin": ["profit_margin", "profitMargins", "profitMargin"],
@@ -186,7 +201,7 @@ def _get_financial_metric(
 
     value = statement_data.get(metric)
     if value is not None:
-        return _safe_float(value)
+        return _latest_value(value)
     return None
 
 

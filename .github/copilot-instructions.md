@@ -53,6 +53,15 @@ python -m pytest tests/ -x -W error --tb=short
 - **SOLVE every test failure immediately** - Treat as blocking issue
 - Re-run tests repeatedly until ALL pass with zero warnings
 
+### ZERO TOLERANCE FOR IGNORED ISSUES
+
+- **NEVER say "this is a different issue" or "pre-existing issue"** - If you see an error, FIX IT
+- **NEVER defer issues to later** - Every error you encounter MUST be fixed immediately
+- **NEVER make excuses for errors** - "Not my task" is forbidden thinking
+- If an error appears in logs, tests, builds, or runtime - it is YOUR responsibility to fix it NOW
+- Errors compound - fixing them immediately prevents cascading failures
+- This rule is ABSOLUTE and NON-NEGOTIABLE
+
 ### Adding Dependencies - NEVER Edit Requirements Directly
 
 ```bash

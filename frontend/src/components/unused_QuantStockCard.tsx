@@ -84,6 +84,12 @@ export const QuantStockCard = memo(function QuantStockCard({
     return chartData.slice(-30).map((p, i) => ({ x: i, y: p.close }));
   }, [chartData]);
 
+  // Prefetch data when user hovers over card
+  const handleMouseEnter = useCallback(() => {
+    prefetchStockChart(stock.ticker, 90);
+    prefetchStockInfo(stock.ticker);
+  }, [stock.ticker]);
+
   if (isLoading) {
     return (
       <Card className="overflow-hidden">
@@ -99,12 +105,6 @@ export const QuantStockCard = memo(function QuantStockCard({
       </Card>
     );
   }
-
-  // Prefetch data when user hovers over card
-  const handleMouseEnter = useCallback(() => {
-    prefetchStockChart(stock.ticker, 90);
-    prefetchStockInfo(stock.ticker);
-  }, [stock.ticker]);
 
   return (
     <motion.div

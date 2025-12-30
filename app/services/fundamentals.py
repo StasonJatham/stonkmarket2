@@ -117,6 +117,35 @@ def _safe_date(value: Any) -> date | None:
         return None
 
 
+def _sorted_period_keys(keys: list[Any]) -> list[Any]:
+    def _key(item: Any) -> datetime:
+        if isinstance(item, datetime):
+            return item
+        if isinstance(item, date):
+            return datetime.combine(item, datetime.min.time(), tzinfo=UTC)
+        try:
+            return datetime.fromisoformat(str(item))
+        except (ValueError, TypeError):
+            return datetime.min
+    return sorted(keys, key=_key, reverse=True)
+
+
+def _latest_value(value: Any) -> float | None:
+    """Return most recent numeric value from a scalar or date-keyed dict."""
+    if isinstance(value, dict):
+        for key in _sorted_period_keys(list(value.keys())):
+            v = value.get(key)
+            if v is not None:
+                return _safe_float(v)
+        return None
+    if isinstance(value, list):
+        for item in value:
+            if item is not None:
+                return _safe_float(item)
+        return None
+    return _safe_float(value)
+
+
 # =============================================================================
 # Domain Detection and Metrics
 # =============================================================================
@@ -201,7 +230,7 @@ def _calculate_domain_metrics(
 
     if domain == "bank":
         # Net Interest Income - try multiple field names (yahooquery vs yfinance)
-        nii = (
+        nii = _latest_value(
             income_stmt.get("NetInterestIncome") or  # yahooquery
             income_stmt.get("Net Interest Income")    # yfinance
         )
@@ -209,11 +238,11 @@ def _calculate_domain_metrics(
             result["net_interest_income"] = int(nii)
         
         # Interest Income and Expense
-        int_income = (
+        int_income = _latest_value(
             income_stmt.get("InterestIncome") or 
             income_stmt.get("Interest Income")
         )
-        int_expense = (
+        int_expense = _latest_value(
             income_stmt.get("InterestExpense") or 
             income_stmt.get("Interest Expense")
         )
@@ -223,7 +252,7 @@ def _calculate_domain_metrics(
             result["interest_expense"] = int(int_expense)
 
         # Net Interest Margin (NII / Interest-earning assets)
-        total_assets = (
+        total_assets = _latest_value(
             balance_sheet.get("TotalAssets") or
             balance_sheet.get("Total Assets")
         )
@@ -233,14 +262,14 @@ def _calculate_domain_metrics(
 
     elif domain == "reit":
         # FFO = Net Income + Depreciation & Amortization
-        net_income = (
+        net_income = _latest_value(
             income_stmt.get("NetIncome") or
             income_stmt.get("Net Income") or 
             info.get("net_income")
         )
         
         # Depreciation from cash flow (more reliable) or income statement
-        depreciation = (
+        depreciation = _latest_value(
             cash_flow.get("DepreciationAndAmortization") or  # yahooquery
             income_stmt.get("DepreciationAndAmortizationInIncomeStatement") or
             income_stmt.get("Depreciation And Amortization In Income Statement") or
@@ -254,32 +283,32 @@ def _calculate_domain_metrics(
             result["ffo"] = ffo
 
             # FFO per share
-            shares = info.get("shares_outstanding") or info.get("sharesOutstanding")
+            shares = _latest_value(info.get("shares_outstanding") or info.get("sharesOutstanding"))
             if shares and shares > 0:
                 ffo_per_share = (ffo * 4) / shares  # Annualized FFO per share
                 result["ffo_per_share"] = round(ffo_per_share, 4)
 
                 # P/FFO
-                price = info.get("current_price") or info.get("currentPrice") or info.get("regularMarketPrice")
+                price = _latest_value(info.get("current_price") or info.get("currentPrice") or info.get("regularMarketPrice"))
                 if price and ffo_per_share > 0:
                     result["p_ffo"] = round(price / ffo_per_share, 4)
 
     elif domain == "insurer":
         # For insurers, calculate expense ratio as proxy for efficiency
-        total_revenue = (
+        total_revenue = _latest_value(
             income_stmt.get("TotalRevenue") or
             income_stmt.get("Total Revenue") or
             income_stmt.get("OperatingRevenue") or
             info.get("revenue")
         )
         
-        total_expenses = (
+        total_expenses = _latest_value(
             income_stmt.get("TotalExpenses") or
             income_stmt.get("Total Expenses")
         )
         
         # Loss ratio from policyholder benefits if available
-        loss_expense = (
+        loss_expense = _latest_value(
             income_stmt.get("NetPolicyholderBenefitsAndClaims") or
             income_stmt.get("Net Policyholder Benefits And Claims") or
             income_stmt.get("PolicyholderBenefitsAndClaims") or
@@ -447,12 +476,30 @@ async def _fetch_fundamentals_from_service(
         "earnings_estimate_avg": _safe_float(earnings_estimate_avg),
         "earnings_date": earnings_date,
         # Financial Statements (store as JSONB)
-        "income_stmt_quarterly": financials.get("quarterly", {}).get("income_statement") if financials else None,
-        "income_stmt_annual": financials.get("annual", {}).get("income_statement") if financials else None,
-        "balance_sheet_quarterly": financials.get("quarterly", {}).get("balance_sheet") if financials else None,
-        "balance_sheet_annual": financials.get("annual", {}).get("balance_sheet") if financials else None,
-        "cash_flow_quarterly": financials.get("quarterly", {}).get("cash_flow") if financials else None,
-        "cash_flow_annual": financials.get("annual", {}).get("cash_flow") if financials else None,
+        "income_stmt_quarterly": (
+            financials.get("quarterly", {}).get("income_statement_series")
+            or financials.get("quarterly", {}).get("income_statement")
+        ) if financials else None,
+        "income_stmt_annual": (
+            financials.get("annual", {}).get("income_statement_series")
+            or financials.get("annual", {}).get("income_statement")
+        ) if financials else None,
+        "balance_sheet_quarterly": (
+            financials.get("quarterly", {}).get("balance_sheet_series")
+            or financials.get("quarterly", {}).get("balance_sheet")
+        ) if financials else None,
+        "balance_sheet_annual": (
+            financials.get("annual", {}).get("balance_sheet_series")
+            or financials.get("annual", {}).get("balance_sheet")
+        ) if financials else None,
+        "cash_flow_quarterly": (
+            financials.get("quarterly", {}).get("cash_flow_series")
+            or financials.get("quarterly", {}).get("cash_flow")
+        ) if financials else None,
+        "cash_flow_annual": (
+            financials.get("annual", {}).get("cash_flow_series")
+            or financials.get("annual", {}).get("cash_flow")
+        ) if financials else None,
         # Domain-Specific Metrics
         "net_interest_income": domain_metrics.get("net_interest_income"),
         "net_interest_margin": domain_metrics.get("net_interest_margin"),

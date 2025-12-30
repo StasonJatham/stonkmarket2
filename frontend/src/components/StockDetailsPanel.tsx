@@ -114,6 +114,10 @@ const periods = [
 /** Target number of points for all chart periods - keeps animations consistent */
 const NORMALIZED_CHART_POINTS = 180;
 
+const deferStateUpdate = (callback: () => void) => {
+  Promise.resolve().then(callback);
+};
+
 /**
  * Normalize chart data to a fixed number of points for consistent animations.
  * Downsamples if too many points, upsamples (linear interpolation) if too few.
@@ -233,7 +237,7 @@ export function StockDetailsPanel({
   // Fetch signal triggers when stock changes
   useEffect(() => {
     if (!stock?.symbol) {
-      setSignalsResponse(null);
+      deferStateUpdate(() => setSignalsResponse(null));
       return;
     }
     
@@ -247,12 +251,14 @@ export function StockDetailsPanel({
   // Fetch quant analysis when stock changes
   useEffect(() => {
     if (!stock?.symbol) {
-      setDipAnalysis(null);
-      setCurrentSignals(null);
+      deferStateUpdate(() => {
+        setDipAnalysis(null);
+        setCurrentSignals(null);
+      });
       return;
     }
     
-    setIsLoadingQuant(true);
+    deferStateUpdate(() => setIsLoadingQuant(true));
     Promise.all([
       getDipAnalysis(stock.symbol).catch(() => null),
       getCurrentSignals(stock.symbol).catch(() => null),
@@ -266,13 +272,17 @@ export function StockDetailsPanel({
   // Fetch AI agents and fundamentals when stock changes
   useEffect(() => {
     if (!stock?.symbol) {
-      setAgentAnalysis(null);
-      setFundamentals(null);
+      deferStateUpdate(() => {
+        setAgentAnalysis(null);
+        setFundamentals(null);
+      });
       return;
     }
     
-    setIsLoadingAgents(true);
-    setShowAllVerdicts(false);
+    deferStateUpdate(() => {
+      setIsLoadingAgents(true);
+      setShowAllVerdicts(false);
+    });
     Promise.all([
       getAgentAnalysis(stock.symbol).catch(() => null),
       getSymbolFundamentals(stock.symbol).catch(() => null),
@@ -286,11 +296,11 @@ export function StockDetailsPanel({
   // Fetch strategy signal (quant optimizer) when stock changes
   useEffect(() => {
     if (!stock?.symbol) {
-      setStrategySignal(null);
+      deferStateUpdate(() => setStrategySignal(null));
       return;
     }
     
-    setIsLoadingStrategy(true);
+    deferStateUpdate(() => setIsLoadingStrategy(true));
     getStrategySignal(stock.symbol)
       .then(setStrategySignal)
       .catch(() => setStrategySignal(null))
@@ -300,11 +310,11 @@ export function StockDetailsPanel({
   // Fetch dip entry analysis when stock changes
   useEffect(() => {
     if (!stock?.symbol) {
-      setDipEntry(null);
+      deferStateUpdate(() => setDipEntry(null));
       return;
     }
     
-    setIsLoadingDipEntry(true);
+    deferStateUpdate(() => setIsLoadingDipEntry(true));
     getDipEntry(stock.symbol)
       .then(setDipEntry)
       .catch(() => setDipEntry(null))
@@ -313,7 +323,7 @@ export function StockDetailsPanel({
   
   // When chart period or data changes, hide dots and show them after animation completes
   useEffect(() => {
-    setDotsVisible(false);
+    deferStateUpdate(() => setDotsVisible(false));
     const timer = setTimeout(() => {
       setDotsVisible(true);
     }, CHART_ANIMATION.animationDuration + 50); // Add 50ms buffer
@@ -1728,4 +1738,3 @@ function StatItem({ icon: Icon, label, value, valueColor, tooltip }: StatItemPro
 
   return content;
 }
-

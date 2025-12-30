@@ -14,16 +14,25 @@ from app.core.logging import get_logger
 
 logger = get_logger("cache.client")
 
-# Global connection pool
-_pool: ConnectionPool | None = None
-_client: Redis | None = None
+# Global connection pool - per event loop
+_pools: dict[int, ConnectionPool] = {}
+_clients: dict[int, Redis] = {}
+
+
+def _get_loop_id() -> int:
+    """Get current event loop id for tracking client per loop."""
+    try:
+        loop = asyncio.get_running_loop()
+        return id(loop)
+    except RuntimeError:
+        return 0
 
 
 async def init_valkey_pool() -> ConnectionPool:
-    """Initialize Valkey connection pool."""
-    global _pool
-    if _pool is None:
-        _pool = ConnectionPool.from_url(
+    """Initialize Valkey connection pool for current event loop."""
+    loop_id = _get_loop_id()
+    if loop_id not in _pools:
+        _pools[loop_id] = ConnectionPool.from_url(
             settings.valkey_url,
             max_connections=settings.valkey_max_connections,
             decode_responses=True,
@@ -33,30 +42,31 @@ async def init_valkey_pool() -> ConnectionPool:
             health_check_interval=30,
         )
         logger.info(
-            "Valkey connection pool initialized", extra={"url": settings.valkey_url}
+            "Valkey connection pool initialized", 
+            extra={"url": settings.valkey_url, "loop_id": loop_id}
         )
-    return _pool
+    return _pools[loop_id]
 
 
 async def get_valkey_client() -> Redis:
-    """Get Valkey client instance."""
-    global _client
-    if _client is None:
+    """Get Valkey client instance for current event loop."""
+    loop_id = _get_loop_id()
+    if loop_id not in _clients:
         pool = await init_valkey_pool()
-        _client = Redis(connection_pool=pool)
-    return _client
+        _clients[loop_id] = Redis(connection_pool=pool)
+    return _clients[loop_id]
 
 
 async def close_valkey_client() -> None:
-    """Close Valkey client and connection pool."""
-    global _client, _pool
-    if _client is not None:
-        await _client.aclose()
-        _client = None
-    if _pool is not None:
-        await _pool.disconnect()
-        _pool = None
-    logger.info("Valkey connection pool closed")
+    """Close Valkey client and connection pool for current event loop."""
+    loop_id = _get_loop_id()
+    if loop_id in _clients:
+        await _clients[loop_id].aclose()
+        del _clients[loop_id]
+    if loop_id in _pools:
+        await _pools[loop_id].disconnect()
+        del _pools[loop_id]
+    logger.info("Valkey connection pool closed", extra={"loop_id": loop_id})
 
 
 async def valkey_healthcheck() -> bool:

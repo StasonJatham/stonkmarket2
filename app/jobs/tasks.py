@@ -175,9 +175,9 @@ def ai_batch_poll_task() -> str:
     return _run_job("ai_batch_poll")
 
 
-@celery_app.task(name="jobs.fundamentals_monthly")
-def fundamentals_monthly_task() -> str:
-    return _run_job("fundamentals_monthly")
+@celery_app.task(name="jobs.fundamentals_daily")
+def fundamentals_daily_task() -> str:
+    return _run_job("fundamentals_daily")
 
 
 @celery_app.task(name="jobs.refresh_fundamentals_symbol")
@@ -381,6 +381,33 @@ def quant_monthly_task() -> str:
     return _run_job("quant_monthly")
 
 
+# =============================================================================
+# MARKET CLOSE PIPELINE - Orchestrates all daily analysis jobs
+# =============================================================================
+
+
+@celery_app.task(name="jobs.market_close_pipeline", soft_time_limit=7200, time_limit=7500)
+def market_close_pipeline_task() -> str:
+    """
+    Run the complete market close pipeline.
+    
+    This is the ONLY scheduled daily job for market analysis.
+    Runs all steps sequentially: prices → signals → regime → strategy 
+    → quant_scoring → dipfinder → quant_analysis
+    
+    Extended time limits (2 hours soft, 2.5 hours hard) because this
+    runs all daily jobs in sequence.
+    """
+    return _run_job("market_close_pipeline")
+
+
+# =============================================================================
+# INDIVIDUAL PIPELINE JOBS (for manual triggers / retries)
+# =============================================================================
+# These are NOT scheduled - they run as part of market_close_pipeline
+# But they can be triggered manually via Flower/admin for debugging/retries
+
+
 @celery_app.task(name="jobs.quant_scoring_daily")
 def quant_scoring_daily_task() -> str:
     """Run daily quant scoring for all tracked symbols."""
@@ -411,10 +438,9 @@ def quant_analysis_nightly_task() -> str:
     return _run_job("quant_analysis_nightly")
 
 
-@celery_app.task(name="jobs.market_analysis_hourly")
-def market_analysis_hourly_task() -> str:
-    """Run hourly market analysis and cache results."""
-    return _run_job("market_analysis_hourly")
+# NOTE: market_analysis_hourly removed - redundant with regime_daily
+# Both do the same thing: regime detection + correlation analysis
+# Regime doesn't change intraday, and prices only update daily anyway
 
 
 @celery_app.task(name="jobs.precompute_dip_entry")

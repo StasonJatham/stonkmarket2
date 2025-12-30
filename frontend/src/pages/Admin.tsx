@@ -173,13 +173,19 @@ export function AdminPage() {
       group: 'Account',
       description: 'Profile, MFA, and personal API keys.',
       content: (
-        <div className="max-w-2xl space-y-6">
-          <UserSettings />
-          <MFASetup />
-          <UserApiKeyManager
-            onError={(msg) => setError(msg)}
-            onSuccess={() => { /* optional toast */ }}
-          />
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          {/* Left column: Account settings */}
+          <div className="space-y-6">
+            <UserSettings />
+            <MFASetup />
+          </div>
+          {/* Right column: API keys (spans full width on xl) */}
+          <div className="xl:row-span-2">
+            <UserApiKeyManager
+              onError={(msg) => setError(msg)}
+              onSuccess={() => { /* optional toast */ }}
+            />
+          </div>
         </div>
       ),
     },

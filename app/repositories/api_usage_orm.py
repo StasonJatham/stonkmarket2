@@ -197,3 +197,84 @@ async def update_batch_job(
 
         await session.commit()
         return True
+
+
+async def expire_stale_batch_jobs(max_age_hours: int = 24) -> list[dict[str, Any]]:
+    """Mark batch jobs as expired if they've been pending/in_progress too long.
+    
+    Returns list of expired jobs for alerting.
+    """
+    cutoff = datetime.now(UTC) - timedelta(hours=max_age_hours)
+    stale_statuses = ("pending", "validating", "in_progress", "finalizing")
+    
+    async with get_session() as session:
+        # Find stale jobs
+        result = await session.execute(
+            select(BatchJob)
+            .where(BatchJob.status.in_(stale_statuses))
+            .where(BatchJob.created_at < cutoff)
+        )
+        stale_jobs = result.scalars().all()
+        
+        expired_jobs = []
+        now = datetime.now(UTC)
+        
+        for job in stale_jobs:
+            age_hours = (now - job.created_at).total_seconds() / 3600
+            expired_jobs.append({
+                "batch_id": job.batch_id,
+                "job_type": job.job_type,
+                "status": job.status,
+                "age_hours": round(age_hours, 1),
+                "total_requests": job.total_requests,
+                "created_at": job.created_at.isoformat(),
+            })
+            
+            # Mark as expired
+            job.status = "expired"
+            job.completed_at = now
+            
+            logger.warning(
+                f"Batch job {job.batch_id} expired after {age_hours:.1f}h "
+                f"(type={job.job_type}, requests={job.total_requests})"
+            )
+        
+        if stale_jobs:
+            await session.commit()
+    
+    return expired_jobs
+
+
+async def get_batch_job_health() -> dict[str, Any]:
+    """Get batch job health metrics for monitoring."""
+    now = datetime.now(UTC)
+    
+    async with get_session() as session:
+        # Count by status
+        result = await session.execute(
+            select(
+                BatchJob.status,
+                func.count().label("count"),
+            )
+            .group_by(BatchJob.status)
+        )
+        status_counts = {row.status: row.count for row in result.all()}
+        
+        # Find oldest pending job
+        result = await session.execute(
+            select(BatchJob)
+            .where(BatchJob.status.in_(("pending", "validating", "in_progress", "finalizing")))
+            .order_by(BatchJob.created_at.asc())
+            .limit(1)
+        )
+        oldest_pending = result.scalar_one_or_none()
+        
+        oldest_pending_hours = None
+        if oldest_pending:
+            oldest_pending_hours = (now - oldest_pending.created_at).total_seconds() / 3600
+    
+    return {
+        "status_counts": status_counts,
+        "oldest_pending_hours": round(oldest_pending_hours, 1) if oldest_pending_hours else None,
+        "has_stale_jobs": oldest_pending_hours is not None and oldest_pending_hours > 12,
+    }

@@ -201,7 +201,8 @@ test.describe('Crawlability', () => {
     expect(ogImage).toBeTruthy();
     
     // Extract the path from absolute URL and test locally
-    const imagePath = ogImage!.replace(/^https?:\/\/[^\/]+/, '');
+    const imageUrl = new URL(ogImage!, page.url());
+    const imagePath = `${imageUrl.pathname}${imageUrl.search}`;
     const response = await page.goto(imagePath);
     expect(response?.status()).toBe(200);
   });

@@ -1,20 +1,46 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  XAxis,
+  YAxis,
+} from 'recharts';
+import {
   createPortfolio,
+  getPortfolioAllocationRecommendation,
+  getPortfolioAnalyticsJob,
   getPortfolioDetail,
   getPortfolios,
+  getPortfolioRiskAnalytics,
+  getStockInfo,
+  runPortfolioAnalytics,
   updatePortfolio,
   deletePortfolio,
   upsertHolding,
   deleteHolding,
+  type PortfolioAllocationRecommendation,
+  type PortfolioAnalyticsJob,
+  type PortfolioAnalyticsResponse,
   type Portfolio,
   type PortfolioDetail,
+  type PortfolioRiskAnalyticsResponse,
+  type StockInfo,
 } from '@/services/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+} from '@/components/ui/chart';
 import {
   Card,
   CardContent,
@@ -53,6 +79,11 @@ import {
   TrendingDown,
   DollarSign,
   Upload,
+  PieChart as PieChartIcon,
+  BarChart3,
+  Target,
+  Sparkles,
+  AlertTriangle,
 } from 'lucide-react';
 import { BulkImportModal } from '@/components/BulkImportModal';
 
@@ -69,12 +100,63 @@ const item = {
   show: { opacity: 1, y: 0 },
 };
 
+const CHART_COLORS = [
+  'hsl(var(--chart-1))',
+  'hsl(var(--chart-2))',
+  'hsl(var(--chart-3))',
+  'hsl(var(--chart-4))',
+  'hsl(var(--chart-5))',
+  'hsl(var(--chart-6))',
+];
+
+const RISK_SEVERITY_STYLES: Record<string, string> = {
+  high: 'bg-red-500/10 text-red-600',
+  medium: 'bg-amber-500/10 text-amber-600',
+  low: 'bg-yellow-500/10 text-yellow-600',
+};
+
+const deferStateUpdate = (callback: () => void) => {
+  Promise.resolve().then(callback);
+};
+
+const mergeAnalyticsResults = (
+  previous: PortfolioAnalyticsResponse | null,
+  next: PortfolioAnalyticsResponse
+): PortfolioAnalyticsResponse => {
+  if (!previous) return next;
+  const resultMap = new Map<string, typeof next.results[number]>();
+  for (const result of previous.results) {
+    resultMap.set(result.tool, result);
+  }
+  for (const result of next.results) {
+    resultMap.set(result.tool, result);
+  }
+  return {
+    ...previous,
+    ...next,
+    results: Array.from(resultMap.values()),
+  };
+};
+
 export function PortfolioPage() {
   const [portfolios, setPortfolios] = useState<Portfolio[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [detail, setDetail] = useState<PortfolioDetail | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [stockInfoMap, setStockInfoMap] = useState<Record<string, StockInfo | null>>({});
+  const [riskAnalytics, setRiskAnalytics] = useState<PortfolioRiskAnalyticsResponse | null>(null);
+  const [riskAnalyticsError, setRiskAnalyticsError] = useState<string | null>(null);
+  const [isRiskAnalyticsLoading, setIsRiskAnalyticsLoading] = useState(false);
+  const [toolAnalytics, setToolAnalytics] = useState<PortfolioAnalyticsResponse | null>(null);
+  const [toolAnalyticsError, setToolAnalyticsError] = useState<string | null>(null);
+  const [toolAnalyticsJob, setToolAnalyticsJob] = useState<PortfolioAnalyticsJob | null>(null);
+  const [isToolAnalyticsLoading, setIsToolAnalyticsLoading] = useState(false);
+  const [allocationAmount, setAllocationAmount] = useState('1000');
+  const [allocationMethod, setAllocationMethod] = useState('risk_parity');
+  const [allocationResult, setAllocationResult] = useState<PortfolioAllocationRecommendation | null>(null);
+  const [allocationError, setAllocationError] = useState<string | null>(null);
+  const [isAllocationLoading, setIsAllocationLoading] = useState(false);
 
   // Portfolio dialog
   const [portfolioDialogOpen, setPortfolioDialogOpen] = useState(false);
@@ -86,6 +168,7 @@ export function PortfolioPage() {
   // Holding dialog
   const [holdingDialogOpen, setHoldingDialogOpen] = useState(false);
   const [editingHolding, setEditingHolding] = useState<{ symbol: string; quantity: number; avg_cost?: number | null } | null>(null);
+  const [holdingValidationError, setHoldingValidationError] = useState<string | null>(null);
   
   // Bulk import dialog
   const [bulkImportOpen, setBulkImportOpen] = useState(false);
@@ -132,33 +215,284 @@ export function PortfolioPage() {
     }
   }, [selectedId, loadDetail]);
 
+  useEffect(() => {
+    if (!selectedId) {
+      deferStateUpdate(() => {
+        setRiskAnalytics(null);
+        setToolAnalytics(null);
+        setToolAnalyticsJob(null);
+        setAllocationResult(null);
+      });
+      return;
+    }
+    if (!detail?.holdings || detail.holdings.length === 0) {
+      return;
+    }
+    const timeout = setTimeout(() => {
+      loadRiskAnalytics(selectedId);
+      loadToolAnalytics(selectedId, ['quantstats', 'pyfolio']);
+    }, 0);
+    return () => clearTimeout(timeout);
+  }, [selectedId, detail?.holdings, loadRiskAnalytics, loadToolAnalytics]);
+
+  useEffect(() => {
+    if (!detail?.holdings || detail.holdings.length === 0) {
+      deferStateUpdate(() => setStockInfoMap({}));
+      return;
+    }
+    let isActive = true;
+    const symbols = detail.holdings.map((holding) => holding.symbol);
+    const timeout = setTimeout(() => {
+      Promise.all(
+        symbols.map(async (symbol) => {
+          try {
+            const info = await getStockInfo(symbol);
+            return [symbol, info] as const;
+          } catch {
+            return [symbol, null] as const;
+          }
+        })
+      ).then((entries) => {
+        if (!isActive) return;
+        const nextMap: Record<string, StockInfo | null> = {};
+        for (const [symbol, info] of entries) {
+          nextMap[symbol] = info;
+        }
+        setStockInfoMap(nextMap);
+      });
+    }, 0);
+    return () => {
+      isActive = false;
+      clearTimeout(timeout);
+    };
+  }, [detail?.holdings]);
+
+  useEffect(() => {
+    if (!selectedId || !toolAnalyticsJob?.job_id) return;
+    if (toolAnalyticsJob.status === 'completed' || toolAnalyticsJob.status === 'failed') {
+      return;
+    }
+    const timeout = setTimeout(async () => {
+      try {
+        const status = await getPortfolioAnalyticsJob(selectedId, toolAnalyticsJob.job_id);
+        setToolAnalyticsJob(status);
+        if (status.status === 'completed') {
+          await loadToolAnalytics(selectedId, status.tools);
+        }
+      } catch (err) {
+        setToolAnalyticsError(err instanceof Error ? err.message : 'Failed to load analytics status');
+      }
+    }, 10000);
+    return () => clearTimeout(timeout);
+  }, [selectedId, toolAnalyticsJob, loadToolAnalytics]);
+
   const selectedPortfolio = useMemo(
     () => portfolios.find((p) => p.id === selectedId) || null,
     [portfolios, selectedId]
   );
 
+  const holdingSnapshots = useMemo(() => {
+    if (!detail?.holdings) return [];
+    return detail.holdings.map((holding) => {
+      const info = stockInfoMap[holding.symbol];
+      const currentPrice = info?.current_price ?? null;
+      const valuationPrice = currentPrice ?? holding.avg_cost ?? 0;
+      const marketValue = valuationPrice * holding.quantity;
+      const costBasis = (holding.avg_cost ?? 0) * holding.quantity;
+      const unrealized = holding.avg_cost && currentPrice
+        ? (currentPrice - holding.avg_cost) * holding.quantity
+        : null;
+      const unrealizedPct = holding.avg_cost
+        && currentPrice
+        ? ((currentPrice - holding.avg_cost) / holding.avg_cost) * 100
+        : null;
+      return {
+        ...holding,
+        name: info?.name ?? null,
+        sector: info?.sector ?? 'Unknown',
+        country: info?.country ?? 'Unknown',
+        currentPrice,
+        marketValue,
+        costBasis,
+        unrealized,
+        unrealizedPct,
+      };
+    });
+  }, [detail, stockInfoMap]);
+
+  const holdingSnapshotMap = useMemo(() => {
+    return new Map(holdingSnapshots.map((holding) => [holding.symbol, holding]));
+  }, [holdingSnapshots]);
+
   // Calculate portfolio stats
   const portfolioStats = useMemo(() => {
-    if (!detail?.holdings) return { totalValue: 0, totalCost: 0, gainLoss: 0, gainLossPercent: 0 };
-    
-    let totalValue = 0;
-    let totalCost = 0;
-    
-    for (const h of detail.holdings) {
-      // We don't have current prices here, so use avg_cost * quantity as value estimate
-      const value = h.quantity * (h.avg_cost || 0);
-      totalValue += value;
-      totalCost += h.quantity * (h.avg_cost || 0);
+    if (!detail?.holdings) {
+      return {
+        totalValue: 0,
+        totalCost: 0,
+        gainLoss: 0,
+        gainLossPercent: 0,
+        investedValue: 0,
+      };
     }
-    
-    // Add cash
-    totalValue += detail.cash_balance || 0;
-    
-    const gainLoss = totalValue - totalCost;
-    const gainLossPercent = totalCost > 0 ? (gainLoss / totalCost) * 100 : 0;
-    
-    return { totalValue, totalCost, gainLoss, gainLossPercent };
-  }, [detail]);
+
+    const investedValue = holdingSnapshots.reduce((sum, holding) => sum + holding.marketValue, 0);
+    const totalCost = holdingSnapshots.reduce((sum, holding) => sum + holding.costBasis, 0);
+    const cashBalance = detail.cash_balance || 0;
+    const totalValue = investedValue + cashBalance;
+    const totalCostWithCash = totalCost + cashBalance;
+    const gainLoss = totalValue - totalCostWithCash;
+    const gainLossPercent = totalCostWithCash > 0 ? (gainLoss / totalCostWithCash) * 100 : 0;
+
+    return {
+      totalValue,
+      totalCost: totalCostWithCash,
+      gainLoss,
+      gainLossPercent,
+      investedValue,
+    };
+  }, [detail, holdingSnapshots]);
+
+  const missingAvgCost = useMemo(
+    () => detail?.holdings.filter((holding) => !holding.avg_cost) ?? [],
+    [detail]
+  );
+
+  const sectorAllocation = useMemo(() => {
+    if (!holdingSnapshots.length) return [];
+    const totals = new Map<string, number>();
+    let total = 0;
+    for (const holding of holdingSnapshots) {
+      if (!holding.marketValue) continue;
+      totals.set(holding.sector, (totals.get(holding.sector) || 0) + holding.marketValue);
+      total += holding.marketValue;
+    }
+    return Array.from(totals.entries())
+      .map(([name, value]) => ({
+        name,
+        value,
+        percent: total > 0 ? (value / total) * 100 : 0,
+      }))
+      .sort((a, b) => b.value - a.value);
+  }, [holdingSnapshots]);
+
+  const countryAllocation = useMemo(() => {
+    if (!holdingSnapshots.length) return [];
+    const totals = new Map<string, number>();
+    let total = 0;
+    for (const holding of holdingSnapshots) {
+      if (!holding.marketValue) continue;
+      totals.set(holding.country, (totals.get(holding.country) || 0) + holding.marketValue);
+      total += holding.marketValue;
+    }
+    return Array.from(totals.entries())
+      .map(([name, value]) => ({
+        name,
+        value,
+        percent: total > 0 ? (value / total) * 100 : 0,
+      }))
+      .sort((a, b) => b.value - a.value);
+  }, [holdingSnapshots]);
+
+  const topHoldings = useMemo(() => {
+    return [...holdingSnapshots]
+      .filter((holding) => holding.marketValue > 0)
+      .sort((a, b) => b.marketValue - a.marketValue)
+      .slice(0, 8);
+  }, [holdingSnapshots]);
+
+  const riskContributionData = useMemo(() => {
+    const contributions = riskAnalytics?.raw.risk_contributions;
+    if (!contributions) return [];
+    return Object.entries(contributions)
+      .map(([symbol, value]) => ({ symbol, value: value * 100 }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 8);
+  }, [riskAnalytics]);
+
+  const riskHighlights = riskAnalytics?.risk_highlights ?? [];
+
+  const performanceMetrics = useMemo(() => {
+    const quantstats = toolAnalytics?.results.find((result) => result.tool === 'quantstats');
+    const pyfolio = toolAnalytics?.results.find((result) => result.tool === 'pyfolio');
+    const data = (quantstats?.data ?? pyfolio?.data) as Record<string, number> | undefined;
+    return {
+      cagr: data?.cagr ?? null,
+      sharpe: data?.sharpe ?? null,
+      sortino: data?.sortino ?? null,
+      volatility: data?.volatility ?? null,
+      maxDrawdown: data?.max_drawdown ?? null,
+      beta: data?.beta ?? null,
+    };
+  }, [toolAnalytics]);
+
+  const skfolioWeights = useMemo(() => {
+    const skfolio = toolAnalytics?.results.find((result) => result.tool === 'skfolio');
+    const weights = skfolio?.data?.weights as Record<string, number> | undefined;
+    if (!weights) return [];
+    return Object.entries(weights)
+      .map(([symbol, value]) => ({ symbol, value: value * 100 }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 8);
+  }, [toolAnalytics]);
+
+  const allocationWeightData = useMemo(() => {
+    if (!allocationResult) return [];
+    const entries = Object.entries(allocationResult.target_weights || {});
+    return entries
+      .map(([symbol, target]) => ({
+        symbol,
+        target: target * 100,
+        current: (allocationResult.current_weights?.[symbol] ?? 0) * 100,
+      }))
+      .sort((a, b) => b.target - a.target)
+      .slice(0, 8);
+  }, [allocationResult]);
+
+  const loadRiskAnalytics = useCallback(async (portfolioId: number) => {
+    deferStateUpdate(() => setIsRiskAnalyticsLoading(true));
+    setRiskAnalyticsError(null);
+    try {
+      const data = await getPortfolioRiskAnalytics(portfolioId);
+      setRiskAnalytics(data);
+    } catch (err) {
+      setRiskAnalyticsError(err instanceof Error ? err.message : 'Failed to load portfolio insights');
+      setRiskAnalytics(null);
+    } finally {
+      setIsRiskAnalyticsLoading(false);
+    }
+  }, []);
+
+  const loadToolAnalytics = useCallback(
+    async (portfolioId: number, tools: string[], forceRefresh = false) => {
+      deferStateUpdate(() => setIsToolAnalyticsLoading(true));
+      setToolAnalyticsError(null);
+      try {
+        const data = await runPortfolioAnalytics(portfolioId, {
+          tools,
+          force_refresh: forceRefresh,
+        });
+        setToolAnalytics((previous) => mergeAnalyticsResults(previous, data));
+        if (data.job_id) {
+          setToolAnalyticsJob({
+            job_id: data.job_id,
+            portfolio_id: portfolioId,
+            status: data.job_status || 'pending',
+            tools: data.scheduled_tools.length ? data.scheduled_tools : tools,
+            results_count: 0,
+            created_at: new Date().toISOString(),
+          });
+        } else {
+          setToolAnalyticsJob(null);
+        }
+      } catch (err) {
+        setToolAnalyticsError(err instanceof Error ? err.message : 'Failed to run analytics tools');
+      } finally {
+        setIsToolAnalyticsLoading(false);
+      }
+    },
+    []
+  );
 
   function openCreateDialog() {
     setEditingPortfolio(null);
@@ -219,6 +553,7 @@ export function PortfolioPage() {
     setHoldingSymbol('');
     setHoldingQty('');
     setHoldingAvgCost('');
+    setHoldingValidationError(null);
     setHoldingDialogOpen(true);
   }
 
@@ -227,16 +562,21 @@ export function PortfolioPage() {
     setHoldingSymbol(holding.symbol);
     setHoldingQty(String(holding.quantity));
     setHoldingAvgCost(holding.avg_cost ? String(holding.avg_cost) : '');
+    setHoldingValidationError(null);
     setHoldingDialogOpen(true);
   }
 
   async function handleSaveHolding() {
     if (!selectedId || !holdingSymbol.trim() || !holdingQty) return;
+    if (!holdingAvgCost || Number(holdingAvgCost) <= 0) {
+      setHoldingValidationError('Average cost is required for portfolio analysis.');
+      return;
+    }
     try {
       await upsertHolding(selectedId, {
         symbol: holdingSymbol.trim().toUpperCase(),
         quantity: Number(holdingQty),
-        avg_cost: holdingAvgCost ? Number(holdingAvgCost) : undefined,
+        avg_cost: Number(holdingAvgCost),
       });
       await loadDetail(selectedId);
       setHoldingDialogOpen(false);
@@ -255,13 +595,45 @@ export function PortfolioPage() {
     }
   }
 
+  async function handleGenerateAllocation() {
+    if (!selectedId) return;
+    const inflow = Number(allocationAmount);
+    if (!inflow || inflow <= 0) {
+      setAllocationError('Enter a valid investment amount.');
+      return;
+    }
+    setAllocationError(null);
+    setAllocationResult(null);
+    deferStateUpdate(() => setIsAllocationLoading(true));
+    try {
+      const data = await getPortfolioAllocationRecommendation(selectedId, {
+        inflow_eur: inflow,
+        method: allocationMethod,
+      });
+      setAllocationResult(data);
+    } catch (err) {
+      setAllocationError(err instanceof Error ? err.message : 'Failed to generate recommendations');
+    } finally {
+      setIsAllocationLoading(false);
+    }
+  }
+
   const formatCurrency = (value: number) => {
+    const safeValue = Number.isFinite(value) ? value : 0;
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
       currency: selectedPortfolio?.base_currency || 'USD',
       minimumFractionDigits: 2,
-    }).format(value);
+    }).format(safeValue);
   };
+
+  const isHoldingValid = Boolean(
+    holdingSymbol.trim() &&
+      holdingQty &&
+      Number(holdingQty) > 0 &&
+      holdingAvgCost &&
+      Number(holdingAvgCost) > 0
+  );
 
   return (
     <div className="mx-auto w-full max-w-4xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
@@ -321,6 +693,18 @@ export function PortfolioPage() {
         </div>
       )}
 
+      {selectedPortfolio && missingAvgCost.length > 0 && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-900/80">
+          <div className="flex items-center gap-2 font-semibold text-amber-700">
+            <AlertTriangle className="h-4 w-4" />
+            Missing average cost on {missingAvgCost.length} holding{missingAvgCost.length > 1 ? 's' : ''}
+          </div>
+          <p className="mt-1 text-xs text-amber-800/80">
+            Add an average price to unlock accurate portfolio analytics and allocation insights.
+          </p>
+        </div>
+      )}
+
       {/* Stats Cards */}
       {selectedPortfolio && (
         <div className="grid gap-4 sm:grid-cols-3">
@@ -364,11 +748,647 @@ export function PortfolioPage() {
                   <p className={`text-xl font-semibold ${portfolioStats.gainLoss >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                     {portfolioStats.gainLoss >= 0 ? '+' : ''}{formatCurrency(portfolioStats.gainLoss)}
                   </p>
+                  <p className="text-xs text-muted-foreground">
+                    {portfolioStats.gainLoss >= 0 ? '+' : ''}{portfolioStats.gainLossPercent.toFixed(1)}%
+                  </p>
                 </div>
               </div>
             </CardContent>
           </Card>
         </div>
+      )}
+
+      {selectedPortfolio && (
+        <div className="grid gap-4 lg:grid-cols-3">
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Target className="h-4 w-4 text-primary" />
+                Risk Summary
+              </CardTitle>
+              <CardDescription>Plain-English portfolio diagnostics</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {isRiskAnalyticsLoading && (
+                <p className="text-sm text-muted-foreground">Loading portfolio insights...</p>
+              )}
+              {!isRiskAnalyticsLoading && riskAnalytics && (
+                <>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline">{riskAnalytics.summary.risk_label}</Badge>
+                    <span className="text-xs text-muted-foreground">
+                      Score {riskAnalytics.summary.risk_score}/10
+                    </span>
+                  </div>
+                  <p className="text-sm font-medium">{riskAnalytics.summary.headline}</p>
+                  <div className="space-y-1 text-xs text-muted-foreground">
+                    <p>{riskAnalytics.risk.volatility_explanation}</p>
+                    <p>{riskAnalytics.risk.bad_day_loss}</p>
+                    <p>{riskAnalytics.risk.crash_loss}</p>
+                    <p>{riskAnalytics.risk.worst_ever}</p>
+                  </div>
+                  {riskAnalytics.action_items.length > 0 && (
+                    <div className="rounded-md bg-muted/50 p-3">
+                      <p className="text-xs font-semibold text-muted-foreground">Actionable next steps</p>
+                      <ul className="mt-2 space-y-1 text-xs">
+                        {riskAnalytics.action_items.map((item) => (
+                          <li key={item}>• {item}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </>
+              )}
+              {!isRiskAnalyticsLoading && !riskAnalytics && (
+                <p className="text-sm text-muted-foreground">Run analytics to see risk insights.</p>
+              )}
+              {riskAnalyticsError && (
+                <p className="text-xs text-destructive">{riskAnalyticsError}</p>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <BarChart3 className="h-4 w-4 text-primary" />
+                Performance Snapshot
+              </CardTitle>
+              <CardDescription>Key stats from Quantstats/Pyfolio</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {isToolAnalyticsLoading && !toolAnalytics && (
+                <p className="text-sm text-muted-foreground">Calculating performance metrics...</p>
+              )}
+              {!isToolAnalyticsLoading && (
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <p className="text-xs text-muted-foreground">CAGR</p>
+                    <p className="font-semibold">
+                      {performanceMetrics.cagr !== null
+                        ? `${(performanceMetrics.cagr * 100).toFixed(1)}%`
+                        : '—'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Sharpe</p>
+                    <p className="font-semibold">
+                      {performanceMetrics.sharpe !== null
+                        ? performanceMetrics.sharpe.toFixed(2)
+                        : '—'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Sortino</p>
+                    <p className="font-semibold">
+                      {performanceMetrics.sortino !== null
+                        ? performanceMetrics.sortino.toFixed(2)
+                        : '—'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Volatility</p>
+                    <p className="font-semibold">
+                      {performanceMetrics.volatility !== null
+                        ? `${(performanceMetrics.volatility * 100).toFixed(1)}%`
+                        : '—'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Max Drawdown</p>
+                    <p className="font-semibold">
+                      {performanceMetrics.maxDrawdown !== null
+                        ? `${(performanceMetrics.maxDrawdown * 100).toFixed(1)}%`
+                        : '—'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Beta</p>
+                    <p className="font-semibold">
+                      {performanceMetrics.beta !== null ? performanceMetrics.beta.toFixed(2) : '—'}
+                    </p>
+                  </div>
+                </div>
+              )}
+              {toolAnalyticsError && (
+                <p className="text-xs text-destructive">{toolAnalyticsError}</p>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Sparkles className="h-4 w-4 text-primary" />
+                Diversification & Market
+              </CardTitle>
+              <CardDescription>How balanced your portfolio is</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {isRiskAnalyticsLoading && (
+                <p className="text-sm text-muted-foreground">Checking diversification...</p>
+              )}
+              {!isRiskAnalyticsLoading && riskAnalytics && (
+                <>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Effective positions</p>
+                    <p className="font-semibold">{riskAnalytics.diversification.effective_positions}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Diversification quality</p>
+                    <p className="font-semibold">{riskAnalytics.diversification.quality}</p>
+                  </div>
+                  {riskAnalytics.diversification.warnings.length > 0 && (
+                    <ul className="space-y-1 text-xs text-muted-foreground">
+                      {riskAnalytics.diversification.warnings.map((warning) => (
+                        <li key={warning}>• {warning}</li>
+                      ))}
+                    </ul>
+                  )}
+                  <div className="rounded-md bg-muted/50 p-3">
+                    <p className="text-xs font-semibold text-muted-foreground">Market regime</p>
+                    <p className="text-sm font-medium">{riskAnalytics.market.current_regime}</p>
+                    <p className="text-xs text-muted-foreground mt-1">{riskAnalytics.market.explanation}</p>
+                  </div>
+                </>
+              )}
+              {!isRiskAnalyticsLoading && !riskAnalytics && (
+                <p className="text-sm text-muted-foreground">Portfolio regime insights appear here.</p>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {selectedPortfolio && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <AlertTriangle className="h-4 w-4 text-primary" />
+              Risk Highlights
+            </CardTitle>
+            <CardDescription>Sector-aware signals based on sustained fundamentals</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {isRiskAnalyticsLoading && (
+              <p className="text-sm text-muted-foreground">Assessing material risks...</p>
+            )}
+            {!isRiskAnalyticsLoading && riskAnalytics && riskHighlights.length > 0 && (
+              <div className="space-y-4">
+                {riskHighlights.map((entry) => {
+                  const info = stockInfoMap[entry.symbol];
+                  const displayName = info?.name ?? null;
+                  const sectorLabel = entry.sector ?? info?.sector ?? null;
+                  return (
+                    <div key={entry.symbol} className="rounded-md border border-muted/60 p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <p className="text-sm font-semibold">{entry.symbol}</p>
+                          {displayName && displayName !== entry.symbol && (
+                            <p className="text-xs text-muted-foreground">{displayName}</p>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {entry.domain && <Badge variant="outline">{entry.domain}</Badge>}
+                          {sectorLabel && <Badge variant="secondary">{sectorLabel}</Badge>}
+                        </div>
+                      </div>
+                      <div className="mt-3 space-y-2">
+                        {entry.highlights.map((highlight) => (
+                          <div key={`${entry.symbol}-${highlight.title}`} className="flex items-start gap-2">
+                            <span
+                              className={`rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase ${
+                                RISK_SEVERITY_STYLES[highlight.severity] ?? 'bg-muted text-muted-foreground'
+                              }`}
+                            >
+                              {highlight.severity}
+                            </span>
+                            <div>
+                              <p className="text-sm font-medium">{highlight.title}</p>
+                              <p className="text-xs text-muted-foreground">{highlight.detail}</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {!isRiskAnalyticsLoading && riskAnalytics && riskHighlights.length === 0 && (
+              <p className="text-sm text-muted-foreground">
+                No material sector risks detected across the last three quarters.
+              </p>
+            )}
+            {!isRiskAnalyticsLoading && !riskAnalytics && (
+              <p className="text-sm text-muted-foreground">Run analytics to surface risk highlights.</p>
+            )}
+            {riskAnalyticsError && (
+              <p className="text-xs text-destructive">{riskAnalyticsError}</p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {selectedPortfolio && (
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <PieChartIcon className="h-4 w-4 text-primary" />
+                Sector Allocation
+              </CardTitle>
+              <CardDescription>Invested exposure by sector</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {sectorAllocation.length > 0 ? (
+                <div className="flex flex-col gap-4 lg:flex-row">
+                  <ChartContainer
+                    config={{ value: { label: 'Allocation', color: 'hsl(var(--chart-1))' } }}
+                    className="h-[220px] w-full"
+                  >
+                    <ResponsiveContainer width="100%" height={220}>
+                      <PieChart>
+                        <ChartTooltip
+                          content={
+                            <ChartTooltipContent
+                              nameKey="name"
+                              formatter={(value, name, item) => {
+                                const payload = item?.payload as { percent?: number };
+                                const pct = payload?.percent ?? 0;
+                                return [`${formatCurrency(Number(value))} (${pct.toFixed(1)}%)`, name];
+                              }}
+                            />
+                          }
+                        />
+                        <Pie
+                          data={sectorAllocation}
+                          dataKey="value"
+                          nameKey="name"
+                          innerRadius={60}
+                          outerRadius={90}
+                        >
+                          {sectorAllocation.map((entry, index) => (
+                            <Cell key={entry.name} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                          ))}
+                        </Pie>
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </ChartContainer>
+                  <div className="space-y-2 text-xs">
+                    {sectorAllocation.map((entry) => (
+                      <div key={entry.name} className="flex items-center justify-between gap-2">
+                        <span className="font-medium">{entry.name}</span>
+                        <span className="text-muted-foreground">
+                          {entry.percent.toFixed(1)}% • {formatCurrency(entry.value)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">No sector data available yet.</p>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <PieChartIcon className="h-4 w-4 text-primary" />
+                Country Allocation
+              </CardTitle>
+              <CardDescription>Invested exposure by country</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {countryAllocation.length > 0 ? (
+                <div className="flex flex-col gap-4 lg:flex-row">
+                  <ChartContainer
+                    config={{ value: { label: 'Allocation', color: 'hsl(var(--chart-2))' } }}
+                    className="h-[220px] w-full"
+                  >
+                    <ResponsiveContainer width="100%" height={220}>
+                      <PieChart>
+                        <ChartTooltip
+                          content={
+                            <ChartTooltipContent
+                              nameKey="name"
+                              formatter={(value, name, item) => {
+                                const payload = item?.payload as { percent?: number };
+                                const pct = payload?.percent ?? 0;
+                                return [`${formatCurrency(Number(value))} (${pct.toFixed(1)}%)`, name];
+                              }}
+                            />
+                          }
+                        />
+                        <Pie
+                          data={countryAllocation}
+                          dataKey="value"
+                          nameKey="name"
+                          innerRadius={60}
+                          outerRadius={90}
+                        >
+                          {countryAllocation.map((entry, index) => (
+                            <Cell key={entry.name} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                          ))}
+                        </Pie>
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </ChartContainer>
+                  <div className="space-y-2 text-xs">
+                    {countryAllocation.map((entry) => (
+                      <div key={entry.name} className="flex items-center justify-between gap-2">
+                        <span className="font-medium">{entry.name}</span>
+                        <span className="text-muted-foreground">
+                          {entry.percent.toFixed(1)}% • {formatCurrency(entry.value)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">No country data available yet.</p>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {selectedPortfolio && (
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <BarChart3 className="h-4 w-4 text-primary" />
+                Largest Positions
+              </CardTitle>
+              <CardDescription>Top holdings by market value</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {topHoldings.length > 0 ? (
+                <ChartContainer
+                  config={{ value: { label: 'Value', color: 'hsl(var(--chart-1))' } }}
+                  className="h-[240px] w-full"
+                >
+                  <ResponsiveContainer width="100%" height={240}>
+                    <BarChart data={topHoldings.map((holding) => ({
+                      symbol: holding.symbol,
+                      value: holding.marketValue,
+                    }))}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                      <XAxis dataKey="symbol" tick={{ fontSize: 10 }} />
+                      <YAxis tickFormatter={(value) => `${Math.round(value / 1000)}k`} width={50} />
+                      <ChartTooltip
+                        content={
+                          <ChartTooltipContent
+                            formatter={(value, name) => [formatCurrency(Number(value)), name]}
+                          />
+                        }
+                      />
+                      <Bar dataKey="value" fill="hsl(var(--chart-1))" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </ChartContainer>
+              ) : (
+                <p className="text-sm text-muted-foreground">Add holdings to see position sizing.</p>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Target className="h-4 w-4 text-primary" />
+                Risk Concentration
+              </CardTitle>
+              <CardDescription>Where most of your risk sits</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {riskContributionData.length > 0 ? (
+                <ChartContainer
+                  config={{ value: { label: 'Risk %', color: 'hsl(var(--chart-2))' } }}
+                  className="h-[240px] w-full"
+                >
+                  <ResponsiveContainer width="100%" height={240}>
+                    <BarChart data={riskContributionData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                      <XAxis dataKey="symbol" tick={{ fontSize: 10 }} />
+                      <YAxis tickFormatter={(value) => `${value.toFixed(0)}%`} width={45} />
+                      <ChartTooltip
+                        content={
+                          <ChartTooltipContent
+                            formatter={(value, name) => [`${Number(value).toFixed(1)}%`, name]}
+                          />
+                        }
+                      />
+                      <Bar dataKey="value" fill="hsl(var(--chart-2))" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </ChartContainer>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  Risk contribution appears after portfolio analytics runs.
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {selectedPortfolio && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2">
+              <Target className="h-5 w-5 text-primary" />
+              Portfolio Actions
+            </CardTitle>
+            <CardDescription>Risk-aware buy/sell suggestions for your next move</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-[1fr,1fr,auto]">
+              <div className="space-y-1">
+                <Label>Investment Amount ({selectedPortfolio?.base_currency || 'USD'})</Label>
+                <Input
+                  type="number"
+                  value={allocationAmount}
+                  onChange={(event) => setAllocationAmount(event.target.value)}
+                  placeholder="1000"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label>Optimization Method</Label>
+                <Select value={allocationMethod} onValueChange={setAllocationMethod}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="risk_parity">Risk Parity</SelectItem>
+                    <SelectItem value="min_variance">Min Variance</SelectItem>
+                    <SelectItem value="max_diversification">Max Diversification</SelectItem>
+                    <SelectItem value="cvar">Min CVaR</SelectItem>
+                    <SelectItem value="hrp">Hierarchical Risk Parity</SelectItem>
+                    <SelectItem value="equal_weight">Equal Weight</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex items-end">
+                <Button onClick={handleGenerateAllocation} disabled={isAllocationLoading}>
+                  {isAllocationLoading ? 'Generating…' : 'Generate Actions'}
+                </Button>
+              </div>
+            </div>
+            {allocationError && (
+              <p className="text-xs text-destructive">{allocationError}</p>
+            )}
+            {allocationResult ? (
+              <div className="space-y-4">
+                <div className="rounded-lg border bg-muted/30 p-3 text-sm">
+                  <p className="font-medium">{allocationResult.explanation}</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {allocationResult.risk_improvement} • Confidence: {allocationResult.confidence}
+                  </p>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-3 text-sm">
+                  <div>
+                    <p className="text-xs text-muted-foreground">Current Volatility</p>
+                    <p className="font-semibold">
+                      {(allocationResult.current_risk.volatility * 100).toFixed(1)}% • {allocationResult.current_risk.label}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Target Volatility</p>
+                    <p className="font-semibold">
+                      {(allocationResult.optimal_risk.volatility * 100).toFixed(1)}% • {allocationResult.optimal_risk.label}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Diversification Ratio</p>
+                    <p className="font-semibold">
+                      {allocationResult.optimal_risk.diversification_ratio.toFixed(2)}
+                    </p>
+                  </div>
+                </div>
+                {allocationResult.trades.length > 0 ? (
+                  <div className="space-y-2">
+                    <p className="text-sm font-semibold">Suggested Trades</p>
+                    <div className="space-y-2">
+                      {allocationResult.trades.map((trade) => (
+                        <div key={`${trade.symbol}-${trade.action}`} className="rounded-md border p-3">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <Badge variant={trade.action === 'BUY' ? 'default' : 'destructive'}>
+                                {trade.action}
+                              </Badge>
+                              <span className="font-semibold">{trade.symbol}</span>
+                            </div>
+                            <span className="font-semibold">{formatCurrency(trade.amount_eur)}</span>
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-1">{trade.reason}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {trade.current_weight_pct.toFixed(1)}% → {trade.target_weight_pct.toFixed(1)}%
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">No trades needed for this allocation.</p>
+                )}
+                {allocationWeightData.length > 0 && (
+                  <div>
+                    <p className="text-sm font-semibold mb-2">Current vs Target Weights</p>
+                    <ChartContainer
+                      config={{
+                        current: { label: 'Current', color: 'hsl(var(--chart-3))' },
+                        target: { label: 'Target', color: 'hsl(var(--chart-1))' },
+                      }}
+                      className="h-[220px] w-full"
+                    >
+                      <ResponsiveContainer width="100%" height={220}>
+                        <BarChart data={allocationWeightData}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                          <XAxis dataKey="symbol" tick={{ fontSize: 10 }} />
+                          <YAxis tickFormatter={(value) => `${value.toFixed(0)}%`} width={45} />
+                          <ChartTooltip
+                            content={
+                              <ChartTooltipContent
+                                formatter={(value, name) => [`${Number(value).toFixed(1)}%`, name]}
+                              />
+                            }
+                          />
+                          <Bar dataKey="current" fill="hsl(var(--chart-3))" radius={[4, 4, 0, 0]} />
+                          <Bar dataKey="target" fill="hsl(var(--chart-1))" radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </ChartContainer>
+                  </div>
+                )}
+                {allocationResult.warnings.length > 0 && (
+                  <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-800">
+                    {allocationResult.warnings.map((warning) => (
+                      <p key={warning}>• {warning}</p>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Generate actions to get a buy/sell plan based on your risk profile.
+              </p>
+            )}
+            {skfolioWeights.length > 0 && (
+              <div className="rounded-lg border bg-muted/30 p-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-semibold">Skfolio Suggested Weights</p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => selectedId && loadToolAnalytics(selectedId, ['skfolio'], true)}
+                    disabled={isToolAnalyticsLoading}
+                  >
+                    Refresh
+                  </Button>
+                </div>
+                <ChartContainer
+                  config={{ value: { label: 'Weight', color: 'hsl(var(--chart-2))' } }}
+                  className="h-[200px] w-full mt-3"
+                >
+                  <ResponsiveContainer width="100%" height={200}>
+                    <BarChart data={skfolioWeights}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                      <XAxis dataKey="symbol" tick={{ fontSize: 10 }} />
+                      <YAxis tickFormatter={(value) => `${value.toFixed(0)}%`} width={45} />
+                      <ChartTooltip
+                        content={
+                          <ChartTooltipContent
+                            formatter={(value, name) => [`${Number(value).toFixed(1)}%`, name]}
+                          />
+                        }
+                      />
+                      <Bar dataKey="value" fill="hsl(var(--chart-2))" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </ChartContainer>
+              </div>
+            )}
+            {toolAnalyticsJob && toolAnalyticsJob.status !== 'completed' && (
+              <div className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">
+                Advanced analytics running ({toolAnalyticsJob.status}). Results will appear automatically.
+              </div>
+            )}
+            {skfolioWeights.length === 0 &&
+              toolAnalyticsJob?.status !== 'pending' &&
+              toolAnalyticsJob?.status !== 'running' && (
+              <Button
+                variant="outline"
+                onClick={() => selectedId && loadToolAnalytics(selectedId, ['skfolio'], true)}
+                disabled={isToolAnalyticsLoading}
+              >
+                Run Skfolio Optimization
+              </Button>
+            )}
+          </CardContent>
+        </Card>
       )}
 
       {/* Holdings */}
@@ -393,49 +1413,83 @@ export function PortfolioPage() {
                 animate="show"
               >
                 <AnimatePresence mode="popLayout">
-                  {detail.holdings.map((holding) => (
-                    <motion.div
-                      key={holding.symbol}
-                      variants={item}
-                      layout
-                      className="flex items-center justify-between rounded-lg border p-4 hover:bg-muted/50 transition-colors"
-                    >
-                      <div className="flex items-center gap-4">
-                        <div className="font-mono font-semibold text-lg">{holding.symbol}</div>
-                        <Badge variant="secondary">{holding.quantity} shares</Badge>
-                        {holding.avg_cost && (
-                          <span className="text-sm text-muted-foreground">
-                            @ {formatCurrency(holding.avg_cost)}
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold">
-                          {formatCurrency(holding.quantity * (holding.avg_cost || 0))}
-                        </span>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon">
-                              <MoreHorizontal className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => openEditHoldingDialog(holding)}>
-                              <Pencil className="h-4 w-4 mr-2" />
-                              Edit
-                            </DropdownMenuItem>
-                            <DropdownMenuItem 
-                              onClick={() => handleDeleteHolding(holding.symbol)}
-                              className="text-destructive focus:text-destructive"
-                            >
-                              <Trash2 className="h-4 w-4 mr-2" />
-                              Remove
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </div>
-                    </motion.div>
-                  ))}
+                  {detail.holdings.map((holding) => {
+                    const snapshot = holdingSnapshotMap.get(holding.symbol);
+                    const unrealizedPct = snapshot?.unrealizedPct ?? null;
+                    const marketValue = snapshot?.marketValue || 0;
+                    return (
+                      <motion.div
+                        key={holding.symbol}
+                        variants={item}
+                        layout
+                        className="flex items-center justify-between rounded-lg border p-4 hover:bg-muted/50 transition-colors"
+                      >
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
+                          <div>
+                            <div className="font-mono font-semibold text-lg">{holding.symbol}</div>
+                            {snapshot?.name && (
+                              <div className="text-xs text-muted-foreground">
+                                {snapshot.name}
+                              </div>
+                            )}
+                          </div>
+                          <Badge variant="secondary">{holding.quantity} shares</Badge>
+                          {holding.avg_cost ? (
+                            <span className="text-sm text-muted-foreground">
+                              Avg {formatCurrency(holding.avg_cost)}
+                            </span>
+                          ) : (
+                            <Badge variant="outline" className="border-amber-500/40 text-amber-700">
+                              Avg cost required
+                            </Badge>
+                          )}
+                          {snapshot?.currentPrice ? (
+                            <span className="text-sm text-muted-foreground">
+                              Now {formatCurrency(snapshot.currentPrice)}
+                            </span>
+                          ) : null}
+                          {unrealizedPct !== null && (
+                            <Badge variant={unrealizedPct >= 0 ? 'default' : 'destructive'}>
+                              {unrealizedPct >= 0 ? '+' : ''}
+                              {unrealizedPct.toFixed(1)}%
+                            </Badge>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <div className="text-right">
+                            <div className="font-semibold">
+                              {formatCurrency(marketValue)}
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              {portfolioStats.investedValue > 0
+                                ? `${((marketValue / portfolioStats.investedValue) * 100).toFixed(1)}%`
+                                : '0%'}
+                            </div>
+                          </div>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon">
+                                <MoreHorizontal className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => openEditHoldingDialog(holding)}>
+                                <Pencil className="h-4 w-4 mr-2" />
+                                Edit
+                              </DropdownMenuItem>
+                              <DropdownMenuItem 
+                                onClick={() => handleDeleteHolding(holding.symbol)}
+                                className="text-destructive focus:text-destructive"
+                              >
+                                <Trash2 className="h-4 w-4 mr-2" />
+                                Remove
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
+                      </motion.div>
+                    );
+                  })}
                 </AnimatePresence>
               </motion.div>
             ) : (
@@ -521,7 +1575,13 @@ export function PortfolioPage() {
       </Dialog>
 
       {/* Holding Dialog */}
-      <Dialog open={holdingDialogOpen} onOpenChange={setHoldingDialogOpen}>
+      <Dialog
+        open={holdingDialogOpen}
+        onOpenChange={(open) => {
+          setHoldingDialogOpen(open);
+          if (!open) setHoldingValidationError(null);
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{editingHolding ? 'Edit Holding' : 'Add Holding'}</DialogTitle>
@@ -550,16 +1610,29 @@ export function PortfolioPage() {
                 />
               </div>
               <div>
-                <Label>Avg Cost (optional)</Label>
+                <Label>Avg Cost</Label>
                 <Input 
                   type="number"
                   step="0.01"
                   value={holdingAvgCost} 
-                  onChange={(e) => setHoldingAvgCost(e.target.value)}
+                  onChange={(e) => {
+                    setHoldingAvgCost(e.target.value);
+                    if (holdingValidationError) setHoldingValidationError(null);
+                  }}
                   placeholder="150.00"
                 />
+                {!holdingAvgCost && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Required for portfolio analytics and allocation insights.
+                  </p>
+                )}
               </div>
             </div>
+            {holdingValidationError && (
+              <div className="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">
+                {holdingValidationError}
+              </div>
+            )}
           </div>
           <DialogFooter className="flex-col sm:flex-row gap-2">
             {!editingHolding && (
@@ -579,7 +1652,7 @@ export function PortfolioPage() {
               <Button variant="outline" onClick={() => setHoldingDialogOpen(false)} className="flex-1 sm:flex-none">
                 Cancel
               </Button>
-              <Button onClick={handleSaveHolding} className="flex-1 sm:flex-none">
+              <Button onClick={handleSaveHolding} className="flex-1 sm:flex-none" disabled={!isHoldingValid}>
                 {editingHolding ? 'Save Changes' : 'Add Holding'}
               </Button>
             </div>

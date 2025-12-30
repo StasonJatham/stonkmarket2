@@ -2,19 +2,17 @@ import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { BenchmarkConfig } from '@/services/api';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
+import { ConfigForm, type ConfigField } from '@/components/ConfigForm';
 import { 
   Plus, 
   Trash2, 
@@ -22,77 +20,6 @@ import {
   LineChart,
   GripVertical
 } from 'lucide-react';
-
-interface BenchmarkFormProps {
-  formId: string;
-  setFormId: (v: string) => void;
-  formSymbol: string;
-  setFormSymbol: (v: string) => void;
-  formName: string;
-  setFormName: (v: string) => void;
-  formDescription: string;
-  setFormDescription: (v: string) => void;
-  onSubmit: () => void;
-  submitLabel: string;
-}
-
-function BenchmarkForm({
-  formId, setFormId,
-  formSymbol, setFormSymbol,
-  formName, setFormName,
-  formDescription, setFormDescription,
-  onSubmit, submitLabel
-}: BenchmarkFormProps) {
-  return (
-    <div className="space-y-4">
-      <div className="space-y-2">
-        <Label>ID</Label>
-        <Input
-          value={formId}
-          onChange={(e) => setFormId(e.target.value.toUpperCase())}
-          placeholder="SP500, NASDAQ, DAX..."
-          className="font-mono"
-        />
-        <p className="text-xs text-muted-foreground">Unique identifier, no spaces</p>
-      </div>
-      
-      <div className="space-y-2">
-        <Label>Symbol</Label>
-        <Input
-          value={formSymbol}
-          onChange={(e) => setFormSymbol(e.target.value.toUpperCase())}
-          placeholder="^GSPC, ^IXIC, ^GDAXI..."
-          className="font-mono"
-        />
-        <p className="text-xs text-muted-foreground">Yahoo Finance ticker symbol</p>
-      </div>
-
-      <div className="space-y-2">
-        <Label>Display Name</Label>
-        <Input
-          value={formName}
-          onChange={(e) => setFormName(e.target.value)}
-          placeholder="S&P 500"
-        />
-      </div>
-
-      <div className="space-y-2">
-        <Label>Description (optional)</Label>
-        <Input
-          value={formDescription}
-          onChange={(e) => setFormDescription(e.target.value)}
-          placeholder="US Large Cap Index"
-        />
-      </div>
-
-      <DialogFooter>
-        <Button type="button" onClick={onSubmit} disabled={!formId.trim() || !formSymbol.trim() || !formName.trim()}>
-          {submitLabel}
-        </Button>
-      </DialogFooter>
-    </div>
-  );
-}
 
 interface BenchmarkManagerProps {
   benchmarks: BenchmarkConfig[];
@@ -187,12 +114,43 @@ export function BenchmarkManager({ benchmarks, onChange, onSave }: BenchmarkMana
     }
   }
 
-  const formProps = {
-    formId, setFormId,
-    formSymbol, setFormSymbol,
-    formName, setFormName,
-    formDescription, setFormDescription,
-  };
+  const formFields: ConfigField[] = [
+    {
+      id: 'benchmark-id',
+      label: 'ID',
+      value: formId,
+      onChange: setFormId,
+      placeholder: 'SP500, NASDAQ, DAX...',
+      helperText: 'Unique identifier, no spaces',
+      inputProps: { className: 'font-mono' },
+      transform: (value) => value.toUpperCase(),
+    },
+    {
+      id: 'benchmark-symbol',
+      label: 'Symbol',
+      value: formSymbol,
+      onChange: setFormSymbol,
+      placeholder: '^GSPC, ^IXIC, ^GDAXI...',
+      helperText: 'Yahoo Finance ticker symbol',
+      inputProps: { className: 'font-mono' },
+      transform: (value) => value.toUpperCase(),
+    },
+    {
+      id: 'benchmark-name',
+      label: 'Display Name',
+      value: formName,
+      onChange: setFormName,
+      placeholder: 'S&P 500',
+    },
+    {
+      id: 'benchmark-description',
+      label: 'Description (optional)',
+      value: formDescription,
+      onChange: setFormDescription,
+      placeholder: 'US Large Cap Index',
+    },
+  ];
+  const isFormValid = Boolean(formId.trim() && formSymbol.trim() && formName.trim());
 
   return (
     <Card>
@@ -222,7 +180,12 @@ export function BenchmarkManager({ benchmarks, onChange, onSave }: BenchmarkMana
                   Add a new benchmark index for comparison.
                 </DialogDescription>
               </DialogHeader>
-              <BenchmarkForm {...formProps} onSubmit={handleAdd} submitLabel="Add Benchmark" />
+              <ConfigForm
+                fields={formFields}
+                onSubmit={handleAdd}
+                submitLabel="Add Benchmark"
+                isValid={isFormValid}
+              />
             </DialogContent>
           </Dialog>
         </div>
@@ -281,7 +244,12 @@ export function BenchmarkManager({ benchmarks, onChange, onSave }: BenchmarkMana
                             Update benchmark configuration.
                           </DialogDescription>
                         </DialogHeader>
-                        <BenchmarkForm {...formProps} onSubmit={handleEdit} submitLabel="Save Changes" />
+                        <ConfigForm
+                          fields={formFields}
+                          onSubmit={handleEdit}
+                          submitLabel="Save Changes"
+                          isValid={isFormValid}
+                        />
                       </DialogContent>
                     </Dialog>
                     

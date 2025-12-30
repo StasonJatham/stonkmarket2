@@ -179,6 +179,57 @@ services:
       valkey:
         condition: service_healthy
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+    networks:
+      - stonkmarket
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777
+
+  celery-worker-2:
+    build:
+      context: .
+      dockerfile: Dockerfile.celery
+    container_name: stonkmarket-celery-worker-2
+    command: >
+      celery -A app.celery_app.celery_app worker
+      --loglevel=INFO
+      --concurrency=${CELERY_CONCURRENCY:-4}
+      --prefetch-multiplier=1
+      --queues=high,default,low
+      -O fair
+      --hostname=worker2@%h
+    env_file:
+      - .env.production
+    environment:
+      - ENVIRONMENT=production
+      - DEBUG=false
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://valkey:6379/1}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://valkey:6379/1}
+      - CELERY_CRON_SYNC_SECONDS=${CELERY_CRON_SYNC_SECONDS:-60}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
     networks:
       - stonkmarket
     security_opt:
@@ -214,6 +265,14 @@ services:
       valkey:
         condition: service_healthy
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4G
+        reservations:
+          cpus: "0.5"
+          memory: 1G
     networks:
       - stonkmarket
     security_opt:

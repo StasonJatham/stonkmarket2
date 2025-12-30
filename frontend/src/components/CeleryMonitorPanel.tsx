@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useState, useMemo } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   getCelerySnapshot,
   type CeleryBrokerInfo,
   type CeleryQueueInfo,
-  type CeleryTaskInfo,
   type CeleryWorkerInfo,
   type CeleryWorkersResponse,
 } from '@/services/api';
@@ -22,16 +21,13 @@ import {
 import {
   AlertCircle,
   CheckCircle,
-  Clock,
   Database,
   Layers,
   RefreshCw,
   Server,
   XCircle,
-  Zap,
   Activity,
 } from 'lucide-react';
-import { DataTableControls } from '@/components/ui/data-table-controls';
 
 function getActiveCount(info: CeleryWorkerInfo): number | null {
   if (Array.isArray(info.active)) return info.active.length;
@@ -67,42 +63,6 @@ function formatUptime(seconds?: number): string {
   }
   if (hours > 0) return `${hours}h ${minutes}m`;
   return `${minutes}m`;
-}
-
-function formatTimestamp(ts?: number): string {
-  if (!ts) return '—';
-  const date = new Date(ts * 1000);
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-}
-
-function formatDuration(seconds?: number): string {
-  if (seconds === undefined || seconds === null) return '—';
-  if (seconds < 1) return `${Math.round(seconds * 1000)}ms`;
-  if (seconds < 60) return `${seconds.toFixed(1)}s`;
-  const minutes = Math.floor(seconds / 60);
-  const secs = seconds % 60;
-  return `${minutes}m ${secs.toFixed(0)}s`;
-}
-
-function TaskStateBadge({ state }: { state: string }) {
-  const stateConfig: Record<string, { variant: 'default' | 'secondary' | 'destructive' | 'outline'; icon: typeof CheckCircle }> = {
-    SUCCESS: { variant: 'default', icon: CheckCircle },
-    FAILURE: { variant: 'destructive', icon: XCircle },
-    PENDING: { variant: 'secondary', icon: Clock },
-    STARTED: { variant: 'outline', icon: Zap },
-    RECEIVED: { variant: 'outline', icon: Clock },
-    RETRY: { variant: 'secondary', icon: RefreshCw },
-  };
-
-  const config = stateConfig[state] || { variant: 'outline' as const, icon: Activity };
-  const Icon = config.icon;
-
-  return (
-    <Badge variant={config.variant} className="gap-1">
-      <Icon className="h-3 w-3" />
-      {state}
-    </Badge>
-  );
 }
 
 interface BrokerCardProps {
@@ -175,15 +135,9 @@ export function CeleryMonitorPanel() {
   const [workers, setWorkers] = useState<CeleryWorkersResponse>({});
   const [queues, setQueues] = useState<CeleryQueueInfo[]>([]);
   const [broker, setBroker] = useState<CeleryBrokerInfo | null>(null);
-  const [tasks, setTasks] = useState<CeleryTaskInfo[]>([]);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // Pagination and search for tasks
-  const [taskSearch, setTaskSearch] = useState('');
-  const [taskPage, setTaskPage] = useState(1);
-  const [taskPageSize, setTaskPageSize] = useState(10);
 
   const loadStats = useCallback(async (showRefreshIndicator = false) => {
     if (showRefreshIndicator) {
@@ -192,11 +146,10 @@ export function CeleryMonitorPanel() {
     setError(null);
 
     try {
-      const snapshot = await getCelerySnapshot(100);
+      const snapshot = await getCelerySnapshot(10); // Only need minimal tasks for health check
       setWorkers(snapshot.workers);
       setQueues(snapshot.queues);
       setBroker(snapshot.broker);
-      setTasks(snapshot.tasks);
     } catch (err) {
       console.error('Celery snapshot error:', err);
       setError('Failed to connect to Celery monitoring');
@@ -207,9 +160,12 @@ export function CeleryMonitorPanel() {
   }, []);
 
   useEffect(() => {
-    loadStats();
+    const initialTimeout = setTimeout(() => loadStats(), 0);
     const interval = setInterval(() => loadStats(false), 15000);
-    return () => clearInterval(interval);
+    return () => {
+      clearTimeout(initialTimeout);
+      clearInterval(interval);
+    };
   }, [loadStats]);
 
   const handleManualRefresh = useCallback(() => {
@@ -222,29 +178,6 @@ export function CeleryMonitorPanel() {
     return sum + (count || 0);
   }, 0);
 
-  // Filter and paginate tasks
-  const filteredTasks = useMemo(() => {
-    if (!taskSearch.trim()) return tasks;
-    const search = taskSearch.toLowerCase();
-    return tasks.filter(task => 
-      task.name?.toLowerCase().includes(search) ||
-      task.state?.toLowerCase().includes(search) ||
-      task.worker?.toLowerCase().includes(search) ||
-      task.uuid?.toLowerCase().includes(search)
-    );
-  }, [tasks, taskSearch]);
-
-  const taskTotalPages = Math.ceil(filteredTasks.length / taskPageSize);
-  const paginatedTasks = useMemo(() => {
-    const start = (taskPage - 1) * taskPageSize;
-    return filteredTasks.slice(start, start + taskPageSize);
-  }, [filteredTasks, taskPage, taskPageSize]);
-
-  // Reset page when search changes
-  useEffect(() => {
-    setTaskPage(1);
-  }, [taskSearch]);
-
   return (
     <Card className="mt-6">
       <CardHeader>
@@ -252,10 +185,10 @@ export function CeleryMonitorPanel() {
           <div>
             <CardTitle className="flex items-center gap-2">
               <Server className="h-5 w-5" />
-              Celery Monitor
+              System Health
             </CardTitle>
             <CardDescription>
-              Real-time worker status, queue depth, and task activity
+              Celery workers, queues, and broker status
             </CardDescription>
           </div>
           <div className="flex items-center gap-3">
@@ -418,71 +351,6 @@ export function CeleryMonitorPanel() {
               <div className="p-4 bg-muted/30 rounded-lg">
                 <BrokerCard broker={broker} />
               </div>
-            </div>
-
-            {/* Recent Tasks Section */}
-            <div>
-              <div className="flex items-center gap-2 mb-3 text-sm font-medium">
-                <Activity className="h-4 w-4 text-muted-foreground" />
-                Recent Tasks
-              </div>
-              
-              {/* Search and Pagination for Tasks */}
-              <DataTableControls
-                searchValue={taskSearch}
-                onSearchChange={setTaskSearch}
-                searchPlaceholder="Search tasks, workers, status..."
-                currentPage={taskPage}
-                totalPages={taskTotalPages}
-                totalItems={filteredTasks.length}
-                pageSize={taskPageSize}
-                onPageChange={setTaskPage}
-                onPageSizeChange={setTaskPageSize}
-                itemName="tasks"
-              />
-
-              {filteredTasks.length === 0 ? (
-                <div className="flex items-center gap-2 p-4 bg-muted/30 rounded-lg mt-4">
-                  <span className="text-sm text-muted-foreground">
-                    {taskSearch ? 'No tasks match your search' : 'No recent tasks. Tasks will appear here when Flower is available.'}
-                  </span>
-                </div>
-              ) : (
-                <div className="overflow-x-auto mt-4">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Task</TableHead>
-                        <TableHead>State</TableHead>
-                        <TableHead>Worker</TableHead>
-                        <TableHead className="text-right">Runtime</TableHead>
-                        <TableHead className="text-right">Started</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {paginatedTasks.map((task) => (
-                        <TableRow key={task.uuid}>
-                          <TableCell className="font-mono text-xs">
-                            {task.name?.split('.').pop() || task.uuid.slice(0, 8)}
-                          </TableCell>
-                          <TableCell>
-                            <TaskStateBadge state={task.state} />
-                          </TableCell>
-                          <TableCell className="text-xs text-muted-foreground">
-                            {task.worker?.split('@')[0] || '—'}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums text-sm">
-                            {formatDuration(task.runtime)}
-                          </TableCell>
-                          <TableCell className="text-right text-xs text-muted-foreground">
-                            {formatTimestamp(task.started || task.received)}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
             </div>
           </>
         )}

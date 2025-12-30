@@ -17,6 +17,16 @@ class CronJobResponse(BaseModel):
     next_runs: list[datetime] = Field(
         default_factory=list, description="Next scheduled run times"
     )
+    # Pipeline metadata
+    pipeline: str | None = Field(
+        None, description="Pipeline this job belongs to (null if standalone)"
+    )
+    pipeline_step: int | None = Field(
+        None, description="Step number in pipeline (1-indexed, null if standalone)"
+    )
+    is_scheduled: bool = Field(
+        True, description="Whether job is scheduled (False = runs via pipeline only)"
+    )
 
     model_config = {"from_attributes": True}
 
@@ -79,6 +89,7 @@ class CronJobLogResponse(BaseModel):
     status: str = Field(..., description="Job status")
     message: str | None = Field(None, description="Log message")
     created_at: datetime = Field(..., description="Log timestamp")
+    duration_ms: int | None = Field(None, description="Execution duration in ms")
 
     model_config = {"from_attributes": True}
 
@@ -100,6 +111,16 @@ class CronJobWithStatsResponse(BaseModel):
     next_run: datetime | None = Field(None, description="Next scheduled run time")
     next_runs: list[datetime] = Field(
         default_factory=list, description="Next scheduled run times"
+    )
+    # Pipeline metadata
+    pipeline: str | None = Field(
+        None, description="Pipeline this job belongs to (null if standalone)"
+    )
+    pipeline_step: int | None = Field(
+        None, description="Step number in pipeline (1-indexed, null if standalone)"
+    )
+    is_scheduled: bool = Field(
+        True, description="Whether job is scheduled (False = runs via pipeline only)"
     )
 
     model_config = {"from_attributes": True}

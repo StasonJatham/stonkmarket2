@@ -294,6 +294,31 @@ class YahooQueryService:
                 "_source": "yahooquery",
             }
 
+            def normalize_period_key(value: Any) -> str | None:
+                if value is None:
+                    return None
+                if isinstance(value, datetime):
+                    return value.date().isoformat()
+                try:
+                    return datetime.fromisoformat(str(value)).date().isoformat()
+                except (ValueError, TypeError):
+                    return str(value)
+
+            def sort_period_keys(keys: list[str]) -> list[str]:
+                def _key(item: str) -> datetime:
+                    try:
+                        return datetime.fromisoformat(item)
+                    except (ValueError, TypeError):
+                        return datetime.min
+                return sorted(keys, key=_key, reverse=True)
+
+            def select_symbol_df(df: pd.DataFrame) -> pd.DataFrame:
+                if symbol_upper in df.index:
+                    return df.loc[[symbol_upper]]
+                if symbol.lower() in df.index:
+                    return df.loc[[symbol.lower()]]
+                return df
+
             # Helper to extract data from yahooquery DataFrame
             def extract_from_df(df: pd.DataFrame) -> dict[str, float]:
                 """Extract most recent values from yahooquery DataFrame."""
@@ -305,12 +330,7 @@ class YahooQueryService:
                 try:
                     # yahooquery returns DataFrame with symbol as index
                     # and columns like asOfDate, periodType, plus financial metrics
-                    if symbol_upper in df.index:
-                        symbol_df = df.loc[[symbol_upper]]  # Keep as DataFrame
-                    elif symbol.lower() in df.index:
-                        symbol_df = df.loc[[symbol.lower()]]
-                    else:
-                        symbol_df = df
+                    symbol_df = select_symbol_df(df)
                     
                     # Get the most recent row (last row after sorting by date)
                     if 'asOfDate' in symbol_df.columns:
@@ -333,49 +353,93 @@ class YahooQueryService:
                                 
                 return extracted
 
+            def extract_series_from_df(df: pd.DataFrame, max_periods: int = 12) -> dict[str, dict[str, float]]:
+                """Extract time series values keyed by period from yahooquery DataFrame."""
+                if df is None or isinstance(df, str) or df.empty:
+                    return {}
+                series: dict[str, dict[str, float]] = {}
+                try:
+                    symbol_df = select_symbol_df(df)
+                    if 'asOfDate' in symbol_df.columns:
+                        symbol_df = symbol_df.sort_values('asOfDate')
+
+                    for _, row in symbol_df.iterrows():
+                        period_key = normalize_period_key(row.get('asOfDate'))
+                        if not period_key:
+                            continue
+                        for col in symbol_df.columns:
+                            if col in ('asOfDate', 'periodType', 'currencyCode'):
+                                continue
+                            val = row.get(col)
+                            if pd.notna(val):
+                                try:
+                                    series.setdefault(str(col), {})[period_key] = float(val)
+                                except (ValueError, TypeError):
+                                    continue
+                except Exception as e:
+                    logger.debug(f"extract_series_from_df error: {e}")
+
+                for metric, values in list(series.items()):
+                    ordered = sort_period_keys(list(values.keys()))[:max_periods]
+                    series[metric] = {key: values[key] for key in ordered}
+
+                return series
+
             # Get quarterly financial statements
             try:
                 q_income = ticker.income_statement(frequency='q')
                 result["quarterly"]["income_statement"] = extract_from_df(q_income)
+                result["quarterly"]["income_statement_series"] = extract_series_from_df(q_income)
             except Exception as e:
                 logger.debug(f"yahooquery quarterly income failed for {symbol}: {e}")
                 result["quarterly"]["income_statement"] = {}
+                result["quarterly"]["income_statement_series"] = {}
 
             try:
                 q_balance = ticker.balance_sheet(frequency='q')
                 result["quarterly"]["balance_sheet"] = extract_from_df(q_balance)
+                result["quarterly"]["balance_sheet_series"] = extract_series_from_df(q_balance)
             except Exception as e:
                 logger.debug(f"yahooquery quarterly balance failed for {symbol}: {e}")
                 result["quarterly"]["balance_sheet"] = {}
+                result["quarterly"]["balance_sheet_series"] = {}
 
             try:
                 q_cash = ticker.cash_flow(frequency='q')
                 result["quarterly"]["cash_flow"] = extract_from_df(q_cash)
+                result["quarterly"]["cash_flow_series"] = extract_series_from_df(q_cash)
             except Exception as e:
                 logger.debug(f"yahooquery quarterly cash_flow failed for {symbol}: {e}")
                 result["quarterly"]["cash_flow"] = {}
+                result["quarterly"]["cash_flow_series"] = {}
 
             # Get annual financial statements  
             try:
                 a_income = ticker.income_statement(frequency='a')
                 result["annual"]["income_statement"] = extract_from_df(a_income)
+                result["annual"]["income_statement_series"] = extract_series_from_df(a_income, max_periods=8)
             except Exception as e:
                 logger.debug(f"yahooquery annual income failed for {symbol}: {e}")
                 result["annual"]["income_statement"] = {}
+                result["annual"]["income_statement_series"] = {}
 
             try:
                 a_balance = ticker.balance_sheet(frequency='a')
                 result["annual"]["balance_sheet"] = extract_from_df(a_balance)
+                result["annual"]["balance_sheet_series"] = extract_series_from_df(a_balance, max_periods=8)
             except Exception as e:
                 logger.debug(f"yahooquery annual balance failed for {symbol}: {e}")
                 result["annual"]["balance_sheet"] = {}
+                result["annual"]["balance_sheet_series"] = {}
 
             try:
                 a_cash = ticker.cash_flow(frequency='a')
                 result["annual"]["cash_flow"] = extract_from_df(a_cash)
+                result["annual"]["cash_flow_series"] = extract_series_from_df(a_cash, max_periods=8)
             except Exception as e:
                 logger.debug(f"yahooquery annual cash_flow failed for {symbol}: {e}")
                 result["annual"]["cash_flow"] = {}
+                result["annual"]["cash_flow_series"] = {}
 
             # Log what we found
             q_income_count = len(result["quarterly"]["income_statement"])

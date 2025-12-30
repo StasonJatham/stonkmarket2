@@ -12,6 +12,7 @@ from app.core.config import settings
 from app.core.exceptions import NotFoundError
 from app.core.security import TokenData
 from app.jobs import enqueue_job, get_task_status
+from app.jobs.definitions import MARKET_CLOSE_PIPELINE_STEPS, WEEKLY_AI_PIPELINE_STEPS
 from app.repositories import cronjobs_orm as cron_repo
 from app.repositories import settings_history_orm as settings_history_repo
 from app.schemas.cronjobs import (
@@ -26,6 +27,44 @@ from app.schemas.cronjobs import (
 
 
 router = APIRouter()
+
+
+# =============================================================================
+# PIPELINE METADATA
+# =============================================================================
+# Build a lookup for which jobs belong to pipelines
+# Key: job_name, Value: (pipeline_name, step_number)
+
+PIPELINE_LOOKUP: dict[str, tuple[str, int]] = {}
+
+# Add market close pipeline steps
+for step_num, job_name in enumerate(MARKET_CLOSE_PIPELINE_STEPS, 1):
+    PIPELINE_LOOKUP[job_name] = ("market_close_pipeline", step_num)
+
+# Add weekly AI pipeline steps
+for step_num, job_name in enumerate(WEEKLY_AI_PIPELINE_STEPS, 1):
+    PIPELINE_LOOKUP[job_name] = ("weekly_ai_pipeline", step_num)
+
+
+def _get_pipeline_info(job_name: str) -> tuple[str | None, int | None, bool]:
+    """Get pipeline metadata for a job.
+    
+    Returns:
+        Tuple of (pipeline_name, step_number, is_scheduled).
+        - pipeline_name: Name of pipeline this job belongs to, or None
+        - step_number: 1-indexed step in pipeline, or None
+        - is_scheduled: True if job runs on its own schedule, False if pipeline-only
+    """
+    # Pipeline orchestrators themselves are scheduled
+    if job_name in ("market_close_pipeline", "weekly_ai_pipeline"):
+        return (None, None, True)
+    
+    if job_name in PIPELINE_LOOKUP:
+        pipeline_name, step_num = PIPELINE_LOOKUP[job_name]
+        return (pipeline_name, step_num, False)  # Not scheduled - runs via pipeline
+    
+    # Standalone job
+    return (None, None, True)
 
 
 def _compute_next_runs(cron_expr: str, count: int = 5) -> list[datetime]:
@@ -121,22 +160,29 @@ async def list_cronjobs(
 ) -> list[CronJobWithStatsResponse]:
     """List all cron jobs with stats."""
     jobs = await cron_repo.list_cronjobs_with_stats()
-    return [
-        CronJobWithStatsResponse(
-            name=j.name,
-            cron=j.cron,
-            description=j.description,
-            last_run=j.last_run,
-            last_status=j.last_status,
-            last_duration_ms=j.last_duration_ms,
-            run_count=j.run_count,
-            error_count=j.error_count,
-            last_error=j.last_error,
-            next_run=next_runs[0] if (next_runs := _compute_next_runs(j.cron)) else None,
-            next_runs=next_runs,
+    result = []
+    for j in jobs:
+        next_runs = _compute_next_runs(j.cron)
+        pipeline, step, is_scheduled = _get_pipeline_info(j.name)
+        result.append(
+            CronJobWithStatsResponse(
+                name=j.name,
+                cron=j.cron,
+                description=j.description,
+                last_run=j.last_run,
+                last_status=j.last_status,
+                last_duration_ms=j.last_duration_ms,
+                run_count=j.run_count,
+                error_count=j.error_count,
+                last_error=j.last_error,
+                next_run=next_runs[0] if next_runs else None,
+                next_runs=next_runs,
+                pipeline=pipeline,
+                pipeline_step=step,
+                is_scheduled=is_scheduled,
+            )
         )
-        for j in jobs
-    ]
+    return result
 
 
 @router.get(
@@ -160,12 +206,16 @@ async def get_cronjob(
             details={"name": name},
         )
     next_runs = _compute_next_runs(job.cron)
+    pipeline, step, is_scheduled = _get_pipeline_info(job.name)
     return CronJobResponse(
         name=job.name,
         cron=job.cron,
         description=job.description,
         next_run=next_runs[0] if next_runs else None,
         next_runs=next_runs,
+        pipeline=pipeline,
+        pipeline_step=step,
+        is_scheduled=is_scheduled,
     )
 
 
@@ -217,12 +267,16 @@ async def update_cronjob(
     await reschedule_job(name, payload.cron)
 
     next_runs = _compute_next_runs(updated.cron)
+    pipeline, step, is_scheduled = _get_pipeline_info(updated.name)
     return CronJobResponse(
         name=updated.name,
         cron=updated.cron,
         description=updated.description,
         next_run=next_runs[0] if next_runs else None,
         next_runs=next_runs,
+        pipeline=pipeline,
+        pipeline_step=step,
+        is_scheduled=is_scheduled,
     )
 
 

@@ -55,6 +55,12 @@ export const StockCard = memo(function StockCard({
     return chartData.slice(-30).map((p, i) => ({ x: i, y: p.close }));
   }, [chartData]);
 
+  // Prefetch data when user hovers over card (90 days default, more on demand)
+  const handleMouseEnter = useCallback(() => {
+    prefetchStockChart(stock.symbol, 90);
+    prefetchStockInfo(stock.symbol);
+  }, [stock.symbol]);
+
   if (isLoading) {
     return (
       <Card className="overflow-hidden">
@@ -70,12 +76,6 @@ export const StockCard = memo(function StockCard({
       </Card>
     );
   }
-
-  // Prefetch data when user hovers over card (90 days default, more on demand)
-  const handleMouseEnter = useCallback(() => {
-    prefetchStockChart(stock.symbol, 90);
-    prefetchStockInfo(stock.symbol);
-  }, [stock.symbol]);
 
   return (
     <motion.div

@@ -36,6 +36,72 @@ interface DipThresholdChartProps {
   height?: number;
 }
 
+type DipThresholdChartDatum = {
+  threshold: number;
+  thresholdLabel: string;
+  avgReturn: number;
+  totalProfit: number;
+  totalProfitCompounded: number;
+  totalProfitAtRecovery: number;
+  avgDaysAtRecovery: number;
+  occurrences: number;
+  recoveryDays: number;
+  velocity: number;
+  winRate: number;
+  mae: number;
+};
+
+type DipThresholdTooltipProps = {
+  active?: boolean;
+  payload?: Array<{ payload: DipThresholdChartDatum }>;
+  label?: string;
+};
+
+function DipThresholdTooltip({ active, payload, label }: DipThresholdTooltipProps) {
+  if (!active || !payload || payload.length === 0) return null;
+
+  const data = payload[0]?.payload;
+  if (!data) return null;
+
+  const title = label ?? data.thresholdLabel;
+
+  return (
+    <div className="bg-popover border border-border rounded-lg p-3 shadow-lg text-sm">
+      <p className="font-semibold mb-2">{title} Dip Threshold</p>
+      <div className="space-y-1 text-xs">
+        <div className="flex justify-between gap-4">
+          <span className="text-muted-foreground">Occurrences:</span>
+          <span className="font-mono">{data.occurrences}</span>
+        </div>
+        <div className="flex justify-between gap-4">
+          <span className="text-muted-foreground">Avg Return (90d):</span>
+          <span className="font-mono text-success">{data.avgReturn.toFixed(1)}%</span>
+        </div>
+        <div className="flex justify-between gap-4">
+          <span className="text-muted-foreground">Total Profit (90d):</span>
+          <span className="font-mono text-muted-foreground">{data.totalProfit.toFixed(1)}%</span>
+        </div>
+        <div className="flex justify-between gap-4">
+          <span className="text-muted-foreground">Total Profit @ Rec:</span>
+          <span className="font-mono text-primary">{data.totalProfitAtRecovery.toFixed(1)}%</span>
+        </div>
+        <div className="flex justify-between gap-4">
+          <span className="text-muted-foreground">Avg Days to Rec:</span>
+          <span className="font-mono">{data.avgDaysAtRecovery.toFixed(0)}d</span>
+        </div>
+        <div className="flex justify-between gap-4">
+          <span className="text-muted-foreground">Avg MAE (pain):</span>
+          <span className="font-mono text-danger">-{data.mae.toFixed(1)}%</span>
+        </div>
+        <div className="flex justify-between gap-4">
+          <span className="text-muted-foreground">Win Rate:</span>
+          <span className="font-mono">{data.winRate.toFixed(0)}%</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function DipThresholdChart({
   thresholdStats,
   optimalThreshold,
@@ -64,54 +130,6 @@ export function DipThresholdChart({
       }))
       .sort((a, b) => b.threshold - a.threshold);  // -1% to -50% (left to right)
   }, [thresholdStats]);
-
-  // Custom tooltip
-  const CustomTooltip = ({ active, payload, label }: { 
-    active?: boolean; 
-    payload?: Array<{ value: number; name: string; color: string }>; 
-    label?: string 
-  }) => {
-    if (!active || !payload || payload.length === 0) return null;
-    
-    const data = chartData.find(d => d.thresholdLabel === label);
-    if (!data) return null;
-    
-    return (
-      <div className="bg-popover border border-border rounded-lg p-3 shadow-lg text-sm">
-        <p className="font-semibold mb-2">{label} Dip Threshold</p>
-        <div className="space-y-1 text-xs">
-          <div className="flex justify-between gap-4">
-            <span className="text-muted-foreground">Occurrences:</span>
-            <span className="font-mono">{data.occurrences}</span>
-          </div>
-          <div className="flex justify-between gap-4">
-            <span className="text-muted-foreground">Avg Return (90d):</span>
-            <span className="font-mono text-success">{data.avgReturn.toFixed(1)}%</span>
-          </div>
-          <div className="flex justify-between gap-4">
-            <span className="text-muted-foreground">Total Profit (90d):</span>
-            <span className="font-mono text-muted-foreground">{data.totalProfit.toFixed(1)}%</span>
-          </div>
-          <div className="flex justify-between gap-4">
-            <span className="text-muted-foreground">Total Profit @ Rec:</span>
-            <span className="font-mono text-primary">{data.totalProfitAtRecovery.toFixed(1)}%</span>
-          </div>
-          <div className="flex justify-between gap-4">
-            <span className="text-muted-foreground">Avg Days to Rec:</span>
-            <span className="font-mono">{data.avgDaysAtRecovery.toFixed(0)}d</span>
-          </div>
-          <div className="flex justify-between gap-4">
-            <span className="text-muted-foreground">Avg MAE (pain):</span>
-            <span className="font-mono text-danger">-{data.mae.toFixed(1)}%</span>
-          </div>
-          <div className="flex justify-between gap-4">
-            <span className="text-muted-foreground">Win Rate:</span>
-            <span className="font-mono">{data.winRate.toFixed(0)}%</span>
-          </div>
-        </div>
-      </div>
-    );
-  };
 
   if (chartData.length === 0) {
     return (
@@ -176,7 +194,7 @@ export function DipThresholdChart({
               width={35}
             />
             
-            <Tooltip content={<CustomTooltip />} />
+            <Tooltip content={<DipThresholdTooltip />} />
             
             <Legend 
               wrapperStyle={{ fontSize: 10 }}

@@ -32,6 +32,7 @@ from app.quant_engine import (
     perform_domain_analysis,
     domain_analysis_to_dict,
 )
+from app.quant_engine.risk_highlights import build_portfolio_risk_highlights
 from app.repositories import auth_user_orm as auth_repo
 from app.repositories import portfolios_orm as portfolios_repo
 from app.repositories import price_history_orm as price_history_repo
@@ -211,6 +212,12 @@ async def get_portfolio_analytics(
     # Translate to user-friendly format
     user_friendly = translate_for_user(analytics)
 
+    risk_highlights: list[dict[str, Any]] = []
+    try:
+        risk_highlights = await build_portfolio_risk_highlights(symbols)
+    except Exception as exc:
+        logger.debug(f"Risk highlights failed for portfolio {portfolio_id}: {exc}")
+
     return {
         "portfolio_id": portfolio_id,
         "analyzed_at": datetime.now().isoformat(),
@@ -223,6 +230,7 @@ async def get_portfolio_analytics(
         "market": user_friendly["market"],
         "insights": user_friendly["insights"],
         "action_items": user_friendly["action_items"],
+        "risk_highlights": risk_highlights,
         # Raw analytics for power users
         "raw": {
             "portfolio_volatility": _safe_float(analytics.risk_decomposition.portfolio_volatility),

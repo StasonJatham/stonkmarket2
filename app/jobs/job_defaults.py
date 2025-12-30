@@ -10,26 +10,20 @@ Job Categories:
        - portfolio_worker: Process analytics queue
        - cache_warmup: Pre-cache chart data
 
-    2. DAILY MARKET DATA (after market close, Mon-Fri)
-       - prices_daily: Fetch closing prices (11 PM)
-       - signals_daily: Technical signal scanner (10 PM)
-       - regime_daily: Market regime detection (10:30 PM)
-       - strategy_nightly: Backtest & optimize (11:30 PM)
-       - quant_scoring_daily: Quant metrics (11:45 PM)
-       - dipfinder_daily: Dip signals (11:50 PM)
+    2. DAILY MARKET CLOSE PIPELINE (single orchestrator, Mon-Fri 10 PM UTC)
+       - market_close_pipeline: Runs all steps sequentially, each waits for previous
+         Steps: prices → fundamentals → signals → regime → strategy → quant_scoring → dipfinder → quant_analysis
+       - Individual jobs exist for manual retries but are NOT scheduled
 
-    3. WEEKLY AI ANALYSIS (Sunday morning)
-       - ai_personas_weekly: Warren Buffett, Peter Lynch etc.
-       - ai_bios_weekly: Swipe-style stock bios
+    3. WEEKLY AI PIPELINE (single orchestrator, Sunday 2 AM UTC)
+       - weekly_ai_pipeline: Runs all AI jobs sequentially
+         Steps: data_backfill → ai_personas_weekly → ai_bios_weekly
+       - Individual jobs exist for manual retries but are NOT scheduled
 
-    4. WEEKLY MAINTENANCE (Sunday)
-       - data_backfill: Fill ALL data gaps (comprehensive)
-
-    5. MONTHLY MAINTENANCE
-       - fundamentals_monthly: Refresh company fundamentals
+    4. MONTHLY MAINTENANCE
        - quant_monthly: Portfolio optimization
 
-    6. DAILY CLEANUP
+    5. DAILY CLEANUP
        - cleanup_daily: Remove expired data
 """
 
@@ -62,6 +56,11 @@ DEFAULT_SCHEDULES: dict[str, tuple[str, str]] = {
         "OpenAI batch result collector - checks for completed AI jobs and stores results. "
         "Every 5 minutes."
     ),
+    "batch_watchdog": (
+        "0 * * * *",
+        "Batch job watchdog - expires jobs stuck for >24h and logs health warnings. "
+        "Every hour."
+    ),
     "portfolio_worker": (
         "*/5 * * * *",
         "Portfolio analytics processor - handles queued risk analysis calculations. "
@@ -75,71 +74,91 @@ DEFAULT_SCHEDULES: dict[str, tuple[str, str]] = {
     
     # =========================================================================
     # 2. DAILY MARKET DATA - After market close (Mon-Fri)
-    # Order matters: prices → signals → regime → strategy → quant → dipfinder
     # =========================================================================
-    "signals_daily": (
+    # SINGLE ORCHESTRATOR: market_close_pipeline runs all steps sequentially
+    # Each step waits for previous to complete - no timing issues!
+    # Individual jobs can still be triggered manually for debugging/retries.
+    # =========================================================================
+    "market_close_pipeline": (
         "0 22 * * 1-5",
-        "Technical signal scanner - finds RSI oversold, MACD crossovers, Bollinger squeezes. "
-        "Runs Mon-Fri at 10 PM UTC."
+        "Daily market close pipeline - runs all analysis jobs sequentially after market close. "
+        "Steps: prices → signals → regime → strategy → quant_scoring → dipfinder → quant_analysis. "
+        "Each step waits for previous to complete. Mon-Fri at 10 PM UTC."
+    ),
+    
+    # Individual jobs (NOT scheduled - triggered by pipeline or manually)
+    # These are kept for: manual retries, debugging, or partial re-runs
+    "prices_daily": (
+        "0 0 31 2 *",  # Never runs (Feb 31 doesn't exist) - triggered by pipeline
+        "Daily price update - fetches closing prices and updates dip states. "
+        "NOT SCHEDULED - runs as part of market_close_pipeline."
+    ),
+    "signals_daily": (
+        "0 0 31 2 *",  # Never runs - triggered by pipeline
+        "Technical signal scanner - RSI, MACD, Bollinger signals. "
+        "NOT SCHEDULED - runs as part of market_close_pipeline."
     ),
     "regime_daily": (
-        "30 22 * * 1-5",
-        "Market regime detection - identifies bull/bear market and volatility conditions. "
-        "Runs Mon-Fri at 10:30 PM UTC."
-    ),
-    "prices_daily": (
-        "0 23 * * 1-5",
-        "Daily price update - fetches closing prices and updates dip states for all stocks. "
-        "Runs Mon-Fri at 11 PM UTC (after US market close)."
+        "0 0 31 2 *",  # Never runs - triggered by pipeline
+        "Market regime detection - bull/bear, volatility. "
+        "NOT SCHEDULED - runs as part of market_close_pipeline."
     ),
     "strategy_nightly": (
-        "30 23 * * 1-5",
-        "Strategy optimization - runs full backtest with recency weighting, finds best strategy "
-        "for each symbol that works NOW. Includes fundamental filters. "
-        "Runs Mon-Fri at 11:30 PM UTC (30 min after prices_daily)."
+        "0 0 31 2 *",  # Never runs - triggered by pipeline
+        "Strategy optimization - backtests and finds best strategies. "
+        "NOT SCHEDULED - runs as part of market_close_pipeline."
     ),
     "quant_scoring_daily": (
-        "45 23 * * 1-5",
-        "Quant scoring - computes quantitative metrics (momentum, quality, value, volatility) "
-        "for all tracked symbols. Runs Mon-Fri at 11:45 PM UTC."
+        "0 0 31 2 *",  # Never runs - triggered by pipeline
+        "Quant scoring - momentum, quality, value metrics. "
+        "NOT SCHEDULED - runs as part of market_close_pipeline."
     ),
     "dipfinder_daily": (
-        "50 23 * * 1-5",
-        "DipFinder signal refresh - computes dip metrics, scores, and enhanced analysis for all "
-        "tracked symbols. Must run after quant_scoring_daily. Runs Mon-Fri at 11:50 PM UTC."
+        "0 0 31 2 *",  # Never runs - triggered by pipeline
+        "DipFinder + Dip Entry Optimizer - dip metrics and optimal buy thresholds. "
+        "NOT SCHEDULED - runs as part of market_close_pipeline."
+    ),
+    "quant_analysis_nightly": (
+        "0 0 31 2 *",  # Never runs - triggered by pipeline
+        "Quant analysis pre-compute - caches all quant results for API. "
+        "NOT SCHEDULED - runs as part of market_close_pipeline."
     ),
     
     # =========================================================================
-    # 3. WEEKLY AI ANALYSIS - Sunday morning (batch for cost savings)
+    # 3. WEEKLY AI PIPELINE - Sunday morning (orchestrated)
     # =========================================================================
+    # SINGLE ORCHESTRATOR: weekly_ai_pipeline runs all AI jobs sequentially
+    # Each step waits for previous to complete - proper data dependencies!
+    # Individual jobs can still be triggered manually for debugging/retries.
+    # =========================================================================
+    "weekly_ai_pipeline": (
+        "0 2 * * 0",
+        "Weekly AI pipeline - runs data_backfill → ai_personas → ai_bios sequentially. "
+        "Ensures data is complete before AI analysis. Sunday 2 AM UTC."
+    ),
+    
+    # Individual jobs (NOT scheduled - triggered by pipeline or manually)
+    "data_backfill": (
+        "0 0 31 2 *",  # Never runs (Feb 31 doesn't exist) - triggered by pipeline
+        "Comprehensive data backfill - fills ALL data gaps: missing sectors, summaries, "
+        "price history, fundamentals, quant scores, dipfinder signals. "
+        "NOT SCHEDULED - runs as part of weekly_ai_pipeline."
+    ),
     "ai_personas_weekly": (
-        "0 3 * * 0",
+        "0 0 31 2 *",  # Never runs - triggered by pipeline
         "AI investor personas (Warren Buffett, Peter Lynch, Cathie Wood, Michael Burry) - "
-        "each analyzes all stocks from their investment philosophy. Sunday 3 AM UTC."
+        "each analyzes all stocks from their investment philosophy. "
+        "NOT SCHEDULED - runs as part of weekly_ai_pipeline."
     ),
     "ai_bios_weekly": (
-        "0 4 * * 0",
+        "0 0 31 2 *",  # Never runs - triggered by pipeline
         "AI swipe bios - generates fun 'dating profile' style descriptions for stocks. "
-        "Sunday 4 AM UTC."
+        "NOT SCHEDULED - runs as part of weekly_ai_pipeline."
     ),
     
     # =========================================================================
-    # 4. WEEKLY MAINTENANCE - Data integrity
+    # 4. MONTHLY MAINTENANCE
     # =========================================================================
-    "data_backfill": (
-        "0 2 * * 0",
-        "Comprehensive data backfill - fills ALL data gaps: missing sectors, summaries, "
-        "price history, fundamentals, quant scores, dipfinder signals. Sunday 2 AM UTC."
-    ),
-    
-    # =========================================================================
-    # 5. MONTHLY MAINTENANCE
-    # =========================================================================
-    "fundamentals_monthly": (
-        "0 2 1 * *",
-        "Company fundamentals refresh - updates P/E, EPS, revenue, margins for all stocks. "
-        "1st of each month at 2 AM UTC."
-    ),
     "quant_monthly": (
         "0 3 1 * *",
         "Quant engine optimization - recalculates portfolio weights and risk models. "
@@ -163,26 +182,34 @@ DEFAULT_SCHEDULES: dict[str, tuple[str, str]] = {
 # Queue assignment and priority (higher = more important)
 
 JOB_PRIORITIES: dict[str, dict[str, int | str]] = {
-    # High priority - time-sensitive market data
-    "prices_daily": {"queue": "high", "priority": 9},
-    "ai_batch_poll": {"queue": "high", "priority": 8},
-    "cache_warmup": {"queue": "high", "priority": 8},
+    # Pipeline orchestrators - highest priority
+    "market_close_pipeline": {"queue": "batch", "priority": 9},
+    "weekly_ai_pipeline": {"queue": "batch", "priority": 9},
     
-    # Default priority - data ingestion & analysis
-    "symbol_ingest": {"queue": "default", "priority": 7},
-    "signals_daily": {"queue": "default", "priority": 7},
-    "regime_daily": {"queue": "default", "priority": 6},
+    # Pipeline component jobs (triggered by orchestrator, not scheduled)
+    "prices_daily": {"queue": "high", "priority": 9},
+    "fundamentals_daily": {"queue": "default", "priority": 8},
+    "signals_daily": {"queue": "high", "priority": 8},
+    "regime_daily": {"queue": "high", "priority": 8},
+    "strategy_nightly": {"queue": "batch", "priority": 7},
     "quant_scoring_daily": {"queue": "default", "priority": 6},
     "dipfinder_daily": {"queue": "default", "priority": 6},
-    "fundamentals_monthly": {"queue": "default", "priority": 5},
+    "quant_analysis_nightly": {"queue": "batch", "priority": 6},
+    
+    # Real-time processing
+    "ai_batch_poll": {"queue": "high", "priority": 8},
+    "batch_watchdog": {"queue": "low", "priority": 3},
+    "cache_warmup": {"queue": "high", "priority": 7},
+    "symbol_ingest": {"queue": "default", "priority": 7},
     "portfolio_worker": {"queue": "default", "priority": 5},
-    "quant_monthly": {"queue": "default", "priority": 4},
     
     # Batch queue - heavy computation / AI jobs
-    "strategy_nightly": {"queue": "batch", "priority": 6},
     "ai_personas_weekly": {"queue": "batch", "priority": 6},
     "ai_bios_weekly": {"queue": "batch", "priority": 4},
     "data_backfill": {"queue": "batch", "priority": 3},
+    
+    # Monthly maintenance
+    "quant_monthly": {"queue": "default", "priority": 4},
     
     # Low priority - maintenance
     "cleanup_daily": {"queue": "low", "priority": 2},

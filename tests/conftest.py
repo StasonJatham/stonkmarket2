@@ -106,9 +106,15 @@ def cleanup_after_test():
                 await db_conn._pool.close()
         except Exception:
             pass
+        # Close all per-loop Valkey clients
         try:
-            if cache_client._pool is not None:
-                await cache_client._pool.disconnect()
+            for client in list(cache_client._clients.values()):
+                await client.aclose()
+        except Exception:
+            pass
+        try:
+            for pool in list(cache_client._pools.values()):
+                await pool.disconnect()
         except Exception:
             pass
     
@@ -127,8 +133,8 @@ def cleanup_after_test():
     db_conn._session_factory = None
     db_conn._pool = None
     yf_service._instance = None
-    cache_client._pool = None
-    cache_client._client = None
+    cache_client._pools.clear()
+    cache_client._clients.clear()
     
     yield
     
@@ -142,8 +148,8 @@ def cleanup_after_test():
     db_conn._session_factory = None
     db_conn._pool = None
     yf_service._instance = None
-    cache_client._pool = None
-    cache_client._client = None
+    cache_client._pools.clear()
+    cache_client._clients.clear()
     
     _force_cleanup()
 
