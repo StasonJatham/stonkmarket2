@@ -50,6 +50,140 @@ from app.database.orm import FinancialUniverse
 
 logger = get_logger("services.financedatabase")
 
+# Supported asset classes (yfinance/yahooquery compatible)
+SUPPORTED_ASSET_CLASSES = ["equity", "etf", "fund", "index"]
+
+
+# =============================================================================
+# FALLBACK SEARCH (direct package access when DB is empty)
+# =============================================================================
+
+
+async def _fallback_get_by_symbol(symbol: str) -> dict[str, Any] | None:
+    """Fallback lookup from financedatabase package when DB is empty.
+    
+    Searches across equity, etf, index, fund asset classes.
+    """
+    import financedatabase as fd
+    
+    symbol_upper = symbol.strip().upper()
+    
+    # Check each supported asset class
+    for asset_class, loader_cls in [
+        ("equity", fd.Equities),
+        ("etf", fd.ETFs),
+        ("index", fd.Indices),
+        ("fund", fd.Funds),
+    ]:
+        try:
+            loop = asyncio.get_event_loop()
+            df = await loop.run_in_executor(None, lambda: loader_cls().select())
+            
+            if symbol_upper in df.index:
+                row = df.loc[symbol_upper]
+                return {
+                    "symbol": symbol_upper,
+                    "name": row.get("name"),
+                    "asset_class": asset_class,
+                    "sector": row.get("sector"),
+                    "industry": row.get("industry"),
+                    "industry_group": row.get("industry_group"),
+                    "country": row.get("country"),
+                    "exchange": row.get("exchange"),
+                    "market": row.get("market"),
+                    "currency": row.get("currency"),
+                    "category": row.get("category"),
+                    "category_group": row.get("category_group"),
+                    "family": row.get("family"),
+                    "market_cap_category": row.get("market_cap"),
+                    "isin": row.get("isin"),
+                    "cusip": row.get("cusip"),
+                    "figi": row.get("figi"),
+                    "summary": row.get("summary"),
+                    "source": "financedatabase_package",
+                }
+        except Exception as e:
+            logger.debug(f"Fallback search failed for {asset_class}: {e}")
+            continue
+    
+    return None
+
+
+async def _fallback_search(
+    query: str,
+    asset_classes: list[str] | None = None,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """Fallback search in financedatabase package when DB is empty.
+    
+    Uses direct package access as fallback.
+    """
+    import financedatabase as fd
+    
+    if asset_classes is None:
+        asset_classes = ["equity", "etf", "index"]
+    
+    # Filter to supported only
+    asset_classes = [ac for ac in asset_classes if ac in SUPPORTED_ASSET_CLASSES]
+    
+    query_upper = query.strip().upper()
+    results: list[dict[str, Any]] = []
+    
+    loader_map = {
+        "equity": fd.Equities,
+        "etf": fd.ETFs,
+        "index": fd.Indices,
+        "fund": fd.Funds,
+    }
+    
+    for asset_class in asset_classes:
+        if asset_class not in loader_map:
+            continue
+            
+        try:
+            loop = asyncio.get_event_loop()
+            df = await loop.run_in_executor(None, lambda ac=asset_class: loader_map[ac]().select())
+            df = df.reset_index().rename(columns={"index": "symbol"})
+            
+            # Search by symbol prefix or name contains
+            matches = df[
+                df["symbol"].str.upper().str.startswith(query_upper) |
+                df["name"].fillna("").str.upper().str.contains(query_upper, regex=False)
+            ].head(limit)
+            
+            for _, row in matches.iterrows():
+                symbol = str(row["symbol"]).upper()
+                name = row.get("name")
+                
+                # Score: exact match > prefix > contains
+                if symbol == query_upper:
+                    score = 1.0
+                elif symbol.startswith(query_upper):
+                    score = 0.9
+                else:
+                    score = 0.6
+                
+                results.append({
+                    "symbol": symbol,
+                    "name": name,
+                    "asset_class": asset_class,
+                    "sector": row.get("sector"),
+                    "industry": row.get("industry"),
+                    "country": row.get("country"),
+                    "exchange": row.get("exchange"),
+                    "category": row.get("category"),
+                    "market_cap_category": row.get("market_cap"),
+                    "score": score,
+                    "source": "financedatabase_package",
+                })
+        except Exception as e:
+            logger.debug(f"Fallback search failed for {asset_class}: {e}")
+            continue
+    
+    # Sort by score descending
+    results.sort(key=lambda x: (-x["score"], len(x["symbol"])))
+    return results[:limit]
+
 
 # =============================================================================
 # INGESTION
@@ -179,10 +313,25 @@ async def ingest_asset_class(asset_class: str) -> int:
         logger.warning(f"No valid records for {asset_class}")
         return 0
     
-    # Batch upsert
-    batch_size = 1000
-    processed = 0
+    # Deduplicate by symbol (keep first occurrence)
+    # financedatabase can have duplicates for same ticker on different exchanges
+    seen_symbols: set[str] = set()
+    unique_records: list[dict[str, Any]] = []
+    for rec in records:
+        sym = rec["symbol"]
+        if sym not in seen_symbols:
+            seen_symbols.add(sym)
+            unique_records.append(rec)
     
+    logger.info(
+        f"Deduplicated {len(records)} -> {len(unique_records)} unique symbols for {asset_class}"
+    )
+    records = unique_records
+
+    # Batch upsert - smaller batch for equity (has long summaries)
+    batch_size = 100 if asset_class == "equity" else 500
+    processed = 0
+
     async with get_session() as session:
         for i in range(0, len(records), batch_size):
             batch = records[i:i + batch_size]
@@ -234,19 +383,33 @@ async def ingest_universe(
     """Ingest all asset classes from financedatabase.
     
     Args:
-        asset_classes: List of asset classes to ingest (default: all)
+        asset_classes: List of asset classes to ingest (default: supported only)
         mark_missing_inactive: Mark symbols not in new data as inactive
         
     Returns:
         Dict of {asset_class: count} ingested
+        
+    Note: Only equity, etf, fund, index are supported (yfinance/yahooquery compatible).
+    Crypto, currency, moneymarket are NOT supported.
     """
+    # Only ingest asset classes that yfinance/yahooquery can provide data for
+    SUPPORTED_ASSET_CLASSES = ["equity", "etf", "fund", "index"]
+    
     if asset_classes is None:
-        asset_classes = ["equity", "etf", "fund", "index", "crypto", "currency", "moneymarket"]
+        asset_classes = SUPPORTED_ASSET_CLASSES
+    else:
+        # Filter to only supported classes
+        asset_classes = [ac for ac in asset_classes if ac in SUPPORTED_ASSET_CLASSES]
+        
+    if not asset_classes:
+        logger.warning("No supported asset classes requested")
+        return {}
     
     logger.info(f"Starting universe ingestion for: {asset_classes}")
     
-    # Track symbols we've seen
-    seen_symbols: set[str] = set()
+    # Record start time for marking stale entries
+    ingestion_start = datetime.now(UTC)
+    
     stats: dict[str, int] = {}
     
     for asset_class in asset_classes:
@@ -257,26 +420,23 @@ async def ingest_universe(
             logger.error(f"Failed to ingest {asset_class}: {e}")
             stats[asset_class] = 0
     
-    # Mark symbols not seen as inactive (optional cleanup)
+    # Mark symbols not updated during this ingestion as inactive
+    # Uses date comparison instead of IN clause to avoid parameter limits
     if mark_missing_inactive:
+        from sqlalchemy import update
+        
         async with get_session() as session:
-            # Get all symbols we just ingested
+            # Symbols updated before ingestion started are stale
             result = await session.execute(
-                select(FinancialUniverse.symbol).where(
-                    FinancialUniverse.source_updated_at >= datetime.now(UTC).replace(hour=0, minute=0, second=0)
-                )
+                update(FinancialUniverse)
+                .where(FinancialUniverse.source_updated_at < ingestion_start)
+                .values(is_active=False)
             )
-            seen_symbols = {r[0] for r in result.all()}
+            stale_count = result.rowcount
+            await session.commit()
             
-            # Mark old symbols as inactive (symbols not updated today)
-            if seen_symbols:
-                from sqlalchemy import update
-                await session.execute(
-                    update(FinancialUniverse)
-                    .where(~FinancialUniverse.symbol.in_(seen_symbols))
-                    .values(is_active=False)
-                )
-                await session.commit()
+            if stale_count > 0:
+                logger.info(f"Marked {stale_count} stale symbols as inactive")
     
     total = sum(stats.values())
     logger.info(f"Universe ingestion complete: {total} total records across {len(asset_classes)} asset classes")
@@ -426,7 +586,14 @@ async def search_universe(
     # Sort by score descending, then by symbol length (shorter = more relevant)
     results.sort(key=lambda x: (-x["score"], len(x["symbol"])))
     
-    return results[:limit]
+    final_results = results[:limit]
+    
+    # Fallback to package search if DB returned no results
+    if not final_results:
+        logger.debug(f"No DB results for '{query}', falling back to package search")
+        final_results = await _fallback_search(query, asset_classes, limit)
+    
+    return final_results
 
 
 async def get_by_symbol(symbol: str) -> dict[str, Any] | None:
@@ -450,7 +617,8 @@ async def get_by_symbol(symbol: str) -> dict[str, Any] | None:
         row = result.scalar_one_or_none()
     
     if not row:
-        return None
+        # Fallback to financedatabase package directly
+        return await _fallback_get_by_symbol(symbol_upper)
     
     return {
         "symbol": row.symbol,

@@ -3090,3 +3090,52 @@ async def quant_analysis_nightly_job() -> str:
         duration_ms=duration_ms,
     )
     return message
+
+
+# =============================================================================
+# PORTFOLIO AI ANALYSIS (DAILY)
+# =============================================================================
+
+
+@register_job("portfolio_ai_analysis")
+async def portfolio_ai_analysis_job() -> str:
+    """
+    Run AI analysis on portfolios that have changed.
+    
+    Schedule: Daily at 6 AM UTC (after market data is updated)
+    
+    This job:
+    1. Finds portfolios where holdings have changed since last analysis
+    2. Schedules batch AI analysis using the central batch scheduler
+    3. Results are collected later by cron_sync_batch_jobs
+    
+    Only runs for portfolios with at least one holding.
+    Uses batch processing for cost efficiency.
+    """
+    from app.services.batch_scheduler import cron_portfolio_ai_analysis
+
+    logger.info("Starting portfolio_ai_analysis job")
+    job_start = time.monotonic()
+    
+    try:
+        result = await cron_portfolio_ai_analysis()
+        
+        duration_ms = int((time.monotonic() - job_start) * 1000)
+        batch_id = result.get("batch_id")
+        
+        if batch_id:
+            message = f"Scheduled portfolio AI batch: {batch_id}"
+        else:
+            message = "No portfolios need AI analysis"
+        
+        log_job_success(
+            "portfolio_ai_analysis",
+            message,
+            batch_id=batch_id,
+            duration_ms=duration_ms,
+        )
+        return message
+        
+    except Exception as e:
+        logger.error(f"portfolio_ai_analysis failed: {e}")
+        raise

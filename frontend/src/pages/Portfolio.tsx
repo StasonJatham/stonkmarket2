@@ -77,7 +77,6 @@ import {
   Wallet,
   TrendingUp,
   TrendingDown,
-  DollarSign,
   Info,
   Upload,
   PieChart as PieChartIcon,
@@ -85,8 +84,10 @@ import {
   Target,
   Sparkles,
   AlertTriangle,
+  Brain,
 } from 'lucide-react';
 import { BulkImportModal } from '@/components/BulkImportModal';
+import { HoldingSparkline } from '@/components/HoldingSparkline';
 import {
   Tooltip,
   TooltipContent,
@@ -161,6 +162,17 @@ const RISK_SEVERITY_STYLES: Record<string, string> = {
   low: 'bg-yellow-500/10 text-yellow-600',
 };
 
+/** Format ISO date string to localized date/time */
+function formatDate(dateStr: string): string {
+  return new Date(dateStr).toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
 const deferStateUpdate = (callback: () => void) => {
   Promise.resolve().then(callback);
 };
@@ -203,6 +215,9 @@ export function PortfolioPage() {
   const [allocationResult, setAllocationResult] = useState<PortfolioAllocationRecommendation | null>(null);
   const [allocationError, setAllocationError] = useState<string | null>(null);
   const [isAllocationLoading, setIsAllocationLoading] = useState(false);
+  
+  // Sparkline data for holdings
+  const [sparklineData, setSparklineData] = useState<Record<string, import('@/services/api').HoldingSparklineData>>({});
 
   // Portfolio dialog
   const [portfolioDialogOpen, setPortfolioDialogOpen] = useState(false);
@@ -356,6 +371,32 @@ export function PortfolioPage() {
       clearTimeout(timeout);
     };
   }, [detail?.holdings]);
+
+  // Fetch sparkline data for holdings
+  useEffect(() => {
+    if (!selectedId || !detail?.holdings || detail.holdings.length === 0) {
+      setSparklineData({});
+      return;
+    }
+    let isActive = true;
+    const symbols = detail.holdings.map((h) => h.symbol);
+    
+    import('@/services/api').then(({ getHoldingsSparklines }) => {
+      getHoldingsSparklines(selectedId, symbols, 180)
+        .then((response) => {
+          if (isActive) {
+            setSparklineData(response.sparklines);
+          }
+        })
+        .catch((err) => {
+          console.error('Failed to load sparkline data:', err);
+        });
+    });
+    
+    return () => {
+      isActive = false;
+    };
+  }, [selectedId, detail?.holdings]);
 
   useEffect(() => {
     if (!selectedId || !toolAnalyticsJob?.job_id) return;
@@ -784,6 +825,33 @@ export function PortfolioPage() {
             </CardContent>
           </Card>
         </div>
+      )}
+
+      {/* AI Portfolio Analysis */}
+      {selectedPortfolio && selectedPortfolio.ai_analysis_summary && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Brain className="h-4 w-4 text-primary" />
+              AI Portfolio Analysis
+            </CardTitle>
+            <CardDescription>
+              Professional insights from our AI Portfolio Advisor
+              {selectedPortfolio.ai_analysis_at && (
+                <span className="ml-2 text-xs">
+                  (Updated {formatDate(selectedPortfolio.ai_analysis_at)})
+                </span>
+              )}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="prose prose-sm dark:prose-invert max-w-none">
+              <div className="whitespace-pre-wrap text-sm leading-relaxed">
+                {selectedPortfolio.ai_analysis_summary}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       {selectedPortfolio && (
@@ -1485,7 +1553,15 @@ export function PortfolioPage() {
                             </Badge>
                           )}
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-4">
+                          {/* Mini sparkline chart */}
+                          <div className="hidden sm:block">
+                            <HoldingSparkline 
+                              data={sparklineData[holding.symbol] ?? null} 
+                              width={100}
+                              height={36}
+                            />
+                          </div>
                           <div className="text-right">
                             <div className="font-semibold">
                               {formatCurrency(marketValue)}

@@ -2427,6 +2427,9 @@ export interface Portfolio {
   description?: string | null;
   base_currency: string;
   is_active: boolean;
+  // AI analysis
+  ai_analysis_summary?: string | null;
+  ai_analysis_at?: string | null;
   created_at: string;
   updated_at?: string | null;
 }
@@ -2663,6 +2666,43 @@ export async function addTransaction(
 export async function deleteTransaction(portfolioId: number, transactionId: number): Promise<void> {
   await fetchAPI<void>(`/portfolios/${portfolioId}/transactions/${transactionId}`, { method: 'DELETE' });
   invalidateEtagCache(new RegExp(`/portfolios/${portfolioId}`));
+}
+
+// =============================================================================
+// SPARKLINE DATA FOR HOLDINGS
+// =============================================================================
+
+export interface SparklinePoint {
+  date: string;
+  close: number;
+}
+
+export interface TradeMarker {
+  date: string;
+  side: 'buy' | 'sell';
+  price: number;
+}
+
+export interface HoldingSparklineData {
+  symbol: string;
+  prices: SparklinePoint[];
+  trades: TradeMarker[];
+  change_pct: number | null;
+}
+
+export interface BatchSparklineResponse {
+  sparklines: Record<string, HoldingSparklineData>;
+}
+
+export async function getHoldingsSparklines(
+  portfolioId: number,
+  symbols: string[],
+  days: number = 180
+): Promise<BatchSparklineResponse> {
+  return fetchAPI<BatchSparklineResponse>(`/portfolios/${portfolioId}/sparklines`, {
+    method: 'POST',
+    body: JSON.stringify({ symbols, days }),
+  });
 }
 
 export async function runPortfolioAnalytics(

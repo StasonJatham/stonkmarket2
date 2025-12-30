@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date
 
 from fastapi import APIRouter, Depends, Query, UploadFile, File, Form, status
+from pydantic import BaseModel
 
 from app.api.dependencies import require_user
 from app.core.exceptions import NotFoundError, ValidationError
@@ -518,3 +519,133 @@ async def bulk_import_positions(
         failed=failed,
         results=results,
     )
+
+
+# =============================================================================
+# Sparkline Data for Holdings
+# =============================================================================
+
+
+class SparklinePoint(BaseModel):
+    """A single point in sparkline data."""
+    date: str
+    close: float
+
+
+class TradeMarker(BaseModel):
+    """A trade marker to overlay on sparkline."""
+    date: str
+    side: str  # buy, sell
+    price: float
+
+
+class HoldingSparklineResponse(BaseModel):
+    """Sparkline data with trade markers for a holding."""
+    symbol: str
+    prices: list[SparklinePoint]
+    trades: list[TradeMarker]
+    change_pct: float | None  # Overall % change from start to end
+
+
+class BatchSparklineRequest(BaseModel):
+    """Request for batch sparkline data."""
+    symbols: list[str]
+    days: int = 180  # 6 months default
+
+
+class BatchSparklineResponse(BaseModel):
+    """Response with sparklines for multiple holdings."""
+    sparklines: dict[str, HoldingSparklineResponse]
+
+
+@router.post(
+    "/{portfolio_id}/sparklines",
+    response_model=BatchSparklineResponse,
+    summary="Get sparkline data for holdings",
+    description="Get mini price charts with trade markers for portfolio holdings.",
+)
+async def get_holdings_sparklines(
+    portfolio_id: int,
+    payload: BatchSparklineRequest,
+    user: TokenData = Depends(require_user),
+) -> BatchSparklineResponse:
+    """
+    Get sparkline chart data for multiple holdings.
+    
+    Returns price history (min 6 months) and trade entry points for overlay.
+    """
+    from datetime import timedelta
+    from app.repositories import price_history_orm as price_history_repo
+    
+    user_id = await _get_user_id(user)
+    portfolio = await portfolios_repo.get_portfolio(portfolio_id, user_id)
+    if not portfolio:
+        raise NotFoundError(message="Portfolio not found")
+    
+    # Get transactions for markers
+    transactions = await portfolios_repo.list_transactions(portfolio_id)
+    trades_by_symbol: dict[str, list[TradeMarker]] = {}
+    for tx in transactions:
+        symbol = tx["symbol"]
+        if symbol not in payload.symbols:
+            continue
+        if tx["side"] not in ("buy", "sell"):
+            continue
+        if symbol not in trades_by_symbol:
+            trades_by_symbol[symbol] = []
+        trades_by_symbol[symbol].append(TradeMarker(
+            date=tx["trade_date"].isoformat(),
+            side=tx["side"],
+            price=float(tx["price"]) if tx.get("price") else 0,
+        ))
+    
+    # Fetch price data
+    end_date = date.today()
+    start_date = end_date - timedelta(days=payload.days)
+    
+    sparklines: dict[str, HoldingSparklineResponse] = {}
+    
+    for symbol in payload.symbols:
+        df = await price_history_repo.get_prices_as_dataframe(symbol, start_date, end_date)
+        
+        if df is None or df.empty or "Close" not in df.columns:
+            # Try yfinance fallback
+            from app.services.data_providers.yfinance_service import get_yfinance_service
+            yf_service = get_yfinance_service()
+            try:
+                results = await yf_service.get_price_history_batch([symbol], start_date, end_date)
+                if symbol in results:
+                    df, _ = results[symbol]
+            except Exception:
+                pass
+        
+        prices: list[SparklinePoint] = []
+        change_pct = None
+        
+        if df is not None and not df.empty and "Close" in df.columns:
+            # Sample down to ~60 points for performance (every 3rd day for 6 months)
+            step = max(1, len(df) // 60)
+            sampled = df.iloc[::step]
+            
+            for idx, row in sampled.iterrows():
+                dt = idx if isinstance(idx, date) else idx.date() if hasattr(idx, 'date') else idx
+                prices.append(SparklinePoint(
+                    date=str(dt),
+                    close=float(row["Close"]),
+                ))
+            
+            # Calculate overall change
+            if len(prices) >= 2:
+                first_price = prices[0].close
+                last_price = prices[-1].close
+                if first_price > 0:
+                    change_pct = ((last_price - first_price) / first_price) * 100
+        
+        sparklines[symbol] = HoldingSparklineResponse(
+            symbol=symbol,
+            prices=prices,
+            trades=trades_by_symbol.get(symbol, []),
+            change_pct=change_pct,
+        )
+    
+    return BatchSparklineResponse(sparklines=sparklines)

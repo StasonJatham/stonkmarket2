@@ -32,6 +32,9 @@ def _portfolio_to_dict(p: Portfolio) -> dict[str, Any]:
         "description": p.description,
         "base_currency": p.base_currency,
         "is_active": p.is_active,
+        "ai_analysis_summary": p.ai_analysis_summary,
+        "ai_analysis_hash": p.ai_analysis_hash,
+        "ai_analysis_at": p.ai_analysis_at,
         "created_at": p.created_at,
         "updated_at": p.updated_at,
     }
@@ -450,3 +453,132 @@ async def apply_transaction_to_holdings(
             session.add(new_holding)
 
         await session.commit()
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+# Portfolio AI Analysis
+# ───────────────────────────────────────────────────────────────────────────────
+
+
+async def get_portfolios_needing_ai_analysis() -> list[dict[str, Any]]:
+    """
+    Get portfolios that need AI analysis.
+    
+    A portfolio needs analysis if:
+    - It has never been analyzed (ai_analysis_hash is None)
+    - Its current holdings hash differs from stored hash (portfolio changed)
+    """
+    async with get_session() as session:
+        result = await session.execute(
+            select(Portfolio)
+            .where(Portfolio.is_active == True)
+            .order_by(Portfolio.id)
+        )
+        portfolios = result.scalars().all()
+        
+        portfolios_needing_analysis = []
+        for p in portfolios:
+            # Get current holdings to compute hash
+            holdings_result = await session.execute(
+                select(PortfolioHolding)
+                .where(PortfolioHolding.portfolio_id == p.id)
+                .order_by(PortfolioHolding.symbol)
+            )
+            holdings = holdings_result.scalars().all()
+            
+            if not holdings:
+                continue  # Skip empty portfolios
+            
+            # Import here to avoid circular dependency
+            from app.hedge_fund.agents.portfolio_advisor import compute_portfolio_hash
+            
+            holdings_data = [
+                {
+                    "symbol": h.symbol,
+                    "quantity": float(h.quantity),
+                    "avg_cost": float(h.avg_cost) if h.avg_cost else 0,
+                }
+                for h in holdings
+            ]
+            current_hash = compute_portfolio_hash(holdings_data)
+            
+            # Check if analysis is needed
+            if p.ai_analysis_hash != current_hash:
+                portfolios_needing_analysis.append({
+                    **_portfolio_to_dict(p),
+                    "holdings": holdings_data,
+                    "current_hash": current_hash,
+                })
+        
+        return portfolios_needing_analysis
+
+
+async def update_portfolio_ai_analysis(
+    portfolio_id: int,
+    summary: str,
+    holdings_hash: str,
+) -> bool:
+    """
+    Update portfolio with AI analysis results.
+    
+    Args:
+        portfolio_id: Portfolio ID
+        summary: AI-generated analysis summary
+        holdings_hash: Hash of holdings at time of analysis
+        
+    Returns:
+        True if updated successfully
+    """
+    async with get_session() as session:
+        result = await session.execute(
+            select(Portfolio).where(Portfolio.id == portfolio_id)
+        )
+        portfolio = result.scalar_one_or_none()
+        if not portfolio:
+            return False
+        
+        portfolio.ai_analysis_summary = summary
+        portfolio.ai_analysis_hash = holdings_hash
+        portfolio.ai_analysis_at = datetime.now()
+        
+        await session.commit()
+        return True
+
+
+async def get_portfolio_with_holdings_for_analysis(
+    portfolio_id: int,
+) -> tuple[dict[str, Any], list[dict[str, Any]]] | None:
+    """
+    Get portfolio and its holdings for AI analysis.
+    
+    Returns:
+        Tuple of (portfolio_dict, holdings_list) or None if not found
+    """
+    async with get_session() as session:
+        result = await session.execute(
+            select(Portfolio).where(
+                Portfolio.id == portfolio_id,
+                Portfolio.is_active == True,
+            )
+        )
+        portfolio = result.scalar_one_or_none()
+        if not portfolio:
+            return None
+        
+        holdings_result = await session.execute(
+            select(PortfolioHolding)
+            .where(PortfolioHolding.portfolio_id == portfolio_id)
+            .order_by(PortfolioHolding.symbol)
+        )
+        holdings = holdings_result.scalars().all()
+        
+        holdings_data = [
+            {
+                "symbol": h.symbol,
+                "quantity": float(h.quantity),
+                "avg_cost": float(h.avg_cost) if h.avg_cost else 0,
+            }
+            for h in holdings
+        ]
+        
+        return _portfolio_to_dict(portfolio), holdings_data

@@ -470,6 +470,13 @@ async def _process_batch_results(
                 # BIO batch for suggestions is deprecated - AI content generated on approval
                 logger.debug(f"Skipping BIO result for {symbol} - suggestion bios no longer used")
 
+            elif job_type == TaskType.PORTFOLIO.value:
+                # Portfolio analysis - store result in portfolio
+                if not result.get("failed"):
+                    await _store_portfolio_analysis(custom_id, content, batch_id)
+                else:
+                    logger.warning(f"Skipping failed PORTFOLIO result for {custom_id}: {result.get('error')}")
+
         except Exception as e:
             logger.error(f"Error processing batch result for {custom_id}: {e}")
 
@@ -516,6 +523,67 @@ async def _store_dip_analysis(symbol: str, content: dict | str, batch_id: str) -
         await session.commit()
 
     logger.debug(f"Stored AI rating for {symbol}: {rating}")
+
+
+async def _store_portfolio_analysis(
+    custom_id: str,
+    content: str,
+    batch_id: str,
+) -> None:
+    """Store AI analysis for a portfolio."""
+    from app.database.orm import Portfolio
+    
+    # Parse portfolio_id from custom_id
+    if not custom_id.startswith("portfolio_"):
+        logger.warning(f"Invalid portfolio custom_id: {custom_id}")
+        return
+    
+    try:
+        portfolio_id = int(custom_id.replace("portfolio_", ""))
+    except ValueError:
+        logger.warning(f"Cannot parse portfolio_id from: {custom_id}")
+        return
+    
+    async with get_session() as session:
+        # Get the holdings hash we computed when scheduling
+        # For now, just store the content - the hash will be computed fresh
+        result = await session.execute(
+            select(Portfolio).where(Portfolio.id == portfolio_id)
+        )
+        portfolio = result.scalar_one_or_none()
+        
+        if not portfolio:
+            logger.warning(f"Portfolio {portfolio_id} not found")
+            return
+        
+        # Recompute hash from current holdings
+        from app.database.orm import PortfolioHolding
+        
+        holdings_result = await session.execute(
+            select(
+                PortfolioHolding.symbol,
+                PortfolioHolding.quantity,
+                PortfolioHolding.avg_cost,
+            ).where(PortfolioHolding.portfolio_id == portfolio_id)
+        )
+        holdings = [
+            {
+                "symbol": r[0],
+                "quantity": str(r[1]) if r[1] else "0",
+                "avg_cost": str(r[2]) if r[2] else "0",
+            }
+            for r in holdings_result.all()
+        ]
+        holdings_hash = _compute_portfolio_holdings_hash(holdings)
+        
+        # Update portfolio
+        portfolio.ai_analysis_summary = content
+        portfolio.ai_analysis_hash = holdings_hash
+        portfolio.ai_analysis_at = datetime.now(UTC)
+        
+        await session.commit()
+    
+    logger.info(f"Stored AI analysis for portfolio {portfolio_id}")
 
 
 async def run_realtime_analysis_for_new_stock(
@@ -747,4 +815,389 @@ async def cron_cleanup_expired() -> dict:
     return {
         "job": "cleanup_expired",
         "history_deleted": history_deleted,
+    }
+
+
+# ============================================================================
+# Portfolio AI Analysis
+# ============================================================================
+
+
+def _compute_portfolio_holdings_hash(holdings: list[dict[str, Any]]) -> str:
+    """
+    Compute hash of portfolio holdings for change detection.
+    
+    Only includes fields that affect analysis output.
+    """
+    key_data = [
+        {
+            "symbol": h.get("symbol"),
+            "quantity": str(h.get("quantity", 0)),
+            "avg_cost": str(h.get("avg_cost", 0)),
+        }
+        for h in sorted(holdings, key=lambda x: x.get("symbol", ""))
+    ]
+    content = json.dumps(key_data, sort_keys=True)
+    return hashlib.md5(content.encode()).hexdigest()
+
+
+async def get_portfolios_needing_ai_analysis() -> list[dict[str, Any]]:
+    """
+    Get portfolios where holdings have changed since last AI analysis.
+    
+    Returns portfolios with their holdings for analysis.
+    """
+    from app.database.orm import Portfolio, PortfolioHolding
+    
+    async with get_session() as session:
+        # Get all portfolios with their holdings
+        result = await session.execute(
+            select(
+                Portfolio.id,
+                Portfolio.user_id,
+                Portfolio.name,
+                Portfolio.ai_analysis_hash,
+            )
+        )
+        portfolios = result.all()
+        
+        portfolios_to_analyze = []
+        
+        for portfolio_id, user_id, name, stored_hash in portfolios:
+            # Get holdings for this portfolio
+            holdings_result = await session.execute(
+                select(
+                    PortfolioHolding.symbol,
+                    PortfolioHolding.quantity,
+                    PortfolioHolding.avg_cost,
+                ).where(PortfolioHolding.portfolio_id == portfolio_id)
+            )
+            holdings = [
+                {
+                    "symbol": r[0],
+                    "quantity": float(r[1]) if r[1] else 0,
+                    "avg_cost": float(r[2]) if r[2] else 0,
+                }
+                for r in holdings_result.all()
+            ]
+            
+            if not holdings:
+                continue  # Skip empty portfolios
+            
+            current_hash = _compute_portfolio_holdings_hash(holdings)
+            
+            if stored_hash == current_hash:
+                logger.debug(f"Skipping portfolio {name}: holdings unchanged")
+                continue
+            
+            portfolios_to_analyze.append({
+                "portfolio_id": portfolio_id,
+                "user_id": user_id,
+                "portfolio_name": name,
+                "holdings": holdings,
+                "holdings_hash": current_hash,
+            })
+        
+        return portfolios_to_analyze
+
+
+async def _enrich_portfolio_holdings(
+    holdings: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, float], float]:
+    """
+    Enrich holdings with sector/country data, current prices, and compute weights.
+    
+    Returns:
+        - Enriched holdings list
+        - Sector weights dict
+        - Total portfolio value
+    """
+    from app.repositories import price_history_orm as price_history_repo
+    from app.services import financedatabase_service
+    
+    symbols = [h["symbol"] for h in holdings]
+    
+    # Get current prices in ONE efficient query
+    current_prices = await price_history_repo.get_latest_prices(symbols)
+    
+    # Get sector/country from local universe first
+    symbol_info: dict[str, dict[str, Any]] = {}
+    for symbol in symbols:
+        try:
+            universe_data = await financedatabase_service.get_by_symbol(symbol)
+            if universe_data:
+                symbol_info[symbol] = {
+                    "sector": universe_data.get("sector"),
+                    "country": universe_data.get("country"),
+                }
+        except Exception:
+            pass
+    
+    # Calculate values and weights
+    total_value = 0.0
+    for h in holdings:
+        quantity = h.get("quantity", 0)
+        symbol = h["symbol"]
+        
+        # Use price from price_history, fallback to avg_cost
+        price = float(current_prices.get(symbol, 0)) or h.get("avg_cost", 0)
+        h["current_price"] = price
+        h["market_value"] = quantity * price
+        total_value += h["market_value"]
+        
+        # Add sector/country from universe
+        info = symbol_info.get(symbol, {})
+        h["sector"] = info.get("sector")
+        h["country"] = info.get("country")
+        
+        # Calculate gain
+        avg_cost = h.get("avg_cost", 0)
+        if avg_cost > 0 and price > 0:
+            h["gain_pct"] = ((price - avg_cost) / avg_cost) * 100
+        else:
+            h["gain_pct"] = 0
+    
+    # Calculate weights and sector breakdown
+    sector_weights: dict[str, float] = {}
+    for h in holdings:
+        if total_value > 0:
+            h["weight"] = (h["market_value"] / total_value) * 100
+        else:
+            h["weight"] = 0
+        
+        sector = h.get("sector") or "Other"
+        sector_weights[sector] = sector_weights.get(sector, 0) + h["weight"]
+    
+    return holdings, sector_weights, total_value
+
+
+async def schedule_batch_portfolio_analysis() -> str | None:
+    """
+    Schedule batch AI analysis for portfolios with changed holdings.
+    
+    Enriches portfolio data with:
+    - Quantstats/pyfolio performance metrics (CAGR, Sharpe, Sortino, etc.)
+    - Risk analytics (VaR, CVaR, max drawdown)
+    - Sector/country weights
+    - Individual position details
+    
+    Returns:
+        Batch job ID if created, None if no portfolios need analysis.
+    """
+    from app.portfolio.service import build_portfolio_context, run_quantstats, run_pyfolio
+    from app.quant_engine import analyze_portfolio as run_risk_analytics
+    from app.dipfinder.service import DatabasePriceProvider
+    
+    portfolios = await get_portfolios_needing_ai_analysis()
+    
+    if not portfolios:
+        logger.info("No portfolios need AI analysis")
+        return None
+    
+    logger.info(f"Scheduling AI analysis for {len(portfolios)} portfolios")
+    
+    # Prepare items for batch
+    items = []
+    price_provider = DatabasePriceProvider()
+    
+    for p in portfolios:
+        try:
+            holdings, sector_weights, total_value = await _enrich_portfolio_holdings(
+                p["holdings"]
+            )
+            
+            # Calculate total gain
+            total_cost = sum(
+                h.get("quantity", 0) * h.get("avg_cost", 0) for h in holdings
+            )
+            total_gain = total_value - total_cost
+            total_gain_pct = ((total_value / total_cost) - 1) * 100 if total_cost > 0 else 0
+            
+            # Build context for quantstats/pyfolio
+            performance_metrics = {}
+            risk_metrics = {}
+            
+            try:
+                context = await build_portfolio_context(
+                    portfolio_id=p["portfolio_id"],
+                    user_id=p["user_id"],
+                    benchmark="SPY",
+                )
+                
+                # Get quantstats metrics
+                qs_result = run_quantstats(context)
+                if qs_result.get("status") in ("ok", "partial"):
+                    qs_data = qs_result.get("data", {})
+                    performance_metrics = {
+                        "cagr": qs_data.get("cagr"),
+                        "sharpe": qs_data.get("sharpe"),
+                        "sortino": qs_data.get("sortino"),
+                        "volatility": qs_data.get("volatility"),
+                        "max_drawdown": qs_data.get("max_drawdown"),
+                        "beta": qs_data.get("beta"),
+                    }
+                
+                # Get pyfolio metrics (as backup/additional)
+                pf_result = run_pyfolio(context)
+                if pf_result.get("status") in ("ok", "partial"):
+                    pf_data = pf_result.get("data", {})
+                    # Only add if not already present
+                    if not performance_metrics.get("cagr"):
+                        performance_metrics["cagr"] = pf_data.get("cagr")
+                    if not performance_metrics.get("sharpe"):
+                        performance_metrics["sharpe"] = pf_data.get("sharpe")
+                    if not performance_metrics.get("max_drawdown"):
+                        performance_metrics["max_drawdown"] = pf_data.get("max_drawdown")
+                        
+            except Exception as e:
+                logger.warning(f"Could not get performance metrics for portfolio {p['portfolio_id']}: {e}")
+            
+            # Try to get risk analytics
+            try:
+                import pandas as pd
+                
+                symbols = [h["symbol"] for h in holdings]
+                
+                # Get price history
+                prices_dict = {}
+                for symbol in symbols:
+                    price_df = await price_provider.get_prices(symbol, days=365)
+                    if price_df is not None and not price_df.empty:
+                        prices_dict[symbol] = price_df["Close"]
+                
+                if prices_dict:
+                    prices_df = pd.DataFrame(prices_dict).dropna()
+                    if len(prices_df) >= 60:
+                        returns = prices_df.pct_change().dropna()
+                        
+                        # Get weights
+                        weights = {h["symbol"]: h["weight"] / 100 for h in holdings if h.get("weight")}
+                        
+                        # Run risk analytics
+                        analytics = run_risk_analytics(
+                            holdings=weights,
+                            returns=returns,
+                            total_value=total_value,
+                        )
+                        
+                        risk_metrics = {
+                            "risk_score": analytics.overall_risk_score,
+                            "portfolio_volatility": float(analytics.risk_decomposition.portfolio_volatility) if analytics.risk_decomposition else None,
+                            "var_95_daily": float(analytics.tail_risk.var_95_daily) if analytics.tail_risk else None,
+                            "cvar_95_daily": float(analytics.tail_risk.cvar_95_daily) if analytics.tail_risk else None,
+                            "effective_n": float(analytics.diversification.effective_n) if analytics.diversification else None,
+                            "diversification_ratio": float(analytics.diversification.diversification_ratio) if analytics.diversification else None,
+                            "market_regime": analytics.regime.regime if analytics.regime else None,
+                            "top_risk_contributors": dict(list(analytics.risk_decomposition.risk_contribution_pct.items())[:3]) if analytics.risk_decomposition else {},
+                        }
+            except Exception as e:
+                logger.warning(f"Could not get risk analytics for portfolio {p['portfolio_id']}: {e}")
+            
+            items.append({
+                "custom_id": f"portfolio_{p['portfolio_id']}",
+                "portfolio_id": p["portfolio_id"],
+                "portfolio_name": p["portfolio_name"],
+                "holdings_hash": p["holdings_hash"],
+                "total_value": total_value,
+                "total_gain": total_gain,
+                "total_gain_pct": total_gain_pct,
+                "holdings": [
+                    {
+                        "symbol": h["symbol"],
+                        "weight": h["weight"],
+                        "gain_pct": h["gain_pct"],
+                        "market_value": h.get("market_value"),
+                        "sector": h.get("sector"),
+                        "country": h.get("country"),
+                    }
+                    for h in sorted(holdings, key=lambda x: -x.get("weight", 0))
+                ],
+                "sector_weights": sector_weights,
+                "performance": performance_metrics,
+                "risk": risk_metrics,
+            })
+            
+        except Exception as e:
+            logger.error(f"Failed to prepare portfolio {p['portfolio_id']} for analysis: {e}")
+            continue
+    
+    if not items:
+        logger.info("No portfolios could be prepared for AI analysis")
+        return None
+    
+    # Submit batch job
+    batch_id = await submit_batch(
+        task=TaskType.PORTFOLIO,
+        items=items,
+    )
+    
+    if batch_id:
+        await api_usage.record_batch_job(
+            batch_id=batch_id,
+            job_type=TaskType.PORTFOLIO.value,
+            total_requests=len(items),
+        )
+        logger.info(f"Created portfolio analysis batch {batch_id} for {len(items)} portfolios")
+    
+    return batch_id
+
+
+async def process_portfolio_analysis_results(batch_id: str) -> int:
+    """
+    Process completed portfolio analysis batch results.
+    
+    Returns number of portfolios updated.
+    """
+    from app.database.orm import Portfolio
+    
+    results = await collect_batch(batch_id)
+    
+    if not results:
+        logger.warning(f"No results for portfolio batch {batch_id}")
+        return 0
+    
+    updated = 0
+    
+    async with get_session() as session:
+        for result in results:
+            custom_id = result.get("custom_id", "")
+            if not custom_id.startswith("portfolio_"):
+                continue
+            
+            portfolio_id = int(custom_id.replace("portfolio_", ""))
+            content = result.get("content", "")
+            holdings_hash = result.get("holdings_hash")
+            
+            if content:
+                await session.execute(
+                    update(Portfolio)
+                    .where(Portfolio.id == portfolio_id)
+                    .values(
+                        ai_analysis_summary=content,
+                        ai_analysis_hash=holdings_hash,
+                        ai_analysis_at=datetime.now(UTC),
+                    )
+                )
+                updated += 1
+                logger.info(f"Updated AI analysis for portfolio {portfolio_id}")
+        
+        await session.commit()
+    
+    return updated
+
+
+async def cron_portfolio_ai_analysis() -> dict:
+    """
+    Cron job: Schedule portfolio AI analysis for changed portfolios.
+    
+    Runs daily at 6 AM UTC.
+    """
+    logger.info("Running portfolio AI analysis job")
+    
+    batch_id = await schedule_batch_portfolio_analysis()
+    
+    return {
+        "job": "portfolio_ai_analysis",
+        "batch_id": batch_id,
+        "status": "scheduled" if batch_id else "no_changes",
     }

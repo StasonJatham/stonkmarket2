@@ -1038,6 +1038,10 @@ class Portfolio(Base):
     description: Mapped[str | None] = mapped_column(Text)
     base_currency: Mapped[str] = mapped_column(String(10), default="USD")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # AI analysis tracking
+    ai_analysis_summary: Mapped[str | None] = mapped_column(Text)
+    ai_analysis_hash: Mapped[str | None] = mapped_column(String(32))  # MD5 of holdings state
+    ai_analysis_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

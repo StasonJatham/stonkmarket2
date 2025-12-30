@@ -144,6 +144,53 @@ async def get_latest_price_dates(symbols: Sequence[str]) -> dict[str, date]:
         return {row[0]: row[1] for row in result.all() if row[1] is not None}
 
 
+async def get_latest_prices(symbols: Sequence[str]) -> dict[str, Decimal]:
+    """Get most recent close price for multiple symbols.
+
+    Uses a subquery to find the max date per symbol, then joins
+    to get the close price for that date. Single efficient query.
+
+    Args:
+        symbols: List of stock ticker symbols
+
+    Returns:
+        Dict mapping symbol to latest close price
+    """
+    normalized = [s.upper() for s in symbols]
+    if not normalized:
+        return {}
+
+    async with get_session() as session:
+        # Subquery: get max date per symbol
+        subq = (
+            select(
+                PriceHistory.symbol,
+                func.max(PriceHistory.date).label("max_date"),
+            )
+            .where(PriceHistory.symbol.in_(normalized))
+            .group_by(PriceHistory.symbol)
+            .subquery()
+        )
+
+        # Join to get close price at max date
+        result = await session.execute(
+            select(PriceHistory.symbol, PriceHistory.close)
+            .join(
+                subq,
+                and_(
+                    PriceHistory.symbol == subq.c.symbol,
+                    PriceHistory.date == subq.c.max_date,
+                ),
+            )
+        )
+
+        return {
+            row[0]: row[1]
+            for row in result.all()
+            if row[1] is not None
+        }
+
+
 async def get_prices_as_dataframe(
     symbol: str,
     start_date: date,

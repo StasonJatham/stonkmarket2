@@ -110,6 +110,7 @@ class TaskType(str, Enum):
     RATING = "rating"        # Buy/hold/sell rating with reasoning
     SUMMARY = "summary"      # Company description summary
     AGENT = "agent"          # Persona agent analysis (Buffett, Lynch, etc.)
+    PORTFOLIO = "portfolio"  # Portfolio advisor analysis
 
 
 # JSON Schema for RATING task - enforces exact structure with Structured Outputs
@@ -182,6 +183,12 @@ TASK_CONFIGS: dict[TaskType, TaskConfig] = {
         reasoning_overhead=300,
         reasoning_max_chars=500,  # Agent reasoning can be longer
         default_max_tokens=500,  # JSON with detailed reasoning
+    ),
+    TaskType.PORTFOLIO: TaskConfig(
+        min_chars=500,
+        max_chars=1000,
+        reasoning_overhead=200,
+        default_max_tokens=800,  # ~3200 chars for detailed analysis
     ),
 }
 
@@ -294,6 +301,50 @@ LENGTH CONTROL:
 - If over 400 chars: remove examples first, then shorten benefit.
 - If under 300 chars: add a clearer "why people pay" benefit.
 - Final output MUST be 300-400 characters.""",
+
+    TaskType.PORTFOLIO: """You are a professional portfolio advisor providing actionable insights based on quantitative analysis.
+
+CONTEXT PROVIDED:
+You will receive comprehensive portfolio data including:
+- Performance metrics: CAGR, Sharpe ratio, Sortino ratio, volatility, max drawdown, beta
+- Risk analytics: VaR, CVaR, diversification ratio, effective positions, risk contributors
+- Holdings: Each position with weight, gain/loss, sector, country, market value
+- Sector allocation breakdown
+
+USE THE DATA:
+- Reference specific numbers in your analysis (e.g., "Your Sharpe of 0.8 is below the 1.0 benchmark")
+- Identify positions that contribute most to risk
+- Flag concerning metrics (Sharpe < 1, max drawdown > 20%, single position > 25%, etc.)
+- Compare current allocation to risk-optimal allocation
+
+OUTPUT STRUCTURE (use these exact headers):
+
+## Overview
+One sentence on overall portfolio health citing key metrics (Sharpe, CAGR, risk score).
+
+## Key Observations
+- 2-3 bullet points on notable strengths or concerns
+- Reference specific data: "AAPL at 30% is your largest risk contributor"
+- Compare to benchmarks where relevant
+
+## Action Items
+- 1-3 specific, actionable recommendations
+- Be concrete: "Reduce AAPL from 30% to 15%, reallocate to defensive sectors"
+- Prioritize by impact on risk-adjusted returns
+
+## Risk Alerts
+- Concentration risk (>25% single position, >50% single sector)
+- Poor risk-adjusted returns (Sharpe < 0.5, negative Sortino)
+- High tail risk (VaR > 3%, drawdown > 25%)
+- Low diversification (effective N < 5)
+- Skip this section entirely if no significant risks
+
+HARD RULES:
+- 500-900 characters total
+- Use plain language, explain metrics in parentheses
+- Be specific: cite actual numbers from the data
+- Focus on actionable improvements, not just observations
+- No generic advice like "diversify more" - say exactly what to do""",
 }
 
 
@@ -350,6 +401,86 @@ def _build_prompt(task: TaskType, context: dict[str, Any]) -> str:
                 desc = desc[:max_desc_chars] + "..."
             parts.append(f"\nFull Description:\n{desc}")
 
+        return "\n".join(parts)
+
+    # === PORTFOLIO: Portfolio analysis with holdings data ===
+    if task == TaskType.PORTFOLIO:
+        if portfolio_name := context.get("portfolio_name"):
+            parts.append(f"Portfolio: {portfolio_name}")
+        if total_value := context.get("total_value"):
+            parts.append(f"Total Value: ${total_value:,.2f}")
+        if total_gain := context.get("total_gain"):
+            gain_pct = context.get("total_gain_pct", 0)
+            parts.append(f"Total Gain: ${total_gain:+,.2f} ({gain_pct:+.1f}%)")
+        
+        # Performance metrics from quantstats/pyfolio
+        perf = context.get("performance", {})
+        if perf:
+            parts.append("\n## Performance Metrics")
+            if cagr := perf.get("cagr"):
+                parts.append(f"- CAGR (Annualized Return): {cagr:.1%}")
+            if sharpe := perf.get("sharpe"):
+                parts.append(f"- Sharpe Ratio: {sharpe:.2f}")
+            if sortino := perf.get("sortino"):
+                parts.append(f"- Sortino Ratio: {sortino:.2f}")
+            if vol := perf.get("volatility"):
+                parts.append(f"- Volatility (Annualized): {vol:.1%}")
+            if mdd := perf.get("max_drawdown"):
+                parts.append(f"- Max Drawdown: {mdd:.1%}")
+            if beta := perf.get("beta"):
+                parts.append(f"- Beta (vs SPY): {beta:.2f}")
+        
+        # Risk metrics from quant engine
+        risk = context.get("risk", {})
+        if risk:
+            parts.append("\n## Risk Analysis")
+            if score := risk.get("risk_score"):
+                parts.append(f"- Overall Risk Score: {score}/10")
+            if pvol := risk.get("portfolio_volatility"):
+                parts.append(f"- Portfolio Volatility: {pvol:.1%}")
+            if var95 := risk.get("var_95_daily"):
+                parts.append(f"- Daily VaR (95%): {var95:.2%} (worst expected daily loss)")
+            if cvar95 := risk.get("cvar_95_daily"):
+                parts.append(f"- Daily CVaR (95%): {cvar95:.2%} (expected loss in worst 5% of days)")
+            if eff_n := risk.get("effective_n"):
+                parts.append(f"- Effective Diversification: {eff_n:.1f} positions")
+            if div_ratio := risk.get("diversification_ratio"):
+                parts.append(f"- Diversification Ratio: {div_ratio:.2f}")
+            if regime := risk.get("market_regime"):
+                parts.append(f"- Current Market Regime: {regime}")
+            if top_risk := risk.get("top_risk_contributors"):
+                parts.append("- Top Risk Contributors:")
+                for symbol, contrib in top_risk.items():
+                    parts.append(f"  - {symbol}: {contrib:.1%} of portfolio risk")
+        
+        parts.append("\n## Holdings")
+        
+        holdings = context.get("holdings", [])
+        for h in holdings:
+            symbol = h.get("symbol", "?")
+            weight = h.get("weight", 0)
+            gain_pct = h.get("gain_pct", 0)
+            market_value = h.get("market_value")
+            sector = h.get("sector") or "Unknown"
+            country = h.get("country") or "Unknown"
+            
+            line = f"- {symbol}: {weight:.1f}% weight"
+            if market_value:
+                line += f" (${market_value:,.0f})"
+            line += f", {gain_pct:+.1f}% gain"
+            if sector != "Unknown":
+                line += f", {sector}"
+            if country != "Unknown":
+                line += f" ({country})"
+            parts.append(line)
+        
+        # Add sector breakdown if available
+        if sector_weights := context.get("sector_weights"):
+            parts.append("\n## Sector Allocation")
+            for sector, weight in sorted(sector_weights.items(), key=lambda x: -x[1]):
+                if weight >= 5:  # Only show significant allocations
+                    parts.append(f"- {sector}: {weight:.0f}%")
+        
         return "\n".join(parts)
 
     # === RATING: Full context with all financial data ===
