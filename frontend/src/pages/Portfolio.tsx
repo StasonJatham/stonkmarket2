@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import Markdown from 'react-markdown';
 import {
   Bar,
   BarChart,
@@ -828,28 +829,47 @@ export function PortfolioPage() {
       )}
 
       {/* AI Portfolio Analysis */}
-      {selectedPortfolio && selectedPortfolio.ai_analysis_summary && (
+      {selectedPortfolio && (
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-base">
               <Brain className="h-4 w-4 text-primary" />
               AI Portfolio Analysis
             </CardTitle>
-            <CardDescription>
+            <CardDescription className="flex items-center gap-2">
               Professional insights from our AI Portfolio Advisor
               {selectedPortfolio.ai_analysis_at && (
-                <span className="ml-2 text-xs">
+                <span className="text-xs">
                   (Updated {formatDate(selectedPortfolio.ai_analysis_at)})
                 </span>
               )}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Info className="h-3.5 w-3.5 text-muted-foreground/60 cursor-help flex-shrink-0" />
+                </TooltipTrigger>
+                <TooltipContent side="top" className="max-w-[280px]">
+                  <p className="text-xs">
+                    AI analysis runs automatically when your portfolio changes. 
+                    It evaluates risk, diversification, and provides actionable recommendations.
+                  </p>
+                </TooltipContent>
+              </Tooltip>
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="prose prose-sm dark:prose-invert max-w-none">
-              <div className="whitespace-pre-wrap text-sm leading-relaxed">
-                {selectedPortfolio.ai_analysis_summary}
+            {selectedPortfolio.ai_analysis_summary ? (
+              <div className="prose prose-sm dark:prose-invert max-w-none prose-headings:text-foreground prose-p:text-muted-foreground prose-strong:text-foreground prose-li:text-muted-foreground">
+                <Markdown>{selectedPortfolio.ai_analysis_summary}</Markdown>
               </div>
-            </div>
+            ) : (
+              <div className="flex items-center gap-3 rounded-lg border border-dashed p-4 text-muted-foreground">
+                <Sparkles className="h-5 w-5 animate-pulse" />
+                <div className="text-sm">
+                  <p className="font-medium">Analysis pending</p>
+                  <p className="text-xs">AI analysis will be generated automatically. Check back soon!</p>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
@@ -1298,9 +1318,27 @@ export function PortfolioPage() {
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2">
               <Target className="h-5 w-5 text-primary" />
-              Portfolio Actions
+              What Should I Buy Next?
             </CardTitle>
-            <CardDescription>Risk-aware buy/sell suggestions for your next move</CardDescription>
+            <CardDescription className="flex items-start gap-1.5">
+              <span>Enter how much you want to invest and we'll calculate the optimal trades to rebalance your portfolio.</span>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Info className="h-3.5 w-3.5 text-muted-foreground/60 cursor-help flex-shrink-0 mt-0.5" />
+                </TooltipTrigger>
+                <TooltipContent side="top" className="max-w-[320px]">
+                  <p className="font-medium mb-1">How it works:</p>
+                  <ol className="text-xs space-y-1 list-decimal list-inside">
+                    <li>Enter the amount you want to invest</li>
+                    <li>Choose an optimization strategy</li>
+                    <li>Get specific buy/sell amounts to improve your portfolio</li>
+                  </ol>
+                  <p className="text-xs mt-2 text-muted-foreground">
+                    Trades are calculated to reduce risk and improve diversification based on your current holdings.
+                  </p>
+                </TooltipContent>
+              </Tooltip>
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-[1fr,1fr,auto]">
@@ -1314,7 +1352,24 @@ export function PortfolioPage() {
                 />
               </div>
               <div className="space-y-1">
-                <Label>Optimization Method</Label>
+                <div className="flex items-center gap-1">
+                  <Label>Strategy</Label>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Info className="h-3 w-3 text-muted-foreground/60 cursor-help" />
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="max-w-[280px]">
+                      <ul className="text-xs space-y-1.5">
+                        <li><strong>Risk Parity:</strong> Equal risk from each position</li>
+                        <li><strong>Min Variance:</strong> Lowest overall volatility</li>
+                        <li><strong>Max Diversification:</strong> Spread across uncorrelated assets</li>
+                        <li><strong>Min CVaR:</strong> Minimize worst-case losses</li>
+                        <li><strong>HRP:</strong> Machine learning-based clustering</li>
+                        <li><strong>Equal Weight:</strong> Same $ in each position</li>
+                      </ul>
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
                 <Select value={allocationMethod} onValueChange={setAllocationMethod}>
                   <SelectTrigger>
                     <SelectValue />
@@ -1331,7 +1386,7 @@ export function PortfolioPage() {
               </div>
               <div className="flex items-end">
                 <Button onClick={handleGenerateAllocation} disabled={isAllocationLoading}>
-                  {isAllocationLoading ? 'Generating…' : 'Generate Actions'}
+                  {isAllocationLoading ? 'Calculating…' : 'Calculate Trades'}
                 </Button>
               </div>
             </div>

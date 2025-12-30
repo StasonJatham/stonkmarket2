@@ -1328,14 +1328,18 @@ async def submit_batch(
     for i, item in enumerate(items):
         # Build custom_id using colon-delimited format to avoid ambiguity
         # Colons are safe in custom_id and not present in symbols/agent IDs
-        symbol = item.get('symbol', 'unknown')
-        agent_id = item.get('agent_id', '')
-        if agent_id:
-            # Agent batch format: "batch_run_id:symbol:agent_id:task"
-            custom_id = f"{batch_run_id}:{symbol}:{agent_id}:{task.value}"
+        # For PORTFOLIO tasks, use the provided custom_id (e.g., "portfolio_1")
+        if task == TaskType.PORTFOLIO and item.get('custom_id'):
+            custom_id = item['custom_id']
         else:
-            # Standard format: "batch_run_id:symbol:idx:task"
-            custom_id = f"{batch_run_id}:{symbol}:{i}:{task.value}"
+            symbol = item.get('symbol', 'unknown')
+            agent_id = item.get('agent_id', '')
+            if agent_id:
+                # Agent batch format: "batch_run_id:symbol:agent_id:task"
+                custom_id = f"{batch_run_id}:{symbol}:{agent_id}:{task.value}"
+            else:
+                # Standard format: "batch_run_id:symbol:idx:task"
+                custom_id = f"{batch_run_id}:{symbol}:{i}:{task.value}"
         prompt = _build_prompt(task, item)
 
         # For RATING, we use structured outputs (no hint needed)

@@ -984,6 +984,7 @@ async def schedule_batch_portfolio_analysis() -> str | None:
     Returns:
         Batch job ID if created, None if no portfolios need analysis.
     """
+    from datetime import date, timedelta
     from app.portfolio.service import build_portfolio_context, run_quantstats, run_pyfolio
     from app.quant_engine import analyze_portfolio as run_risk_analytics
     from app.dipfinder.service import DatabasePriceProvider
@@ -1059,9 +1060,12 @@ async def schedule_batch_portfolio_analysis() -> str | None:
                 symbols = [h["symbol"] for h in holdings]
                 
                 # Get price history
+                end_dt = date.today()
+                start_dt = end_dt - timedelta(days=365)
+                
                 prices_dict = {}
                 for symbol in symbols:
-                    price_df = await price_provider.get_prices(symbol, days=365)
+                    price_df = await price_provider.get_prices(symbol, start_dt, end_dt)
                     if price_df is not None and not price_df.empty:
                         prices_dict[symbol] = price_df["Close"]
                 
