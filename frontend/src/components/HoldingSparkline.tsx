@@ -6,7 +6,46 @@ import {
   ResponsiveContainer,
   Tooltip,
 } from 'recharts';
+import { useTheme } from '@/context/ThemeContext';
 import type { HoldingSparklineData } from '@/services/api';
+
+/**
+ * Get chart colors respecting theme and colorblind mode.
+ * Same pattern as StockCardV2 for consistency.
+ */
+function useChartColors() {
+  const { colorblindMode, customColors } = useTheme();
+
+  return useMemo(() => {
+    if (typeof window === 'undefined') {
+      if (colorblindMode) {
+        return { success: '#3b82f6', danger: '#f97316', muted: '#6b7280' };
+      }
+      if (customColors) {
+        return { success: customColors.up, danger: customColors.down, muted: '#6b7280' };
+      }
+      return { success: '#22c55e', danger: '#ef4444', muted: '#6b7280' };
+    }
+
+    // Read computed colors from CSS variables (respects theme and colorblind mode)
+    const root = document.documentElement;
+    const success = getComputedStyle(root).getPropertyValue('--success').trim();
+    const danger = getComputedStyle(root).getPropertyValue('--danger').trim();
+    const muted = getComputedStyle(root).getPropertyValue('--muted-foreground').trim();
+
+    if (success && danger) {
+      return { success, danger, muted: muted || '#6b7280' };
+    }
+    if (colorblindMode) {
+      return { success: '#3b82f6', danger: '#f97316', muted: '#6b7280' };
+    }
+    if (customColors) {
+      return { success: customColors.up, danger: customColors.down, muted: '#6b7280' };
+    }
+
+    return { success: '#22c55e', danger: '#ef4444', muted: '#6b7280' };
+  }, [colorblindMode, customColors]);
+}
 
 interface HoldingSparklineProps {
   data: HoldingSparklineData | null;
@@ -27,35 +66,16 @@ export function HoldingSparkline({
   width = 120,
   height = 40,
 }: HoldingSparklineProps) {
+  // Get theme-aware colors for SVG chart (respects colorblind mode)
+  const chartColors = useChartColors();
+  
   // Determine color based on performance
-  const { strokeColor, fillColor, isPositive } = useMemo(() => {
-    if (!data?.change_pct) {
-      // Neutral color when no change data
-      return {
-        strokeColor: 'hsl(var(--muted-foreground))',
-        fillColor: 'hsl(var(--muted))',
-        isPositive: null,
-      };
-    }
-    
-    const positive = data.change_pct >= 0;
-    
-    // Using CSS variables for theme awareness
-    // These map to the chart colors in globals.css which are color-blind friendly
-    if (positive) {
-      return {
-        strokeColor: 'hsl(var(--chart-2))', // Green variant
-        fillColor: 'hsl(var(--chart-2) / 0.2)',
-        isPositive: true,
-      };
-    } else {
-      return {
-        strokeColor: 'hsl(var(--chart-5))', // Red variant  
-        fillColor: 'hsl(var(--chart-5) / 0.2)',
-        isPositive: false,
-      };
-    }
-  }, [data?.change_pct]);
+  const isPositive = data?.change_pct ? data.change_pct >= 0 : null;
+  const chartColor = isPositive === null 
+    ? chartColors.muted 
+    : isPositive 
+      ? chartColors.success 
+      : chartColors.danger;
 
   // Transform data for recharts
   const chartData = useMemo(() => {
@@ -115,8 +135,8 @@ export function HoldingSparkline({
         >
           <defs>
             <linearGradient id={`sparkGradient-${data.symbol}`} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={strokeColor} stopOpacity={0.4} />
-              <stop offset="100%" stopColor={strokeColor} stopOpacity={0.05} />
+              <stop offset="0%" stopColor={chartColor} stopOpacity={0.4} />
+              <stop offset="100%" stopColor={chartColor} stopOpacity={0.05} />
             </linearGradient>
           </defs>
           
@@ -137,7 +157,7 @@ export function HoldingSparkline({
           <Area
             type="monotone"
             dataKey="price"
-            stroke={strokeColor}
+            stroke={chartColor}
             strokeWidth={1.5}
             fill={`url(#sparkGradient-${data.symbol})`}
             isAnimationActive={false}
@@ -150,8 +170,8 @@ export function HoldingSparkline({
               x={trade.date}
               y={trade.price}
               r={4}
-              fill={trade.side === 'buy' ? 'hsl(var(--chart-2))' : 'hsl(var(--chart-5))'}
-              stroke="hsl(var(--background))"
+              fill={trade.side === 'buy' ? chartColors.success : chartColors.danger}
+              stroke="#fff"
               strokeWidth={1.5}
               isFront
             />
@@ -162,14 +182,10 @@ export function HoldingSparkline({
       {/* Change indicator badge */}
       {data.change_pct !== null && (
         <div
-          className={`absolute -top-1 -right-1 text-[9px] font-semibold px-1 rounded ${
-            isPositive
-              ? 'bg-chart-2/20 text-chart-2'
-              : 'bg-chart-5/20 text-chart-5'
-          }`}
+          className="absolute -top-1 -right-1 text-[9px] font-semibold px-1 rounded"
           style={{ 
-            color: strokeColor,
-            backgroundColor: fillColor,
+            color: chartColor,
+            backgroundColor: `${chartColor}33`,
           }}
         >
           {isPositive ? '+' : ''}{data.change_pct.toFixed(0)}%

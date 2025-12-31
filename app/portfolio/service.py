@@ -296,8 +296,11 @@ def run_quantstats(context: PortfolioContext) -> dict[str, Any]:
             "volatility": float(qs.stats.volatility(context.returns)),
             "max_drawdown": float(qs.stats.max_drawdown(context.returns)),
         }
-        if context.benchmark_returns is not None:
-            data["beta"] = float(qs.stats.beta(context.returns, context.benchmark_returns))
+        if context.benchmark_returns is not None and not context.benchmark_returns.empty:
+            # Use greeks() to get beta and alpha
+            greeks = qs.stats.greeks(context.returns, context.benchmark_returns)
+            data["beta"] = float(greeks["beta"])
+            data["alpha"] = float(greeks["alpha"])
         return _tool_result(tool, "ok", data)
     except Exception as exc:
         logger.info(f"quantstats unavailable, using fallback: {exc}")
