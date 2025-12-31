@@ -804,7 +804,7 @@ export function PortfolioPage() {
               </div>
             </CardContent>
           </Card>
-          <Card className="sm:col-span-2 lg:col-span-1">
+          <Card>
             <CardContent className="pt-6">
               <div className="flex items-center gap-3">
                 <div className={`rounded-lg p-2 ${portfolioStats.gainLoss >= 0 ? 'bg-success/10' : 'bg-danger/10'}`}>
@@ -821,6 +821,32 @@ export function PortfolioPage() {
                   <p className="text-xs text-muted-foreground">
                     {portfolioStats.gainLoss >= 0 ? '+' : ''}{portfolioStats.gainLossPercent.toFixed(1)}%
                   </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-3">
+                <div className={`rounded-lg p-2 ${riskHighlights.length > 0 ? 'bg-amber-500/10' : 'bg-success/10'}`}>
+                  <AlertTriangle className={`h-5 w-5 ${riskHighlights.length > 0 ? 'text-amber-500' : 'text-success'}`} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm text-muted-foreground">Risk Alerts</p>
+                  {isRiskAnalyticsLoading ? (
+                    <p className="text-sm text-muted-foreground">Analyzing...</p>
+                  ) : riskHighlights.length > 0 ? (
+                    <>
+                      <p className="text-xl font-semibold text-amber-500">{riskHighlights.length} issue{riskHighlights.length !== 1 ? 's' : ''}</p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {riskHighlights.slice(0, 2).map(h => h.symbol).join(', ')}{riskHighlights.length > 2 ? ` +${riskHighlights.length - 2} more` : ''}
+                      </p>
+                    </>
+                  ) : riskAnalytics ? (
+                    <p className="text-xl font-semibold text-success">All clear</p>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">Not analyzed</p>
+                  )}
                 </div>
               </div>
             </CardContent>
@@ -858,7 +884,7 @@ export function PortfolioPage() {
           </CardHeader>
           <CardContent>
             {selectedPortfolio.ai_analysis_summary ? (
-              <div className="prose prose-sm dark:prose-invert max-w-none prose-headings:text-foreground prose-p:text-muted-foreground prose-strong:text-foreground prose-li:text-muted-foreground">
+              <div className="space-y-3 text-sm [&_h2]:text-base [&_h2]:font-semibold [&_h2]:text-foreground [&_h2]:border-b [&_h2]:border-border [&_h2]:pb-1 [&_h2]:mt-4 [&_h2]:mb-2 [&_h2:first-child]:mt-0 [&_p]:text-muted-foreground [&_p]:leading-relaxed [&_p]:my-2 [&_strong]:text-foreground [&_strong]:font-medium [&_ul]:my-2 [&_ul]:pl-4 [&_ul]:space-y-1 [&_li]:text-muted-foreground">
                 <Markdown>{selectedPortfolio.ai_analysis_summary}</Markdown>
               </div>
             ) : (
@@ -1028,76 +1054,6 @@ export function PortfolioPage() {
             </CardContent>
           </Card>
         </div>
-      )}
-
-      {selectedPortfolio && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <AlertTriangle className="h-4 w-4 text-primary" />
-              Risk Highlights
-            </CardTitle>
-            <CardDescription>Sector-aware signals based on sustained fundamentals</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {isRiskAnalyticsLoading && (
-              <p className="text-sm text-muted-foreground">Assessing material risks...</p>
-            )}
-            {!isRiskAnalyticsLoading && riskAnalytics && riskHighlights.length > 0 && (
-              <div className="space-y-4">
-                {riskHighlights.map((entry) => {
-                  const info = stockInfoMap[entry.symbol];
-                  const displayName = info?.name ?? null;
-                  const sectorLabel = entry.sector ?? info?.sector ?? null;
-                  return (
-                    <div key={entry.symbol} className="rounded-md border border-muted/60 p-3">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div>
-                          <p className="text-sm font-semibold">{entry.symbol}</p>
-                          {displayName && displayName !== entry.symbol && (
-                            <p className="text-xs text-muted-foreground">{displayName}</p>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {entry.domain && <Badge variant="outline">{entry.domain}</Badge>}
-                          {sectorLabel && <Badge variant="secondary">{sectorLabel}</Badge>}
-                        </div>
-                      </div>
-                      <div className="mt-3 space-y-2">
-                        {entry.highlights.map((highlight) => (
-                          <div key={`${entry.symbol}-${highlight.title}`} className="flex items-start gap-2">
-                            <span
-                              className={`rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase ${
-                                RISK_SEVERITY_STYLES[highlight.severity] ?? 'bg-muted text-muted-foreground'
-                              }`}
-                            >
-                              {highlight.severity}
-                            </span>
-                            <div>
-                              <p className="text-sm font-medium">{highlight.title}</p>
-                              <p className="text-xs text-muted-foreground">{highlight.detail}</p>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            {!isRiskAnalyticsLoading && riskAnalytics && riskHighlights.length === 0 && (
-              <p className="text-sm text-muted-foreground">
-                No material sector risks detected across the last three quarters.
-              </p>
-            )}
-            {!isRiskAnalyticsLoading && !riskAnalytics && (
-              <p className="text-sm text-muted-foreground">Run analytics to surface risk highlights.</p>
-            )}
-            {riskAnalyticsError && (
-              <p className="text-xs text-destructive">{riskAnalyticsError}</p>
-            )}
-          </CardContent>
-        </Card>
       )}
 
       {selectedPortfolio && (

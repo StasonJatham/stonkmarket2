@@ -178,7 +178,8 @@ class DatabasePriceProvider:
                             [df.copy(), yf_df.copy()],
                             axis=0,
                         )
-                        merged.index = pd.to_datetime(merged.index).date
+                        # Keep as DatetimeIndex for consistency with database output
+                        merged.index = pd.to_datetime(merged.index)
                         merged = merged[~merged.index.duplicated(keep="last")].sort_index()
                         return merged
 

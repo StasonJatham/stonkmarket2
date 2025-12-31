@@ -9,41 +9,38 @@ import {
 import { useTheme } from '@/context/ThemeContext';
 import type { HoldingSparklineData } from '@/services/api';
 
+// Default colors
+const DEFAULT_COLORS = {
+  up: '#22c55e', // Green
+  down: '#ef4444', // Red
+};
+
+// Colorblind-friendly palette (blue/orange)
+const COLORBLIND_COLORS = {
+  up: '#3b82f6', // Blue
+  down: '#f97316', // Orange
+};
+
 /**
  * Get chart colors respecting theme and colorblind mode.
- * Same pattern as StockCardV2 for consistency.
+ * Uses context values directly to avoid race conditions with CSS variable updates.
  */
 function useChartColors() {
   const { colorblindMode, customColors } = useTheme();
 
   return useMemo(() => {
-    if (typeof window === 'undefined') {
-      if (colorblindMode) {
-        return { success: '#3b82f6', danger: '#f97316', muted: '#6b7280' };
-      }
-      if (customColors) {
-        return { success: customColors.up, danger: customColors.down, muted: '#6b7280' };
-      }
-      return { success: '#22c55e', danger: '#ef4444', muted: '#6b7280' };
-    }
-
-    // Read computed colors from CSS variables (respects theme and colorblind mode)
-    const root = document.documentElement;
-    const success = getComputedStyle(root).getPropertyValue('--success').trim();
-    const danger = getComputedStyle(root).getPropertyValue('--danger').trim();
-    const muted = getComputedStyle(root).getPropertyValue('--muted-foreground').trim();
-
-    if (success && danger) {
-      return { success, danger, muted: muted || '#6b7280' };
-    }
+    // Use colorblind palette when enabled
     if (colorblindMode) {
-      return { success: '#3b82f6', danger: '#f97316', muted: '#6b7280' };
+      return { success: COLORBLIND_COLORS.up, danger: COLORBLIND_COLORS.down, muted: '#6b7280' };
     }
-    if (customColors) {
+    
+    // Use custom colors if set
+    if (customColors && (customColors.up !== DEFAULT_COLORS.up || customColors.down !== DEFAULT_COLORS.down)) {
       return { success: customColors.up, danger: customColors.down, muted: '#6b7280' };
     }
-
-    return { success: '#22c55e', danger: '#ef4444', muted: '#6b7280' };
+    
+    // Default green/red
+    return { success: DEFAULT_COLORS.up, danger: DEFAULT_COLORS.down, muted: '#6b7280' };
   }, [colorblindMode, customColors]);
 }
 
