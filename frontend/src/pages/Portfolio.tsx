@@ -104,6 +104,7 @@ import {
 import { BulkImportModal } from '@/components/BulkImportModal';
 import { HoldingSparkline } from '@/components/HoldingSparkline';
 import { AIPortfolioAnalysis } from '@/components/AIPortfolioAnalysis';
+import { Skeleton } from '@/components/ui/skeleton';
 import {
   Tooltip,
   TooltipContent,
@@ -163,6 +164,129 @@ function MetricWithTooltip({
         </Tooltip>
       </div>
       <p className="font-semibold">{value}</p>
+    </div>
+  );
+}
+
+/** Skeleton for Risk Summary card - matches layout to prevent CLS */
+function RiskSummarySkeleton() {
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <Skeleton className="h-5 w-20" />
+        <Skeleton className="h-4 w-16" />
+      </div>
+      <Skeleton className="h-5 w-full" />
+      <div className="space-y-1">
+        <Skeleton className="h-4 w-full" />
+        <Skeleton className="h-4 w-3/4" />
+        <Skeleton className="h-4 w-4/5" />
+        <Skeleton className="h-4 w-2/3" />
+      </div>
+      <div className="rounded-md bg-muted/50 p-3">
+        <Skeleton className="h-3 w-28 mb-2" />
+        <div className="space-y-1">
+          <Skeleton className="h-3 w-full" />
+          <Skeleton className="h-3 w-4/5" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Skeleton for Performance Snapshot card */
+function PerformanceSnapshotSkeleton() {
+  return (
+    <div className="grid grid-cols-2 gap-3">
+      {[...Array(6)].map((_, i) => (
+        <div key={i}>
+          <Skeleton className="h-3 w-12 mb-1" />
+          <Skeleton className="h-5 w-16" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Skeleton for Diversification & Market card */
+function DiversificationSkeleton() {
+  return (
+    <div className="space-y-3">
+      <div>
+        <Skeleton className="h-3 w-24 mb-1" />
+        <Skeleton className="h-5 w-8" />
+      </div>
+      <div>
+        <Skeleton className="h-3 w-32 mb-1" />
+        <Skeleton className="h-5 w-20" />
+      </div>
+      <div className="space-y-1">
+        <Skeleton className="h-3 w-full" />
+        <Skeleton className="h-3 w-4/5" />
+      </div>
+      <div className="rounded-md bg-muted/50 p-3">
+        <Skeleton className="h-3 w-24 mb-2" />
+        <Skeleton className="h-5 w-32 mb-1" />
+        <Skeleton className="h-3 w-full" />
+      </div>
+    </div>
+  );
+}
+
+/** Skeleton for stat card (Total Value, Gain/Loss, Risk Alerts) */
+function StatCardSkeleton() {
+  return (
+    <Card>
+      <CardContent className="pt-6">
+        <div className="flex items-center gap-3">
+          <Skeleton className="h-9 w-9 rounded-lg" />
+          <div className="flex-1">
+            <Skeleton className="h-3 w-20 mb-2" />
+            <Skeleton className="h-6 w-24" />
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Skeleton for AI Portfolio Analysis card */
+function AIAnalysisSkeleton() {
+  return (
+    <div className="space-y-4">
+      {/* Health badge and headline */}
+      <div className="flex items-start gap-3">
+        <Skeleton className="h-6 w-16 rounded-full" />
+        <Skeleton className="h-5 w-3/4" />
+      </div>
+      
+      {/* Insights section */}
+      <div className="space-y-2">
+        <Skeleton className="h-4 w-20" />
+        <div className="space-y-1">
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-5/6" />
+          <Skeleton className="h-4 w-4/5" />
+        </div>
+      </div>
+      
+      {/* Actions section */}
+      <div className="space-y-2">
+        <Skeleton className="h-4 w-24" />
+        <div className="space-y-1">
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-3/4" />
+        </div>
+      </div>
+      
+      {/* Risks section */}
+      <div className="space-y-2">
+        <Skeleton className="h-4 w-16" />
+        <div className="space-y-1">
+          <Skeleton className="h-4 w-5/6" />
+          <Skeleton className="h-4 w-2/3" />
+        </div>
+      </div>
     </div>
   );
 }
@@ -808,7 +932,14 @@ export function PortfolioPage() {
       )}
 
       {/* Stats Cards */}
-      {selectedPortfolio && (
+      {isLoading && (
+        <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+          <StatCardSkeleton />
+          <StatCardSkeleton />
+          <StatCardSkeleton />
+        </div>
+      )}
+      {selectedPortfolio && !isLoading && (
         <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
           <Card>
             <CardContent className="pt-6">
@@ -874,7 +1005,21 @@ export function PortfolioPage() {
       )}
 
       {/* AI Portfolio Analysis */}
-      {selectedPortfolio && (
+      {isLoading && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Brain className="h-4 w-4 text-primary" />
+              AI Portfolio Analysis
+            </CardTitle>
+            <CardDescription>Professional insights from our AI Portfolio Advisor</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <AIAnalysisSkeleton />
+          </CardContent>
+        </Card>
+      )}
+      {selectedPortfolio && !isLoading && (
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-base">
@@ -918,9 +1063,7 @@ export function PortfolioPage() {
               <CardDescription>Plain-English portfolio diagnostics</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              {isRiskAnalyticsLoading && (
-                <p className="text-sm text-muted-foreground">Loading portfolio insights...</p>
-              )}
+              {isRiskAnalyticsLoading && <RiskSummarySkeleton />}
               {!isRiskAnalyticsLoading && riskAnalytics && (
                 <>
                   <div className="flex items-center gap-2">
@@ -966,9 +1109,7 @@ export function PortfolioPage() {
               <CardDescription>Key stats from Quantstats/Pyfolio</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              {isToolAnalyticsLoading && !toolAnalytics && (
-                <p className="text-sm text-muted-foreground">Calculating performance metrics...</p>
-              )}
+              {isToolAnalyticsLoading && !toolAnalytics && <PerformanceSnapshotSkeleton />}
               {!isToolAnalyticsLoading && (
                 <div className="grid grid-cols-2 gap-3 text-sm">
                   <MetricWithTooltip
@@ -1028,9 +1169,7 @@ export function PortfolioPage() {
               <CardDescription>How balanced your portfolio is</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              {isRiskAnalyticsLoading && (
-                <p className="text-sm text-muted-foreground">Checking diversification...</p>
-              )}
+              {isRiskAnalyticsLoading && <DiversificationSkeleton />}
               {!isRiskAnalyticsLoading && riskAnalytics && (
                 <>
                   <div>

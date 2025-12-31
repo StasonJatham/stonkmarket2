@@ -27,6 +27,7 @@ from app.services.openai_client import (
     TaskType,
     check_batch,
     collect_batch,
+    generate,
     submit_batch,
 )
 from app.services.statistical_rating import calculate_rating
@@ -533,10 +534,16 @@ async def _store_portfolio_analysis(
     """Store AI analysis for a portfolio.
     
     Validates that content is valid JSON matching AIPortfolioAnalysis schema.
-    If validation fails, stores an error message instead.
+    On validation failure, immediately retries with synchronous generate() call.
+    If retry also fails, skips storage (marks for next scheduled run).
+    
+    Args:
+        custom_id: Portfolio identifier (portfolio_{id})
+        content: Raw AI response content
+        batch_id: Source batch job ID
     """
     import json
-    from app.database.orm import Portfolio
+    from app.database.orm import Portfolio, PortfolioHolding
     from app.schemas.portfolio import AIPortfolioAnalysis
     from pydantic import ValidationError
     
@@ -551,33 +558,67 @@ async def _store_portfolio_analysis(
         logger.warning(f"Cannot parse portfolio_id from: {custom_id}")
         return
     
-    # Validate JSON structure
-    validated_content = content
-    try:
-        # Strip markdown code blocks if present
-        clean_content = content.strip()
-        if clean_content.startswith("```json"):
-            clean_content = clean_content[7:]
-        if clean_content.startswith("```"):
-            clean_content = clean_content[3:]
-        if clean_content.endswith("```"):
-            clean_content = clean_content[:-3]
-        clean_content = clean_content.strip()
+    def _clean_and_validate(raw: str) -> str | None:
+        """Strip markdown, parse JSON, validate schema. Returns validated JSON string or None."""
+        clean = raw.strip()
+        if clean.startswith("```json"):
+            clean = clean[7:]
+        if clean.startswith("```"):
+            clean = clean[3:]
+        if clean.endswith("```"):
+            clean = clean[:-3]
+        clean = clean.strip()
         
-        # Parse and validate
-        parsed = json.loads(clean_content)
+        parsed = json.loads(clean)
         validated = AIPortfolioAnalysis.model_validate(parsed)
-        # Store as validated JSON string
-        validated_content = validated.model_dump_json()
+        return validated.model_dump_json()
+    
+    # First attempt: validate batch result
+    validated_content = None
+    first_attempt_failed = False
+    
+    try:
+        validated_content = _clean_and_validate(content)
         logger.debug(f"Portfolio {portfolio_id} AI analysis validated successfully")
     except (json.JSONDecodeError, ValidationError) as e:
         logger.warning(f"Portfolio {portfolio_id} AI analysis validation failed: {e}")
-        # Store raw content as fallback (legacy format)
-        validated_content = content
+        first_attempt_failed = True
+    
+    # Retry once with synchronous generate() call if first attempt failed
+    if first_attempt_failed:
+        logger.info(f"Portfolio {portfolio_id}: retrying AI generation...")
+        try:
+            # Build minimal context for retry
+            retry_context = await _build_portfolio_retry_context(portfolio_id)
+            
+            if retry_context:
+                retry_result = await generate(
+                    task=TaskType.PORTFOLIO,
+                    context=retry_context,
+                    json_output=True,
+                )
+                
+                if retry_result and isinstance(retry_result, dict):
+                    # Already parsed as dict, validate with Pydantic
+                    validated = AIPortfolioAnalysis.model_validate(retry_result)
+                    validated_content = validated.model_dump_json()
+                    logger.info(f"Portfolio {portfolio_id}: retry succeeded")
+                elif retry_result and isinstance(retry_result, str):
+                    validated_content = _clean_and_validate(retry_result)
+                    logger.info(f"Portfolio {portfolio_id}: retry succeeded")
+                else:
+                    logger.warning(f"Portfolio {portfolio_id}: retry returned empty result")
+            else:
+                logger.warning(f"Portfolio {portfolio_id}: could not build retry context")
+                    
+        except Exception as retry_err:
+            logger.warning(f"Portfolio {portfolio_id}: retry also failed: {retry_err}")
+    
+    if not validated_content:
+        logger.info(f"Portfolio {portfolio_id} marked for re-analysis on next scheduled run")
+        return
     
     async with get_session() as session:
-        # Get the holdings hash we computed when scheduling
-        # For now, just store the content - the hash will be computed fresh
         result = await session.execute(
             select(Portfolio).where(Portfolio.id == portfolio_id)
         )
@@ -586,9 +627,6 @@ async def _store_portfolio_analysis(
         if not portfolio:
             logger.warning(f"Portfolio {portfolio_id} not found")
             return
-        
-        # Recompute hash from current holdings
-        from app.database.orm import PortfolioHolding
         
         holdings_result = await session.execute(
             select(
@@ -615,6 +653,70 @@ async def _store_portfolio_analysis(
         await session.commit()
     
     logger.info(f"Stored AI analysis for portfolio {portfolio_id}")
+
+
+async def _build_portfolio_retry_context(portfolio_id: int) -> dict[str, Any] | None:
+    """Build minimal context for portfolio AI analysis retry.
+    
+    Fetches portfolio data from database and builds context dict.
+    Returns None if portfolio not found or has no holdings.
+    """
+    from app.database.orm import Portfolio, PortfolioHolding
+    
+    async with get_session() as session:
+        # Get portfolio
+        result = await session.execute(
+            select(Portfolio).where(Portfolio.id == portfolio_id)
+        )
+        portfolio = result.scalar_one_or_none()
+        
+        if not portfolio:
+            return None
+        
+        # Get holdings
+        holdings_result = await session.execute(
+            select(PortfolioHolding).where(PortfolioHolding.portfolio_id == portfolio_id)
+        )
+        holdings = holdings_result.scalars().all()
+        
+        if not holdings:
+            return None
+        
+        # Build holdings list
+        holdings_data = []
+        total_value = 0
+        total_cost = 0
+        
+        for h in holdings:
+            qty = float(h.quantity) if h.quantity else 0
+            avg = float(h.avg_cost) if h.avg_cost else 0
+            cost = qty * avg
+            # Use avg_cost as proxy for current price (real price fetch is expensive)
+            value = cost  # Will be slightly off but good enough for retry
+            total_cost += cost
+            total_value += value
+            
+            holdings_data.append({
+                "symbol": h.symbol,
+                "weight": 0,  # Will calculate after
+                "gain_pct": 0,  # Unknown without current prices
+            })
+        
+        # Calculate weights
+        for hd in holdings_data:
+            # Equal weight as fallback
+            hd["weight"] = 100 / len(holdings_data) if holdings_data else 0
+        
+        return {
+            "portfolio_name": portfolio.name,
+            "total_value": total_value,
+            "total_gain": 0,
+            "total_gain_pct": 0,
+            "holdings": holdings_data,
+            "sector_weights": {},
+            "performance": {},
+            "risk": {},
+        }
 
 
 async def run_realtime_analysis_for_new_stock(

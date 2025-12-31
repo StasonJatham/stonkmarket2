@@ -141,6 +141,88 @@ RATING_SCHEMA = {
     }
 }
 
+# JSON Schema for PORTFOLIO task - enforces structured AI analysis output
+PORTFOLIO_SCHEMA = {
+    "type": "json_schema",
+    "name": "portfolio_analysis",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "properties": {
+            "health": {
+                "type": "string",
+                "enum": ["strong", "good", "fair", "weak"],
+                "description": "Overall portfolio health rating"
+            },
+            "headline": {
+                "type": "string",
+                "description": "One-sentence summary with key metric (max 120 chars)"
+            },
+            "insights": {
+                "type": "array",
+                "description": "2-4 key observations about the portfolio",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "type": {
+                            "type": "string",
+                            "enum": ["positive", "warning", "neutral"],
+                            "description": "Insight category"
+                        },
+                        "text": {
+                            "type": "string",
+                            "description": "Insight text (max 200 chars)"
+                        }
+                    },
+                    "required": ["type", "text"],
+                    "additionalProperties": False
+                }
+            },
+            "actions": {
+                "type": "array",
+                "description": "0-3 specific actionable recommendations",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "priority": {
+                            "type": "integer",
+                            "description": "Priority level: 1=high, 2=medium, 3=low"
+                        },
+                        "action": {
+                            "type": "string",
+                            "description": "Action recommendation (max 200 chars)"
+                        }
+                    },
+                    "required": ["priority", "action"],
+                    "additionalProperties": False
+                }
+            },
+            "risks": {
+                "type": "array",
+                "description": "0-3 risk alerts (empty array if none)",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "severity": {
+                            "type": "string",
+                            "enum": ["high", "medium", "low"],
+                            "description": "Risk severity level"
+                        },
+                        "alert": {
+                            "type": "string",
+                            "description": "Risk alert text (max 200 chars)"
+                        }
+                    },
+                    "required": ["severity", "alert"],
+                    "additionalProperties": False
+                }
+            }
+        },
+        "required": ["health", "headline", "insights", "actions", "risks"],
+        "additionalProperties": False
+    }
+}
+
 # =============================================================================
 # Task Configuration
 # =============================================================================
@@ -823,6 +905,87 @@ def _calculate_cost(input_tokens: int, output_tokens: int, model: str, is_batch:
 # Validation and Repair
 # =============================================================================
 
+# Valid values for PORTFOLIO JSON schema
+_PORTFOLIO_HEALTH_VALUES = {"strong", "good", "fair", "weak"}
+_PORTFOLIO_INSIGHT_TYPES = {"positive", "warning", "neutral"}
+_PORTFOLIO_PRIORITIES = {1, 2, 3}
+_PORTFOLIO_SEVERITIES = {"high", "medium", "low"}
+
+
+def _validate_portfolio_output(output: str | dict) -> tuple[bool, str]:
+    """
+    Validate PORTFOLIO AI output against JSON schema.
+    
+    Required structure:
+    {
+        "health": "strong|good|fair|weak",
+        "headline": "string (max 120 chars)",
+        "insights": [{"type": "positive|warning|neutral", "text": "string"}],
+        "actions": [{"priority": 1|2|3, "action": "string"}],
+        "risks": [{"severity": "high|medium|low", "alert": "string"}]
+    }
+    """
+    # Parse if string
+    if isinstance(output, str):
+        try:
+            output = json.loads(output)
+        except json.JSONDecodeError:
+            return False, "invalid JSON"
+    
+    if not isinstance(output, dict):
+        return False, "output must be a JSON object"
+    
+    # Check required fields
+    if "health" not in output:
+        return False, "missing 'health' field"
+    if output["health"] not in _PORTFOLIO_HEALTH_VALUES:
+        return False, f"invalid health value: {output['health']}"
+    
+    if "headline" not in output:
+        return False, "missing 'headline' field"
+    if not isinstance(output["headline"], str):
+        return False, "headline must be string"
+    if len(output["headline"]) > 150:
+        return False, f"headline too long: {len(output['headline'])} chars, max 150"
+    
+    if "insights" not in output:
+        return False, "missing 'insights' array"
+    if not isinstance(output["insights"], list):
+        return False, "insights must be array"
+    for i, insight in enumerate(output["insights"]):
+        if not isinstance(insight, dict):
+            return False, f"insight[{i}] must be object"
+        if insight.get("type") not in _PORTFOLIO_INSIGHT_TYPES:
+            return False, f"insight[{i}] has invalid type"
+        if not isinstance(insight.get("text"), str):
+            return False, f"insight[{i}] missing text"
+    
+    # Actions and risks are optional but must be valid if present
+    if "actions" in output:
+        if not isinstance(output["actions"], list):
+            return False, "actions must be array"
+        for i, action in enumerate(output["actions"]):
+            if not isinstance(action, dict):
+                return False, f"action[{i}] must be object"
+            if action.get("priority") not in _PORTFOLIO_PRIORITIES:
+                return False, f"action[{i}] has invalid priority"
+            if not isinstance(action.get("action"), str):
+                return False, f"action[{i}] missing action text"
+    
+    if "risks" in output:
+        if not isinstance(output["risks"], list):
+            return False, "risks must be array"
+        for i, risk in enumerate(output["risks"]):
+            if not isinstance(risk, dict):
+                return False, f"risk[{i}] must be object"
+            if risk.get("severity") not in _PORTFOLIO_SEVERITIES:
+                return False, f"risk[{i}] has invalid severity"
+            if not isinstance(risk.get("alert"), str):
+                return False, f"risk[{i}] missing alert text"
+    
+    return True, ""
+
+
 def _count_emojis(text: str) -> int:
     """Count emoji characters in text."""
     emoji_pattern = re.compile(
@@ -858,6 +1021,10 @@ def _validate_output(task: TaskType, output: str | dict) -> tuple[bool, str]:
         if config.reasoning_max_chars > 0 and len(reasoning) > config.reasoning_max_chars:
             return False, f"reasoning too long: {len(reasoning)} chars, max is {config.reasoning_max_chars}"
         return True, ""
+
+    # For PORTFOLIO, validate JSON schema
+    if task == TaskType.PORTFOLIO:
+        return _validate_portfolio_output(output)
 
     # For text outputs (BIO, SUMMARY)
     if isinstance(output, str):
@@ -917,6 +1084,26 @@ Keep the same rating ({output.get('rating')}) and confidence ({output.get('confi
 Cite at least 2 facts. Output only the reasoning text, no JSON.
 
 Original ({len(output.get('reasoning', ''))} chars): {output.get('reasoning', '')}"""
+
+    elif task == TaskType.PORTFOLIO:
+        # Repair invalid portfolio JSON
+        repair_prompt = f"""Fix this portfolio analysis JSON to match the required schema.
+
+REQUIRED SCHEMA:
+{{
+  "health": "strong|good|fair|weak",
+  "headline": "max 120 chars",
+  "insights": [{{"type": "positive|warning|neutral", "text": "string"}}],
+  "actions": [{{"priority": 1|2|3, "action": "string"}}],
+  "risks": [{{"severity": "high|medium|low", "alert": "string"}}]
+}}
+
+ERROR: {error}
+
+ORIGINAL OUTPUT:
+{json.dumps(output) if isinstance(output, dict) else output}
+
+Return ONLY the corrected JSON, no explanation."""
     else:
         return None
 
@@ -925,7 +1112,7 @@ Original ({len(output.get('reasoning', ''))} chars): {output.get('reasoning', ''
             "model": model,
             "instructions": "You are a precise editor. Follow instructions exactly.",
             "input": repair_prompt,
-            "max_output_tokens": 300,
+            "max_output_tokens": 500 if task == TaskType.PORTFOLIO else 300,
             "store": False,
         }
 
@@ -943,6 +1130,14 @@ Original ({len(output.get('reasoning', ''))} chars): {output.get('reasoning', ''
         if task == TaskType.RATING and isinstance(output, dict):
             output["reasoning"] = clean_ai_text(repaired)
             return output
+        
+        # For PORTFOLIO, parse the repaired JSON
+        if task == TaskType.PORTFOLIO:
+            try:
+                return json.loads(repaired)
+            except json.JSONDecodeError:
+                logger.warning(f"Repair returned invalid JSON: {repaired[:100]}")
+                return None
 
         return clean_ai_text(repaired)
 
@@ -1003,9 +1198,9 @@ async def generate(
         config = TASK_CONFIGS.get(task)
         max_tokens = config.default_max_tokens if config else 300
 
-    # For RATING task, we use structured outputs (no need for "respond with JSON" hint)
+    # For RATING and PORTFOLIO tasks, we use structured outputs (no need for "respond with JSON" hint)
     # For other json_output tasks, add hint for json_object format
-    use_structured_output = task == TaskType.RATING and json_output
+    use_structured_output = task in (TaskType.RATING, TaskType.PORTFOLIO) and json_output
     if json_output and not use_structured_output:
         prompt += "\n\nRespond with valid JSON."
 
@@ -1041,10 +1236,13 @@ async def generate(
     # verbosity: "low" reduces token usage for short outputs
     text_config: dict[str, Any] = {"verbosity": "low"}
 
-    # Use Structured Outputs (JSON Schema) for RATING - guarantees exact schema
+    # Use Structured Outputs (JSON Schema) for RATING/PORTFOLIO - guarantees exact schema
     # Use json_object for other JSON tasks - just ensures valid JSON
     if use_structured_output:
-        text_config["format"] = RATING_SCHEMA
+        if task == TaskType.PORTFOLIO:
+            text_config["format"] = PORTFOLIO_SCHEMA
+        else:
+            text_config["format"] = RATING_SCHEMA
     elif json_output:
         text_config["format"] = {"type": "json_object"}
 
@@ -1311,8 +1509,8 @@ async def submit_batch(
 
     model = model or DEFAULT_MODEL
     instructions = INSTRUCTIONS.get(task, "")
-    json_output = task == TaskType.RATING
-    use_structured_output = task == TaskType.RATING
+    json_output = task in (TaskType.RATING, TaskType.PORTFOLIO)
+    use_structured_output = task in (TaskType.RATING, TaskType.PORTFOLIO)
 
     # Generate unique batch run ID to avoid custom_id collisions
     batch_run_id = uuid.uuid4().hex[:8]
@@ -1367,9 +1565,12 @@ async def submit_batch(
         if _is_gpt5(model):
             body["reasoning"] = {"effort": "low"}
 
-        # Use Structured Outputs for RATING
+        # Use Structured Outputs for RATING/PORTFOLIO - guarantees exact schema
         if use_structured_output:
-            body["text"] = {"format": RATING_SCHEMA}
+            if task == TaskType.PORTFOLIO:
+                body["text"] = {"format": PORTFOLIO_SCHEMA}
+            else:
+                body["text"] = {"format": RATING_SCHEMA}
         elif json_output:
             body["text"] = {"format": {"type": "json_object"}}
 

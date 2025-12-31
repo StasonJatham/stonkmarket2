@@ -49,6 +49,9 @@ if TYPE_CHECKING:
 router = APIRouter(prefix="/portfolios", tags=["Quant Engine"])
 logger = get_logger("routes.quant_engine")
 
+# Short-lived cache for price data (5 min) to avoid re-fetching across related calls
+_price_cache = Cache(prefix="stonkmarket:v1:quant_prices")
+
 
 # =============================================================================
 # Helper Functions
@@ -68,25 +71,48 @@ async def _fetch_prices_for_symbols(
     lookback_days: int = 1260,  # 5 years
 ) -> pd.DataFrame:
     """
-    Fetch price history for multiple symbols.
+    Fetch price history for multiple symbols in parallel.
 
     Returns a DataFrame with dates as index and symbols as columns.
     Falls back to yfinance if data not in database.
+    Uses short-lived cache to avoid re-fetching across related calls.
     """
     from app.services.data_providers.yfinance_service import get_yfinance_service
+    import hashlib
     
     end_date = date.today()
     start_date = end_date - timedelta(days=lookback_days)
-
-    price_dfs = {}
-    missing_symbols = []
     
-    for symbol in symbols:
+    # Check cache first - key based on symbols + date range
+    symbols_sorted = sorted(symbols)
+    cache_key = f"{hashlib.md5(','.join(symbols_sorted).encode()).hexdigest()}:{lookback_days}:{end_date}"
+    cached = await _price_cache.get(cache_key)
+    if cached is not None:
+        logger.debug(f"Price cache hit for {len(symbols)} symbols")
+        # Reconstruct DataFrame from cached data
+        df = pd.DataFrame(
+            data=cached["data"],
+            index=pd.to_datetime(cached["index"]),
+            columns=cached["columns"],
+        )
+        return df
+
+    # Fetch all symbols from DB in parallel
+    async def fetch_symbol(symbol: str) -> tuple[str, pd.Series | None]:
         df = await price_history_repo.get_prices_as_dataframe(
             symbol, start_date, end_date
         )
         if df is not None and "Close" in df.columns and len(df) >= 20:
-            price_dfs[symbol] = df["Close"]
+            return symbol, df["Close"]
+        return symbol, None
+    
+    results = await asyncio.gather(*[fetch_symbol(s) for s in symbols])
+    
+    price_dfs = {}
+    missing_symbols = []
+    for symbol, series in results:
+        if series is not None:
+            price_dfs[symbol] = series
         else:
             missing_symbols.append(symbol)
     
@@ -107,6 +133,15 @@ async def _fetch_prices_for_symbols(
     prices = pd.DataFrame(price_dfs)
     prices = prices.dropna(how="all")
     prices = prices.ffill()
+    
+    # Cache for 5 minutes - covers typical page load scenario
+    # Convert index to string for JSON serialization
+    cache_data = {
+        "index": [str(d) for d in prices.index.tolist()],
+        "columns": prices.columns.tolist(),
+        "data": prices.values.tolist(),
+    }
+    await _price_cache.set(cache_key, cache_data, ttl=300)
 
     return prices
 
