@@ -157,12 +157,6 @@ const CHART_COLORS = [
   'var(--chart-8)',
 ];
 
-const RISK_SEVERITY_STYLES: Record<string, string> = {
-  high: 'bg-red-500/10 text-red-600',
-  medium: 'bg-amber-500/10 text-amber-600',
-  low: 'bg-yellow-500/10 text-yellow-600',
-};
-
 /** Format ISO date string to localized date/time */
 function formatDate(dateStr: string): string {
   return new Date(dateStr).toLocaleString('en-US', {
@@ -212,7 +206,7 @@ export function PortfolioPage() {
   const [toolAnalyticsJob, setToolAnalyticsJob] = useState<PortfolioAnalyticsJob | null>(null);
   const [isToolAnalyticsLoading, setIsToolAnalyticsLoading] = useState(false);
   const [allocationAmount, setAllocationAmount] = useState('1000');
-  const [allocationMethod, setAllocationMethod] = useState('risk_parity');
+  const [allocationMethod, setAllocationMethod] = useState('auto');  // auto = cross-validate and select best
   const [allocationResult, setAllocationResult] = useState<PortfolioAllocationRecommendation | null>(null);
   const [allocationError, setAllocationError] = useState<string | null>(null);
   const [isAllocationLoading, setIsAllocationLoading] = useState(false);
@@ -558,24 +552,14 @@ export function PortfolioPage() {
     };
   }, [toolAnalytics]);
 
-  const skfolioWeights = useMemo(() => {
-    const skfolio = toolAnalytics?.results.find((result) => result.tool === 'skfolio');
-    const weights = skfolio?.data?.weights as Record<string, number> | undefined;
-    if (!weights) return [];
-    return Object.entries(weights)
-      .map(([symbol, value]) => ({ symbol, value: value * 100 }))
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 8);
-  }, [toolAnalytics]);
-
   const allocationWeightData = useMemo(() => {
     if (!allocationResult) return [];
     const entries = Object.entries(allocationResult.target_weights || {});
     return entries
       .map(([symbol, target]) => ({
         symbol,
-        target: target * 100,
-        current: (allocationResult.current_weights?.[symbol] ?? 0) * 100,
+        target,
+        current: allocationResult.current_weights?.[symbol] ?? 0,
       }))
       .sort((a, b) => b.target - a.target)
       .slice(0, 8);
@@ -1316,12 +1300,11 @@ export function PortfolioPage() {
                     </TooltipTrigger>
                     <TooltipContent side="top" className="max-w-[280px]">
                       <ul className="text-xs space-y-1.5">
+                        <li><strong>Auto:</strong> Cross-validates methods, picks best</li>
                         <li><strong>Risk Parity:</strong> Equal risk from each position</li>
-                        <li><strong>Min Variance:</strong> Lowest overall volatility</li>
-                        <li><strong>Max Diversification:</strong> Spread across uncorrelated assets</li>
                         <li><strong>Min CVaR:</strong> Minimize worst-case losses</li>
-                        <li><strong>HRP:</strong> Machine learning-based clustering</li>
-                        <li><strong>Equal Weight:</strong> Same $ in each position</li>
+                        <li><strong>Max Diversification:</strong> Spread across uncorrelated assets</li>
+                        <li><strong>Equal Weight:</strong> Same % in each position</li>
                       </ul>
                     </TooltipContent>
                   </Tooltip>
@@ -1331,11 +1314,10 @@ export function PortfolioPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="auto">Auto (Best Method)</SelectItem>
                     <SelectItem value="risk_parity">Risk Parity</SelectItem>
-                    <SelectItem value="min_variance">Min Variance</SelectItem>
+                    <SelectItem value="min_cvar">Min CVaR</SelectItem>
                     <SelectItem value="max_diversification">Max Diversification</SelectItem>
-                    <SelectItem value="cvar">Min CVaR</SelectItem>
-                    <SelectItem value="hrp">Hierarchical Risk Parity</SelectItem>
                     <SelectItem value="equal_weight">Equal Weight</SelectItem>
                   </SelectContent>
                 </Select>
@@ -1355,6 +1337,9 @@ export function PortfolioPage() {
                   <p className="font-medium">{allocationResult.explanation}</p>
                   <p className="text-xs text-muted-foreground mt-1">
                     {allocationResult.risk_improvement} • Confidence: {allocationResult.confidence}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Portfolio: {formatCurrency(allocationResult.portfolio_value_eur)} + {formatCurrency(allocationResult.inflow_eur)} new = {formatCurrency(allocationResult.portfolio_value_eur + allocationResult.inflow_eur)} total
                   </p>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-3 text-sm">
@@ -1442,59 +1427,8 @@ export function PortfolioPage() {
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">
-                Generate actions to get a buy/sell plan based on your risk profile.
+                Enter your investment amount and choose a strategy to get optimized trade recommendations.
               </p>
-            )}
-            {skfolioWeights.length > 0 && (
-              <div className="rounded-lg border bg-muted/30 p-3">
-                <div className="flex items-center justify-between">
-                  <p className="text-sm font-semibold">Skfolio Suggested Weights</p>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => selectedId && loadToolAnalytics(selectedId, ['skfolio'], true)}
-                    disabled={isToolAnalyticsLoading}
-                  >
-                    Refresh
-                  </Button>
-                </div>
-                <ChartContainer
-                  config={{ value: { label: 'Weight', color: 'var(--chart-2)' } }}
-                  className="h-[160px] w-full sm:h-[200px] mt-3"
-                >
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={skfolioWeights}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-                      <XAxis dataKey="symbol" tick={{ fontSize: 10 }} interval={0} angle={-45} textAnchor="end" height={50} />
-                      <YAxis tickFormatter={(value) => `${value.toFixed(0)}%`} width={40} />
-                      <ChartTooltip
-                        content={
-                          <ChartTooltipContent
-                            formatter={(value, name) => [`${Number(value).toFixed(1)}%`, name]}
-                          />
-                        }
-                      />
-                      <Bar dataKey="value" fill="var(--chart-2)" radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </ChartContainer>
-              </div>
-            )}
-            {toolAnalyticsJob && toolAnalyticsJob.status !== 'completed' && (
-              <div className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">
-                Advanced analytics running ({toolAnalyticsJob.status}). Results will appear automatically.
-              </div>
-            )}
-            {skfolioWeights.length === 0 &&
-              toolAnalyticsJob?.status !== 'pending' &&
-              toolAnalyticsJob?.status !== 'running' && (
-              <Button
-                variant="outline"
-                onClick={() => selectedId && loadToolAnalytics(selectedId, ['skfolio'], true)}
-                disabled={isToolAnalyticsLoading}
-              >
-                Run Skfolio Optimization
-              </Button>
             )}
           </CardContent>
         </Card>

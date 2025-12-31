@@ -38,7 +38,6 @@ HEAVY_TOOLS = {
     "mlfinlab",
     "prophet",
     "arch",
-    "skfolio",
     "gluonts",
     "pyflux",
     "lppls",
@@ -54,7 +53,7 @@ TOOL_TTLS = {
     "prophet": 6 * 3600,
     "fbprophet": 6 * 3600,
     "arch": 3 * 3600,
-    "skfolio": 6 * 3600,
+    "skfolio": 1800,  # 30 min cache for skfolio (runs synchronously now)
     "gluonts": 12 * 3600,
     "pyflux": 12 * 3600,
     "lppls": 24 * 3600,
@@ -326,9 +325,18 @@ def run_pyfolio(context: PortfolioContext) -> dict[str, Any]:
         return _tool_result(tool, "partial", data, ["pyfolio not available, used fallback metrics"])
 
 
-def run_skfolio(context: PortfolioContext) -> dict[str, Any]:
+def run_skfolio(
+    context: PortfolioContext,
+    method: str | None = None,
+    inflow_amount: float | None = None,
+) -> dict[str, Any]:
     """
     Portfolio optimization using skfolio with proper pre-selection and cross-validation.
+    
+    Args:
+        context: Portfolio context with holdings and price data
+        method: Optional optimization method override (min_cvar, risk_parity, max_diversification, equal_weight)
+        inflow_amount: Optional investment amount - if provided, calculates EUR-based trades
     
     Features:
     - Pre-selection: SelectComplete + DropCorrelated to clean universe
@@ -370,20 +378,54 @@ def run_skfolio(context: PortfolioContext) -> dict[str, Any]:
         set_config(transform_output='pandas')
         
         warnings: list[str] = []
+        dropped_assets: list[str] = []
         
-        # --- Step 1: Pre-selection to clean universe ---
-        pre_selection_info = _run_pre_selection(returns_df)
+        # --- Step 0: Clean NaN values from returns data ---
+        # skfolio requires complete data with no missing values
+        original_assets = set(returns_df.columns.tolist())
+        
+        # First, drop columns (stocks) with >20% missing data
+        nan_threshold = 0.2
+        nan_pct = returns_df.isna().mean()
+        good_columns = nan_pct[nan_pct <= nan_threshold].index.tolist()
+        bad_columns = nan_pct[nan_pct > nan_threshold].index.tolist()
+        
+        if bad_columns:
+            warnings.append(f"Dropped {len(bad_columns)} assets with >20% missing data: {', '.join(bad_columns[:3])}")
+            dropped_assets.extend(bad_columns)
+        
+        clean_returns = returns_df[good_columns].copy()
+        
+        # Then, drop rows with any remaining NaN (forward-fill first to minimize loss)
+        clean_returns = clean_returns.ffill().bfill()
+        
+        # If still has NaN (edge case), drop those rows
+        if clean_returns.isna().any().any():
+            before_len = len(clean_returns)
+            clean_returns = clean_returns.dropna()
+            if len(clean_returns) < before_len:
+                warnings.append(f"Dropped {before_len - len(clean_returns)} rows with missing data")
+        
+        # Validate we still have enough data
+        if len(clean_returns) < 60:
+            return _tool_result(tool, "error", {}, [f"After cleaning NaN, only {len(clean_returns)} rows remain (need 60)"])
+        if len(clean_returns.columns) < 2:
+            return _tool_result(tool, "error", {}, ["After cleaning, fewer than 2 assets remain"])
+        
+        # --- Step 1: Pre-selection to remove highly correlated assets ---
+        pre_selection_info = _run_pre_selection(clean_returns)
         clean_returns = pre_selection_info["clean_returns"]
-        dropped_assets = pre_selection_info["dropped"]
+        pre_dropped = pre_selection_info["dropped"]
+        dropped_assets.extend(pre_dropped)
         
         if len(clean_returns.columns) < 2:
-            # If too few assets after pre-selection, skip it
-            clean_returns = returns_df
-            dropped_assets = []
-            warnings.append("Pre-selection dropped too many assets, using full universe")
+            # If too few assets after pre-selection, use pre-cleaned data
+            clean_returns = returns_df[good_columns].ffill().bfill().dropna()
+            dropped_assets = list(set(original_assets) - set(clean_returns.columns.tolist()))
+            warnings.append("Pre-selection dropped too many assets, using cleaned universe")
         
-        if dropped_assets:
-            warnings.append(f"Pre-selection removed {len(dropped_assets)} highly correlated assets: {', '.join(dropped_assets[:5])}")
+        if pre_dropped:
+            warnings.append(f"Pre-selection removed {len(pre_dropped)} correlated assets: {', '.join(pre_dropped[:5])}")
         
         # --- Step 2: Define optimization models ---
         models = {
@@ -404,43 +446,66 @@ def run_skfolio(context: PortfolioContext) -> dict[str, Any]:
             ),
         }
         
-        # --- Step 3: Walk-forward cross-validation ---
-        # Use ~80% train, ~20% test rolling windows
-        n_days = len(clean_returns)
-        train_size = max(60, int(n_days * 0.6))  # At least 60 days training
-        test_size = max(20, int(n_days * 0.2))   # At least 20 days testing
+        # Map common method names to internal names
+        method_aliases = {
+            "cvar": "min_cvar",
+            "min_variance": "min_cvar",  # CVaR is similar risk measure
+            "hrp": "risk_parity",        # HRP approximated by risk budgeting
+            "equal_weight": None,        # Special case: equal weight
+        }
         
-        cv = WalkForward(train_size=train_size, test_size=test_size)
+        # If method is specified and valid, use it directly (skip CV)
+        requested_method = method.lower() if method else None
+        if requested_method:
+            requested_method = method_aliases.get(requested_method, requested_method)
+        
+        use_equal_weight = requested_method == "equal_weight" or method == "equal_weight"
+        skip_cv = requested_method in models or use_equal_weight
         
         cv_results: dict[str, dict[str, Any]] = {}
-        best_model_name = "min_cvar"
+        best_model_name = requested_method if requested_method in models else "min_cvar"
         best_sharpe = float("-inf")
         
-        for name, model in models.items():
-            try:
-                pred = cross_val_predict(model, clean_returns, cv=cv)
-                sharpe = float(pred.sharpe_ratio) if hasattr(pred, 'sharpe_ratio') else 0.0
-                returns_arr = np.asarray(pred)
-                volatility = float(np.std(returns_arr) * np.sqrt(252)) if len(returns_arr) > 0 else 0.0
-                cvar = float(np.percentile(returns_arr, 5)) if len(returns_arr) > 0 else 0.0
-                
-                cv_results[name] = {
-                    "sharpe": sharpe,
-                    "volatility": volatility,
-                    "cvar_95": cvar,
-                }
-                
-                if sharpe > best_sharpe:
-                    best_sharpe = sharpe
-                    best_model_name = name
-            except Exception as e:
-                logger.warning(f"CV failed for {name}: {e}")
-                cv_results[name] = {"error": str(e)}
+        # --- Step 3: Walk-forward cross-validation (skip if method specified) ---
+        if not skip_cv:
+            # Use ~80% train, ~20% test rolling windows
+            n_days = len(clean_returns)
+            train_size = max(60, int(n_days * 0.6))  # At least 60 days training
+            test_size = max(20, int(n_days * 0.2))   # At least 20 days testing
+            
+            cv = WalkForward(train_size=train_size, test_size=test_size)
+            
+            for name, model in models.items():
+                try:
+                    pred = cross_val_predict(model, clean_returns, cv=cv)
+                    sharpe = float(pred.sharpe_ratio) if hasattr(pred, 'sharpe_ratio') else 0.0
+                    returns_arr = np.asarray(pred)
+                    volatility = float(np.std(returns_arr) * np.sqrt(252)) if len(returns_arr) > 0 else 0.0
+                    cvar = float(np.percentile(returns_arr, 5)) if len(returns_arr) > 0 else 0.0
+                    
+                    cv_results[name] = {
+                        "sharpe": sharpe,
+                        "volatility": volatility,
+                        "cvar_95": cvar,
+                    }
+                    
+                    if sharpe > best_sharpe:
+                        best_sharpe = sharpe
+                        best_model_name = name
+                except Exception as e:
+                    logger.warning(f"CV failed for {name}: {e}")
+                    cv_results[name] = {"error": str(e)}
         
         # --- Step 4: Fit best model on full data to get final weights ---
-        best_model = models[best_model_name]
-        best_model.fit(clean_returns)
-        weights = dict(zip(clean_returns.columns.tolist(), best_model.weights_.tolist()))
+        if use_equal_weight:
+            # Equal weight: simple 1/N allocation
+            n_assets = len(clean_returns.columns)
+            weights = {s: 1.0 / n_assets for s in clean_returns.columns}
+            best_model_name = "equal_weight"
+        else:
+            best_model = models[best_model_name]
+            best_model.fit(clean_returns)
+            weights = dict(zip(clean_returns.columns.tolist(), best_model.weights_.tolist()))
         
         # Add zero weights for dropped assets
         for asset in dropped_assets:
@@ -453,22 +518,54 @@ def run_skfolio(context: PortfolioContext) -> dict[str, Any]:
         
         portfolio_return = float(mean_returns.values.dot(weight_arr) * 252)
         portfolio_vol = float(np.sqrt(weight_arr.T.dot(cov.values).dot(weight_arr)) * np.sqrt(252))
-        sharpe = float(portfolio_return / portfolio_vol) if portfolio_vol > 0 else 0.0
+        opt_sharpe = float(portfolio_return / portfolio_vol) if portfolio_vol > 0 else 0.0
         
         # --- Step 6: Generate rebalance trades ---
         current_weights = _get_current_weights(context.holdings, context.prices_by_symbol)
-        trades = _compute_rebalance_trades(current_weights, weights)
+        portfolio_value = _get_portfolio_value(context.holdings, context.prices_by_symbol)
+        
+        # Compute trades with EUR amounts if inflow specified
+        trades = _compute_trades_with_amounts(
+            current_weights=current_weights,
+            target_weights=weights,
+            portfolio_value=portfolio_value,
+            inflow_amount=inflow_amount,
+        )
+        
+        # Current portfolio risk
+        current_arr = np.array([current_weights.get(s, 0) for s in clean_returns.columns])
+        if current_arr.sum() > 0:
+            current_arr = current_arr / current_arr.sum()
+        else:
+            current_arr = np.ones(len(clean_returns.columns)) / len(clean_returns.columns)
+        current_vol = float(np.sqrt(current_arr.T.dot(cov.values).dot(current_arr)) * np.sqrt(252))
+        
+        # Risk change summary
+        vol_change_pct = ((portfolio_vol - current_vol) / current_vol * 100) if current_vol > 0 else 0.0
+        if vol_change_pct < -5:
+            risk_summary = f"Risk reduced by {abs(vol_change_pct):.0f}%"
+        elif vol_change_pct > 5:
+            risk_summary = f"Risk increased by {vol_change_pct:.0f}%"
+        else:
+            risk_summary = "Risk approximately unchanged"
         
         data = {
             "weights": weights,
             "expected_return": portfolio_return,
             "expected_volatility": portfolio_vol,
-            "sharpe": sharpe,
+            "sharpe": opt_sharpe,
             "best_method": best_model_name,
             "cv_results": cv_results,
             "dropped_assets": dropped_assets,
             "trades": trades,
             "n_assets": len([w for w in weights.values() if w > 0.001]),
+            # Additional fields for allocation UI compatibility
+            "current_weights": current_weights,
+            "portfolio_value": portfolio_value,
+            "inflow_amount": inflow_amount,
+            "current_volatility": current_vol,
+            "risk_improvement": risk_summary,
+            "confidence": "HIGH" if opt_sharpe > 0.5 else "MEDIUM" if opt_sharpe > 0 else "LOW",
         }
         
         return _tool_result(tool, "ok", data, warnings if warnings else None)
@@ -553,6 +650,73 @@ def _compute_rebalance_trades(current_weights: dict[str, float], target_weights:
     
     # Sort by absolute delta descending
     trades.sort(key=lambda t: abs(t["delta_weight"]), reverse=True)
+    return trades
+
+
+def _get_portfolio_value(holdings: list[dict], prices_by_symbol: dict[str, pd.DataFrame]) -> float:
+    """Calculate total portfolio value from holdings and current prices."""
+    total = 0.0
+    for h in holdings:
+        symbol = h["symbol"]
+        qty = float(h.get("quantity") or 0)
+        df = prices_by_symbol.get(symbol)
+        if df is not None and not df.empty:
+            price = float(df["Close"].iloc[-1])
+            total += qty * price
+    return total
+
+
+def _compute_trades_with_amounts(
+    current_weights: dict[str, float],
+    target_weights: dict[str, float],
+    portfolio_value: float,
+    inflow_amount: float | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Compute trades needed to rebalance from current to target weights.
+    
+    If inflow_amount is provided, calculates trade amounts in currency.
+    """
+    trades = []
+    all_symbols = set(current_weights.keys()) | set(target_weights.keys())
+    
+    # Total value after inflow
+    total_value = portfolio_value + (inflow_amount or 0)
+    
+    for symbol in all_symbols:
+        current_pct = current_weights.get(symbol, 0.0)
+        target_pct = target_weights.get(symbol, 0.0)
+        delta_pct = target_pct - current_pct
+        
+        # Skip tiny changes
+        if abs(delta_pct) <= 0.005:
+            continue
+        
+        # Calculate amounts
+        current_value = current_pct * portfolio_value
+        target_value = target_pct * total_value
+        trade_value = target_value - current_value
+        
+        # Determine action
+        if trade_value > 0:
+            action = "BUY"
+            reason = "New position for diversification" if current_pct == 0 else "Increase position to improve risk balance"
+        else:
+            action = "SELL"
+            reason = "Close position" if target_pct == 0 else "Reduce overweight position"
+        
+        trades.append({
+            "symbol": symbol,
+            "action": action,
+            "amount_eur": round(abs(trade_value), 2),
+            "current_weight_pct": round(current_pct * 100, 2),
+            "target_weight_pct": round(target_pct * 100, 2),
+            "delta_weight_pct": round(delta_pct * 100, 2),
+            "reason": reason,
+        })
+    
+    # Sort by absolute trade amount descending
+    trades.sort(key=lambda t: t["amount_eur"], reverse=True)
     return trades
 
 

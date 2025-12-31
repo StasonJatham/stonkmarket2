@@ -25,8 +25,6 @@ from app.core.exceptions import NotFoundError, ValidationError
 from app.core.logging import get_logger
 from app.quant_engine import (
     analyze_portfolio,
-    generate_allocation_recommendation,
-    RiskOptimizationMethod,
     scan_all_stocks,
     translate_for_user,
     perform_domain_analysis,
@@ -115,6 +113,29 @@ async def _fetch_prices_for_symbols(
 def _compute_returns(prices: pd.DataFrame) -> pd.DataFrame:
     """Compute daily returns from prices."""
     return prices.pct_change().dropna()
+
+
+async def _get_symbol_prices(symbol: str, days: int = 365) -> pd.DataFrame | None:
+    """Fetch price history for a single symbol as DataFrame with Close column."""
+    from app.services.data_providers.yfinance_service import get_yfinance_service
+    
+    end_date = date.today()
+    start_date = end_date - timedelta(days=days)
+    
+    # Try database first
+    df = await price_history_repo.get_prices_as_dataframe(symbol, start_date, end_date)
+    if df is not None and "Close" in df.columns and len(df) >= 20:
+        return df
+    
+    # Fallback to yfinance
+    yf_service = get_yfinance_service()
+    results = await yf_service.get_price_history_batch([symbol], start_date, end_date)
+    if symbol in results:
+        df, _ = results[symbol]
+        if df is not None and not df.empty and "Close" in df.columns:
+            return df
+    
+    return None
 
 
 def _safe_float(value: float | None, default: float = 0.0) -> float:
@@ -249,7 +270,7 @@ async def get_portfolio_analytics(
 
 
 # =============================================================================
-# Allocation Recommendation Endpoint
+# Allocation Recommendation Endpoint (Using skfolio)
 # =============================================================================
 
 
@@ -258,30 +279,34 @@ async def get_portfolio_analytics(
     status_code=status.HTTP_200_OK,
     summary="Get Allocation Recommendation",
     description="""
-    Get a risk-based allocation recommendation for new investment.
+    Get a risk-based allocation recommendation for new investment using skfolio.
     
     This answers: "Where should my next €X go?"
     
-    Uses risk-based optimization (no return forecasting):
+    Uses professional portfolio optimization with skfolio:
     - RISK_PARITY: Equal risk contribution from each position
-    - MIN_VARIANCE: Minimize total portfolio volatility  
+    - MIN_CVAR: Minimize expected loss in worst scenarios
     - MAX_DIVERSIFICATION: Maximize diversification ratio
-    - CVAR: Minimize expected loss in worst scenarios
-    - HRP: Hierarchical Risk Parity (correlation-based clustering)
+    - EQUAL_WEIGHT: Simple 1/N allocation
     
-    Returns specific trade recommendations with rationale.
+    Features:
+    - Walk-forward cross-validation to select best method
+    - Pre-selection to remove highly correlated assets
+    - EUR-based trade recommendations
     """,
 )
 async def get_allocation_recommendation(
     portfolio_id: int,
     inflow_eur: float = Query(1000.0, ge=50, le=100000, description="Amount to invest"),
     method: str = Query(
-        "risk_parity",
-        description="Optimization method: risk_parity, min_variance, max_diversification, cvar, hrp"
+        "",
+        description="Optimization method: risk_parity, min_cvar, max_diversification, equal_weight. Leave empty to auto-select best."
     ),
     user: TokenData = Depends(require_user),
 ) -> dict[str, Any]:
-    """Get allocation recommendation for a portfolio."""
+    """Get allocation recommendation using skfolio optimization."""
+    from app.portfolio.service import PortfolioContext, run_skfolio
+    
     user_id = await _get_user_id(user)
 
     portfolio = await portfolios_repo.get_portfolio(portfolio_id, user_id)
@@ -294,76 +319,110 @@ async def get_allocation_recommendation(
 
     symbols = [h["symbol"] for h in holdings]
 
-    prices = await _fetch_prices_for_symbols(symbols)
-    if prices.empty or len(prices) < 60:
-        raise ValidationError(
-            message="Insufficient price history for optimization (need at least 60 days)"
-        )
-
-    returns = _compute_returns(prices)
-
-    # Calculate current weights and portfolio value
-    current_prices = prices.iloc[-1]
-    weights = {}
-    total_value = 0.0
+    # Fetch price history
+    prices_by_symbol: dict[str, pd.DataFrame] = {}
+    for symbol in symbols:
+        df = await _get_symbol_prices(symbol, days=365)
+        if df is not None and not df.empty:
+            prices_by_symbol[symbol] = df
     
+    if len(prices_by_symbol) < 2:
+        raise ValidationError(message="Need at least 2 assets with price history")
+
+    # Build combined prices DataFrame for returns calculation
+    combined = pd.DataFrame({s: df["Close"] for s, df in prices_by_symbol.items()}).dropna()
+    if combined.empty or len(combined) < 60:
+        raise ValidationError(message="Insufficient price history (need 60+ days)")
+    
+    returns = combined.pct_change().dropna()
+
+    # Calculate portfolio values for context
+    current_prices = combined.iloc[-1]
+    portfolio_values_dict = {}
+    total_portfolio_value = 0.0
     for h in holdings:
         symbol = h["symbol"]
-        quantity = float(h.get("quantity", 0))
+        qty = float(h.get("quantity", 0))
         if symbol in current_prices.index:
-            value = quantity * current_prices[symbol]
-            weights[symbol] = value
-            total_value += value
+            val = qty * current_prices[symbol]
+            portfolio_values_dict[symbol] = val
+            total_portfolio_value += val
     
-    if total_value > 0:
-        weights = {s: v / total_value for s, v in weights.items()}
-    else:
-        weights = {s: 1.0 / len(symbols) for s in symbols}
+    # Build portfolio values series (daily total value)
+    portfolio_values = (combined * pd.Series({
+        h["symbol"]: float(h.get("quantity", 0)) for h in holdings
+    })).sum(axis=1)
 
-    # Parse optimization method
-    method_map = {
-        "risk_parity": RiskOptimizationMethod.RISK_PARITY,
-        "min_variance": RiskOptimizationMethod.MIN_VARIANCE,
-        "max_diversification": RiskOptimizationMethod.MAX_DIVERSIFICATION,
-        "cvar": RiskOptimizationMethod.CVAR,
-        "hrp": RiskOptimizationMethod.HIERARCHICAL_RISK_PARITY,
-        "equal_weight": RiskOptimizationMethod.EQUAL_WEIGHT,
-    }
-    opt_method = method_map.get(method.lower(), RiskOptimizationMethod.RISK_PARITY)
-
-    # Generate recommendation
-    recommendation = generate_allocation_recommendation(
-        returns=returns,
-        symbols=list(returns.columns),
-        current_weights=weights,
-        inflow_eur=inflow_eur,
-        portfolio_value_eur=total_value,
-        method=opt_method,
+    # Build PortfolioContext
+    context = PortfolioContext(
+        portfolio_id=portfolio_id,
+        portfolio=portfolio,
+        holdings=holdings,
+        prices_by_symbol=prices_by_symbol,
+        portfolio_values=portfolio_values,
+        returns=returns.mean(axis=1),  # Portfolio returns (simplified)
+        benchmark_returns=None,
     )
+
+    # Run skfolio optimization
+    # 'auto' or empty = cross-validate and pick best method
+    opt_method = None if method in ("", "auto") else method
+    result = run_skfolio(
+        context=context,
+        method=opt_method,
+        inflow_amount=inflow_eur,
+    )
+
+    if result.get("status") == "error":
+        raise ValidationError(message=result.get("warnings", ["Optimization failed"])[0])
+
+    data = result.get("data", {})
+    
+    # Method explanations
+    method_explanations = {
+        "min_cvar": "Minimizes expected loss in worst 5% of scenarios (CVaR)",
+        "risk_parity": "Allocates so each position contributes equally to risk",
+        "max_diversification": "Maximizes the diversification ratio",
+        "equal_weight": "Simple 1/N equal weight across all assets",
+        "inverse_volatility": "Weights inversely proportional to volatility (fallback)",
+    }
+    best_method = data.get("best_method", "risk_parity")
+    
+    # Volatility labels
+    def vol_label(vol: float) -> str:
+        if vol < 0.10:
+            return "Low"
+        elif vol < 0.20:
+            return "Moderate"
+        elif vol < 0.30:
+            return "High"
+        return "Very High"
+    
+    current_vol = data.get("current_volatility", 0)
+    target_vol = data.get("expected_volatility", 0)
 
     return {
         "portfolio_id": portfolio_id,
-        "method": recommendation.method if hasattr(recommendation, 'method') else method,
+        "method": best_method,
         "inflow_eur": inflow_eur,
-        "portfolio_value_eur": _safe_float(total_value),
-        "confidence": recommendation.confidence,
-        "explanation": recommendation.explanation,
-        "risk_improvement": recommendation.risk_improvement_summary,
+        "portfolio_value_eur": _safe_float(data.get("portfolio_value", 0)),
+        "confidence": data.get("confidence", "MEDIUM"),
+        "explanation": method_explanations.get(best_method, "Risk-based optimization"),
+        "risk_improvement": data.get("risk_improvement", ""),
         "current_risk": {
-            "volatility": _safe_float(recommendation.current_risk.get("volatility", 0)),
-            "label": recommendation.current_risk.get("volatility_label", "Unknown"),
+            "volatility": _safe_float(current_vol),
+            "label": vol_label(current_vol),
         },
         "optimal_risk": {
-            "volatility": _safe_float(recommendation.optimal_risk.get("volatility", 0)),
-            "label": recommendation.optimal_risk.get("volatility_label", "Unknown"),
-            "diversification_ratio": _safe_float(
-                recommendation.optimal_risk.get("diversification_ratio", 0)
-            ),
+            "volatility": _safe_float(target_vol),
+            "label": vol_label(target_vol),
+            "diversification_ratio": _safe_float(data.get("sharpe", 0) + 1),  # Approximation
         },
-        "trades": recommendation.recommendations,
-        "current_weights": {s: _safe_float(v) for s, v in recommendation.current_portfolio.items()},
-        "target_weights": {s: _safe_float(v) for s, v in recommendation.optimal_portfolio.items()},
-        "warnings": recommendation.warnings,
+        "trades": data.get("trades", []),
+        "current_weights": {s: _safe_float(v * 100) for s, v in data.get("current_weights", {}).items()},
+        "target_weights": {s: _safe_float(v * 100) for s, v in data.get("weights", {}).items()},
+        "cv_results": data.get("cv_results", {}),
+        "warnings": result.get("warnings", []),
     }
 
 

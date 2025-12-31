@@ -55,16 +55,9 @@ from app.quant_engine.analytics import (
     translate_for_user,
 )
 
-# Risk Optimizer
+# Risk Optimizer - Data Types Only (optimization is now in skfolio)
 from app.quant_engine.risk_optimizer import (
     AllocationRecommendation,
-    generate_allocation_recommendation,
-    optimize_cvar,
-    optimize_hrp,
-    optimize_max_diversification,
-    optimize_min_variance,
-    optimize_portfolio_risk_based,
-    optimize_risk_parity,
     RiskOptimizationConstraints,
     RiskOptimizationMethod,
     RiskOptimizationResult,
@@ -106,15 +99,8 @@ __all__ = [
     "RiskDecomposition",
     "TailRiskAnalysis",
     "translate_for_user",
-    # Risk Optimizer
+    # Risk Optimizer - Data Types Only
     "AllocationRecommendation",
-    "generate_allocation_recommendation",
-    "optimize_cvar",
-    "optimize_hrp",
-    "optimize_max_diversification",
-    "optimize_min_variance",
-    "optimize_portfolio_risk_based",
-    "optimize_risk_parity",
     "RiskOptimizationConstraints",
     "RiskOptimizationMethod",
     "RiskOptimizationResult",
