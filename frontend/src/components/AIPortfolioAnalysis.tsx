@@ -174,11 +174,15 @@ export function AIPortfolioAnalysis({ summary, className }: AIPortfolioAnalysisP
     );
   }
 
-  // Legacy markdown format - render as markdown
+  // Invalid/old format - prompt regeneration
   if (!analysis) {
     return (
-      <div className={cn('text-sm text-muted-foreground', className)}>
-        <p className="whitespace-pre-wrap">{summary}</p>
+      <div className={cn('flex items-center gap-3 rounded-lg border border-dashed p-4 text-muted-foreground', className)}>
+        <Sparkles className="h-5 w-5" />
+        <div className="text-sm">
+          <p className="font-medium">Analysis needs refresh</p>
+          <p className="text-xs">AI analysis will be regenerated on the next scheduled run.</p>
+        </div>
       </div>
     );
   }
