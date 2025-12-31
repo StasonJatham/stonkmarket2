@@ -370,7 +370,17 @@ def run_skfolio(
         from sklearn.pipeline import Pipeline
         from sklearn import set_config
         from skfolio import RiskMeasure
-        from skfolio.optimization import MeanRisk, RiskBudgeting, MaximumDiversification, ObjectiveFunction
+        from skfolio.optimization import (
+            MeanRisk,
+            RiskBudgeting,
+            MaximumDiversification,
+            ObjectiveFunction,
+            EqualWeighted,
+            InverseVolatility,
+            HierarchicalRiskParity,
+            HierarchicalEqualRiskContribution,
+            DistributionallyRobustCVaR,
+        )
         from skfolio.pre_selection import DropCorrelated
         from skfolio.model_selection import WalkForward, cross_val_predict
         from skfolio.population import Population
@@ -428,30 +438,69 @@ def run_skfolio(
             warnings.append(f"Pre-selection removed {len(pre_dropped)} correlated assets: {', '.join(pre_dropped[:5])}")
         
         # --- Step 2: Define optimization models ---
+        # All skfolio models with consistent weight constraints
+        weight_constraints = {"min_weights": 0.01, "max_weights": 0.40}
+        
         models = {
+            # === Convex Optimization Models ===
+            "min_variance": MeanRisk(
+                objective_function=ObjectiveFunction.MINIMIZE_RISK,
+                risk_measure=RiskMeasure.VARIANCE,
+                **weight_constraints,
+            ),
             "min_cvar": MeanRisk(
                 objective_function=ObjectiveFunction.MINIMIZE_RISK,
                 risk_measure=RiskMeasure.CVAR,
-                min_weights=0.01,  # At least 1% per position
-                max_weights=0.40,  # Max 40% single position
+                **weight_constraints,
+            ),
+            "min_semi_variance": MeanRisk(
+                objective_function=ObjectiveFunction.MINIMIZE_RISK,
+                risk_measure=RiskMeasure.SEMI_VARIANCE,
+                **weight_constraints,
+            ),
+            "max_sharpe": MeanRisk(
+                objective_function=ObjectiveFunction.MAXIMIZE_RATIO,
+                risk_measure=RiskMeasure.VARIANCE,
+                **weight_constraints,
+            ),
+            "max_sortino": MeanRisk(
+                objective_function=ObjectiveFunction.MAXIMIZE_RATIO,
+                risk_measure=RiskMeasure.SEMI_VARIANCE,
+                **weight_constraints,
             ),
             "risk_parity": RiskBudgeting(
+                risk_measure=RiskMeasure.VARIANCE,
+                **weight_constraints,
+            ),
+            "cvar_parity": RiskBudgeting(
                 risk_measure=RiskMeasure.CVAR,
-                min_weights=0.01,
-                max_weights=0.40,
+                **weight_constraints,
             ),
             "max_diversification": MaximumDiversification(
-                min_weights=0.01,
-                max_weights=0.40,
+                **weight_constraints,
             ),
+            "robust_cvar": DistributionallyRobustCVaR(
+                wasserstein_ball_radius=0.02,
+                **weight_constraints,
+            ),
+            # === Hierarchical/Clustering Models ===
+            "hrp": HierarchicalRiskParity(
+                risk_measure=RiskMeasure.VARIANCE,
+            ),
+            "herc": HierarchicalEqualRiskContribution(
+                risk_measure=RiskMeasure.VARIANCE,
+            ),
+            # === Naive Models ===
+            "inverse_volatility": InverseVolatility(),
+            "equal_weight": EqualWeighted(),
         }
         
         # Map common method names to internal names
         method_aliases = {
             "cvar": "min_cvar",
-            "min_variance": "min_cvar",  # CVaR is similar risk measure
-            "hrp": "risk_parity",        # HRP approximated by risk budgeting
-            "equal_weight": None,        # Special case: equal weight
+            "variance": "min_variance",
+            "sharpe": "max_sharpe",
+            "sortino": "max_sortino",
         }
         
         # If method is specified and valid, use it directly (skip CV)
@@ -459,11 +508,10 @@ def run_skfolio(
         if requested_method:
             requested_method = method_aliases.get(requested_method, requested_method)
         
-        use_equal_weight = requested_method == "equal_weight" or method == "equal_weight"
-        skip_cv = requested_method in models or use_equal_weight
+        skip_cv = requested_method in models
         
         cv_results: dict[str, dict[str, Any]] = {}
-        best_model_name = requested_method if requested_method in models else "min_cvar"
+        best_model_name = requested_method if requested_method in models else "min_variance"
         best_sharpe = float("-inf")
         
         # --- Step 3: Walk-forward cross-validation (skip if method specified) ---
@@ -475,7 +523,18 @@ def run_skfolio(
             
             cv = WalkForward(train_size=train_size, test_size=test_size)
             
-            for name, model in models.items():
+            # For speed, only CV on 5 diverse representative models:
+            # - risk_parity (balanced risk approach)
+            # - min_cvar (tail risk focus)
+            # - max_sharpe (return-focused)
+            # - hrp (hierarchical, no covariance estimation)
+            # - equal_weight (naive baseline)
+            cv_models = ["risk_parity", "min_cvar", "max_sharpe", "hrp", "equal_weight"]
+            
+            for name in cv_models:
+                model = models.get(name)
+                if not model:
+                    continue
                 try:
                     pred = cross_val_predict(model, clean_returns, cv=cv)
                     sharpe = float(pred.sharpe_ratio) if hasattr(pred, 'sharpe_ratio') else 0.0
@@ -497,15 +556,9 @@ def run_skfolio(
                     cv_results[name] = {"error": str(e)}
         
         # --- Step 4: Fit best model on full data to get final weights ---
-        if use_equal_weight:
-            # Equal weight: simple 1/N allocation
-            n_assets = len(clean_returns.columns)
-            weights = {s: 1.0 / n_assets for s in clean_returns.columns}
-            best_model_name = "equal_weight"
-        else:
-            best_model = models[best_model_name]
-            best_model.fit(clean_returns)
-            weights = dict(zip(clean_returns.columns.tolist(), best_model.weights_.tolist()))
+        best_model = models[best_model_name]
+        best_model.fit(clean_returns)
+        weights = dict(zip(clean_returns.columns.tolist(), best_model.weights_.tolist()))
         
         # Add zero weights for dropped assets
         for asset in dropped_assets:

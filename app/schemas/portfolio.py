@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
@@ -153,3 +154,68 @@ class PortfolioAnalyticsResponse(BaseModel):
     job_id: str | None = None
     job_status: str | None = None
     scheduled_tools: list[str] = Field(default_factory=list)
+
+
+# =============================================================================
+# AI Portfolio Analysis - Structured Output Schema
+# =============================================================================
+
+
+class PortfolioHealthEnum(str, Enum):
+    """Portfolio health status."""
+    
+    STRONG = "strong"
+    GOOD = "good"
+    FAIR = "fair"
+    WEAK = "weak"
+
+
+class AIInsight(BaseModel):
+    """Single AI insight with type indicator."""
+    
+    type: str = Field(..., description="positive, warning, or neutral")
+    text: str = Field(..., max_length=200)
+
+
+class AIActionItem(BaseModel):
+    """Single actionable recommendation."""
+    
+    priority: int = Field(..., ge=1, le=3, description="1=high, 2=medium, 3=low")
+    action: str = Field(..., max_length=200)
+
+
+class AIRiskAlert(BaseModel):
+    """Single risk alert."""
+    
+    severity: str = Field(..., description="high, medium, or low")
+    alert: str = Field(..., max_length=200)
+
+
+class AIPortfolioAnalysis(BaseModel):
+    """Structured AI portfolio analysis output."""
+    
+    health: PortfolioHealthEnum = Field(
+        ..., 
+        description="Overall portfolio health rating"
+    )
+    headline: str = Field(
+        ..., 
+        max_length=120,
+        description="One-sentence summary with key metric"
+    )
+    insights: list[AIInsight] = Field(
+        ..., 
+        min_length=1,
+        max_length=4,
+        description="2-4 key observations"
+    )
+    actions: list[AIActionItem] = Field(
+        default_factory=list,
+        max_length=3,
+        description="0-3 specific recommendations"
+    )
+    risks: list[AIRiskAlert] = Field(
+        default_factory=list,
+        max_length=3,
+        description="0-3 risk alerts (empty if none)"
+    )

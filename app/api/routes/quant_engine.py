@@ -11,6 +11,7 @@ Provides endpoints for:
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -319,12 +320,15 @@ async def get_allocation_recommendation(
 
     symbols = [h["symbol"] for h in holdings]
 
-    # Fetch price history
-    prices_by_symbol: dict[str, pd.DataFrame] = {}
-    for symbol in symbols:
+    # Fetch price history in parallel
+    async def fetch_with_symbol(symbol: str) -> tuple[str, pd.DataFrame | None]:
         df = await _get_symbol_prices(symbol, days=365)
-        if df is not None and not df.empty:
-            prices_by_symbol[symbol] = df
+        return symbol, df
+    
+    price_results = await asyncio.gather(*[fetch_with_symbol(s) for s in symbols])
+    prices_by_symbol: dict[str, pd.DataFrame] = {
+        symbol: df for symbol, df in price_results if df is not None and not df.empty
+    }
     
     if len(prices_by_symbol) < 2:
         raise ValidationError(message="Need at least 2 assets with price history")

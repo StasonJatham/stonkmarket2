@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import Markdown from 'react-markdown';
 import {
   Bar,
   BarChart,
@@ -65,6 +64,19 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -86,14 +98,36 @@ import {
   Sparkles,
   AlertTriangle,
   Brain,
+  Check,
+  ChevronsUpDown,
 } from 'lucide-react';
 import { BulkImportModal } from '@/components/BulkImportModal';
 import { HoldingSparkline } from '@/components/HoldingSparkline';
+import { AIPortfolioAnalysis } from '@/components/AIPortfolioAnalysis';
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { cn } from '@/lib/utils';
+
+/** Portfolio optimization strategies from skfolio */
+const OPTIMIZATION_STRATEGIES = [
+  { value: 'auto', label: 'Auto (Best Method)', description: 'Cross-validates all methods' },
+  { value: 'max_sharpe', label: 'Max Sharpe Ratio', description: 'Best risk-adjusted returns' },
+  { value: 'max_sortino', label: 'Max Sortino Ratio', description: 'Best downside-adjusted returns' },
+  { value: 'min_variance', label: 'Min Variance', description: 'Minimize volatility' },
+  { value: 'min_cvar', label: 'Min CVaR', description: 'Minimize tail risk' },
+  { value: 'min_semi_variance', label: 'Min Semi-Variance', description: 'Minimize downside variance' },
+  { value: 'risk_parity', label: 'Risk Parity', description: 'Equal risk contribution' },
+  { value: 'cvar_parity', label: 'CVaR Parity', description: 'Equal tail-risk contribution' },
+  { value: 'hrp', label: 'Hierarchical Risk Parity', description: 'Clustering-based allocation' },
+  { value: 'herc', label: 'Hierarchical Equal Risk', description: 'Hierarchical equal risk' },
+  { value: 'max_diversification', label: 'Max Diversification', description: 'Spread across assets' },
+  { value: 'robust_cvar', label: 'Robust CVaR', description: 'Worst-case optimization' },
+  { value: 'inverse_volatility', label: 'Inverse Volatility', description: 'Weight by 1/volatility' },
+  { value: 'equal_weight', label: 'Equal Weight', description: 'Simple 1/N allocation' },
+] as const;
 
 /** Retail investor-friendly metric explanations */
 const METRIC_TOOLTIPS = {
@@ -207,6 +241,7 @@ export function PortfolioPage() {
   const [isToolAnalyticsLoading, setIsToolAnalyticsLoading] = useState(false);
   const [allocationAmount, setAllocationAmount] = useState('1000');
   const [allocationMethod, setAllocationMethod] = useState('auto');  // auto = cross-validate and select best
+  const [strategyComboboxOpen, setStrategyComboboxOpen] = useState(false);
   const [allocationResult, setAllocationResult] = useState<PortfolioAllocationRecommendation | null>(null);
   const [allocationError, setAllocationError] = useState<string | null>(null);
   const [isAllocationLoading, setIsAllocationLoading] = useState(false);
@@ -867,19 +902,7 @@ export function PortfolioPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {selectedPortfolio.ai_analysis_summary ? (
-              <div className="space-y-3 text-sm [&_h2]:text-base [&_h2]:font-semibold [&_h2]:text-foreground [&_h2]:border-b [&_h2]:border-border [&_h2]:pb-1 [&_h2]:mt-4 [&_h2]:mb-2 [&_h2:first-child]:mt-0 [&_p]:text-muted-foreground [&_p]:leading-relaxed [&_p]:my-2 [&_strong]:text-foreground [&_strong]:font-medium [&_ul]:my-2 [&_ul]:pl-4 [&_ul]:space-y-1 [&_li]:text-muted-foreground">
-                <Markdown>{selectedPortfolio.ai_analysis_summary}</Markdown>
-              </div>
-            ) : (
-              <div className="flex items-center gap-3 rounded-lg border border-dashed p-4 text-muted-foreground">
-                <Sparkles className="h-5 w-5 animate-pulse" />
-                <div className="text-sm">
-                  <p className="font-medium">Analysis pending</p>
-                  <p className="text-xs">AI analysis will be generated automatically. Check back soon!</p>
-                </div>
-              </div>
-            )}
+            <AIPortfolioAnalysis summary={selectedPortfolio.ai_analysis_summary} />
           </CardContent>
         </Card>
       )}
@@ -1298,29 +1321,62 @@ export function PortfolioPage() {
                     <TooltipTrigger asChild>
                       <Info className="h-3 w-3 text-muted-foreground/60 cursor-help" />
                     </TooltipTrigger>
-                    <TooltipContent side="top" className="max-w-[280px]">
-                      <ul className="text-xs space-y-1.5">
-                        <li><strong>Auto:</strong> Cross-validates methods, picks best</li>
-                        <li><strong>Risk Parity:</strong> Equal risk from each position</li>
-                        <li><strong>Min CVaR:</strong> Minimize worst-case losses</li>
+                    <TooltipContent side="top" className="max-w-[320px]">
+                      <ul className="text-xs space-y-1">
+                        <li><strong>Auto:</strong> Cross-validates all methods, picks best Sharpe</li>
+                        <li><strong>Max Sharpe/Sortino:</strong> Best risk-adjusted returns</li>
+                        <li><strong>Min Variance/CVaR:</strong> Minimize volatility or tail risk</li>
+                        <li><strong>Risk/CVaR Parity:</strong> Equal risk contribution per asset</li>
+                        <li><strong>HRP/HERC:</strong> Hierarchical clustering-based allocation</li>
                         <li><strong>Max Diversification:</strong> Spread across uncorrelated assets</li>
-                        <li><strong>Equal Weight:</strong> Same % in each position</li>
                       </ul>
                     </TooltipContent>
                   </Tooltip>
                 </div>
-                <Select value={allocationMethod} onValueChange={setAllocationMethod}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="auto">Auto (Best Method)</SelectItem>
-                    <SelectItem value="risk_parity">Risk Parity</SelectItem>
-                    <SelectItem value="min_cvar">Min CVaR</SelectItem>
-                    <SelectItem value="max_diversification">Max Diversification</SelectItem>
-                    <SelectItem value="equal_weight">Equal Weight</SelectItem>
-                  </SelectContent>
-                </Select>
+                <Popover open={strategyComboboxOpen} onOpenChange={setStrategyComboboxOpen}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      role="combobox"
+                      aria-expanded={strategyComboboxOpen}
+                      className="w-full justify-between font-normal"
+                    >
+                      {OPTIMIZATION_STRATEGIES.find((s) => s.value === allocationMethod)?.label || 'Select strategy...'}
+                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-[280px] p-0" align="start">
+                    <Command>
+                      <CommandInput placeholder="Search strategies..." />
+                      <CommandList>
+                        <CommandEmpty>No strategy found.</CommandEmpty>
+                        <CommandGroup>
+                          {OPTIMIZATION_STRATEGIES.map((strategy) => (
+                            <CommandItem
+                              key={strategy.value}
+                              value={strategy.value}
+                              onSelect={(currentValue) => {
+                                setAllocationMethod(currentValue);
+                                setStrategyComboboxOpen(false);
+                              }}
+                            >
+                              <Check
+                                className={cn(
+                                  "mr-2 h-4 w-4",
+                                  allocationMethod === strategy.value ? "opacity-100" : "opacity-0"
+                                )}
+                              />
+                              <div className="flex flex-col">
+                                <span>{strategy.label}</span>
+                                <span className="text-xs text-muted-foreground">{strategy.description}</span>
+                              </div>
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
               </div>
               <div className="flex items-end">
                 <Button onClick={handleGenerateAllocation} disabled={isAllocationLoading}>

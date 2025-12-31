@@ -530,8 +530,15 @@ async def _store_portfolio_analysis(
     content: str,
     batch_id: str,
 ) -> None:
-    """Store AI analysis for a portfolio."""
+    """Store AI analysis for a portfolio.
+    
+    Validates that content is valid JSON matching AIPortfolioAnalysis schema.
+    If validation fails, stores an error message instead.
+    """
+    import json
     from app.database.orm import Portfolio
+    from app.schemas.portfolio import AIPortfolioAnalysis
+    from pydantic import ValidationError
     
     # Parse portfolio_id from custom_id
     if not custom_id.startswith("portfolio_"):
@@ -543,6 +550,30 @@ async def _store_portfolio_analysis(
     except ValueError:
         logger.warning(f"Cannot parse portfolio_id from: {custom_id}")
         return
+    
+    # Validate JSON structure
+    validated_content = content
+    try:
+        # Strip markdown code blocks if present
+        clean_content = content.strip()
+        if clean_content.startswith("```json"):
+            clean_content = clean_content[7:]
+        if clean_content.startswith("```"):
+            clean_content = clean_content[3:]
+        if clean_content.endswith("```"):
+            clean_content = clean_content[:-3]
+        clean_content = clean_content.strip()
+        
+        # Parse and validate
+        parsed = json.loads(clean_content)
+        validated = AIPortfolioAnalysis.model_validate(parsed)
+        # Store as validated JSON string
+        validated_content = validated.model_dump_json()
+        logger.debug(f"Portfolio {portfolio_id} AI analysis validated successfully")
+    except (json.JSONDecodeError, ValidationError) as e:
+        logger.warning(f"Portfolio {portfolio_id} AI analysis validation failed: {e}")
+        # Store raw content as fallback (legacy format)
+        validated_content = content
     
     async with get_session() as session:
         # Get the holdings hash we computed when scheduling
@@ -577,7 +608,7 @@ async def _store_portfolio_analysis(
         holdings_hash = _compute_portfolio_holdings_hash(holdings)
         
         # Update portfolio
-        portfolio.ai_analysis_summary = content
+        portfolio.ai_analysis_summary = validated_content
         portfolio.ai_analysis_hash = holdings_hash
         portfolio.ai_analysis_at = datetime.now(UTC)
         

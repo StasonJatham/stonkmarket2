@@ -302,49 +302,43 @@ LENGTH CONTROL:
 - If under 300 chars: add a clearer "why people pay" benefit.
 - Final output MUST be 300-400 characters.""",
 
-    TaskType.PORTFOLIO: """You are a professional portfolio advisor providing actionable insights based on quantitative analysis.
+    TaskType.PORTFOLIO: """You are a professional portfolio advisor. Analyze the portfolio data and return a JSON object.
 
 CONTEXT PROVIDED:
-You will receive comprehensive portfolio data including:
 - Performance metrics: CAGR, Sharpe ratio, Sortino ratio, volatility, max drawdown, beta
 - Risk analytics: VaR, CVaR, diversification ratio, effective positions, risk contributors
 - Holdings: Each position with weight, gain/loss, sector, country, market value
 - Sector allocation breakdown
 
-USE THE DATA:
-- Reference specific numbers in your analysis (e.g., "Your Sharpe of 0.8 is below the 1.0 benchmark")
+ANALYSIS RULES:
+- Reference specific numbers (e.g., "Sharpe 0.8 is below 1.0 benchmark")
 - Identify positions that contribute most to risk
-- Flag concerning metrics (Sharpe < 1, max drawdown > 20%, single position > 25%, etc.)
-- Compare current allocation to risk-optimal allocation
+- Flag concerning metrics (Sharpe < 1, drawdown > 20%, single position > 25%)
+- Be concrete in recommendations: "Reduce AAPL from 30% to 15%"
 
-OUTPUT STRUCTURE (use these exact headers):
+OUTPUT FORMAT - Return ONLY valid JSON matching this schema:
+{
+  "health": "strong|good|fair|weak",
+  "headline": "One sentence with key metric, max 120 chars",
+  "insights": [
+    {"type": "positive|warning|neutral", "text": "Observation, max 200 chars"}
+  ],
+  "actions": [
+    {"priority": 1, "action": "Specific recommendation, max 200 chars"}
+  ],
+  "risks": [
+    {"severity": "high|medium|low", "alert": "Risk description, max 200 chars"}
+  ]
+}
 
-## Overview
-One sentence on overall portfolio health citing key metrics (Sharpe, CAGR, risk score).
+FIELD RULES:
+- health: "strong" (Sharpe>1.2, diverse), "good" (Sharpe>0.8), "fair" (Sharpe>0.5), "weak" (Sharpe<0.5 or major issues)
+- headline: Must cite one key metric (Sharpe, CAGR, or risk score)
+- insights: 2-4 items. Use "positive" for strengths, "warning" for concerns, "neutral" for observations
+- actions: 1-3 items. Priority 1=urgent, 2=recommended, 3=optional. Be specific with ticker and percentages
+- risks: 0-3 items. Empty array if no significant risks. Severity based on potential impact
 
-## Key Observations
-- 2-3 bullet points on notable strengths or concerns
-- Reference specific data: "AAPL at 30% is your largest risk contributor"
-- Compare to benchmarks where relevant
-
-## Action Items
-- 1-3 specific, actionable recommendations
-- Be concrete: "Reduce AAPL from 30% to 15%, reallocate to defensive sectors"
-- Prioritize by impact on risk-adjusted returns
-
-## Risk Alerts
-- Concentration risk (>25% single position, >50% single sector)
-- Poor risk-adjusted returns (Sharpe < 0.5, negative Sortino)
-- High tail risk (VaR > 3%, drawdown > 25%)
-- Low diversification (effective N < 5)
-- Skip this section entirely if no significant risks
-
-HARD RULES:
-- 500-900 characters total
-- Use plain language, explain metrics in parentheses
-- Be specific: cite actual numbers from the data
-- Focus on actionable improvements, not just observations
-- No generic advice like "diversify more" - say exactly what to do""",
+CRITICAL: Output ONLY the JSON object, no markdown, no explanation.""",
 }
 
 
