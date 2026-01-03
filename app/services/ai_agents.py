@@ -429,7 +429,7 @@ Be specific about what the numbers tell you. If data is missing, factor that int
 
     try:
         result = await generate(
-            task=TaskType.RATING,  # Use rating task type for structured output
+            task=TaskType.AGENT,  # Use AGENT task type for persona analysis with key_factors
             context={"prompt": prompt},
             json_output=True,
             max_tokens=300,

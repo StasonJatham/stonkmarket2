@@ -223,6 +223,82 @@ PORTFOLIO_SCHEMA = {
     }
 }
 
+# JSON Schema for BIO task - dating-style stock bio
+# Wraps text output in object for structured validation
+BIO_SCHEMA = {
+    "type": "json_schema",
+    "name": "stock_bio",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "properties": {
+            "bio": {
+                "type": "string",
+                "description": "Tinder-style dating bio for the stock (150-200 chars, 3 sentences max, 1-2 emojis)"
+            }
+        },
+        "required": ["bio"],
+        "additionalProperties": False
+    }
+}
+
+# JSON Schema for SUMMARY task - plain-English company summary
+# Wraps text output in object for structured validation
+SUMMARY_SCHEMA = {
+    "type": "json_schema",
+    "name": "company_summary",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "properties": {
+            "summary": {
+                "type": "string",
+                "description": "Plain-English company summary (300-400 chars)"
+            }
+        },
+        "required": ["summary"],
+        "additionalProperties": False
+    }
+}
+
+# JSON Schema for AGENT task - persona investor analysis
+# Same structure as RATING but with key_factors for detailed analysis
+AGENT_SCHEMA = {
+    "type": "json_schema",
+    "name": "agent_analysis",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "properties": {
+            "rating": {
+                "type": "string",
+                "enum": ["strong_buy", "buy", "hold", "sell", "strong_sell"],
+                "description": "Investment signal rating"
+            },
+            "reasoning": {
+                "type": "string",
+                "description": "2-3 sentence explanation in the investor persona's voice"
+            },
+            "confidence": {
+                "type": "integer",
+                "description": "Confidence level from 1-10"
+            },
+            "key_factors": {
+                "type": "array",
+                "description": "3-5 key factors that influenced the rating",
+                "items": {
+                    "type": "string"
+                }
+            }
+        },
+        "required": ["rating", "reasoning", "confidence", "key_factors"],
+        "additionalProperties": False
+    }
+}
+
+# Map task types to their schemas
+TASK_SCHEMAS: dict["TaskType", dict] = {}  # Populated after TaskType defined
+
 # =============================================================================
 # Task Configuration
 # =============================================================================
@@ -274,6 +350,15 @@ TASK_CONFIGS: dict[TaskType, TaskConfig] = {
     ),
 }
 
+# Populate TASK_SCHEMAS after TaskType is defined
+TASK_SCHEMAS = {
+    TaskType.BIO: BIO_SCHEMA,
+    TaskType.RATING: RATING_SCHEMA,
+    TaskType.SUMMARY: SUMMARY_SCHEMA,
+    TaskType.AGENT: AGENT_SCHEMA,
+    TaskType.PORTFOLIO: PORTFOLIO_SCHEMA,
+}
+
 
 # =============================================================================
 # Prompt Templates
@@ -312,8 +397,8 @@ STYLE GUIDE (pick 2–3):
 - wholesome premium (for Apple-type brands)
 - "I'm busy but worth it" energy
 
-OUTPUT:
-Return only the bio text. No quotes, no explanations.""",
+OUTPUT FORMAT:
+Return JSON with: {"bio": "your bio text here"}""",
 
     TaskType.RATING: """You are a decisive "dip-buy opportunity" rater.
 
@@ -382,7 +467,10 @@ segment, portfolio, suite, ecosystem, enterprise, leverage, synergies, robust, i
 LENGTH CONTROL:
 - If over 400 chars: remove examples first, then shorten benefit.
 - If under 300 chars: add a clearer "why people pay" benefit.
-- Final output MUST be 300-400 characters.""",
+- Final summary MUST be 300-400 characters.
+
+OUTPUT FORMAT:
+Return JSON with: {"summary": "your summary text here"}""",
 
     TaskType.PORTFOLIO: """You are a professional portfolio advisor. Analyze the portfolio data and return a JSON object.
 
@@ -421,6 +509,25 @@ FIELD RULES:
 - risks: 0-3 items. Empty array if no significant risks. Severity based on potential impact
 
 CRITICAL: Output ONLY the JSON object, no markdown, no explanation.""",
+
+    TaskType.AGENT: """You are an AI assistant analyzing stocks from the perspective of a legendary investor persona.
+
+You will receive:
+- The investor persona's name, philosophy, and focus areas
+- Financial data about a stock (valuation, profitability, growth, risk metrics)
+
+ANALYSIS RULES:
+- Stay in character as the investor persona
+- Base your analysis on the specific financial data provided
+- Reference concrete numbers in your reasoning
+- If data is missing, factor that into your confidence level
+
+OUTPUT FORMAT:
+Return JSON with:
+- rating: "strong_buy" | "buy" | "hold" | "sell" | "strong_sell"
+- reasoning: 2-3 sentences in the investor persona's voice explaining your analysis
+- confidence: 1-10 (lower if key data is missing)
+- key_factors: array of 3-5 specific factors that influenced your rating""",
 }
 
 
@@ -1198,11 +1305,9 @@ async def generate(
         config = TASK_CONFIGS.get(task)
         max_tokens = config.default_max_tokens if config else 300
 
-    # For RATING and PORTFOLIO tasks, we use structured outputs (no need for "respond with JSON" hint)
-    # For other json_output tasks, add hint for json_object format
-    use_structured_output = task in (TaskType.RATING, TaskType.PORTFOLIO) and json_output
-    if json_output and not use_structured_output:
-        prompt += "\n\nRespond with valid JSON."
+    # ALL tasks use Structured Outputs for predictable parsing
+    # Each task has a defined schema in TASK_SCHEMAS
+    use_structured_output = task in TASK_SCHEMAS
 
     # Calculate safe output tokens dynamically based on input size
     safe_output_tokens, input_overflow = _calculate_safe_output_tokens(
@@ -1236,14 +1341,11 @@ async def generate(
     # verbosity: "low" reduces token usage for short outputs
     text_config: dict[str, Any] = {"verbosity": "low"}
 
-    # Use Structured Outputs (JSON Schema) for RATING/PORTFOLIO - guarantees exact schema
-    # Use json_object for other JSON tasks - just ensures valid JSON
+    # Use Structured Outputs (JSON Schema) for ALL tasks - guarantees exact schema
     if use_structured_output:
-        if task == TaskType.PORTFOLIO:
-            text_config["format"] = PORTFOLIO_SCHEMA
-        else:
-            text_config["format"] = RATING_SCHEMA
+        text_config["format"] = TASK_SCHEMAS[task]
     elif json_output:
+        # Fallback for any task without a schema (shouldn't happen)
         text_config["format"] = {"type": "json_object"}
 
     params["text"] = text_config
@@ -1404,7 +1506,7 @@ async def generate_bio(
     dip_pct: float | None = None,
 ) -> str | None:
     """Generate a dating-app style bio for a stock."""
-    return await generate(
+    result = await generate(
         task=TaskType.BIO,
         context={
             "symbol": symbol,
@@ -1415,6 +1517,10 @@ async def generate_bio(
         },
         max_tokens=150,
     )
+    # Structured output returns {"bio": "..."}
+    if isinstance(result, dict):
+        return result.get("bio")
+    return result
 
 
 async def rate_dip(
@@ -1463,6 +1569,10 @@ async def summarize_company(
         max_tokens=250,  # Target: 300-400 chars (~75-100 tokens)
     )
 
+    # Structured output returns {"summary": "..."}
+    if isinstance(result, dict):
+        result = result.get("summary")
+
     # Apply truncation fallback if AI exceeded limit
     if result:
         result = truncate_summary(result, max_chars=500, target_chars=400)
@@ -1509,8 +1619,8 @@ async def submit_batch(
 
     model = model or DEFAULT_MODEL
     instructions = INSTRUCTIONS.get(task, "")
-    json_output = task in (TaskType.RATING, TaskType.PORTFOLIO)
-    use_structured_output = task in (TaskType.RATING, TaskType.PORTFOLIO)
+    # ALL tasks use Structured Outputs for predictable parsing
+    use_structured_output = task in TASK_SCHEMAS
 
     # Generate unique batch run ID to avoid custom_id collisions
     batch_run_id = uuid.uuid4().hex[:8]
@@ -1533,11 +1643,6 @@ async def submit_batch(
                 # Standard format: "batch_run_id:symbol:idx:task"
                 custom_id = f"{batch_run_id}:{symbol}:{i}:{task.value}"
         prompt = _build_prompt(task, item)
-
-        # For RATING, we use structured outputs (no hint needed)
-        # For other JSON tasks, add hint
-        if json_output and not use_structured_output:
-            prompt += "\n\nRespond with valid JSON."
 
         # Calculate safe output tokens dynamically for this item
         safe_output_tokens, overflow = _calculate_safe_output_tokens(
@@ -1565,14 +1670,9 @@ async def submit_batch(
         if _is_gpt5(model):
             body["reasoning"] = {"effort": "low"}
 
-        # Use Structured Outputs for RATING/PORTFOLIO - guarantees exact schema
+        # Use Structured Outputs for ALL tasks - guarantees exact schema
         if use_structured_output:
-            if task == TaskType.PORTFOLIO:
-                body["text"] = {"format": PORTFOLIO_SCHEMA}
-            else:
-                body["text"] = {"format": RATING_SCHEMA}
-        elif json_output:
-            body["text"] = {"format": {"type": "json_object"}}
+            body["text"] = {"format": TASK_SCHEMAS[task]}
 
         jsonl_lines.append(json.dumps({
             "custom_id": custom_id,
