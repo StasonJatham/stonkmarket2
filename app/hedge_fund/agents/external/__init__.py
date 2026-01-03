@@ -288,7 +288,7 @@ class FundamentalsServiceAdapter(ExternalAgentAdapter):
 
 class OpenAIRatingAdapter(ExternalAgentAdapter):
     """
-    Adapter for the existing openai_client rating functionality.
+    Adapter for the existing OpenAI rating functionality.
     
     Uses the RATING task type for structured investment opinions.
     """
@@ -318,7 +318,7 @@ class OpenAIRatingAdapter(ExternalAgentAdapter):
         run_id: str | None = None,
     ) -> AgentSignal:
         """Get rating from OpenAI client."""
-        from app.services.openai_client import TaskType, generate
+        from app.services.openai import TaskType, generate
 
         try:
             # Build context for rating

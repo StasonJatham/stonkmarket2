@@ -366,7 +366,7 @@ class TestOpenAIBatchAPI:
 
     def test_batch_model_configured(self):
         """Should have default model configured."""
-        from app.services.openai_client import DEFAULT_MODEL
+        from app.services.openai import DEFAULT_MODEL
 
         # Verify default model configuration
         assert DEFAULT_MODEL is not None
@@ -374,7 +374,7 @@ class TestOpenAIBatchAPI:
     @pytest.mark.asyncio
     async def test_check_batch_with_mock(self):
         """Should check batch status."""
-        from app.services.openai_client import check_batch
+        from app.services.openai import check_batch
 
         mock_client = MagicMock()
         mock_batch = MagicMock()
@@ -385,7 +385,7 @@ class TestOpenAIBatchAPI:
         mock_client.batches.retrieve.return_value = mock_batch
 
         with patch(
-            "app.services.openai_client._get_client",
+            "app.services.openai.client.get_client",
             return_value=mock_client,
         ):
             result = await check_batch("batch-456")

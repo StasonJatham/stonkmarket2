@@ -426,7 +426,7 @@ async def symbol_ingest_job() -> str:
     from app.repositories import dip_state_orm as dip_state_repo
     from app.repositories import dip_votes_orm as dip_votes_repo
     from app.services.data_providers import get_yfinance_service
-    from app.services.openai_client import TaskType, submit_batch
+    from app.services.openai import TaskType, submit_batch
     from app.services.fundamentals import get_fundamentals_for_analysis, refresh_fundamentals
     from app.services.stock_info import get_stock_info_batch_async
 
@@ -664,7 +664,7 @@ async def data_backfill_job() -> str:
     from app.repositories import quant_scores_orm as quant_repo
     from app.services.data_providers import get_yfinance_service
     from app.services.fundamentals import refresh_fundamentals
-    from app.services.openai_client import summarize_company
+    from app.services.openai import summarize_company
     from app.services.stock_info import get_stock_info_async
     
     logger.info("Starting data_backfill job")

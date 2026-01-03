@@ -1,7 +1,7 @@
 """
 LLM Gateway for unified access to OpenAI realtime and batch APIs.
 
-Wraps the existing openai_client.py to provide a clean interface for agents.
+Wraps the openai package to provide a clean interface for agents.
 """
 
 import asyncio
@@ -124,10 +124,10 @@ class OpenAIGateway:
         """Execute a single task using the OpenAI Responses API directly."""
         import time
 
-        from app.services.openai_client import _get_client
+        from app.services.openai import get_client
 
         try:
-            client = await _get_client()
+            client = await get_client()
             if not client:
                 return LLMResult(
                     custom_id=task.custom_id,
@@ -239,9 +239,9 @@ class OpenAIGateway:
 
     async def run_batch(self, tasks: list[LLMTask]) -> str:
         """Submit tasks for batch processing."""
-        from app.services import openai_client
+        from app.services.openai import submit_batch
 
-        # Convert tasks to openai_client format
+        # Convert tasks to openai format
         items = []
         for task in tasks:
             items.append({
@@ -253,7 +253,7 @@ class OpenAIGateway:
             })
 
         # Submit batch
-        batch_id = await openai_client.submit_batch(
+        batch_id = await submit_batch(
             task="rating",  # Use rating task for structured output
             items=items,
             model=self.model,
@@ -268,9 +268,9 @@ class OpenAIGateway:
         """Check status of a batch job."""
         from datetime import datetime
 
-        from app.services import openai_client
+        from app.services.openai import check_batch
 
-        status = await openai_client.check_batch(batch_id)
+        status = await check_batch(batch_id)
         if not status:
             raise RuntimeError(f"Failed to check batch {batch_id}")
 
@@ -287,9 +287,9 @@ class OpenAIGateway:
 
     async def collect_batch_results(self, batch_id: str) -> list[LLMResult]:
         """Collect results from a completed batch."""
-        from app.services import openai_client
+        from app.services.openai import collect_batch
 
-        results = await openai_client.collect_batch(batch_id)
+        results = await collect_batch(batch_id)
         if results is None:
             return []
 

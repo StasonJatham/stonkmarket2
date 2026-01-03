@@ -1,11 +1,11 @@
 """Business logic services."""
 
-from . import batch_scheduler, openai_client, stock_info, swipe
+from . import batch_scheduler, openai, stock_info, swipe
 
 
 __all__ = [
     "batch_scheduler",
-    "openai_client",
+    "openai",
     "stock_info",
     "swipe",
 ]

@@ -23,7 +23,7 @@ from app.database.orm import (
     Symbol,
 )
 from app.repositories import api_usage_orm as api_usage
-from app.services.openai_client import (
+from app.services.openai import (
     TaskType,
     check_batch,
     collect_batch,

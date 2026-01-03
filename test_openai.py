@@ -4,7 +4,7 @@ import asyncio
 from dotenv import load_dotenv
 load_dotenv()
 
-from app.services.openai_client import generate, submit_batch, check_batch, collect_batch, TaskType
+from app.services.openai import generate, submit_batch, check_batch, collect_batch, TaskType
 
 async def test_realtime():
     print('='*60)

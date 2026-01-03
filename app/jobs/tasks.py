@@ -281,7 +281,7 @@ def regenerate_symbol_summary_task(symbol: str) -> str:
     async def _run() -> str:
         from app.cache.cache import Cache
         from app.repositories import symbols_orm as symbols_repo
-        from app.services.openai_client import summarize_company
+        from app.services.openai import summarize_company
         from app.services.runtime_settings import get_runtime_setting
         from app.services.stock_info import get_stock_info_async
 

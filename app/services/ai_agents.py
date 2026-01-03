@@ -39,7 +39,7 @@ from app.database.connection import get_session
 from app.database.orm import AiAgentAnalysis, AnalysisVersion, Symbol
 from app.services import stock_info
 from app.services.fundamentals import get_fundamentals_for_analysis
-from app.services.openai_client import TaskType, generate
+from app.services.openai import TaskType, generate
 
 
 logger = get_logger("ai_agents")
@@ -929,7 +929,7 @@ async def submit_agent_batch(symbols: list[str]) -> tuple[str, dict[str, str]] |
     Returns:
         Tuple of (batch_job_id, input_hashes) or None on failure
     """
-    from app.services.openai_client import TaskType, submit_batch
+    from app.services.openai import TaskType, submit_batch
 
     # Prepare batch items
     items, input_hashes = await prepare_batch_items(symbols)
@@ -969,7 +969,7 @@ async def collect_agent_batch(batch_id: str) -> dict[str, AgentAnalysisResult]:
     Returns:
         Dict of symbol -> AgentAnalysisResult
     """
-    from app.services.openai_client import collect_batch
+    from app.services.openai import collect_batch
 
     results = await collect_batch(batch_id)
     if not results:

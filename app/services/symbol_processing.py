@@ -11,7 +11,7 @@ from app.repositories import dip_state_orm as dip_state_repo
 from app.repositories import dip_votes_orm as dip_votes_repo
 from app.repositories import suggestions_orm as suggestions_repo
 from app.repositories import symbols_orm as symbols_repo
-from app.services.openai_client import summarize_company
+from app.services.openai import summarize_company
 from app.services.runtime_settings import get_runtime_setting
 from app.services.statistical_rating import calculate_rating
 from app.services.stock_info import get_stock_info_async

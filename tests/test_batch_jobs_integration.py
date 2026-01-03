@@ -282,9 +282,9 @@ class TestRealOpenAIClient:
     @pytest.mark.asyncio
     async def test_real_bio_generation(self):
         """Generate a real stock bio using OpenAI."""
-        from app.services.openai_client import ai
+        from app.services.openai import generate
 
-        result = await ai.generate(
+        result = await generate(
             task="bio",
             context={
                 "symbol": "TSLA",
@@ -305,9 +305,9 @@ class TestRealOpenAIClient:
     @pytest.mark.asyncio
     async def test_real_rating_generation(self):
         """Generate a real stock rating using OpenAI with structured output."""
-        from app.services.openai_client import ai
+        from app.services.openai import generate
 
-        result = await ai.generate(
+        result = await generate(
             task="rating",
             context={
                 "symbol": "META",
@@ -349,9 +349,9 @@ class TestRealOpenAIClient:
     @pytest.mark.asyncio
     async def test_real_summary_generation(self):
         """Generate a real company summary using OpenAI."""
-        from app.services.openai_client import ai
+        from app.services.openai import generate
 
-        result = await ai.generate(
+        result = await generate(
             task="summary",
             context={
                 "symbol": "MSFT",
@@ -380,7 +380,7 @@ class TestRealBatchAPI:
     @pytest.mark.skip(reason="Batch API tests cost money and take time - run manually")
     async def test_submit_real_batch(self):
         """Submit a real batch job to OpenAI."""
-        from app.services.openai_client import submit_batch
+        from app.services.openai import submit_batch
 
         requests = [
             {
@@ -860,8 +860,8 @@ class TestRealBatchAPIWithPolling:
         Prints batch ID so you can check status later.
         """
         import asyncio
-        from app.services.openai_client import submit_batch, check_batch
-        from app.services.openai_client import TaskType
+        from app.services.openai import submit_batch, check_batch
+        from app.services.openai import TaskType
 
         items = [
             {
@@ -916,11 +916,11 @@ class TestRealBatchAPIWithPolling:
         print(f"   Completed: {status['completed_count']}")
 
         print(f"\n💡 To check status later:")
-        print(f"   from app.services.openai_client import check_batch")
+        print(f"   from app.services.openai import check_batch")
         print(f"   await check_batch('{batch_id}')")
 
         print(f"\n💡 To collect results when done:")
-        print(f"   from app.services.openai_client import collect_batch")
+        print(f"   from app.services.openai import collect_batch")
         print(f"   await collect_batch('{batch_id}')")
 
 
@@ -1431,7 +1431,7 @@ class TestRealDBDataUnifiedBatch:
         """
         from app.hedge_fund.data import get_market_data
         from app.hedge_fund.agents.investor_persona import get_all_persona_agents
-        from app.services.openai_client import submit_batch, check_batch, TaskType
+        from app.services.openai import submit_batch, check_batch, TaskType
         import json
         import uuid
 
@@ -1490,7 +1490,7 @@ class TestRealDBDataUnifiedBatch:
     async def test_real_data_bio_rating_summary(self):
         """Test bio, rating, and summary generation with real data."""
         from app.hedge_fund.data import get_market_data
-        from app.services.openai_client import generate, TaskType
+        from app.services.openai import generate, TaskType
 
         test_symbol = "NVDA"
         
@@ -1550,7 +1550,7 @@ class TestRealDBDataUnifiedBatch:
         from app.hedge_fund.data import get_market_data
         from app.hedge_fund.orchestrator import get_calculation_agents
         from app.hedge_fund.agents.investor_persona import get_all_persona_agents
-        from app.services.openai_client import generate
+        from app.services.openai import generate
         from app.hedge_fund.schemas import AgentSignal, Signal
 
         test_symbol = "NVDA"
