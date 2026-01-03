@@ -1477,3 +1477,254 @@ class SchemaMigration(Base):
 
     version: Mapped[str] = mapped_column(String(50), primary_key=True)
     applied_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# =============================================================================
+# MARKET DATA (Sectors & Industries from yfinance)
+# =============================================================================
+
+
+class MarketSector(Base):
+    """
+    Market sector data from yfinance.
+    
+    Updated weekly via scheduled job.
+    Used for competitor analysis, sector trends, and stock suggestions.
+    """
+    __tablename__ = "market_sectors"
+
+    key: Mapped[str] = mapped_column(String(100), primary_key=True)  # e.g., 'technology'
+    name: Mapped[str] = mapped_column(String(200), nullable=False)  # e.g., 'Technology'
+    symbol: Mapped[str | None] = mapped_column(String(20))  # Sector ETF symbol
+    
+    # Overview data (market weight, performance metrics, etc.)
+    overview: Mapped[dict | None] = mapped_column(JSONB)
+    
+    # Top companies in sector (symbol, name, market_weight)
+    top_companies: Mapped[list | None] = mapped_column(JSONB)
+    
+    # Top ETFs tracking this sector (symbol -> name mapping)
+    top_etfs: Mapped[dict | None] = mapped_column(JSONB)
+    
+    # Top mutual funds in sector (symbol -> name mapping)
+    top_mutual_funds: Mapped[dict | None] = mapped_column(JSONB)
+    
+    # Research reports (list of dicts with title, provider, date, etc.)
+    research_reports: Mapped[list | None] = mapped_column(JSONB)
+    
+    # Metadata
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    
+    # Relationships
+    industries: Mapped[list[MarketIndustry]] = relationship(back_populates="sector")
+
+    __table_args__ = (
+        Index("idx_market_sectors_name", "name"),
+        Index("idx_market_sectors_updated", "updated_at"),
+    )
+
+
+class MarketIndustry(Base):
+    """
+    Market industry data from yfinance.
+    
+    Updated weekly via scheduled job.
+    Used for finding competitors, similar stocks, and industry trends.
+    """
+    __tablename__ = "market_industries"
+
+    key: Mapped[str] = mapped_column(String(100), primary_key=True)  # e.g., 'software-infrastructure'
+    name: Mapped[str] = mapped_column(String(200), nullable=False)  # e.g., 'Software - Infrastructure'
+    symbol: Mapped[str | None] = mapped_column(String(20))  # Industry ETF symbol if exists
+    
+    # Parent sector reference
+    sector_key: Mapped[str] = mapped_column(String(100), ForeignKey("market_sectors.key"), nullable=False)
+    sector_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    
+    # Overview data (market weight, performance metrics, etc.)
+    overview: Mapped[dict | None] = mapped_column(JSONB)
+    
+    # Top companies in industry (symbol, name, market_weight)
+    top_companies: Mapped[list | None] = mapped_column(JSONB)
+    
+    # Top performing companies (by returns)
+    top_performing_companies: Mapped[list | None] = mapped_column(JSONB)
+    
+    # Top growth companies (by growth metrics)
+    top_growth_companies: Mapped[list | None] = mapped_column(JSONB)
+    
+    # Research reports
+    research_reports: Mapped[list | None] = mapped_column(JSONB)
+    
+    # Metadata
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    
+    # Relationships
+    sector: Mapped[MarketSector] = relationship(back_populates="industries")
+
+    __table_args__ = (
+        Index("idx_market_industries_sector", "sector_key"),
+        Index("idx_market_industries_name", "name"),
+        Index("idx_market_industries_updated", "updated_at"),
+    )
+
+
+# =============================================================================
+# CALENDAR EVENTS - Earnings, IPOs, Splits, Economic Events
+# =============================================================================
+
+
+class CalendarEarnings(Base):
+    """
+    Earnings calendar events from yfinance.
+    
+    Updated weekly via scheduled job.
+    Used for earnings alerts, stock analysis, and UI calendar widget.
+    """
+    __tablename__ = "calendar_earnings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(20), nullable=False)
+    company_name: Mapped[str | None] = mapped_column(String(300))
+    
+    # Earnings date/time
+    earnings_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    earnings_time: Mapped[str | None] = mapped_column(String(20))  # 'BMO', 'AMC', 'TAS' (before market, after close, time not supplied)
+    
+    # EPS data
+    eps_estimate: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+    eps_actual: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+    surprise_percent: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    
+    # Additional data from yfinance (JSONB for flexibility)
+    raw_data: Mapped[dict | None] = mapped_column(JSONB)
+    
+    # Metadata
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        Index("idx_calendar_earnings_symbol", "symbol"),
+        Index("idx_calendar_earnings_date", "earnings_date"),
+        Index("idx_calendar_earnings_symbol_date", "symbol", "earnings_date"),
+        UniqueConstraint("symbol", "earnings_date", name="uq_calendar_earnings_symbol_date"),
+    )
+
+
+class CalendarIPO(Base):
+    """
+    IPO calendar events from yfinance.
+    
+    Updated weekly via scheduled job.
+    Used for IPO tracking and UI calendar widget.
+    """
+    __tablename__ = "calendar_ipos"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    symbol: Mapped[str | None] = mapped_column(String(20))  # May not have symbol yet
+    company_name: Mapped[str] = mapped_column(String(300), nullable=False)
+    
+    # IPO date and pricing
+    ipo_date: Mapped[date] = mapped_column(Date, nullable=False)
+    price_range_low: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    price_range_high: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    offer_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    
+    # Deal info
+    shares_offered: Mapped[int | None] = mapped_column(BigInteger)
+    deal_size: Mapped[Decimal | None] = mapped_column(Numeric(20, 2))  # In millions
+    exchange: Mapped[str | None] = mapped_column(String(20))
+    
+    # Status
+    status: Mapped[str | None] = mapped_column(String(50))  # 'Priced', 'Expected', 'Filed', etc.
+    
+    # Additional data from yfinance
+    raw_data: Mapped[dict | None] = mapped_column(JSONB)
+    
+    # Metadata
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        Index("idx_calendar_ipos_date", "ipo_date"),
+        Index("idx_calendar_ipos_symbol", "symbol"),
+        UniqueConstraint("company_name", "ipo_date", name="uq_calendar_ipos_company_date"),
+    )
+
+
+class CalendarSplit(Base):
+    """
+    Stock split calendar events from yfinance.
+    
+    Updated weekly via scheduled job.
+    Critical for price history adjustments and UI calendar widget.
+    """
+    __tablename__ = "calendar_splits"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(20), nullable=False)
+    company_name: Mapped[str | None] = mapped_column(String(300))
+    
+    # Split date and ratio
+    split_date: Mapped[date] = mapped_column(Date, nullable=False)
+    split_ratio: Mapped[str] = mapped_column(String(20), nullable=False)  # e.g., '4:1', '1:10'
+    
+    # Parsed ratio components
+    split_from: Mapped[int | None] = mapped_column(Integer)  # e.g., 4 in '4:1'
+    split_to: Mapped[int | None] = mapped_column(Integer)  # e.g., 1 in '4:1'
+    
+    # Additional data from yfinance
+    raw_data: Mapped[dict | None] = mapped_column(JSONB)
+    
+    # Metadata
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        Index("idx_calendar_splits_symbol", "symbol"),
+        Index("idx_calendar_splits_date", "split_date"),
+        UniqueConstraint("symbol", "split_date", name="uq_calendar_splits_symbol_date"),
+    )
+
+
+class CalendarEconomicEvent(Base):
+    """
+    Economic events calendar from yfinance (Fed meetings, jobs reports, etc.).
+    
+    Updated weekly via scheduled job.
+    Used for macro analysis and UI calendar widget.
+    """
+    __tablename__ = "calendar_economic_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    event_name: Mapped[str] = mapped_column(String(300), nullable=False)
+    
+    # Event date/time
+    event_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    
+    # Country/region
+    country: Mapped[str | None] = mapped_column(String(50))
+    
+    # Event data (estimates, actual, prior)
+    estimate: Mapped[str | None] = mapped_column(String(100))
+    actual: Mapped[str | None] = mapped_column(String(100))
+    prior: Mapped[str | None] = mapped_column(String(100))
+    
+    # Importance (if provided)
+    importance: Mapped[str | None] = mapped_column(String(20))  # 'High', 'Medium', 'Low'
+    
+    # Additional data from yfinance
+    raw_data: Mapped[dict | None] = mapped_column(JSONB)
+    
+    # Metadata
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        Index("idx_calendar_econ_date", "event_date"),
+        Index("idx_calendar_econ_country", "country"),
+        UniqueConstraint("event_name", "event_date", name="uq_calendar_econ_event_date"),
+    )
+

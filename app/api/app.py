@@ -18,6 +18,7 @@ from .routes import (
     ai_personas,
     api_keys,
     auth,
+    calendar,
     celery,
     cronjobs,
     dip_changes,
@@ -26,6 +27,7 @@ from .routes import (
     dips,
     health,
     logos,
+    market,
     metrics,
     mfa,
     portfolios,
@@ -211,5 +213,7 @@ def create_api_app() -> FastAPI:
     app.include_router(dip_entry.router, prefix="/signals/dip-entry", tags=["Dip Entry"])
     app.include_router(celery.router, tags=["Celery"])
     app.include_router(ai_personas.router, tags=["AI Personas"])
+    app.include_router(market.router, tags=["Market Data"])
+    app.include_router(calendar.router, tags=["Calendar"])
 
     return app

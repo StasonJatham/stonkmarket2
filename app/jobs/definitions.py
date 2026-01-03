@@ -3139,3 +3139,130 @@ async def portfolio_ai_analysis_job() -> str:
     except Exception as e:
         logger.error(f"portfolio_ai_analysis failed: {e}")
         raise
+
+
+# =============================================================================
+# MARKET DATA SYNC - Weekly yfinance sector/industry data
+# =============================================================================
+
+
+@register_job("market_data_sync")
+async def market_data_sync_job() -> str:
+    """
+    Sync market sector and industry data from yfinance.
+    
+    Schedule: Sunday 3 AM UTC (weekly)
+    
+    This job:
+    1. Fetches all 11 sector summaries with top companies, ETFs, mutual funds
+    2. Fetches all industries for each sector with top/performing/growth companies
+    3. Stores data in market_sectors and market_industries tables
+    4. Invalidates cache for sector/industry endpoints
+    
+    Data is used for:
+    - Competitor suggestions (stocks in same industry)
+    - Sector analysis and trends
+    - Similar stock recommendations
+    """
+    from app.services.market_data import sync_all_market_data
+
+    logger.info("Starting market_data_sync job")
+    job_start = time.monotonic()
+    
+    try:
+        result = await sync_all_market_data()
+        
+        duration_ms = int((time.monotonic() - job_start) * 1000)
+        
+        message = (
+            f"Synced {result['sectors_synced']} sectors, "
+            f"{result['industries_synced']} industries"
+        )
+        
+        if result['errors']:
+            message += f" ({len(result['errors'])} errors)"
+        
+        log_job_success(
+            "market_data_sync",
+            message,
+            sectors_synced=result['sectors_synced'],
+            industries_synced=result['industries_synced'],
+            errors=len(result['errors']),
+            duration_ms=duration_ms,
+        )
+        return message
+        
+    except Exception as e:
+        logger.error(f"market_data_sync failed: {e}")
+        raise
+
+
+# =============================================================================
+# CALENDAR SYNC - Weekly yfinance calendar data (earnings, splits, IPOs)
+# =============================================================================
+
+
+@register_job("calendar_sync")
+async def calendar_sync_job() -> str:
+    """
+    Sync calendar data (earnings, IPOs, splits, economic events) from yfinance.
+    
+    Schedule: Saturday 5 AM UTC (weekly)
+    
+    This job:
+    1. Fetches earnings calendar for next 5 weeks
+    2. Fetches IPO calendar for next 5 weeks
+    3. Fetches splits calendar for next 5 weeks
+    4. Fetches economic events calendar for next 5 weeks
+    5. Stores all events in database
+    6. Invalidates cache for calendar endpoints
+    
+    Data is used for:
+    - Calendar widget in UI
+    - Earnings alerts and analysis
+    - Split tracking for price adjustments
+    - Economic event awareness
+    """
+    from app.services.calendar_data import sync_all_calendar_data
+
+    logger.info("Starting calendar_sync job")
+    job_start = time.monotonic()
+    
+    try:
+        result = await sync_all_calendar_data(weeks_ahead=5)
+        
+        duration_ms = int((time.monotonic() - job_start) * 1000)
+        
+        total_synced = (
+            result['earnings_synced'] + 
+            result['ipos_synced'] + 
+            result['splits_synced'] + 
+            result['economic_events_synced']
+        )
+        
+        message = (
+            f"Synced {total_synced} calendar events: "
+            f"{result['earnings_synced']} earnings, "
+            f"{result['ipos_synced']} IPOs, "
+            f"{result['splits_synced']} splits, "
+            f"{result['economic_events_synced']} economic"
+        )
+        
+        if result['errors']:
+            message += f" ({len(result['errors'])} errors)"
+        
+        log_job_success(
+            "calendar_sync",
+            message,
+            earnings_synced=result['earnings_synced'],
+            ipos_synced=result['ipos_synced'],
+            splits_synced=result['splits_synced'],
+            economic_events_synced=result['economic_events_synced'],
+            errors=len(result['errors']),
+            duration_ms=duration_ms,
+        )
+        return message
+        
+    except Exception as e:
+        logger.error(f"calendar_sync failed: {e}")
+        raise

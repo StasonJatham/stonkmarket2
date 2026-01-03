@@ -157,7 +157,23 @@ DEFAULT_SCHEDULES: dict[str, tuple[str, str]] = {
     ),
     
     # =========================================================================
-    # 4. MONTHLY MAINTENANCE
+    # 4. WEEKLY MARKET DATA
+    # =========================================================================
+    "market_data_sync": (
+        "0 3 * * 0",
+        "Market sector/industry sync - fetches all sectors, industries, top companies "
+        "from yfinance. Used for competitor suggestions and similar stocks. "
+        "Sunday 3 AM UTC."
+    ),
+    "calendar_sync": (
+        "0 5 * * 6",
+        "Calendar data sync - fetches earnings, IPOs, splits, economic events from yfinance "
+        "for the next 5 weeks. Used for calendar widget and stock analysis. "
+        "Saturday 5 AM UTC."
+    ),
+    
+    # =========================================================================
+    # 5. MONTHLY MAINTENANCE
     # =========================================================================
     "quant_monthly": (
         "0 3 1 * *",
@@ -207,6 +223,10 @@ JOB_PRIORITIES: dict[str, dict[str, int | str]] = {
     "ai_personas_weekly": {"queue": "batch", "priority": 6},
     "ai_bios_weekly": {"queue": "batch", "priority": 4},
     "data_backfill": {"queue": "batch", "priority": 3},
+    
+    # Weekly market data - medium priority
+    "market_data_sync": {"queue": "default", "priority": 5},
+    "calendar_sync": {"queue": "default", "priority": 5},
     
     # Monthly maintenance
     "quant_monthly": {"queue": "default", "priority": 4},
