@@ -188,6 +188,12 @@ async def check_batch(batch_id: str) -> dict[str, Any] | None:
         failed = batch.request_counts.failed if batch.request_counts else 0
         total = batch.request_counts.total if batch.request_counts else 0
         
+        # Log status for worker visibility
+        logger.info(
+            f"[BATCH] {batch_id[:16]}... status={batch.status}, "
+            f"{completed}/{total} completed, {failed} failed"
+        )
+        
         return {
             "id": batch.id,
             "status": batch.status,
@@ -323,7 +329,13 @@ async def collect_batch(batch_id: str) -> list[dict[str, Any]] | None:
                 logger.warning(f"Failed to parse batch result line: {e}")
                 continue
         
-        logger.info(f"Collected {len(results)} results from batch {batch_id}")
+        # Log detailed results for worker visibility
+        success_count = sum(1 for r in results if not r.get("failed"))
+        failed_count = sum(1 for r in results if r.get("failed"))
+        logger.info(
+            f"[BATCH] Collected {batch_id[:16]}... - "
+            f"{success_count} succeeded, {failed_count} failed"
+        )
         return results
     
     except Exception as e:

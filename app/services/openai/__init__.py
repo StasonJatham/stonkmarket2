@@ -66,6 +66,7 @@ from app.services.openai.generate import (
     UsageMetrics,
     build_prompt,
     calculate_safe_output_tokens,
+    count_tokens,
     estimate_tokens,
     generate,
     generate_bio,
@@ -154,6 +155,7 @@ __all__ = [
     # Generation helpers
     "UsageMetrics",
     "build_prompt",
+    "count_tokens",
     "estimate_tokens",
     "calculate_safe_output_tokens",
 ]

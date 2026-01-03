@@ -4,7 +4,7 @@ Core AI generation functions.
 Provides the main generate() function with:
 - Type-safe structured outputs
 - Automatic retry with exponential backoff
-- Token budget calculation
+- Token budget calculation (using tiktoken)
 - Telemetry and usage tracking
 """
 
@@ -15,8 +15,10 @@ import json
 import random
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import lru_cache
 from typing import Any, TypeVar, overload
 
+import tiktoken
 from pydantic import BaseModel
 from tenacity import (
     AsyncRetrying,
@@ -53,6 +55,55 @@ logger = get_logger("openai.generate")
 
 # Type variable for output types
 T = TypeVar("T", bound=BaseModel)
+
+
+# =============================================================================
+# TOKEN COUNTING WITH TIKTOKEN
+# =============================================================================
+
+
+@lru_cache(maxsize=8)
+def _get_encoding(model: str) -> tiktoken.Encoding:
+    """
+    Get the tiktoken encoding for a model.
+    
+    Cached to avoid repeated initialization overhead.
+    Falls back to cl100k_base for unknown models.
+    """
+    try:
+        return tiktoken.encoding_for_model(model)
+    except KeyError:
+        # GPT-5, o3, and newer models likely use cl100k_base or similar
+        return tiktoken.get_encoding("cl100k_base")
+
+
+def count_tokens(text: str, model: str | None = None) -> int:
+    """
+    Count exact tokens in text using tiktoken.
+    
+    Args:
+        text: Text to count tokens for
+        model: Model name for encoding (defaults to configured model)
+    
+    Returns:
+        Exact token count
+    """
+    if not text:
+        return 0
+    
+    model = model or get_settings().default_model
+    encoding = _get_encoding(model)
+    return len(encoding.encode(text))
+
+
+def estimate_tokens(text: str, model: str | None = None) -> int:
+    """
+    Count tokens using tiktoken.
+    
+    This is the primary token counting function used throughout the module.
+    Uses exact tiktoken counting for accuracy.
+    """
+    return count_tokens(text, model)
 
 
 @dataclass
@@ -95,12 +146,6 @@ class UsageMetrics:
         return input_cost + output_cost
 
 
-def estimate_tokens(text: str) -> int:
-    """Estimate token count from text length."""
-    settings = get_settings()
-    return len(text) // settings.chars_per_token
-
-
 def calculate_safe_output_tokens(
     model: str,
     instructions: str,
@@ -111,6 +156,8 @@ def calculate_safe_output_tokens(
     """
     Calculate safe output token budget based on input size.
     
+    Uses tiktoken for accurate token counting.
+    
     Returns:
         Tuple of (safe_output_tokens, input_overflow)
         If input_overflow is True, the input is too large for the model.
@@ -118,10 +165,10 @@ def calculate_safe_output_tokens(
     limits = get_model_limits(model)
     config = get_task_config(task)
     
-    # Estimate input tokens
-    input_tokens = estimate_tokens(instructions + prompt)
+    # Count input tokens using tiktoken
+    input_tokens = estimate_tokens(instructions + prompt, model)
     
-    # Add reasoning overhead for GPT-5 models
+    # Add reasoning overhead for GPT-5/o3 models
     if is_reasoning_model(model):
         input_tokens += config.reasoning_overhead
     
@@ -458,6 +505,13 @@ async def generate(
                     duration_ms=duration_ms,
                     model=model,
                     task=task.value,
+                )
+                
+                # Log token usage for worker job visibility
+                logger.info(
+                    f"[{task.value.upper()}] {ctx_dict.get('symbol', 'unknown')} - "
+                    f"{metrics.input_tokens} in / {metrics.output_tokens} out tokens, "
+                    f"{metrics.duration_ms}ms, ${metrics.cost_usd:.4f}"
                 )
                 
                 # Record usage if enabled
