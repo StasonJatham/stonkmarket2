@@ -146,7 +146,7 @@ async def cache_warmup_job() -> str:
 
                 try:
                     # Fetch fresh price data (always refresh)
-                    prices = await service.price_provider.get_prices(
+                    prices = await service.price_service.get_prices(
                         symbol,
                         start_date=date.today() - timedelta(days=days),
                         end_date=date.today(),

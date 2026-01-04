@@ -117,7 +117,7 @@ async def process_new_symbol(symbol: str) -> None:
                 logger.info(f"[NEW SYMBOL] Step 4: Price history already cached for {symbol}")
             else:
                 service = get_dipfinder_service()
-                prices = await service.price_provider.get_prices(
+                prices = await service.price_service.get_prices(
                     symbol.upper(),
                     start_date=date.today() - timedelta(days=1825),  # 5 years
                     end_date=date.today(),
@@ -322,7 +322,7 @@ async def process_approved_symbol(symbol: str) -> None:
                 logger.info(f"Price history already cached for {symbol}, skipping fetch")
             else:
                 service = get_dipfinder_service()
-                prices = await service.price_provider.get_prices(
+                prices = await service.price_service.get_prices(
                     symbol.upper(),
                     start_date=date.today() - timedelta(days=1825),  # 5 years
                     end_date=date.today(),

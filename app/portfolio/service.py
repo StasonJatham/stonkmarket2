@@ -13,8 +13,8 @@ import pandas as pd
 
 from app.cache.cache import Cache
 from app.core.logging import get_logger
-from app.dipfinder.service import DatabasePriceProvider
 from app.repositories import portfolios_orm as portfolios_repo
+from app.services.prices import get_price_service
 
 
 logger = get_logger("portfolio.service")
@@ -198,8 +198,8 @@ async def _fetch_prices(
     start_date: date,
     end_date: date,
 ) -> dict[str, pd.DataFrame]:
-    provider = DatabasePriceProvider()
-    return await provider.get_prices_batch(symbols, start_date, end_date)
+    service = get_price_service()
+    return await service.get_prices_batch(symbols, start_date, end_date)
 
 
 async def build_portfolio_context(

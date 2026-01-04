@@ -118,11 +118,12 @@ async def _fetch_prices_for_symbols(
     
     # Fetch missing symbols from yfinance (common for sector ETFs)
     if missing_symbols:
-        yf_service = get_yfinance_service()
-        yf_results = await yf_service.get_price_history_batch(
+        from app.services.prices import get_price_service
+        price_service = get_price_service()
+        yf_results = await price_service.get_prices_batch(
             missing_symbols, start_date, end_date
         )
-        for symbol, (df, _version) in yf_results.items():
+        for symbol, df in yf_results.items():
             if df is not None and not df.empty and "Close" in df.columns:
                 price_dfs[symbol] = df["Close"]
 
@@ -153,7 +154,7 @@ def _compute_returns(prices: pd.DataFrame) -> pd.DataFrame:
 
 async def _get_symbol_prices(symbol: str, days: int = 365) -> pd.DataFrame | None:
     """Fetch price history for a single symbol as DataFrame with Close column."""
-    from app.services.data_providers.yfinance_service import get_yfinance_service
+    from app.services.prices import get_price_service
     
     end_date = date.today()
     start_date = end_date - timedelta(days=days)
@@ -163,13 +164,11 @@ async def _get_symbol_prices(symbol: str, days: int = 365) -> pd.DataFrame | Non
     if df is not None and "Close" in df.columns and len(df) >= 20:
         return df
     
-    # Fallback to yfinance
-    yf_service = get_yfinance_service()
-    results = await yf_service.get_price_history_batch([symbol], start_date, end_date)
-    if symbol in results:
-        df, _ = results[symbol]
-        if df is not None and not df.empty and "Close" in df.columns:
-            return df
+    # Fallback to PriceService (DB first, yfinance fallback)
+    price_service = get_price_service()
+    df = await price_service.get_prices(symbol, start_date, end_date)
+    if df is not None and not df.empty and "Close" in df.columns:
+        return df
     
     return None
 

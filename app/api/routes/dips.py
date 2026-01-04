@@ -48,13 +48,6 @@ def _safe_float(value: float, default: float = 0.0) -> float:
         return default
 
 
-def _get_close_col(df: pd.DataFrame) -> str:
-    """Get the best close column, preferring Adjusted Close for split-adjusted prices."""
-    if "Adj Close" in df.columns and df["Adj Close"].notna().any():
-        return "Adj Close"
-    return "Close"
-
-
 def _validate_chart_data(chart_points: list) -> list:
     """
     Validate chart data and skip points with impossible daily changes.
@@ -512,7 +505,7 @@ async def get_chart(
     try:
         # Use dipfinder service for chart data
         service = get_dipfinder_service()
-        prices = await service.price_provider.get_prices(
+        prices = await service.price_service.get_prices(
             symbol,
             start_date=date.today() - timedelta(days=days),
             end_date=date.today(),
@@ -524,8 +517,8 @@ async def get_chart(
                 details={"symbol": symbol},
             )
 
-        # Use Adjusted Close for split-adjusted prices (prevents chart corruption)
-        close_col = _get_close_col(prices)
+        # Use Close column - yfinance Adj Close has quality issues with recent data
+        close_col = "Close"
         
         # Convert to chart points
         chart_points = []
@@ -622,7 +615,7 @@ async def get_batch_charts(
             
             # Fetch from service
             service = get_dipfinder_service()
-            prices = await service.price_provider.get_prices(
+            prices = await service.price_service.get_prices(
                 symbol,
                 start_date=date.today() - timedelta(days=days),
                 end_date=date.today(),
@@ -631,8 +624,8 @@ async def get_batch_charts(
             if prices is None or prices.empty:
                 return None
             
-            # Use Adjusted Close for split-adjusted prices
-            close_col = _get_close_col(prices)
+            # Use Close column - yfinance Adj Close has quality issues
+            close_col = "Close"
             
             # Convert to mini chart points (last 50)
             points = []

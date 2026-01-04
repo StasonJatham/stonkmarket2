@@ -1,27 +1,21 @@
-"""DipFinder service with price provider and caching.
+"""DipFinder service for computing dip signals.
 
-MIGRATED: Now uses unified YFinanceService for yfinance calls.
-Orchestrates the full signal computation pipeline with:
-- Price data fetching/caching
-- Signal caching
-- Database persistence
-- Background job integration
+Uses unified PriceService for all price data operations.
 """
 
 from __future__ import annotations
 
 import json
 from datetime import UTC, date, datetime, timedelta
-from typing import Any, Protocol
+from typing import Any
 
 import pandas as pd
 
 from app.cache.cache import Cache
 from app.core.logging import get_logger
 from app.repositories import dipfinder_orm as dipfinder_repo
-from app.repositories import price_history_orm as price_history_repo
 from app.repositories import quant_scores_orm as quant_scores_repo
-from app.services.data_providers import get_yfinance_service
+from app.services.prices import get_price_service
 
 from .config import DipFinderConfig, get_dipfinder_config
 from .dip import DipMetrics
@@ -33,223 +27,24 @@ from .stability import StabilityMetrics, compute_stability_score
 logger = get_logger("dipfinder.service")
 
 
-class PriceProvider(Protocol):
-    """Protocol for price data providers."""
-
-    async def get_prices(
-        self,
-        ticker: str,
-        start_date: date,
-        end_date: date,
-    ) -> pd.DataFrame | None:
-        """Get price data for a ticker."""
-        ...
-
-    async def get_prices_batch(
-        self,
-        tickers: list[str],
-        start_date: date,
-        end_date: date,
-    ) -> dict[str, pd.DataFrame]:
-        """Get price data for multiple tickers."""
-        ...
-
-
-class YFinancePriceProvider:
-    """Price provider using unified YFinanceService with caching."""
-
-    def __init__(self, config: DipFinderConfig | None = None):
-        """Initialize provider with optional config."""
-        self.config = config or get_dipfinder_config()
-        self._cache = Cache(prefix="prices", default_ttl=self.config.price_cache_ttl)
-        self._service = get_yfinance_service()
-
-    async def get_prices(
-        self,
-        ticker: str,
-        start_date: date,
-        end_date: date,
-    ) -> pd.DataFrame | None:
-        """Get price data for a single ticker."""
-        result = await self.get_prices_batch([ticker], start_date, end_date)
-        return result.get(ticker)
-
-    async def get_prices_batch(
-        self,
-        tickers: list[str],
-        start_date: date,
-        end_date: date,
-    ) -> dict[str, pd.DataFrame]:
-        """Get price data for multiple tickers with batching."""
-        results: dict[str, pd.DataFrame] = {}
-        tickers_to_fetch: list[str] = []
-
-        # Check local cache first
-        for ticker in tickers:
-            cache_key = f"{ticker}:{start_date}:{end_date}"
-            cached = await self._cache.get(cache_key)
-            if cached is not None:
-                # Reconstruct DataFrame from cached dict
-                try:
-                    index_dates = cached.pop("_index_dates", None)
-                    df = pd.DataFrame(cached)
-                    if index_dates is not None:
-                        df.index = pd.to_datetime(index_dates)
-                    else:
-                        df.index = pd.to_datetime(df.index)
-                    results[ticker] = df
-                except Exception:
-                    tickers_to_fetch.append(ticker)
-            else:
-                tickers_to_fetch.append(ticker)
-
-        if not tickers_to_fetch:
-            return results
-
-        # Use unified service for batch download
-        batch_results = await self._service.get_price_history_batch(
-            tickers_to_fetch, start_date, end_date
-        )
-
-        # Process results and cache
-        for ticker, (df, version) in batch_results.items():
-            if df is not None and not df.empty:
-                results[ticker] = df
-
-                # Cache the result
-                cache_key = f"{ticker}:{start_date}:{end_date}"
-                df_for_cache = df.copy()
-                df_for_cache.index = df_for_cache.index.strftime("%Y-%m-%d")
-                cache_data = df_for_cache.to_dict()
-                cache_data["_index_dates"] = list(df_for_cache.index)
-                await self._cache.set(
-                    cache_key, cache_data, ttl=self.config.price_cache_ttl
-                )
-
-        return results
-
-
-class DatabasePriceProvider:
-    """Price provider using cached database prices.
-
-    Falls back to yfinance if not in database.
-    """
-
-    def __init__(self, config: DipFinderConfig | None = None):
-        """Initialize with optional config."""
-        self.config = config or get_dipfinder_config()
-        self._yf_provider = YFinancePriceProvider(config)
-
-    async def get_prices(
-        self,
-        ticker: str,
-        start_date: date,
-        end_date: date,
-    ) -> pd.DataFrame | None:
-        """Get price data from database or yfinance."""
-        # Try database first
-        df = await price_history_repo.get_prices_as_dataframe(
-            ticker.upper(),
-            start_date,
-            end_date,
-        )
-
-        if df is not None and not df.empty:
-            expected_days = (end_date - start_date).days * 0.7
-            coverage_ok = len(df) >= expected_days * 0.8
-
-            last_idx = df.index.max()
-            last_date = last_idx.date() if hasattr(last_idx, "date") else last_idx
-
-            if coverage_ok and last_date and last_date >= (end_date - timedelta(days=1)):
-                return df
-
-            if last_date and last_date < end_date:
-                # Use at least 5-day window to avoid holiday no-data errors
-                fetch_start = last_date + timedelta(days=1)
-                min_fetch_days = 5
-                if (end_date - fetch_start).days < min_fetch_days:
-                    fetch_start = end_date - timedelta(days=min_fetch_days)
-                if fetch_start <= end_date:
-                    yf_df = await self._yf_provider.get_prices(ticker, fetch_start, end_date)
-                    if yf_df is not None and not yf_df.empty:
-                        await self._save_prices_to_db(ticker, yf_df)
-                        merged = pd.concat(
-                            [df.copy(), yf_df.copy()],
-                            axis=0,
-                        )
-                        # Keep as DatetimeIndex for consistency with database output
-                        merged.index = pd.to_datetime(merged.index)
-                        merged = merged[~merged.index.duplicated(keep="last")].sort_index()
-                        return merged
-
-        # Fallback to yfinance (full range)
-        yf_df = await self._yf_provider.get_prices(ticker, start_date, end_date)
-
-        if yf_df is not None and not yf_df.empty:
-            await self._save_prices_to_db(ticker, yf_df)
-            return yf_df
-
-        return df
-
-    async def get_prices_batch(
-        self,
-        tickers: list[str],
-        start_date: date,
-        end_date: date,
-    ) -> dict[str, pd.DataFrame]:
-        """Get prices for multiple tickers."""
-        results: dict[str, pd.DataFrame] = {}
-
-        for ticker in tickers:
-            df = await self.get_prices(ticker, start_date, end_date)
-            if df is not None and not df.empty:
-                results[ticker] = df
-
-        return results
-
-    async def _save_prices_to_db(self, ticker: str, df: pd.DataFrame) -> None:
-        """Save price data to database with validation."""
-        try:
-            # Validate prices before saving
-            from app.services.data_providers.smart_price_fetcher import get_smart_price_fetcher
-            fetcher = get_smart_price_fetcher()
-            
-            # Get existing last price for continuity check
-            existing_prices = await price_history_repo.get_latest_prices([ticker])
-            existing_price = existing_prices.get(ticker.upper())
-            
-            validation = fetcher.validate_prices(ticker, df, existing_price)
-            if not validation.valid:
-                logger.warning(f"Skipping save for {ticker}: {validation.error}")
-                return
-            
-            if validation.suspicious_dates:
-                logger.warning(
-                    f"{ticker} has {len(validation.suspicious_dates)} suspicious "
-                    f"price points - saving but flagging for review"
-                )
-            
-            count = await price_history_repo.save_prices(ticker, df)
-            logger.debug(f"Cached {count} price records for {ticker}")
-        except Exception as e:
-            logger.warning(f"Failed to cache prices for {ticker}: {e}")
-
-
 class DipFinderService:
     """Main service for DipFinder signal computation."""
 
     def __init__(
         self,
         config: DipFinderConfig | None = None,
-        price_provider: PriceProvider | None = None,
     ):
-        """Initialize service with optional config and price provider."""
+        """Initialize service with optional config."""
         self.config = config or get_dipfinder_config()
-        self.price_provider = price_provider or DatabasePriceProvider(self.config)
+        self._price_service = get_price_service()
         self._signal_cache = Cache(
             prefix="dipfinder", default_ttl=self.config.signal_cache_ttl
         )
+
+    @property
+    def price_service(self):
+        """Get the price service instance."""
+        return self._price_service
 
     async def get_signal(
         self,
@@ -433,8 +228,8 @@ class DipFinderService:
             event_risk=bool(quant_score.event_risk),
         )
 
-        # Fetch prices
-        prices = await self.price_provider.get_prices_batch(
+        # Fetch prices using unified PriceService
+        prices = await self._price_service.get_prices_batch(
             [ticker, benchmark],
             start_date,
             as_of_date,

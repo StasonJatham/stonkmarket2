@@ -565,13 +565,13 @@ async def get_price_gaps(
 ) -> dict:
     """Get summary of price data gaps."""
     from app.repositories import symbols_orm as symbols_repo
-    from app.services.data_providers.smart_price_fetcher import get_smart_price_fetcher
+    from app.services.prices import get_price_service
     
     all_symbols = await symbols_repo.list_symbols()
     tickers = [s.symbol for s in all_symbols if s.symbol not in ("SPY", "^GSPC", "URTH")]
     
-    fetcher = get_smart_price_fetcher()
-    summary = await fetcher.get_gaps_summary(tickers)
+    price_service = get_price_service()
+    summary = await price_service.get_gaps_summary(tickers)
     
     return summary
 
@@ -591,7 +591,7 @@ async def refresh_prices(
         symbols: Optional list of symbols to refresh (default: all)
     """
     from app.repositories import symbols_orm as symbols_repo
-    from app.services.data_providers.smart_price_fetcher import get_smart_price_fetcher
+    from app.services.prices import get_price_service
     
     logger.info(f"Price refresh triggered by {user.username}")
     
@@ -601,10 +601,10 @@ async def refresh_prices(
         all_symbols = await symbols_repo.list_symbols()
         tickers = [s.symbol for s in all_symbols if s.symbol not in ("SPY", "^GSPC", "URTH")]
     
-    fetcher = get_smart_price_fetcher()
+    price_service = get_price_service()
     
     try:
-        results = await fetcher.fetch_and_save(tickers, validate=True)
+        results = await price_service.refresh_prices(tickers)
         
         total_records = sum(results.values())
         symbols_updated = sum(1 for count in results.values() if count > 0)

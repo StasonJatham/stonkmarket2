@@ -690,7 +690,7 @@ async def quant_analysis_nightly_job() -> str:
         get_current_signals,
         SIGNAL_COMBINATIONS,
     )
-    from app.services.data_providers.yfinance_service import get_yfinance_service
+    from app.services.prices import get_price_service
 
     logger.info("Starting quant_analysis_nightly job")
     job_start = time.monotonic()
@@ -710,7 +710,7 @@ async def quant_analysis_nightly_job() -> str:
     failed = 0
     
     # Fetch SPY prices once for benchmarking
-    yf_service = get_yfinance_service()
+    price_service = get_price_service()
     end_date = date.today()
     start_date = end_date - timedelta(days=1260)
     
@@ -719,15 +719,11 @@ async def quant_analysis_nightly_job() -> str:
     if spy_df is not None and "Close" in spy_df.columns and len(spy_df) >= 60:
         spy_prices = spy_df["Close"].dropna()
     else:
-        # Try yfinance
+        # Try PriceService fallback
         try:
-            yf_results = await yf_service.get_price_history_batch(
-                ["SPY"], start_date, end_date
-            )
-            if "SPY" in yf_results:
-                df, _ = yf_results["SPY"]
-                if df is not None and "Close" in df.columns:
-                    spy_prices = df["Close"].dropna()
+            spy_df = await price_service.get_prices("SPY", start_date, end_date)
+            if spy_df is not None and "Close" in spy_df.columns:
+                spy_prices = spy_df["Close"].dropna()
         except Exception:
             pass
     

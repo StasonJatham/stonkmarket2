@@ -1120,7 +1120,6 @@ async def schedule_batch_portfolio_analysis() -> str | None:
     from datetime import date, timedelta
     from app.portfolio.service import build_portfolio_context, run_quantstats, run_pyfolio
     from app.quant_engine import analyze_portfolio as run_risk_analytics
-    from app.dipfinder.service import DatabasePriceProvider
     
     portfolios = await get_portfolios_needing_ai_analysis()
     
@@ -1132,7 +1131,6 @@ async def schedule_batch_portfolio_analysis() -> str | None:
     
     # Prepare items for batch
     items = []
-    price_provider = DatabasePriceProvider()
     
     for p in portfolios:
         try:
@@ -1189,6 +1187,7 @@ async def schedule_batch_portfolio_analysis() -> str | None:
             # Try to get risk analytics
             try:
                 import pandas as pd
+                from app.services.prices import get_price_service
                 
                 symbols = [h["symbol"] for h in holdings]
                 
@@ -1196,9 +1195,10 @@ async def schedule_batch_portfolio_analysis() -> str | None:
                 end_dt = date.today()
                 start_dt = end_dt - timedelta(days=365)
                 
+                price_service = get_price_service()
                 prices_dict = {}
                 for symbol in symbols:
-                    price_df = await price_provider.get_prices(symbol, start_dt, end_dt)
+                    price_df = await price_service.get_prices(symbol, start_dt, end_dt)
                     if price_df is not None and not price_df.empty:
                         prices_dict[symbol] = price_df["Close"]
                 

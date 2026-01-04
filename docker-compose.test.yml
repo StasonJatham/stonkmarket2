@@ -1,0 +1,169 @@
+# System Test Docker Compose
+# Isolated stack for running holistic system tests
+#
+# Usage:
+#   docker compose -f docker-compose.test.yml up -d
+#   pytest system_tests/ -v
+#   docker compose -f docker-compose.test.yml down -v
+#
+# OR use the existing dev stack (faster):
+#   docker compose -f docker-compose.dev.yml up -d
+#   SYSTEM_TEST_USE_DEV=1 pytest system_tests/ -v
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: stonkmarket-api-test
+    command: >
+      uvicorn app.main:app
+      --host 0.0.0.0
+      --port 8000
+    env_file:
+      - .env.production
+    environment:
+      - ENVIRONMENT=test
+      - DEBUG=false
+      - LOG_LEVEL=INFO
+      - CORS_ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000
+      - CELERY_BROKER_URL=redis://valkey:6379/1
+      - CELERY_RESULT_BACKEND=redis://valkey:6379/1
+      - DATABASE_URL=postgresql+asyncpg://stonkmarket:${POSTGRES_PASSWORD:-stonkmarket}@postgres:5432/stonkmarket_test
+      - POSTGRES_DB=stonkmarket_test
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./app:/app/app:ro
+      - ./alembic:/app/alembic
+      - ./alembic.ini:/app/alembic.ini:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - stonkmarket-test
+
+  postgres:
+    image: postgres:17-alpine
+    container_name: stonkmarket-postgres-test
+    environment:
+      - POSTGRES_USER=stonkmarket
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-stonkmarket}
+      - POSTGRES_DB=stonkmarket_test
+    ports:
+      - "5433:5432"  # Different port to avoid conflict with dev
+    volumes:
+      - postgres_data_test:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stonkmarket -d stonkmarket_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - stonkmarket-test
+
+  valkey:
+    image: valkey/valkey:8.1-alpine
+    container_name: stonkmarket-valkey-test
+    command: >
+      valkey-server
+      --appendonly yes
+      --maxmemory 64mb
+      --maxmemory-policy allkeys-lru
+    ports:
+      - "6380:6379"  # Different port to avoid conflict with dev
+    volumes:
+      - valkey_data_test:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 3s
+    networks:
+      - stonkmarket-test
+
+  celery-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.celery
+    container_name: stonkmarket-celery-worker-test
+    command: >
+      celery -A app.celery_app.celery_app worker
+      --loglevel=INFO
+      --events
+      --concurrency=2
+      --prefetch-multiplier=1
+      --queues=high,default,low
+      -O fair
+      --hostname=worker-test@%h
+    env_file:
+      - .env.production
+    environment:
+      - ENVIRONMENT=test
+      - DEBUG=false
+      - CELERY_BROKER_URL=redis://valkey:6379/1
+      - CELERY_RESULT_BACKEND=redis://valkey:6379/1
+      - DATABASE_URL=postgresql+asyncpg://stonkmarket:${POSTGRES_PASSWORD:-stonkmarket}@postgres:5432/stonkmarket_test
+    volumes:
+      - ./app:/app/app:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    networks:
+      - stonkmarket-test
+
+  celery-worker-batch:
+    build:
+      context: .
+      dockerfile: Dockerfile.celery
+    container_name: stonkmarket-celery-worker-batch-test
+    command: >
+      celery -A app.celery_app.celery_app worker
+      --loglevel=INFO
+      --events
+      --concurrency=1
+      --prefetch-multiplier=1
+      --queues=batch
+      -O fair
+      --hostname=batch-test@%h
+    env_file:
+      - .env.production
+    environment:
+      - ENVIRONMENT=test
+      - DEBUG=false
+      - CELERY_BROKER_URL=redis://valkey:6379/1
+      - CELERY_RESULT_BACKEND=redis://valkey:6379/1
+      - DATABASE_URL=postgresql+asyncpg://stonkmarket:${POSTGRES_PASSWORD:-stonkmarket}@postgres:5432/stonkmarket_test
+    volumes:
+      - ./app:/app/app:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    networks:
+      - stonkmarket-test
+
+volumes:
+  postgres_data_test:
+    driver: local
+  valkey_data_test:
+    driver: local
+
+networks:
+  stonkmarket-test:
+    name: stonkmarket_test_net
+    driver: bridge

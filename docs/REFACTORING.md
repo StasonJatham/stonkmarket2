@@ -1,6 +1,6 @@
 # Stonkmarket Refactoring Blueprint
 
-**Status:** In Progress  
+**Status:** Phase 7 In Progress  
 **Started:** January 4, 2026  
 **Last Updated:** January 4, 2026
 
@@ -9,6 +9,12 @@
 ## Overview
 
 This document tracks the architectural refactoring of the Stonkmarket codebase from legacy patterns to a modern, async-first, high-performance stack.
+
+**Principles:**
+- **No facades or wrappers** - Full refactors only, remove old code completely
+- **No backward compatibility layers** - Clean architecture over legacy support
+- **Python typing everywhere** - Pydantic models, type hints on all functions
+- **PEP compliance** - Pythonic, idiomatic code
 
 ---
 
@@ -216,12 +222,98 @@ Update `tests/conftest.py` to only manage SQLAlchemy state.
 
 ---
 
+## Phase 6: Price Service Consolidation ✅ COMPLETED
+
+### 6.1 Problem Statement
+
+Price fetching code was scattered across 4+ overlapping implementations:
+- `YFinancePriceProvider` in `app/dipfinder/service.py`
+- `DatabasePriceProvider` in `app/dipfinder/service.py`
+- `SmartPriceFetcher` in `app/services/data_providers/smart_price_fetcher.py`
+- `YFinanceService.get_price_history_batch()` in `app/services/data_providers/yfinance_service.py`
+
+This caused data corruption issues where corrupt yfinance data was merged even after validation failed.
+
+### 6.2 Solution: Unified PriceService ✅
+
+**Created:** `app/services/prices.py` (~600 lines)
+
+Single source of truth for all price data operations:
+
+| Method | Purpose |
+| ------ | ------- |
+| `validate_prices()` | Reject data with >50% daily changes |
+| `get_prices()` | DB first, yfinance fallback, auto-validation |
+| `get_prices_batch()` | Batch fetching with validation |
+| `refresh_prices()` | Force refresh from yfinance |
+| `get_gaps_summary()` | Analyze price data gaps for admin UI |
+| `get_latest_prices()` | Get most recent close prices |
+| `get_latest_price_dates()` | Get most recent price dates |
+
+**Key Features:**
+- **DB-first approach** - Always check local DB before hitting yfinance
+- **Validated data only** - Never returns or saves corrupt data
+- **Automatic persistence** - Valid yfinance data saved automatically
+- **50% threshold** - Rejects day-over-day changes exceeding 50%
+
+### 6.3 Files Deleted ✅
+
+- `app/services/data_providers/smart_price_fetcher.py` (~500 lines)
+
+### 6.4 Files Updated ✅
+
+**DipFinder:**
+- `app/dipfinder/service.py` - Removed `DatabasePriceProvider`, `YFinancePriceProvider` (~200 lines removed)
+- Added `price_service` property using `PriceService`
+
+**Jobs:**
+- `app/jobs/data/__init__.py` - `symbol_ingest_job`, `prices_daily_job`, `data_backfill_job` now use `PriceService`
+- `app/jobs/quant/__init__.py` - `quant_analysis_nightly` uses `PriceService` for SPY fallback
+- `app/jobs/definitions.py` - Uses `service.price_service`
+
+**API Routes:**
+- `app/api/routes/dips.py` - Chart endpoints use `service.price_service`
+- `app/api/routes/portfolios.py` - Sparklines use `PriceService`
+- `app/api/routes/quant_engine.py` - Analytics use `PriceService`
+- `app/api/routes/admin_settings.py` - Gap analysis/refresh use `PriceService`
+
+**Services:**
+- `app/services/symbol_processing.py` - Uses `price_service`
+- `app/services/batch_scheduler.py` - Risk analytics use `PriceService`
+- `app/services/statistical_rating.py` - Signal analysis uses `PriceService`
+- `app/portfolio/service.py` - Batch price fetching uses `PriceService`
+
+### 6.5 Architecture Improvement
+
+**Before:**
+```
+Request → DipFinderService
+           ├── DatabasePriceProvider → price_history_repo
+           │                           └── (returns partial DB data)
+           └── YFinancePriceProvider → yfinance
+                                       └── (merges even if corrupt!)
+```
+
+**After:**
+```
+Request → DipFinderService
+           └── PriceService
+                ├── DB lookup (via price_history_orm)
+                ├── yfinance fallback (if needed)
+                ├── validate_prices() ← REJECTS CORRUPT DATA
+                ├── save to DB (only if valid)
+                └── return validated data only
+```
+
+---
+
 ## Test Results
 
 | Phase | Tests Passed | Tests Skipped | Status |
 | ----- | ------------ | ------------- | ------ |
 | Phase 1 | 513 | 8 | ✅ |
 | Phase 2 | 550 | 8 | ✅ (37 new tests: 29 domain + 8 typed service) |
+| Phase 6 | 588 | 8 | ✅ |
 
 ---
 
@@ -231,16 +323,52 @@ Update `tests/conftest.py` to only manage SQLAlchemy state.
 |----------|-------|----------|--------|
 | P0 | Dual database pools | `connection.py` | 📋 Phase 5 |
 | P0 | Thread pool saturation | `yfinance_service.py` | ✅ Fixed |
-| P1 | Circular imports | `jobs/tasks.py` | 📋 Phase 4 |
-| P1 | No retry policy | Multiple | 📋 Phase 3 |
+| P0 | Price data corruption | Multiple providers | ✅ Fixed (Phase 6) |
+| P1 | Circular imports | `jobs/tasks.py` | ✅ N/A |
+| P1 | No retry policy | Multiple | ✅ Fixed (Phase 3) |
 | P2 | Raw dicts instead of models | Services | ✅ Fixed (Phase 2) |
 | P2 | Deprecated `get_event_loop()` | Multiple | ✅ Fixed |
-| P3 | Monolithic job definitions | `definitions.py` | 📋 Phase 4 |
+| P3 | Monolithic job definitions | `definitions.py` | ✅ Fixed (Phase 4) |
+| P3 | Overlapping price providers | Multiple | ✅ Fixed (Phase 6) |
+| P2 | Legacy price methods in YFinanceService | `yfinance_service.py` | 🔄 Phase 7 |
+| P2 | Duplicate hedge_fund yfinance wrapper | `hedge_fund/data/yfinance_service.py` | 🔄 Phase 7 |
+
+---
+
+## Phase 7: Architecture Cleanup 🔄 IN PROGRESS
+
+### 7.1 Problem Statement
+
+Despite Phase 6 creating unified `PriceService`, legacy price methods still exist in:
+
+1. `YFinanceService.get_price_history()` - 1600 line file, price methods are redundant
+2. `YFinanceService.get_price_history_batch()` - Same issue
+3. `YFinanceService.get_price_history_typed()` - Wrapper around deprecated method
+4. `app/hedge_fund/data/yfinance_service.py` - Duplicate yfinance wrapper for hedge fund module
+
+### 7.2 Goals
+
+- **Remove legacy price methods** from `YFinanceService` 
+- **Consolidate hedge fund module** to use unified services
+- **Reduce `yfinance_service.py`** from 1600 lines to <1000 lines
+- **No backward compatibility layers** - full removal of old code
+
+### 7.3 Execution Plan
+
+| Step | Task | Status |
+| ---- | ---- | ------ |
+| 7.3.1 | Audit all usages of `get_price_history*` methods | ⏳ |
+| 7.3.2 | Update remaining consumers to use `PriceService` | ⏳ |
+| 7.3.3 | Remove `get_price_history`, `get_price_history_batch`, `get_price_history_typed` from `YFinanceService` | ⏳ |
+| 7.3.4 | Remove or consolidate `app/hedge_fund/data/yfinance_service.py` | ⏳ |
+| 7.3.5 | Run tests and verify no regressions | ⏳ |
+| 7.3.6 | Run system tests against Docker stack | ⏳ |
 
 ---
 
 ## Notes
 
-- All changes maintain backward compatibility
+- **No backward compatibility** - Old code is removed, not wrapped
 - Each phase includes running the full test suite
+- System tests required after major changes
 - No file should exceed 500 lines after refactoring

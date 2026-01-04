@@ -609,13 +609,11 @@ async def get_holdings_sparklines(
         df = await price_history_repo.get_prices_as_dataframe(symbol, start_date, end_date)
         
         if df is None or df.empty or "Close" not in df.columns:
-            # Try yfinance fallback
-            from app.services.data_providers.yfinance_service import get_yfinance_service
-            yf_service = get_yfinance_service()
+            # Try PriceService fallback
+            from app.services.prices import get_price_service
+            price_service = get_price_service()
             try:
-                results = await yf_service.get_price_history_batch([symbol], start_date, end_date)
-                if symbol in results:
-                    df, _ = results[symbol]
+                df = await price_service.get_prices(symbol, start_date, end_date)
             except Exception:
                 pass
         

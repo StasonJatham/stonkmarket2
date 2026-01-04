@@ -1,0 +1,27 @@
+{
+  "test_id": "system_tests/smoke/test_stack_healthy.py::TestDatabaseIntegrity::test_no_null_tickers_in_symbols",
+  "test_name": "test_no_null_tickers_in_symbols",
+  "test_start": "2026-01-04T14:24:08.468544+00:00",
+  "test_end": "2026-01-04T14:24:08.925010+00:00",
+  "duration_seconds": 0.456466,
+  "summary": "1 error(s) in logs",
+  "errors": [
+    "2026-01-04T14:24:08.524545342Z 2026-01-04 14:24:08.524 UTC [71452] ERROR:  column \"ticker\" does not exist at character 36"
+  ],
+  "tracebacks": [],
+  "warnings": [],
+  "container_logs": {
+    "api": [],
+    "worker": [],
+    "worker-batch": [],
+    "postgres": [
+      "2026-01-04T14:24:08.524545342Z 2026-01-04 14:24:08.524 UTC [71452] ERROR:  column \"ticker\" does not exist at character 36",
+      "2026-01-04T14:24:08.524597508Z 2026-01-04 14:24:08.524 UTC [71452] STATEMENT:  SELECT COUNT(*) FROM symbols WHERE ticker IS NULL"
+    ],
+    "valkey": []
+  },
+  "request": null,
+  "response": null,
+  "database": null,
+  "assertion_error": null
+}

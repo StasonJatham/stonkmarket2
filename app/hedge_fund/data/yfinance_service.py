@@ -1,13 +1,13 @@
 """
 yfinance data service for fetching market data.
 
-MIGRATED: Now uses unified YFinanceService for all yfinance calls.
+MIGRATED: Now uses unified YFinanceService and PriceService.
 Provides a clean interface with typed Pydantic models for the hedge_fund module.
 """
 
 import asyncio
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from app.hedge_fund.schemas import (
@@ -18,6 +18,7 @@ from app.hedge_fund.schemas import (
     PriceSeries,
 )
 from app.services.data_providers import get_yfinance_service
+from app.services.prices import get_price_service
 
 
 logger = logging.getLogger(__name__)
@@ -184,15 +185,23 @@ async def get_price_history(
     end_date: date | None = None,
     period: str = "1y",
 ) -> PriceSeries:
-    """Get price history as PriceSeries."""
-    service = get_yfinance_service()
+    """Get price history as PriceSeries using unified PriceService."""
+    price_service = get_price_service()
+    
+    # Calculate date range from period if not provided
+    if end_date is None:
+        end_date = date.today()
+    
+    if start_date is None:
+        # Parse period string to calculate start_date
+        period_days = {
+            "1d": 1, "5d": 5, "1mo": 30, "3mo": 90, "6mo": 180,
+            "1y": 365, "2y": 730, "5y": 1825, "10y": 3650, "max": 7300,
+        }
+        days = period_days.get(period, 365)
+        start_date = end_date - timedelta(days=days)
 
-    df, _ = await service.get_price_history(
-        symbol,
-        period=period,
-        start_date=start_date,
-        end_date=end_date,
-    )
+    df = await price_service.get_prices(symbol, start_date, end_date)
 
     prices = []
     if df is not None and not df.empty:

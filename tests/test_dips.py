@@ -118,13 +118,13 @@ class TestChartEndpoint:
 
         from app.api.routes import dips as dips_routes
 
-        class DummyPriceProvider:
+        class DummyPriceService:
             async def get_prices(self, symbol, start_date, end_date):
                 dates = pd.date_range(end=date.today(), periods=3, freq="D")
                 return pd.DataFrame({"Close": [100.0, 105.0, 102.0]}, index=dates)
 
         class DummyService:
-            price_provider = DummyPriceProvider()
+            price_service = DummyPriceService()
 
         async def fake_get_symbol_min_dip_pct(symbol):
             return 0.10
@@ -189,3 +189,62 @@ class TestRankingCache:
         assert "ranking" in key
         # Colons are sanitized to underscores in cache keys
         assert "all_True" in key
+
+
+class TestSafeFloatHelper:
+    """Tests for _safe_float helper function (prevents NaN JSON serialization errors)."""
+
+    def test_safe_float_with_normal_values(self):
+        """Normal float values pass through unchanged."""
+        from app.api.routes.dips import _safe_float
+        
+        assert _safe_float(123.45) == 123.45
+        assert _safe_float(0.0) == 0.0
+        assert _safe_float(-50.5) == -50.5
+
+    def test_safe_float_with_python_nan(self):
+        """Python float('nan') returns default."""
+        from app.api.routes.dips import _safe_float
+        
+        assert _safe_float(float("nan")) == 0.0
+        assert _safe_float(float("nan"), default=999.0) == 999.0
+
+    def test_safe_float_with_numpy_nan(self):
+        """NumPy NaN returns default."""
+        import numpy as np
+        from app.api.routes.dips import _safe_float
+        
+        assert _safe_float(np.nan) == 0.0
+        assert _safe_float(np.nan, default=-1.0) == -1.0
+
+    def test_safe_float_with_pandas_na(self):
+        """Pandas NA returns default."""
+        import pandas as pd
+        from app.api.routes.dips import _safe_float
+        
+        assert _safe_float(pd.NA) == 0.0
+        assert _safe_float(pd.NA, default=100.0) == 100.0
+
+    def test_safe_float_with_none(self):
+        """None returns default."""
+        from app.api.routes.dips import _safe_float
+        
+        assert _safe_float(None) == 0.0
+        assert _safe_float(None, default=42.0) == 42.0
+
+    def test_safe_float_with_infinity(self):
+        """Infinity returns default."""
+        import numpy as np
+        from app.api.routes.dips import _safe_float
+        
+        assert _safe_float(float("inf")) == 0.0
+        assert _safe_float(float("-inf")) == 0.0
+        assert _safe_float(np.inf) == 0.0
+        assert _safe_float(-np.inf) == 0.0
+
+    def test_safe_float_with_pandas_nat(self):
+        """Pandas NaT (Not a Time) returns default."""
+        import pandas as pd
+        from app.api.routes.dips import _safe_float
+        
+        assert _safe_float(pd.NaT) == 0.0

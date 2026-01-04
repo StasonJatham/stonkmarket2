@@ -125,7 +125,7 @@ async def symbol_ingest_job() -> str:
     from app.repositories import symbols_orm as symbols_repo
     from app.repositories import dip_state_orm as dip_state_repo
     from app.repositories import dip_votes_orm as dip_votes_repo
-    from app.services.data_providers import get_yfinance_service
+    from app.services.prices import get_price_service
     from app.services.openai import TaskType, submit_batch
     from app.services.fundamentals import get_fundamentals_for_analysis, refresh_fundamentals
     from app.services.stock_info import get_stock_info_batch_async
@@ -154,7 +154,7 @@ async def symbol_ingest_job() -> str:
         
         logger.info(f"[INGEST] Processing {len(symbols)} queued symbols: {symbols}")
 
-        yf_service = get_yfinance_service()
+        price_service = get_price_service()
         processed = 0
         failed = 0
         ai_items = []  # Collect items needing AI generation
@@ -177,12 +177,13 @@ async def symbol_ingest_job() -> str:
         stock_infos = await get_stock_info_batch_async(symbols)
 
         # Step 3: Batch fetch price history for symbols missing it
+        # PriceService handles validation and saving automatically
         price_results = {}
         if symbols_needing_data:
             logger.info(f"[INGEST] Fetching 5y price history for {len(symbols_needing_data)} symbols")
             today = date.today()
             start_date = today - timedelta(days=1825)  # 5 years
-            price_results = await yf_service.get_price_history_batch(
+            price_results = await price_service.get_prices_batch(
                 symbols=symbols_needing_data,
                 start_date=start_date,
                 end_date=today,
@@ -219,14 +220,11 @@ async def symbol_ingest_job() -> str:
                     dip_percentage=dip_pct,
                 )
 
-                # Store price history if we fetched it
+                # Check if we got price data (already saved by PriceService)
                 if symbol in price_results:
-                    price_data = price_results[symbol]
-                    if price_data:
-                        prices, _version = price_data
-                        if prices is not None and not prices.empty:
-                            await price_history_repo.save_prices(symbol, prices)
-                            logger.info(f"[INGEST] Saved {len(prices)} days of price history for {symbol}")
+                    prices = price_results[symbol]
+                    if prices is not None and not prices.empty:
+                        logger.info(f"[INGEST] Got {len(prices)} days of price history for {symbol}")
 
                 # Refresh fundamentals (idempotent - checks freshness internally)
                 await refresh_fundamentals(symbol)
@@ -362,7 +360,7 @@ async def data_backfill_job() -> str:
     from app.dipfinder.service import DipFinderService
     from app.repositories import symbols_orm as symbols_repo
     from app.repositories import quant_scores_orm as quant_repo
-    from app.services.data_providers import get_yfinance_service
+    from app.services.prices import get_price_service
     from app.services.fundamentals import refresh_fundamentals
     from app.services.openai import summarize_company
     from app.services.stock_info import get_stock_info_async
@@ -425,17 +423,14 @@ async def data_backfill_job() -> str:
                     logger.debug(f"[BACKFILL] Metadata failed for {symbol}: {e}")
         
         # =====================================================================
-        # PHASE 2: Price history - Smart batch fetching with gap analysis
+        # PHASE 2: Price history - Use unified PriceService
         # =====================================================================
-        from app.services.data_providers.smart_price_fetcher import get_smart_price_fetcher
+        price_service = get_price_service()
         
-        smart_fetcher = get_smart_price_fetcher()
+        logger.info(f"[BACKFILL] Phase 2: Refreshing prices for {len(tickers)} symbols")
         
-        # Analyze gaps for ALL symbols (quick - just checks latest dates)
-        logger.info(f"[BACKFILL] Phase 2: Analyzing price gaps for {len(tickers)} symbols")
-        
-        # Use smart fetcher which groups by missing days
-        price_results = await smart_fetcher.fetch_and_save(tickers, validate=True)
+        # Refresh recent prices (last 30 days covers most gaps)
+        price_results = await price_service.refresh_prices(tickers, days=30)
         
         stats["prices"] = sum(1 for count in price_results.values() if count > 0)
         
@@ -451,9 +446,9 @@ async def data_backfill_job() -> str:
         # =====================================================================
         symbols_needing_fundamentals = []
         for symbol in tickers[:50]:  # Limit to avoid rate limiting
-            from app.repositories import financials_orm
+            from app.services.fundamentals import get_fundamentals_from_db
             try:
-                fundamentals = await financials_orm.get_fundamentals(symbol)
+                fundamentals = await get_fundamentals_from_db(symbol)
                 if not fundamentals:
                     symbols_needing_fundamentals.append(symbol)
             except Exception:
@@ -474,7 +469,7 @@ async def data_backfill_job() -> str:
         # =====================================================================
         symbols_needing_quant = []
         for symbol in tickers:
-            score = await quant_repo.get_score(symbol)
+            score = await quant_repo.get_quant_score(symbol)
             if not score:
                 symbols_needing_quant.append(symbol)
         
@@ -495,10 +490,14 @@ async def data_backfill_job() -> str:
         # =====================================================================
         from app.repositories import dipfinder_orm
         
+        # Get all existing signals at once
+        existing_signals = await dipfinder_orm.get_latest_signals_for_tickers(tickers)
+        signals_by_symbol = {s.ticker: s for s in existing_signals}
+        
         symbols_needing_dipfinder = []
         today = date.today()
         for symbol in tickers:
-            signal = await dipfinder_orm.get_latest_signal(symbol)
+            signal = signals_by_symbol.get(symbol)
             if not signal or (today - signal.as_of_date).days > 7:
                 symbols_needing_dipfinder.append(symbol)
         
@@ -555,8 +554,8 @@ async def data_backfill_job() -> str:
 @register_job("prices_daily")
 async def prices_daily_job() -> str:
     """
-    Fetch stock data from yfinance and update dip_state with latest prices.
-    Uses unified YFinanceService with change detection for targeted cache invalidation.
+    Fetch stock data and update dip_state with latest prices.
+    Uses unified PriceService with automatic validation.
 
     Schedule: Mon-Fri at 11pm (after market close)
     """
@@ -564,7 +563,7 @@ async def prices_daily_job() -> str:
 
     from app.cache.cache import Cache
     from app.repositories import symbols_orm as symbols_repo
-    from app.services.data_providers import get_yfinance_service
+    from app.services.prices import get_price_service
     from app.services.runtime_settings import get_runtime_setting
 
     logger.info("Starting prices_daily job")
@@ -585,7 +584,7 @@ async def prices_daily_job() -> str:
                             duration_ms=int((time.monotonic() - job_start) * 1000))
             return "No active symbols"
 
-        yf_service = get_yfinance_service()
+        price_service = get_price_service()
 
         # Fetch latest prices and update dip_state
         updated_count = 0
@@ -627,14 +626,12 @@ async def prices_daily_job() -> str:
             from app.dipfinder.config import DipFinderConfig
             dipfinder_config = DipFinderConfig()
 
-            results = await yf_service.get_price_history_batch(symbols, start_date, today)
+            # Use PriceService - it handles fetching, validation, and saving
+            results = await price_service.get_prices_batch(symbols, start_date, today)
 
             for symbol in symbols:
                 try:
-                    data = results.get(symbol)
-                    if not data:
-                        continue
-                    prices, price_version = data
+                    prices = results.get(symbol)
                     if prices is None or prices.empty:
                         continue
 
@@ -645,15 +642,8 @@ async def prices_daily_job() -> str:
                         continue
                     current_price = float(valid_closes.iloc[-1])
 
-                    # Check if data actually changed
-                    data_changed = False
-                    if price_version:
-                        data_changed = await yf_service.has_data_changed(
-                            symbol, "prices", price_version.hash
-                        )
-                        if data_changed:
-                            await yf_service.save_data_version(symbol, price_version)
-                            changed_symbols.append(symbol)
+                    # Mark as changed if we got new data
+                    changed_symbols.append(symbol)
 
                     # ATH from our price_history table (single source of truth)
                     ath_price = await jobs_repo.get_ath_price(
@@ -773,14 +763,7 @@ async def prices_daily_job() -> str:
                         regime_dip_percentile=regime_dip_percentile,
                     )
 
-                    # Store new price history (only new rows)
-                    last_date = latest_dates.get(symbol)
-                    if last_date:
-                        prices_to_store = prices.loc[prices.index.date > last_date]
-                    else:
-                        prices_to_store = prices
-                    if prices_to_store is not None and not prices_to_store.empty:
-                        await _store_price_history(symbol, prices_to_store)
+                    # PriceService already saved prices to DB
 
                     # Update price-based ratios daily
                     await update_price_based_metrics(symbol, current_price)
@@ -852,10 +835,7 @@ async def prices_daily_job() -> str:
             logger.info(f"Fetching data for {len(benchmark_symbols)} benchmarks")
             for symbol in benchmark_symbols:
                 try:
-                    await yf_service.get_price_history(
-                        symbol,
-                        period="5d",
-                    )
+                    await price_service.refresh_prices([symbol], days=5)
                     benchmark_count += 1
                 except Exception as e:
                     logger.warning(f"Failed to fetch benchmark {symbol}: {e}")

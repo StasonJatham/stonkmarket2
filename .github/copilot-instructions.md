@@ -37,7 +37,7 @@ You are an expert in:
 ### Test Execution Rules
 
 ```bash
-# Run tests - FAIL ON FIRST ERROR, WARNINGS ARE ERRORS
+# Run unit tests - FAIL ON FIRST ERROR, WARNINGS ARE ERRORS
 python -m pytest tests/ -x -W error --tb=short
 ```
 
@@ -52,6 +52,25 @@ python -m pytest tests/ -x -W error --tb=short
 - **ALWAYS show full error output** - Never hide or truncate test failures
 - **SOLVE every test failure immediately** - Treat as blocking issue
 - Re-run tests repeatedly until ALL pass with zero warnings
+
+### System Tests - VALIDATE THE REAL APP
+
+Unit tests passing is NOT enough. After significant changes, run system tests against the real Docker stack:
+
+```bash
+# Run system tests against dev stack (REQUIRED after major changes)
+SYSTEM_TEST_USE_DEV=1 python -m pytest system_tests/smoke/ -v --tb=short
+
+# For strict mode (fail on warnings too)
+SYSTEM_TEST_USE_DEV=1 SYSTEM_TEST_STRICT=1 python -m pytest system_tests/smoke/ -v
+```
+
+- **Unit tests mock the DB** - They can pass while the real app is broken
+- **System tests hit real containers** - They fail if ANY container emits errors
+- **Run smoke tests after**: API changes, job changes, database migrations, service refactors
+- **Docker log monitoring** - System tests automatically fail if API, Celery, or DB logs errors during the test
+- If system tests fail, check `docker compose -f docker-compose.dev.yml logs` for root cause
+- See `docs/SYSTEM_TESTING.md` for full documentation
 
 ### ZERO TOLERANCE FOR IGNORED ISSUES
 
@@ -230,10 +249,12 @@ Before submitting any change:
 3. [ ] Alembic autogenerate for migrations
 4. [ ] All functions have type hints
 5. [ ] No code duplication
-6. [ ] Tests pass with `-x -W error`
-7. [ ] shadcn components used where applicable
-8. [ ] Docker compose works if infrastructure changed
-9. [ ] Files edited directly (no heredocs or shell-insert tricks)
+6. [ ] Unit tests pass with `-x -W error`
+7. [ ] **System tests pass** (smoke tests against real Docker stack)
+8. [ ] shadcn components used where applicable
+9. [ ] Docker compose works if infrastructure changed
+10. [ ] Files edited directly (no heredocs or shell-insert tricks)
+11. [ ] No errors in Docker container logs
 
 ---
 
@@ -248,6 +269,8 @@ Before submitting any change:
 ❌ **Don't** ignore warnings - they're errors
 ❌ **Don't** create custom UI components when shadcn has them
 ❌ **Don't** keep legacy or deprecated code around; remove it after refactors
+❌ **Don't** assume unit tests passing means the app works - run system tests
+❌ **Don't** ignore Docker container log errors during development
 
 ✅ **Do** store data locally, fetch on schedule
 ✅ **Do** use Alembic autogenerate
@@ -255,4 +278,6 @@ Before submitting any change:
 ✅ **Do** reuse services and utilities
 ✅ **Do** fix root causes, not symptoms
 ✅ **Do** treat warnings as errors
-✅ **Do** use shadcn/ui components  
+✅ **Do** use shadcn/ui components
+✅ **Do** run system tests after major changes to validate real app behavior
+✅ **Do** monitor Docker logs for errors during and after tests  

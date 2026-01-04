@@ -345,11 +345,17 @@ async def get_rating_for_symbol(
     signal_data: dict[str, Any] = {}
     if include_signals:
         try:
+            from datetime import timedelta
             from app.quant_engine import scan_single_stock
-            from app.services.price_fetcher import get_price_history
+            from app.services.prices import get_price_service
             
             # This is expensive - only do it if we really need signals
-            prices = await get_price_history(symbol, lookback_days=400)
+            end_date = date.today()
+            start_date = end_date - timedelta(days=400)
+            price_service = get_price_service()
+            df = await price_service.get_prices(symbol, start_date, end_date)
+            
+            prices = df["Close"] if df is not None and "Close" in df.columns else None
             if prices is not None and len(prices) >= 60:
                 opp = scan_single_stock(
                     symbol=symbol,
