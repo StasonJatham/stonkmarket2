@@ -31,6 +31,7 @@ import {
   type PortfolioDetail,
   type PortfolioRiskAnalyticsResponse,
   type StockInfo,
+  type HoldingSparklineData,
 } from '@/services/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -371,7 +372,7 @@ export function PortfolioPage() {
   const [isAllocationLoading, setIsAllocationLoading] = useState(false);
   
   // Sparkline data for holdings
-  const [sparklineData, setSparklineData] = useState<Record<string, import('@/services/api').HoldingSparklineData>>({});
+  const [sparklineData, setSparklineData] = useState<Record<string, HoldingSparklineData>>({});
 
   // Portfolio dialog
   const [portfolioDialogOpen, setPortfolioDialogOpen] = useState(false);

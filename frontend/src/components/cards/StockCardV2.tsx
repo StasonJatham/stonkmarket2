@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 /**
  * StockCardV2 - Information-dense dashboard card for stock display.
  * 

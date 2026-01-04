@@ -1,5 +1,7 @@
 import { test, expect } from '@playwright/test';
 
+/* eslint-disable no-console */
+
 /**
  * Dashboard page E2E tests
  * Tests the main dashboard functionality including:

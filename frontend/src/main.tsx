@@ -19,16 +19,19 @@ declare global {
 window.stonkmarket = {
   clearCache: () => {
     apiCache.clear();
-    console.log('✅ All cache cleared (memory + localStorage)');
+    // eslint-disable-next-line no-console
+    console.info('✅ All cache cleared (memory + localStorage)');
   },
   cacheStats: () => apiCache.stats(),
   invalidateChart: (symbol?: string) => {
     if (symbol) {
       apiCache.invalidate(new RegExp(`^chart:${symbol}:`));
-      console.log(`✅ Chart cache cleared for ${symbol}`);
+      // eslint-disable-next-line no-console
+      console.info(`✅ Chart cache cleared for ${symbol}`);
     } else {
       apiCache.invalidate(/^chart:/);
-      console.log('✅ All chart caches cleared');
+      // eslint-disable-next-line no-console
+      console.info('✅ All chart caches cleared');
     }
   },
 };

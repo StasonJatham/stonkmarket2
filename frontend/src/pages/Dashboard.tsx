@@ -87,8 +87,9 @@ export function Dashboard() {
   const quantQuery = useQuantRecommendations(inflow, 40);
   
   // Extract data from query - the select transform gives us 'stocks' already
-  const recommendations = quantQuery.data?.recommendations ?? [];
-  const quantStocks = quantQuery.data?.stocks ?? [];
+  // Using useMemo for stable references to prevent unnecessary re-renders
+  const recommendations = useMemo(() => quantQuery.data?.recommendations ?? [], [quantQuery.data?.recommendations]);
+  const quantStocks = useMemo(() => quantQuery.data?.stocks ?? [], [quantQuery.data?.stocks]);
   const asOfDate = quantQuery.data?.as_of_date ?? null;
   const marketMessage = quantQuery.data?.market_message ?? null;
   const portfolioStats = quantQuery.data ? {
@@ -367,6 +368,52 @@ export function Dashboard() {
     return 365; // Default to 1 year if nothing fits
   }, []);
 
+  // Helper functions for loading stock data - defined before useEffect that uses them
+  const loadStockInfo = useCallback(async (symbol: string) => {
+    setIsLoadingInfo(true);
+    try {
+      const info = await getStockInfo(symbol);
+      setStockInfo(info);
+    } catch (err) {
+      console.error('Failed to load stock info:', err);
+      setStockInfo(null);
+    } finally {
+      setIsLoadingInfo(false);
+    }
+  }, []);
+
+  const loadAiData = useCallback(async (symbol: string) => {
+    setIsLoadingAi(true);
+    try {
+      // First check if we have domain analysis from the recommendations
+      const cardData = stockCardDataMap.get(symbol);
+      const card = await getDipCard(symbol);
+      setAiData({
+        ai_rating: card.ai_rating,
+        ai_reasoning: card.ai_reasoning,
+        // Use domain_analysis from recommendations (quant data) if available
+        domain_analysis: cardData?.domain_analysis || null,
+        // Pass through all domain-specific analysis fields
+        domain_context: cardData?.domain_context || null,
+        domain_adjustment: cardData?.domain_adjustment ?? null,
+        domain_adjustment_reason: cardData?.domain_adjustment_reason || null,
+        domain_risk_level: cardData?.domain_risk_level || null,
+        domain_risk_factors: cardData?.domain_risk_factors || null,
+        domain_recovery_days: cardData?.domain_recovery_days ?? null,
+        domain_warnings: cardData?.domain_warnings || null,
+        volatility_regime: cardData?.volatility_regime || null,
+        volatility_percentile: cardData?.volatility_percentile ?? null,
+        vs_sector_performance: cardData?.vs_sector_performance ?? null,
+        sector: cardData?.sector || null,
+      });
+    } catch (err) {
+      console.error('Failed to load AI data:', err);
+      setAiData(null);
+    } finally {
+      setIsLoadingAi(false);
+    }
+  }, [stockCardDataMap]);
+
   // Load chart and info when stock selected
   useEffect(() => {
     if (selectedStock) {
@@ -379,7 +426,7 @@ export function Dashboard() {
     } else {
       setAiData(null);
     }
-  }, [selectedStock, calculateOptimalPeriod]);
+  }, [selectedStock, calculateOptimalPeriod, loadStockInfo, loadAiData]);
 
   // Consolidated chart loading - load both stock and benchmark chart together
   useEffect(() => {
@@ -474,51 +521,6 @@ export function Dashboard() {
       setAggregatedData([]);
     }
   }, [stocks, benchmarkData, benchmark, calculateAggregatedPerformance]);
-
-  async function loadStockInfo(symbol: string) {
-    setIsLoadingInfo(true);
-    try {
-      const info = await getStockInfo(symbol);
-      setStockInfo(info);
-    } catch (err) {
-      console.error('Failed to load stock info:', err);
-      setStockInfo(null);
-    } finally {
-      setIsLoadingInfo(false);
-    }
-  }
-
-  async function loadAiData(symbol: string) {
-    setIsLoadingAi(true);
-    try {
-      // First check if we have domain analysis from the recommendations
-      const cardData = stockCardDataMap.get(symbol);
-      const card = await getDipCard(symbol);
-      setAiData({
-        ai_rating: card.ai_rating,
-        ai_reasoning: card.ai_reasoning,
-        // Use domain_analysis from recommendations (quant data) if available
-        domain_analysis: cardData?.domain_analysis || null,
-        // Pass through all domain-specific analysis fields
-        domain_context: cardData?.domain_context || null,
-        domain_adjustment: cardData?.domain_adjustment ?? null,
-        domain_adjustment_reason: cardData?.domain_adjustment_reason || null,
-        domain_risk_level: cardData?.domain_risk_level || null,
-        domain_risk_factors: cardData?.domain_risk_factors || null,
-        domain_recovery_days: cardData?.domain_recovery_days ?? null,
-        domain_warnings: cardData?.domain_warnings || null,
-        volatility_regime: cardData?.volatility_regime || null,
-        volatility_percentile: cardData?.volatility_percentile ?? null,
-        vs_sector_performance: cardData?.vs_sector_performance ?? null,
-        sector: cardData?.sector || null,
-      });
-    } catch (err) {
-      console.error('Failed to load AI data:', err);
-      setAiData(null);
-    } finally {
-      setIsLoadingAi(false);
-    }
-  }
 
   const handleStockSelect = useCallback((stock: DipStock) => {
     setSelectedStock(stock);

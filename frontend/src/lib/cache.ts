@@ -328,7 +328,7 @@ class ApiCache {
       const storedVersion = localStorage.getItem(DATA_VERSION_KEY);
       
       if (storedVersion && storedVersion !== serverVersion) {
-        console.log(`Data version changed: ${storedVersion} → ${serverVersion}. Clearing caches.`);
+        console.warn(`Data version changed: ${storedVersion} → ${serverVersion}. Clearing caches.`);
         this.clear();
       }
       

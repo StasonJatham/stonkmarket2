@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence, useMotionValue, useTransform } from 'framer-motion';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { useTheme } from '@/context/ThemeContext';
@@ -6,17 +6,18 @@ import { AreaChart, Area, ResponsiveContainer, XAxis, YAxis, Tooltip } from 'rec
 import { CHART_LINE_ANIMATION } from '@/lib/chartConfig';
 import type { PanInfo } from 'framer-motion';
 import { 
-  getDipCards, 
-  voteDip,
-  getTopSuggestions,
-  getSuggestionSettings,
-  voteForSuggestion,
-  getStockChart,
   type DipCard, 
   type VoteType,
   type TopSuggestion,
   type ChartDataPoint
 } from '@/services/api';
+import {
+  useSwipeData,
+  useSwipeCharts,
+  useVoteDip,
+  useVoteSuggestion,
+  type SwipeMode,
+} from '@/features/dip-swipe/api/queries';
 import { useSEO, generateBreadcrumbJsonLd } from '@/lib/seo';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -155,6 +156,30 @@ function getChartColors(isColorblind: boolean, customColors?: { up: string; down
     gradientStart: 'rgba(239, 68, 68, 0.4)',
     gradientEnd: 'rgba(239, 68, 68, 0.05)',
   };
+}
+
+// Mode selector component - extracted to avoid re-creating on each render
+function ModeSelector({ 
+  mode, 
+  onModeChange 
+}: { 
+  mode: SwipeMode; 
+  onModeChange: (mode: SwipeMode) => void;
+}) {
+  return (
+    <Tabs value={mode} onValueChange={(v) => onModeChange(v as SwipeMode)} className="w-full mb-4">
+      <TabsList className="grid w-full grid-cols-2">
+        <TabsTrigger value="dips" className="gap-2">
+          <DollarSign className="w-4 h-4" />
+          Buy/Sell Dips
+        </TabsTrigger>
+        <TabsTrigger value="suggestions" className="gap-2">
+          <Lightbulb className="w-4 h-4" />
+          Vote Suggestions
+        </TabsTrigger>
+      </TabsList>
+    </Tabs>
+  );
 }
 
 // Individual swipeable card - Swipe-style!
@@ -654,24 +679,38 @@ function SuggestionSwipeCard({
   );
 }
 
-type SwipeMode = 'dips' | 'suggestions';
-
 export function DipSwipePage() {
   const isMobile = useIsMobile();
   const { colorblindMode, customColors } = useTheme();
   const [mode, setMode] = useState<SwipeMode>('dips');
-  const [cards, setCards] = useState<DipCard[]>([]);
-  const [suggestions, setSuggestions] = useState<TopSuggestion[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isVoting, setIsVoting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [votedCards, setVotedCards] = useState<Set<string>>(new Set());
-  const [chartDataMap, setChartDataMap] = useState<Record<string, ChartDataPoint[]>>({});
-  const [autoApproveVotes, setAutoApproveVotes] = useState(10);
+
+  // TanStack Query hooks - replace all manual useEffect data fetching
+  const swipeData = useSwipeData(mode);
+  const voteDipMutation = useVoteDip();
+  const voteSuggestionMutation = useVoteSuggestion();
+  
+  // Derive current data from query
+  const cards = swipeData.cards;
+  const suggestions = swipeData.suggestions;
+  const autoApproveVotes = swipeData.autoApproveVotes;
+  const isLoading = swipeData.isLoading;
+  const error = swipeData.error?.message ?? null;
 
   // Get current card for dynamic SEO
   const currentCard = mode === 'dips' ? cards[currentIndex] : null;
+  const nextCard = useMemo(() => cards[currentIndex + 1], [cards, currentIndex]);
+  const currentSuggestion = useMemo(() => suggestions[currentIndex], [suggestions, currentIndex]);
+  const totalItems = mode === 'dips' ? cards.length : suggestions.length;
+
+  // Prefetch charts for current + next cards
+  const symbolsForCharts = useMemo(() => {
+    if (mode !== 'dips') return [];
+    return [currentCard?.symbol, nextCard?.symbol].filter((s): s is string => !!s);
+  }, [mode, currentCard?.symbol, nextCard?.symbol]);
+  const chartsQuery = useSwipeCharts(symbolsForCharts, 90);
+  const chartDataMap = chartsQuery.data;
 
   // SEO - Dynamic meta based on current card
   useSEO({
@@ -689,75 +728,18 @@ export function DipSwipePage() {
     ]),
   });
 
-  // Fetch suggestion settings
-  useEffect(() => {
-    getSuggestionSettings()
-      .then(settings => setAutoApproveVotes(settings.auto_approve_votes))
-      .catch(() => setAutoApproveVotes(10));
-  }, []);
-
-  const loadCards = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      if (mode === 'dips') {
-        // Exclude cards user has already voted on
-        const response = await getDipCards(true, true);
-        setCards(response.cards);
-      } else {
-        // Exclude suggestions user has already voted on
-        const data = await getTopSuggestions(50, true);
-        setSuggestions(data);
-      }
-      setCurrentIndex(0);
-      setVotedCards(new Set()); // Reset local voted tracking on reload
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load cards');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [mode]);
-
-  useEffect(() => {
-    loadCards();
-  }, [loadCards, mode]);
-
   // Reset index when mode changes
-  useEffect(() => {
+  const handleModeChange = useCallback((newMode: SwipeMode) => {
+    setMode(newMode);
     setCurrentIndex(0);
     setVotedCards(new Set());
-  }, [mode]);
-
-  const nextCard = useMemo(() => cards[currentIndex + 1], [cards, currentIndex]);
-  const currentSuggestion = useMemo(() => suggestions[currentIndex], [suggestions, currentIndex]);
-  const totalItems = mode === 'dips' ? cards.length : suggestions.length;
-
-  // Fetch chart data for current and next cards (prefetch next for smooth experience)
-  useEffect(() => {
-    if (mode !== 'dips') return;
-    
-    const symbolsToFetch = [currentCard?.symbol, nextCard?.symbol].filter((s): s is string => 
-      !!s && !chartDataMap[s]
-    );
-    
-    if (symbolsToFetch.length === 0) return;
-    
-    symbolsToFetch.forEach(async (symbol) => {
-      try {
-        const data = await getStockChart(symbol, 90);
-        setChartDataMap(prev => ({ ...prev, [symbol]: data }));
-      } catch (err) {
-        console.error(`Failed to fetch chart for ${symbol}:`, err);
-      }
-    });
-  }, [mode, currentCard?.symbol, nextCard?.symbol, chartDataMap]);
+  }, []);
 
   const handleVote = useCallback(async (vote: VoteType) => {
-    if (!currentCard || isVoting) return;
+    if (!currentCard || voteDipMutation.isPending) return;
     
-    setIsVoting(true);
     try {
-      await voteDip(currentCard.symbol, vote);
+      await voteDipMutation.mutateAsync({ symbol: currentCard.symbol, vote });
       setVotedCards(prev => new Set([...prev, currentCard.symbol]));
       setCurrentIndex(prev => prev + 1);
     } catch (err) {
@@ -769,33 +751,26 @@ export function DipSwipePage() {
         setVotedCards(prev => new Set([...prev, currentCard.symbol]));
         setCurrentIndex(prev => prev + 1);
       } else {
-        // Other error - show it and still advance
-        setError(`Vote failed: ${errMsg}`);
-        setTimeout(() => setError(null), 3000);
+        // Other error - still advance
         setCurrentIndex(prev => prev + 1);
       }
-    } finally {
-      setIsVoting(false);
     }
-  }, [currentCard, isVoting]);
+  }, [currentCard, voteDipMutation]);
 
   const handleSuggestionVote = useCallback(async (approve: boolean) => {
-    if (!currentSuggestion || isVoting) return;
+    if (!currentSuggestion || voteSuggestionMutation.isPending) return;
     
-    setIsVoting(true);
     try {
       if (approve) {
-        await voteForSuggestion(currentSuggestion.symbol);
+        await voteSuggestionMutation.mutateAsync({ symbol: currentSuggestion.symbol });
       }
       setVotedCards(prev => new Set([...prev, currentSuggestion.symbol]));
       setCurrentIndex(prev => prev + 1);
     } catch (err) {
       console.error('Vote failed:', err);
       setCurrentIndex(prev => prev + 1);
-    } finally {
-      setIsVoting(false);
     }
-  }, [currentSuggestion, isVoting]);
+  }, [currentSuggestion, voteSuggestionMutation]);
 
   const handleSkip = useCallback(() => {
     setCurrentIndex(prev => Math.min(prev + 1, totalItems));
@@ -805,21 +780,7 @@ export function DipSwipePage() {
     setCurrentIndex(prev => Math.max(prev - 1, 0));
   }, []);
 
-  // Mode selector component
-  const ModeSelector = () => (
-    <Tabs value={mode} onValueChange={(v) => setMode(v as SwipeMode)} className="w-full mb-4">
-      <TabsList className="grid w-full grid-cols-2">
-        <TabsTrigger value="dips" className="gap-2">
-          <DollarSign className="w-4 h-4" />
-          Buy/Sell Dips
-        </TabsTrigger>
-        <TabsTrigger value="suggestions" className="gap-2">
-          <Lightbulb className="w-4 h-4" />
-          Vote Suggestions
-        </TabsTrigger>
-      </TabsList>
-    </Tabs>
-  );
+  const isVoting = voteDipMutation.isPending || voteSuggestionMutation.isPending;
 
   // Loading state
   if (isLoading) {
@@ -833,7 +794,7 @@ export function DipSwipePage() {
             </p>
           </div>
         )}
-        <ModeSelector />
+        <ModeSelector mode={mode} onModeChange={handleModeChange} />
         <Card className={isMobile ? 'h-[calc(100vh-120px)]' : 'h-[600px]'}>
           <CardContent className="p-6 space-y-4">
             <Skeleton className="h-8 w-24" />
@@ -856,10 +817,10 @@ export function DipSwipePage() {
       <div className={`container max-w-lg mx-auto px-4 ${isMobile ? 'py-2' : 'py-8'}`}>
         <div className="text-center">
           {!isMobile && <h1 className="text-3xl font-bold mb-4">DipSwipe</h1>}
-          <ModeSelector />
+          <ModeSelector mode={mode} onModeChange={handleModeChange} />
           <Card className="p-8">
             <p className="text-danger mb-4">{error}</p>
-            <Button onClick={loadCards}>
+            <Button onClick={() => swipeData.refetch()}>
               <RefreshCw className="w-4 h-4 mr-2" />
               Try Again
             </Button>
@@ -875,7 +836,7 @@ export function DipSwipePage() {
       <div className={`container max-w-lg mx-auto px-4 ${isMobile ? 'py-2' : 'py-8'}`}>
         <div className="text-center">
           {!isMobile && <h1 className="text-3xl font-bold mb-4">DipSwipe</h1>}
-          <ModeSelector />
+          <ModeSelector mode={mode} onModeChange={handleModeChange} />
           <Card className="p-8">
             <BarChart3 className="w-16 h-16 mx-auto mb-4 text-muted-foreground" />
             <h2 className="text-xl font-semibold mb-2">All caught up!</h2>
@@ -887,7 +848,7 @@ export function DipSwipePage() {
             <p className="text-sm text-muted-foreground mb-6">
               Voted on {votedCards.size} items
             </p>
-            <Button onClick={loadCards}>
+            <Button onClick={() => { setCurrentIndex(0); setVotedCards(new Set()); swipeData.refetch(); }}>
               <RefreshCw className="w-4 h-4 mr-2" />
               Start Over
             </Button>
@@ -910,7 +871,7 @@ export function DipSwipePage() {
       )}
 
       {/* Mode Selector */}
-      <ModeSelector />
+      <ModeSelector mode={mode} onModeChange={handleModeChange} />
 
       {/* Progress indicator - shows position in deck */}
       <div className="flex items-center justify-center gap-2 mb-2">
@@ -1030,7 +991,7 @@ export function DipSwipePage() {
             variant="outline"
             size="icon"
             className="w-12 h-12 rounded-full"
-            onClick={loadCards}
+            onClick={() => swipeData.refetch()}
           >
             <RefreshCw className="w-5 h-5" />
           </Button>

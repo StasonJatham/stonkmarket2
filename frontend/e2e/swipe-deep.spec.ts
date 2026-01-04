@@ -1,5 +1,7 @@
 import { test, expect } from '@playwright/test';
 
+/* eslint-disable no-console */
+
 /**
  * Deep Swipe Functionality Tests
  * Tests specific issues:

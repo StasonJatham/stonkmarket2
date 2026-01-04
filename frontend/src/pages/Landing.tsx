@@ -719,7 +719,7 @@ export function Landing() {
   const updatedLabel = lastUpdatedAt ? formatUpdatedLabel(lastUpdatedAt) : 'Updating...';
   const buyCount = recommendations.filter((rec) => rec.action === 'BUY').length;
   
-  const heroVerdicts = heroAgentAnalysis?.verdicts ?? [];
+  const heroVerdicts = useMemo(() => heroAgentAnalysis?.verdicts ?? [], [heroAgentAnalysis?.verdicts]);
   const verdictCounts = useMemo(() => {
     const bullishCount = heroVerdicts.filter((v) => v.signal === 'buy' || v.signal === 'strong_buy').length;
     const bearishCount = heroVerdicts.filter((v) => v.signal === 'sell' || v.signal === 'strong_sell').length;

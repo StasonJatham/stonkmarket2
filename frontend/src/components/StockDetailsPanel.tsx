@@ -211,8 +211,8 @@ export function StockDetailsPanel({
   const [signalsResponse, setSignalsResponse] = useState<SignalTriggersResponse | null>(null);
   const [showSignals, setShowSignals] = useState(true);
   
-  // Extract triggers from response for backward compatibility
-  const signalTriggers = signalsResponse?.triggers ?? [];
+  // Extract triggers from response for backward compatibility - memoize for stable reference
+  const signalTriggers = useMemo(() => signalsResponse?.triggers ?? [], [signalsResponse?.triggers]);
   
   // Quant analysis state
   const [_dipAnalysis, setDipAnalysis] = useState<DipAnalysis | null>(null);

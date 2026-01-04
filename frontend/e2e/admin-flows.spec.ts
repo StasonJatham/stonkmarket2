@@ -1,5 +1,7 @@
 import { test, expect } from '@playwright/test';
 
+/* eslint-disable no-console */
+
 /**
  * Admin Flow E2E Tests
  * 
@@ -14,7 +16,7 @@ const BASE_URL = 'http://localhost:8000';
 const FRONTEND_URL = 'http://localhost:5173';
 
 // Helper: Create admin auth token (mock for testing)
-async function getAdminToken(): Promise<string> {
+async function _getAdminToken(): Promise<string> {
   // In tests, we use a test admin token
   // Real implementation would login via /auth/login
   const response = await fetch(`${BASE_URL}/auth/login`, {

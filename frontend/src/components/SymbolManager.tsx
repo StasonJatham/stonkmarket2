@@ -186,7 +186,7 @@ export function SymbolManager({ onError }: SymbolManagerProps) {
       cancelled = true;
       clearInterval(pollInterval);
     };
-  }, [activeTaskIds]);
+  }, [activeTaskIds, loadSymbols]);
 
   async function handleValidateSymbol() {
     if (!formSymbol.trim()) return;

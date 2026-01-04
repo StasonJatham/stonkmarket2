@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { ChevronLeft, ChevronRight, Search, ChevronsLeft, ChevronsRight } from 'lucide-react';
