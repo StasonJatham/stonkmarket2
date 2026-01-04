@@ -785,421 +785,416 @@
                 - generic [ref=e1091]: 12 ranked | 0 buy signals
             - generic [ref=e1095]:
               - generic [ref=e1096]:
-                - generic [ref=e1097]:
-                  - generic [ref=e1098]:
-                    - generic [ref=e1099]:
-                      - img "HOOD logo" [ref=e1101]
-                      - generic [ref=e1102]:
-                        - generic [ref=e1103]: HOOD
-                        - generic [ref=e1104]: Live signal preview
-                    - generic [ref=e1105]:
-                      - paragraph [ref=e1106]: $115.21
-                      - paragraph [ref=e1107]: +26.23%
-                  - generic [ref=e1108]:
-                    - img
-                    - text: 8 signals detected
-                - img [ref=e1113]:
-                  - generic [ref=e1115]:
-                    - generic [ref=e1117]: Aug 14
-                    - generic [ref=e1119]: Sep 18
-                    - generic [ref=e1121]: Oct 22
-                    - generic [ref=e1123]: Nov 25
-                    - generic [ref=e1125]: Jan 2
-                  - generic [ref=e1127]:
-                    - generic [ref=e1129]: $100
-                    - generic [ref=e1131]: $115
-                    - generic [ref=e1133]: $130
-                    - generic [ref=e1135]: $152
-              - generic [ref=e1156]:
-                - generic [ref=e1157]:
-                  - generic [ref=e1158]:
-                    - generic [ref=e1159]:
-                      - img [ref=e1160]
+                - generic [ref=e1098]:
+                  - generic [ref=e1099]:
+                    - img "HOOD logo" [ref=e1101]
+                    - generic [ref=e1102]:
+                      - generic [ref=e1103]: HOOD
+                      - generic [ref=e1104]: Live signal preview
+                  - generic [ref=e1105]:
+                    - paragraph [ref=e1106]: $115.21
+                    - paragraph [ref=e1107]: +26.23%
+                - img [ref=e1112]:
+                  - generic [ref=e1114]:
+                    - generic [ref=e1116]: Aug 14
+                    - generic [ref=e1118]: Sep 18
+                    - generic [ref=e1120]: Oct 22
+                    - generic [ref=e1122]: Nov 25
+                    - generic [ref=e1124]: Jan 2
+                  - generic [ref=e1126]:
+                    - generic [ref=e1128]: $100
+                    - generic [ref=e1130]: $115
+                    - generic [ref=e1132]: $130
+                    - generic [ref=e1134]: $152
+              - generic [ref=e1141]:
+                - generic [ref=e1142]:
+                  - generic [ref=e1143]:
+                    - generic [ref=e1144]:
+                      - img [ref=e1145]
                       - text: Live Signal Briefing
-                    - generic [ref=e1162]:
+                    - generic [ref=e1147]:
                       - img
                       - text: HOLD
-                  - generic [ref=e1163]:
-                    - generic [ref=e1164]:
-                      - paragraph [ref=e1165]: "-24.4%"
-                      - paragraph [ref=e1166]: Dip Depth
-                    - generic [ref=e1167]:
-                      - paragraph [ref=e1168]: 86%
-                      - paragraph [ref=e1169]: P(Recovery)
-                    - generic [ref=e1170]:
-                      - paragraph [ref=e1171]: 21d
-                      - paragraph [ref=e1172]: Avg Recovery
-                - generic [ref=e1173]:
-                  - generic [ref=e1174]:
-                    - paragraph [ref=e1175]: "Why this signal:"
-                    - generic [ref=e1176]:
-                      - generic [ref=e1177]:
-                        - img [ref=e1178]
-                        - generic [ref=e1181]: "P(rec):"
-                        - generic [ref=e1182]: 86%
-                      - generic [ref=e1183]:
-                        - img [ref=e1184]
-                        - generic [ref=e1186]: "vs typical:"
-                        - generic [ref=e1187]: 1.5x
-                      - generic [ref=e1188]:
-                        - img [ref=e1189]
-                        - generic [ref=e1191]: "Unusual:"
-                        - generic [ref=e1192]: "Yes"
-                      - generic [ref=e1193]:
-                        - img [ref=e1194]
-                        - generic [ref=e1200]: "Win rate:"
-                        - generic [ref=e1201]: 75%
-                  - generic [ref=e1202]:
-                    - generic [ref=e1203]:
-                      - img [ref=e1204]
-                      - text: 5 trades backtested
-                      - generic [ref=e1207]: "• Edge: -152.3%"
-                    - button "Full Analysis" [ref=e1208] [cursor=pointer]:
+                  - generic [ref=e1148]:
+                    - generic [ref=e1149]:
+                      - paragraph [ref=e1150]: "-24.4%"
+                      - paragraph [ref=e1151]: Dip Depth
+                    - generic [ref=e1152]:
+                      - paragraph [ref=e1153]: 86%
+                      - paragraph [ref=e1154]: P(Recovery)
+                    - generic [ref=e1155]:
+                      - paragraph [ref=e1156]: 21d
+                      - paragraph [ref=e1157]: Avg Recovery
+                - generic [ref=e1158]:
+                  - generic [ref=e1159]:
+                    - paragraph [ref=e1160]: "Why this signal:"
+                    - generic [ref=e1161]:
+                      - generic [ref=e1162]:
+                        - img [ref=e1163]
+                        - generic [ref=e1166]: "P(rec):"
+                        - generic [ref=e1167]: 86%
+                      - generic [ref=e1168]:
+                        - img [ref=e1169]
+                        - generic [ref=e1171]: "vs typical:"
+                        - generic [ref=e1172]: 1.5x
+                      - generic [ref=e1173]:
+                        - img [ref=e1174]
+                        - generic [ref=e1176]: "Unusual:"
+                        - generic [ref=e1177]: "Yes"
+                      - generic [ref=e1178]:
+                        - img [ref=e1179]
+                        - generic [ref=e1185]: "Win rate:"
+                        - generic [ref=e1186]: 75%
+                  - generic [ref=e1187]:
+                    - generic [ref=e1188]:
+                      - img [ref=e1189]
+                      - text: Signal stats loading
+                    - button "Full Analysis" [ref=e1192] [cursor=pointer]:
                       - text: Full Analysis
                       - img
-                  - paragraph [ref=e1209]:
-                    - img [ref=e1210]
+                  - paragraph [ref=e1193]:
+                    - img [ref=e1194]
                     - text: "Dip -23.2% (>=20%) from recent high (153.86->118.13) - deep dip meets strong-buy depth criterion; dip type unspecified (possible stock-specific or mixed) and no structural red flags noted. Cited facts: -23.2% dip, current price $118.13 vs recent high $153.86."
-          - generic [ref=e1219]:
-            - generic [ref=e1220]:
-              - generic [ref=e1221]:
-                - heading "Live Signal Board" [level=2] [ref=e1222]
-                - paragraph [ref=e1223]: Top-ranked opportunities, refreshed every 15 minutes.
-              - button "View Full Board" [ref=e1224] [cursor=pointer]:
+          - generic [ref=e1203]:
+            - generic [ref=e1204]:
+              - generic [ref=e1205]:
+                - heading "Live Signal Board" [level=2] [ref=e1206]
+                - paragraph [ref=e1207]: Top-ranked opportunities, refreshed every 15 minutes.
+              - button "View Full Board" [ref=e1208] [cursor=pointer]:
                 - text: View Full Board
                 - img
-            - alert [ref=e1225]:
-              - img [ref=e1226]
-              - generic [ref=e1228]: "No actionable opportunities today. Top score: 91/100."
-            - generic [ref=e1229]:
-              - generic [ref=e1232] [cursor=pointer]:
-                - generic [ref=e1233]:
-                  - generic [ref=e1234]:
-                    - img "HOOD logo" [ref=e1236]
-                    - generic [ref=e1237]:
-                      - generic [ref=e1238]:
-                        - generic [ref=e1239]: HOOD
-                        - generic [ref=e1240]:
+            - alert [ref=e1209]:
+              - img [ref=e1210]
+              - generic [ref=e1212]: "No actionable opportunities today. Top score: 91/100."
+            - generic [ref=e1213]:
+              - generic [ref=e1216] [cursor=pointer]:
+                - generic [ref=e1217]:
+                  - generic [ref=e1218]:
+                    - img "HOOD logo" [ref=e1220]
+                    - generic [ref=e1221]:
+                      - generic [ref=e1222]:
+                        - generic [ref=e1223]: HOOD
+                        - generic [ref=e1224]:
                           - img
                           - text: HOLD
-                      - paragraph [ref=e1241]: Robinhood Markets, Inc.
-                  - generic [ref=e1242]:
-                    - paragraph [ref=e1243]: $115.21
-                    - paragraph [ref=e1244]: "-19.14%"
-                - generic [ref=e1245]:
-                  - generic [ref=e1246]:
-                    - paragraph [ref=e1247]: Expected Return
-                    - paragraph [ref=e1248]: 0.0%
-                  - generic [ref=e1249]:
-                    - paragraph [ref=e1250]: Signal Score
-                    - paragraph [ref=e1251]: "91"
-                - img [ref=e1255]
-              - generic [ref=e1262] [cursor=pointer]:
-                - generic [ref=e1263]:
-                  - generic [ref=e1264]:
-                    - img "NVDA logo" [ref=e1266]
-                    - generic [ref=e1267]:
-                      - generic [ref=e1268]:
-                        - generic [ref=e1269]: NVDA
-                        - generic [ref=e1270]:
+                      - paragraph [ref=e1225]: Robinhood Markets, Inc.
+                  - generic [ref=e1226]:
+                    - paragraph [ref=e1227]: $115.21
+                    - paragraph [ref=e1228]: "-19.14%"
+                - generic [ref=e1229]:
+                  - generic [ref=e1230]:
+                    - paragraph [ref=e1231]: Expected Return
+                    - paragraph [ref=e1232]: 0.0%
+                  - generic [ref=e1233]:
+                    - paragraph [ref=e1234]: Signal Score
+                    - paragraph [ref=e1235]: "91"
+                - img [ref=e1239]
+              - generic [ref=e1246] [cursor=pointer]:
+                - generic [ref=e1247]:
+                  - generic [ref=e1248]:
+                    - img "NVDA logo" [ref=e1250]
+                    - generic [ref=e1251]:
+                      - generic [ref=e1252]:
+                        - generic [ref=e1253]: NVDA
+                        - generic [ref=e1254]:
                           - img
                           - text: HOLD
-                      - paragraph [ref=e1271]: NVIDIA Corporation
-                  - generic [ref=e1272]:
-                    - paragraph [ref=e1273]: $188.85
-                    - paragraph [ref=e1274]: "-3.25%"
-                - generic [ref=e1275]:
-                  - generic [ref=e1276]:
-                    - paragraph [ref=e1277]: Expected Return
-                    - paragraph [ref=e1278]: 0.0%
-                  - generic [ref=e1279]:
-                    - paragraph [ref=e1280]: Signal Score
-                    - paragraph [ref=e1281]: "91"
-                - img [ref=e1285]
-              - generic [ref=e1292] [cursor=pointer]:
-                - generic [ref=e1293]:
-                  - generic [ref=e1294]:
-                    - img "MSFT logo" [ref=e1296]
-                    - generic [ref=e1297]:
-                      - generic [ref=e1298]:
-                        - generic [ref=e1299]: MSFT
-                        - generic [ref=e1300]:
+                      - paragraph [ref=e1255]: NVIDIA Corporation
+                  - generic [ref=e1256]:
+                    - paragraph [ref=e1257]: $188.85
+                    - paragraph [ref=e1258]: "-3.25%"
+                - generic [ref=e1259]:
+                  - generic [ref=e1260]:
+                    - paragraph [ref=e1261]: Expected Return
+                    - paragraph [ref=e1262]: 0.0%
+                  - generic [ref=e1263]:
+                    - paragraph [ref=e1264]: Signal Score
+                    - paragraph [ref=e1265]: "91"
+                - img [ref=e1269]
+              - generic [ref=e1276] [cursor=pointer]:
+                - generic [ref=e1277]:
+                  - generic [ref=e1278]:
+                    - img "MSFT logo" [ref=e1280]
+                    - generic [ref=e1281]:
+                      - generic [ref=e1282]:
+                        - generic [ref=e1283]: MSFT
+                        - generic [ref=e1284]:
                           - img
                           - text: HOLD
-                      - paragraph [ref=e1301]: Microsoft Corporation
-                  - generic [ref=e1302]:
-                    - paragraph [ref=e1303]: $472.94
-                    - paragraph [ref=e1304]: "-6.57%"
-                - generic [ref=e1305]:
-                  - generic [ref=e1306]:
-                    - paragraph [ref=e1307]: Expected Return
-                    - paragraph [ref=e1308]: 0.0%
-                  - generic [ref=e1309]:
-                    - paragraph [ref=e1310]: Signal Score
-                    - paragraph [ref=e1311]: "89"
-                - img [ref=e1315]
-              - generic [ref=e1322] [cursor=pointer]:
-                - generic [ref=e1323]:
-                  - generic [ref=e1324]:
-                    - img "META logo" [ref=e1326]
-                    - generic [ref=e1327]:
-                      - generic [ref=e1328]:
-                        - generic [ref=e1329]: META
-                        - generic [ref=e1330]:
+                      - paragraph [ref=e1285]: Microsoft Corporation
+                  - generic [ref=e1286]:
+                    - paragraph [ref=e1287]: $472.94
+                    - paragraph [ref=e1288]: "-6.57%"
+                - generic [ref=e1289]:
+                  - generic [ref=e1290]:
+                    - paragraph [ref=e1291]: Expected Return
+                    - paragraph [ref=e1292]: 0.0%
+                  - generic [ref=e1293]:
+                    - paragraph [ref=e1294]: Signal Score
+                    - paragraph [ref=e1295]: "89"
+                - img [ref=e1299]
+              - generic [ref=e1306] [cursor=pointer]:
+                - generic [ref=e1307]:
+                  - generic [ref=e1308]:
+                    - img "META logo" [ref=e1310]
+                    - generic [ref=e1311]:
+                      - generic [ref=e1312]:
+                        - generic [ref=e1313]: META
+                        - generic [ref=e1314]:
                           - img
                           - text: HOLD
-                      - paragraph [ref=e1331]: Meta Platforms, Inc.
-                  - generic [ref=e1332]:
-                    - paragraph [ref=e1333]: $650.41
-                    - paragraph [ref=e1334]: +2.36%
-                - generic [ref=e1335]:
-                  - generic [ref=e1336]:
-                    - paragraph [ref=e1337]: Expected Return
-                    - paragraph [ref=e1338]: 0.0%
-                  - generic [ref=e1339]:
-                    - paragraph [ref=e1340]: Signal Score
-                    - paragraph [ref=e1341]: "88"
+                      - paragraph [ref=e1315]: Meta Platforms, Inc.
+                  - generic [ref=e1316]:
+                    - paragraph [ref=e1317]: $650.41
+                    - paragraph [ref=e1318]: +2.36%
+                - generic [ref=e1319]:
+                  - generic [ref=e1320]:
+                    - paragraph [ref=e1321]: Expected Return
+                    - paragraph [ref=e1322]: 0.0%
+                  - generic [ref=e1323]:
+                    - paragraph [ref=e1324]: Signal Score
+                    - paragraph [ref=e1325]: "88"
+                - img [ref=e1329]
+          - generic [ref=e1335]:
+            - generic [ref=e1336]:
+              - heading "The AI pipeline behind every signal" [level=2] [ref=e1337]
+              - paragraph [ref=e1338]: From raw price action to AI consensus to validated entry decisions.
+            - generic [ref=e1341]:
+              - generic [ref=e1343]:
                 - img [ref=e1345]
-          - generic [ref=e1351]:
-            - generic [ref=e1352]:
-              - heading "The AI pipeline behind every signal" [level=2] [ref=e1353]
-              - paragraph [ref=e1354]: From raw price action to AI consensus to validated entry decisions.
-            - generic [ref=e1357]:
-              - generic [ref=e1359]:
-                - img [ref=e1361]
-                - heading "Scan" [level=4] [ref=e1364]
-                - paragraph [ref=e1365]: Detect dips & momentum shifts
-              - generic [ref=e1367]:
-                - img [ref=e1369]
-                - heading "Debate" [level=4] [ref=e1374]
-                - paragraph [ref=e1375]: AI personas challenge the signal
+                - heading "Scan" [level=4] [ref=e1348]
+                - paragraph [ref=e1349]: Detect dips & momentum shifts
+              - generic [ref=e1351]:
+                - img [ref=e1353]
+                - heading "Debate" [level=4] [ref=e1358]
+                - paragraph [ref=e1359]: AI personas challenge the signal
+              - generic [ref=e1361]:
+                - img [ref=e1363]
+                - heading "Optimize Entry" [level=4] [ref=e1367]
+                - paragraph [ref=e1368]: Find optimal buy zone
+              - generic [ref=e1370]:
+                - img [ref=e1372]
+                - heading "Backtest" [level=4] [ref=e1374]
+                - paragraph [ref=e1375]: Validate with historical data
+            - generic [ref=e1376]:
               - generic [ref=e1377]:
-                - img [ref=e1379]
-                - heading "Optimize Entry" [level=4] [ref=e1383]
-                - paragraph [ref=e1384]: Find optimal buy zone
+                - paragraph [ref=e1378]: —
+                - paragraph [ref=e1379]: Signals Detected
+              - generic [ref=e1380]:
+                - paragraph [ref=e1381]: —
+                - paragraph [ref=e1382]: AI Personas
+              - generic [ref=e1383]:
+                - paragraph [ref=e1384]: +32.7%
+                - paragraph [ref=e1385]: Expected Return
               - generic [ref=e1386]:
-                - img [ref=e1388]
-                - heading "Backtest" [level=4] [ref=e1390]
-                - paragraph [ref=e1391]: Validate with historical data
-            - generic [ref=e1392]:
-              - generic [ref=e1393]:
-                - paragraph [ref=e1394]: "5"
-                - paragraph [ref=e1395]: Signals Detected
-              - generic [ref=e1396]:
-                - paragraph [ref=e1397]: —
-                - paragraph [ref=e1398]: AI Personas
-              - generic [ref=e1399]:
-                - paragraph [ref=e1400]: +32.7%
-                - paragraph [ref=e1401]: Expected Return
-              - generic [ref=e1402]:
-                - paragraph [ref=e1403]: "5"
-                - paragraph [ref=e1404]: Backtested Trades
-          - generic [ref=e1406]:
-            - generic [ref=e1407]:
-              - generic [ref=e1408]:
+                - paragraph [ref=e1387]: —
+                - paragraph [ref=e1388]: Backtested Trades
+          - generic [ref=e1390]:
+            - generic [ref=e1391]:
+              - generic [ref=e1392]:
                 - img
                 - text: Verified Performance
-              - heading "Real backtest results" [level=2] [ref=e1409]
-              - paragraph [ref=e1410]: Historical performance of our signals, not simulated scenarios.
-            - generic [ref=e1411]:
-              - generic [ref=e1414]:
-                - img [ref=e1416]
-                - paragraph [ref=e1422]:
-                  - generic [ref=e1423]: 75%
-                - paragraph [ref=e1424]: Win Rate
-                - paragraph [ref=e1425]: 5 trades analyzed
-              - generic [ref=e1428]:
-                - img [ref=e1430]
-                - paragraph [ref=e1433]: "-152.3%"
-                - paragraph [ref=e1434]: Avg Return
-                - paragraph [ref=e1435]: Edge vs buy-and-hold
-              - generic [ref=e1438]:
-                - img [ref=e1440]
-                - paragraph [ref=e1442]: "-8.2%"
-                - paragraph [ref=e1443]: Max Drawdown
-                - paragraph [ref=e1444]: Worst peak-to-trough
-            - paragraph [ref=e1445]:
-              - img [ref=e1446]
+              - heading "Real backtest results" [level=2] [ref=e1393]
+              - paragraph [ref=e1394]: Historical performance of our signals, not simulated scenarios.
+            - generic [ref=e1395]:
+              - generic [ref=e1398]:
+                - img [ref=e1400]
+                - paragraph [ref=e1406]:
+                  - generic [ref=e1407]: 75%
+                - paragraph [ref=e1408]: Win Rate
+                - paragraph [ref=e1409]: N/A trades analyzed
+              - generic [ref=e1412]:
+                - img [ref=e1414]
+                - paragraph [ref=e1417]: +12.4%
+                - paragraph [ref=e1418]: Avg Return
+                - paragraph [ref=e1419]: Edge vs buy-and-hold
+              - generic [ref=e1422]:
+                - img [ref=e1424]
+                - paragraph [ref=e1426]: "-8.2%"
+                - paragraph [ref=e1427]: Max Drawdown
+                - paragraph [ref=e1428]: Worst peak-to-trough
+            - paragraph [ref=e1429]:
+              - img [ref=e1430]
               - text: Data as of Jan 4, 2026 • Past performance does not guarantee future results
-          - generic [ref=e1450]:
-            - generic [ref=e1451]:
-              - heading "Today's signal gallery" [level=2] [ref=e1452]
-              - paragraph [ref=e1453]: Real tickers with real dips and real AI analysis. This is what you're getting.
-            - generic [ref=e1454]:
-              - generic [ref=e1457] [cursor=pointer]:
-                - generic [ref=e1458]:
-                  - img "HOOD logo" [ref=e1460]
-                  - generic [ref=e1461]:
-                    - generic [ref=e1462]:
-                      - generic [ref=e1463]: HOOD
-                      - generic [ref=e1464]: HOLD
-                    - paragraph [ref=e1465]: Robinhood Markets, Inc.
-                - generic [ref=e1466]:
-                  - generic [ref=e1467]:
-                    - paragraph [ref=e1468]: Dip
-                    - paragraph [ref=e1469]: "-24.4%"
-                  - generic [ref=e1470]:
-                    - paragraph [ref=e1471]: P(rec)
-                    - paragraph [ref=e1472]: 86%
-                - paragraph [ref=e1473]: "AI: Dip -23.2% (>=20%) from recent high (153.86->118.13) - deep dip meets strong-buy depth criterion; dip type unspecified (possible stock-specific or mixed) and no structural red flags noted. Cited facts: -23.2% dip, current price $118.13 vs recent high $153.86."
-                - button "Analyze" [ref=e1475]:
+          - generic [ref=e1434]:
+            - generic [ref=e1435]:
+              - heading "Today's signal gallery" [level=2] [ref=e1436]
+              - paragraph [ref=e1437]: Real tickers with real dips and real AI analysis. This is what you're getting.
+            - generic [ref=e1438]:
+              - generic [ref=e1441] [cursor=pointer]:
+                - generic [ref=e1442]:
+                  - img "HOOD logo" [ref=e1444]
+                  - generic [ref=e1445]:
+                    - generic [ref=e1446]:
+                      - generic [ref=e1447]: HOOD
+                      - generic [ref=e1448]: HOLD
+                    - paragraph [ref=e1449]: Robinhood Markets, Inc.
+                - generic [ref=e1450]:
+                  - generic [ref=e1451]:
+                    - paragraph [ref=e1452]: Dip
+                    - paragraph [ref=e1453]: "-24.4%"
+                  - generic [ref=e1454]:
+                    - paragraph [ref=e1455]: P(rec)
+                    - paragraph [ref=e1456]: 86%
+                - paragraph [ref=e1457]: "AI: Dip -23.2% (>=20%) from recent high (153.86->118.13) - deep dip meets strong-buy depth criterion; dip type unspecified (possible stock-specific or mixed) and no structural red flags noted. Cited facts: -23.2% dip, current price $118.13 vs recent high $153.86."
+                - button "Analyze" [ref=e1459]:
                   - text: Analyze
                   - img
-              - generic [ref=e1478] [cursor=pointer]:
-                - generic [ref=e1479]:
-                  - img "NVDA logo" [ref=e1481]
-                  - generic [ref=e1482]:
-                    - generic [ref=e1483]:
-                      - generic [ref=e1484]: NVDA
-                      - generic [ref=e1485]: HOLD
-                    - paragraph [ref=e1486]: NVIDIA Corporation
-                - generic [ref=e1487]:
-                  - generic [ref=e1488]:
-                    - paragraph [ref=e1489]: Dip
-                    - paragraph [ref=e1490]: "-8.8%"
-                  - generic [ref=e1491]:
-                    - paragraph [ref=e1492]: P(rec)
-                    - paragraph [ref=e1493]: 84%
-                - button "Analyze" [ref=e1495]:
+              - generic [ref=e1462] [cursor=pointer]:
+                - generic [ref=e1463]:
+                  - img "NVDA logo" [ref=e1465]
+                  - generic [ref=e1466]:
+                    - generic [ref=e1467]:
+                      - generic [ref=e1468]: NVDA
+                      - generic [ref=e1469]: HOLD
+                    - paragraph [ref=e1470]: NVIDIA Corporation
+                - generic [ref=e1471]:
+                  - generic [ref=e1472]:
+                    - paragraph [ref=e1473]: Dip
+                    - paragraph [ref=e1474]: "-8.8%"
+                  - generic [ref=e1475]:
+                    - paragraph [ref=e1476]: P(rec)
+                    - paragraph [ref=e1477]: 84%
+                - button "Analyze" [ref=e1479]:
                   - text: Analyze
                   - img
-              - generic [ref=e1498] [cursor=pointer]:
-                - generic [ref=e1499]:
-                  - img "MSFT logo" [ref=e1501]
-                  - generic [ref=e1502]:
-                    - generic [ref=e1503]:
-                      - generic [ref=e1504]: MSFT
-                      - generic [ref=e1505]: HOLD
-                    - paragraph [ref=e1506]: Microsoft Corporation
-                - generic [ref=e1507]:
-                  - generic [ref=e1508]:
-                    - paragraph [ref=e1509]: Dip
-                    - paragraph [ref=e1510]: "-12.6%"
-                  - generic [ref=e1511]:
-                    - paragraph [ref=e1512]: P(rec)
-                    - paragraph [ref=e1513]: 90%
-                - button "Analyze" [ref=e1515]:
+              - generic [ref=e1482] [cursor=pointer]:
+                - generic [ref=e1483]:
+                  - img "MSFT logo" [ref=e1485]
+                  - generic [ref=e1486]:
+                    - generic [ref=e1487]:
+                      - generic [ref=e1488]: MSFT
+                      - generic [ref=e1489]: HOLD
+                    - paragraph [ref=e1490]: Microsoft Corporation
+                - generic [ref=e1491]:
+                  - generic [ref=e1492]:
+                    - paragraph [ref=e1493]: Dip
+                    - paragraph [ref=e1494]: "-12.6%"
+                  - generic [ref=e1495]:
+                    - paragraph [ref=e1496]: P(rec)
+                    - paragraph [ref=e1497]: 90%
+                - button "Analyze" [ref=e1499]:
                   - text: Analyze
                   - img
-              - generic [ref=e1518] [cursor=pointer]:
-                - generic [ref=e1519]:
-                  - img "META logo" [ref=e1521]
-                  - generic [ref=e1522]:
-                    - generic [ref=e1523]:
-                      - generic [ref=e1524]: META
-                      - generic [ref=e1525]: HOLD
-                    - paragraph [ref=e1526]: Meta Platforms, Inc.
-                - generic [ref=e1527]:
-                  - generic [ref=e1528]:
-                    - paragraph [ref=e1529]: Dip
-                    - paragraph [ref=e1530]: "-17.5%"
-                  - generic [ref=e1531]:
-                    - paragraph [ref=e1532]: P(rec)
-                    - paragraph [ref=e1533]: 91%
-                - button "Analyze" [ref=e1535]:
+              - generic [ref=e1502] [cursor=pointer]:
+                - generic [ref=e1503]:
+                  - img "META logo" [ref=e1505]
+                  - generic [ref=e1506]:
+                    - generic [ref=e1507]:
+                      - generic [ref=e1508]: META
+                      - generic [ref=e1509]: HOLD
+                    - paragraph [ref=e1510]: Meta Platforms, Inc.
+                - generic [ref=e1511]:
+                  - generic [ref=e1512]:
+                    - paragraph [ref=e1513]: Dip
+                    - paragraph [ref=e1514]: "-17.5%"
+                  - generic [ref=e1515]:
+                    - paragraph [ref=e1516]: P(rec)
+                    - paragraph [ref=e1517]: 91%
+                - button "Analyze" [ref=e1519]:
                   - text: Analyze
                   - img
-              - generic [ref=e1538] [cursor=pointer]:
-                - generic [ref=e1539]:
-                  - img "GOOG logo" [ref=e1541]
-                  - generic [ref=e1542]:
-                    - generic [ref=e1543]:
-                      - generic [ref=e1544]: GOOG
-                      - generic [ref=e1545]: HOLD
-                    - paragraph [ref=e1546]: Alphabet Inc.
-                - generic [ref=e1547]:
-                  - generic [ref=e1548]:
-                    - paragraph [ref=e1549]: Dip
-                    - paragraph [ref=e1550]: "-2.5%"
-                  - generic [ref=e1551]:
-                    - paragraph [ref=e1552]: P(rec)
-                    - paragraph [ref=e1553]: 79%
-                - button "Analyze" [ref=e1555]:
+              - generic [ref=e1522] [cursor=pointer]:
+                - generic [ref=e1523]:
+                  - img "GOOG logo" [ref=e1525]
+                  - generic [ref=e1526]:
+                    - generic [ref=e1527]:
+                      - generic [ref=e1528]: GOOG
+                      - generic [ref=e1529]: HOLD
+                    - paragraph [ref=e1530]: Alphabet Inc.
+                - generic [ref=e1531]:
+                  - generic [ref=e1532]:
+                    - paragraph [ref=e1533]: Dip
+                    - paragraph [ref=e1534]: "-2.5%"
+                  - generic [ref=e1535]:
+                    - paragraph [ref=e1536]: P(rec)
+                    - paragraph [ref=e1537]: 79%
+                - button "Analyze" [ref=e1539]:
                   - text: Analyze
                   - img
-              - generic [ref=e1558] [cursor=pointer]:
-                - generic [ref=e1559]:
-                  - img "JPM logo" [ref=e1561]
-                  - generic [ref=e1562]:
-                    - generic [ref=e1563]:
-                      - generic [ref=e1564]: JPM
-                      - generic [ref=e1565]: HOLD
-                    - paragraph [ref=e1566]: JP Morgan Chase & Co.
-                - generic [ref=e1567]:
-                  - generic [ref=e1568]:
-                    - paragraph [ref=e1569]: Dip
-                    - paragraph [ref=e1570]: "-0.7%"
-                  - generic [ref=e1571]:
-                    - paragraph [ref=e1572]: P(rec)
-                    - paragraph [ref=e1573]: 89%
-                - button "Analyze" [ref=e1575]:
+              - generic [ref=e1542] [cursor=pointer]:
+                - generic [ref=e1543]:
+                  - img "JPM logo" [ref=e1545]
+                  - generic [ref=e1546]:
+                    - generic [ref=e1547]:
+                      - generic [ref=e1548]: JPM
+                      - generic [ref=e1549]: HOLD
+                    - paragraph [ref=e1550]: JP Morgan Chase & Co.
+                - generic [ref=e1551]:
+                  - generic [ref=e1552]:
+                    - paragraph [ref=e1553]: Dip
+                    - paragraph [ref=e1554]: "-0.7%"
+                  - generic [ref=e1555]:
+                    - paragraph [ref=e1556]: P(rec)
+                    - paragraph [ref=e1557]: 89%
+                - button "Analyze" [ref=e1559]:
                   - text: Analyze
                   - img
-            - button "Explore All Signals" [ref=e1577] [cursor=pointer]:
+            - button "Explore All Signals" [ref=e1561] [cursor=pointer]:
               - text: Explore All Signals
               - img
-          - generic [ref=e1579]:
-            - generic [ref=e1580]:
-              - heading "AI investor council for HOOD" [level=2] [ref=e1581]
-              - paragraph [ref=e1582]: See how legendary investing styles react to the same setup.
-            - generic [ref=e1584]: Loading AI debate for this signal...
-          - generic [ref=e1586]:
-            - generic [ref=e1587]:
-              - heading "Built for signal-driven traders" [level=2] [ref=e1588]
-              - paragraph [ref=e1589]: A quant + AI stack that turns noisy markets into clear entry decisions.
-            - generic [ref=e1590]:
-              - generic [ref=e1592]:
-                - generic [ref=e1593]:
-                  - img [ref=e1595]
-                  - generic [ref=e1597]: Signal Engine
-                - generic [ref=e1599]: Detects oversold conditions with mean-reversion, volatility filters, and statistical validation.
-              - generic [ref=e1601]:
-                - generic [ref=e1602]:
-                  - img [ref=e1604]
-                  - generic [ref=e1612]: AI Personas
-                - generic [ref=e1614]: Explains each setup with multiple investor viewpoints so you see the risks and the upside.
-              - generic [ref=e1616]:
-                - generic [ref=e1617]:
-                  - img [ref=e1619]
-                  - generic [ref=e1623]: Portfolio Optimizer
-                - generic [ref=e1625]: Position sizing based on expected return, risk, and correlation for smarter allocations.
-          - generic [ref=e1628]:
-            - heading "Ready to trade with AI conviction?" [level=2] [ref=e1629]
-            - paragraph [ref=e1630]: Join traders using StonkMarket to move faster on signals that are explained, tested, and optimized.
-            - button "Start Trading Smarter" [ref=e1631] [cursor=pointer]:
+          - generic [ref=e1563]:
+            - generic [ref=e1564]:
+              - heading "AI investor council for HOOD" [level=2] [ref=e1565]
+              - paragraph [ref=e1566]: See how legendary investing styles react to the same setup.
+            - generic [ref=e1568]: Loading AI debate for this signal...
+          - generic [ref=e1570]:
+            - generic [ref=e1571]:
+              - heading "Built for signal-driven traders" [level=2] [ref=e1572]
+              - paragraph [ref=e1573]: A quant + AI stack that turns noisy markets into clear entry decisions.
+            - generic [ref=e1574]:
+              - generic [ref=e1576]:
+                - generic [ref=e1577]:
+                  - img [ref=e1579]
+                  - generic [ref=e1581]: Signal Engine
+                - generic [ref=e1583]: Detects oversold conditions with mean-reversion, volatility filters, and statistical validation.
+              - generic [ref=e1585]:
+                - generic [ref=e1586]:
+                  - img [ref=e1588]
+                  - generic [ref=e1596]: AI Personas
+                - generic [ref=e1598]: Explains each setup with multiple investor viewpoints so you see the risks and the upside.
+              - generic [ref=e1600]:
+                - generic [ref=e1601]:
+                  - img [ref=e1603]
+                  - generic [ref=e1607]: Portfolio Optimizer
+                - generic [ref=e1609]: Position sizing based on expected return, risk, and correlation for smarter allocations.
+          - generic [ref=e1612]:
+            - heading "Ready to trade with AI conviction?" [level=2] [ref=e1613]
+            - paragraph [ref=e1614]: Join traders using StonkMarket to move faster on signals that are explained, tested, and optimized.
+            - button "Start Trading Smarter" [ref=e1615] [cursor=pointer]:
               - text: Start Trading Smarter
               - img
-      - contentinfo [ref=e1632]:
-        - generic [ref=e1633]:
-          - generic [ref=e1634]:
-            - generic [ref=e1636]: StonkMarket • Not financial advice
-            - generic [ref=e1637]:
-              - generic [ref=e1638]:
-                - generic [ref=e1640]:
-                  - button "Up color" [ref=e1641] [cursor=pointer]:
-                    - img [ref=e1642]
-                  - button "Down color" [ref=e1646] [cursor=pointer]:
-                    - img [ref=e1647]
-                  - button "Reset colors" [ref=e1651] [cursor=pointer]:
-                    - img [ref=e1652]
-                - button "Colorblind" [ref=e1655] [cursor=pointer]:
-                  - img [ref=e1656]
-                  - generic [ref=e1661]: Colorblind
-              - generic [ref=e1662]:
-                - link "About" [ref=e1663] [cursor=pointer]:
+      - contentinfo [ref=e1616]:
+        - generic [ref=e1617]:
+          - generic [ref=e1618]:
+            - generic [ref=e1620]: StonkMarket • Not financial advice
+            - generic [ref=e1621]:
+              - generic [ref=e1622]:
+                - generic [ref=e1624]:
+                  - button "Up color" [ref=e1625] [cursor=pointer]:
+                    - img [ref=e1626]
+                  - button "Down color" [ref=e1630] [cursor=pointer]:
+                    - img [ref=e1631]
+                  - button "Reset colors" [ref=e1635] [cursor=pointer]:
+                    - img [ref=e1636]
+                - button "Colorblind" [ref=e1639] [cursor=pointer]:
+                  - img [ref=e1640]
+                  - generic [ref=e1645]: Colorblind
+              - generic [ref=e1646]:
+                - link "About" [ref=e1647] [cursor=pointer]:
                   - /url: /about
-                - link "Contact" [ref=e1664] [cursor=pointer]:
+                - link "Contact" [ref=e1648] [cursor=pointer]:
                   - /url: /contact
-                  - img [ref=e1665]
+                  - img [ref=e1649]
                   - text: Contact
-              - button "Donate" [ref=e1668] [cursor=pointer]:
-                - img [ref=e1669]
-                - generic [ref=e1671]: Donate
-          - link "Logos provided by Logo.dev" [ref=e1673] [cursor=pointer]:
+              - button "Donate" [ref=e1652] [cursor=pointer]:
+                - img [ref=e1653]
+                - generic [ref=e1655]: Donate
+          - link "Logos provided by Logo.dev" [ref=e1657] [cursor=pointer]:
             - /url: https://logo.dev
-    - generic [ref=e1674]:
-      - img [ref=e1676]
-      - button "Open Tanstack query devtools" [ref=e1724] [cursor=pointer]:
-        - img [ref=e1725]
-  - generic [ref=e1773]: $100
+    - generic [ref=e1658]:
+      - img [ref=e1660]
+      - button "Open Tanstack query devtools" [ref=e1708] [cursor=pointer]:
+        - img [ref=e1709]
+  - generic [ref=e1757]: $100
 ```

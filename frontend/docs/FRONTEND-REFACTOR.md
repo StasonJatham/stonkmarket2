@@ -47,15 +47,18 @@
 ## Phase 2: Data Fetching Migration - IN PROGRESS
 
 ### Priority Order (by complexity):
-1. [ ] `StockDetail.tsx` - Already uses `useStockDetail` from features ✅
+1. [x] `StockDetail.tsx` - Already uses `useStockDetail` from features ✅
 2. [ ] `Landing.tsx` - Manual cache → useQuery
 3. [x] `Dashboard.tsx` - Migrated to `useQuantRecommendations` ✅
 4. [ ] `Portfolio.tsx` - 8+ useState → useQuery + useMutation
 5. [ ] `DipSwipe.tsx` - Card fetching → useInfiniteQuery
 
 ### Context Deletion: ✅ COMPLETE
-6. [x] DELETE `QuantContext.tsx` - Replaced with `useQuantRecommendations`
-7. [x] DELETE `DipContext.tsx` - Replaced with `useRanking`
+6. [x] DELETE `QuantContext.tsx` - Replaced with `useQuantRecommendations` ✅
+7. [x] DELETE `DipContext.tsx` - Replaced with `useRanking` ✅
+
+### Additional Migrations Completed:
+8. [x] `Layout.tsx` - Migrated to `useRanking` for ticker component ✅
 
 ---
 
@@ -118,20 +121,37 @@ const queryClient = new QueryClient({
 | Date | Phase | Task | Status |
 |------|-------|------|--------|
 | 2026-01-04 | 1 | Created tracking document | ✅ |
-| 2026-01-04 | 1 | Install TanStack Query | 🔄 |
+| 2026-01-04 | 1 | Install TanStack Query v5, devtools, zod | ✅ |
+| 2026-01-04 | 1 | Create lib/api-client.ts with interceptors | ✅ |
+| 2026-01-04 | 1 | Create lib/query.tsx QueryProvider | ✅ |
+| 2026-01-04 | 1 | Create features/market-data/ structure | ✅ |
+| 2026-01-04 | 1 | Create features/quant-engine/ structure | ✅ |
+| 2026-01-04 | 2 | Migrate Dashboard.tsx to useQuantRecommendations | ✅ |
+| 2026-01-04 | 2 | Migrate Layout.tsx to useRanking | ✅ |
+| 2026-01-04 | 2 | DELETE QuantContext.tsx | ✅ |
+| 2026-01-04 | 2 | DELETE DipContext.tsx | ✅ |
+| 2026-01-04 | 2 | Fix Zod schema (add 'etf' type, updated_at field) | ✅ |
+| 2026-01-04 | - | Fix Playwright tests (networkidle → element waiting) | ✅ |
+| 2026-01-04 | - | **Playwright: 56/65 tests passing** | ✅ |
 
 ---
 
 ## Files to Delete
 
-- [ ] `frontend/src/lib/cache.ts` (after migration)
-- [ ] `frontend/src/context/QuantContext.tsx` (after migration)
-- [ ] `frontend/src/context/DipContext.tsx` (after migration)
+- [x] `frontend/src/context/QuantContext.tsx` ✅ DELETED
+- [x] `frontend/src/context/DipContext.tsx` ✅ DELETED
+- [ ] `frontend/src/lib/cache.ts` (after full migration)
 
 ## Files to Create
 
+- [x] `frontend/src/lib/query.tsx` - QueryClientProvider with DevTools ✅
+- [x] `frontend/src/lib/api-client.ts` - Axios client with interceptors ✅
+- [x] `frontend/src/features/market-data/api/queries.ts` ✅
+- [x] `frontend/src/features/market-data/api/schemas.ts` ✅
+- [x] `frontend/src/features/quant-engine/api/queries.ts` ✅
+- [x] `frontend/src/features/quant-engine/api/schemas.ts` ✅
 - [ ] `frontend/src/app/providers.tsx`
-- [ ] `frontend/src/shared/api/client.ts`
-- [ ] `frontend/src/features/*/api/queries.ts`
+- [ ] `frontend/src/features/portfolio/api/queries.ts`
+- [ ] `frontend/src/features/dip-swipe/api/queries.ts`
+- [ ] `frontend/src/features/admin/api/queries.ts`
 - [ ] `frontend/src/features/*/api/mutations.ts`
-- [ ] `frontend/src/features/*/api/schemas.ts`
