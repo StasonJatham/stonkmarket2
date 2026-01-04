@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Bar,
@@ -12,27 +13,24 @@ import {
   YAxis,
 } from 'recharts';
 import {
-  createPortfolio,
-  getPortfolioAllocationRecommendation,
-  getPortfolioAnalyticsJob,
-  getPortfolioDetail,
-  getPortfolios,
-  getPortfolioRiskAnalytics,
-  getStockInfo,
-  runPortfolioAnalytics,
-  updatePortfolio,
-  deletePortfolio,
-  upsertHolding,
-  deleteHolding,
   type PortfolioAllocationRecommendation,
-  type PortfolioAnalyticsJob,
   type PortfolioAnalyticsResponse,
   type Portfolio,
-  type PortfolioDetail,
-  type PortfolioRiskAnalyticsResponse,
-  type StockInfo,
-  type HoldingSparklineData,
 } from '@/services/api';
+import { queryKeys } from '@/lib/query';
+import {
+  usePortfolioPageData,
+  usePortfolioAnalyticsJob,
+} from '@/features/portfolio/api/queries';
+import {
+  useCreatePortfolio,
+  useUpdatePortfolio,
+  useDeletePortfolio,
+  useUpsertHolding,
+  useDeleteHolding,
+  useRunAnalytics,
+  useGetAllocation,
+} from '@/features/portfolio/api/mutations';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -327,10 +325,6 @@ function formatDate(dateStr: string): string {
   });
 }
 
-const deferStateUpdate = (callback: () => void) => {
-  Promise.resolve().then(callback);
-};
-
 const mergeAnalyticsResults = (
   previous: PortfolioAnalyticsResponse | null,
   next: PortfolioAnalyticsResponse
@@ -351,28 +345,18 @@ const mergeAnalyticsResults = (
 };
 
 export function PortfolioPage() {
-  const [portfolios, setPortfolios] = useState<Portfolio[]>([]);
+  const queryClient = useQueryClient();
+  
+  // UI State only - data comes from hooks
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [detail, setDetail] = useState<PortfolioDetail | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [stockInfoMap, setStockInfoMap] = useState<Record<string, StockInfo | null>>({});
-  const [riskAnalytics, setRiskAnalytics] = useState<PortfolioRiskAnalyticsResponse | null>(null);
-  const [riskAnalyticsError, setRiskAnalyticsError] = useState<string | null>(null);
-  const [isRiskAnalyticsLoading, setIsRiskAnalyticsLoading] = useState(false);
   const [toolAnalytics, setToolAnalytics] = useState<PortfolioAnalyticsResponse | null>(null);
   const [toolAnalyticsError, setToolAnalyticsError] = useState<string | null>(null);
-  const [toolAnalyticsJob, setToolAnalyticsJob] = useState<PortfolioAnalyticsJob | null>(null);
-  const [isToolAnalyticsLoading, setIsToolAnalyticsLoading] = useState(false);
+  const [toolAnalyticsJobId, setToolAnalyticsJobId] = useState<string | null>(null);
   const [allocationAmount, setAllocationAmount] = useState('1000');
-  const [allocationMethod, setAllocationMethod] = useState('auto');  // auto = cross-validate and select best
+  const [allocationMethod, setAllocationMethod] = useState('auto');
   const [strategyComboboxOpen, setStrategyComboboxOpen] = useState(false);
   const [allocationResult, setAllocationResult] = useState<PortfolioAllocationRecommendation | null>(null);
   const [allocationError, setAllocationError] = useState<string | null>(null);
-  const [isAllocationLoading, setIsAllocationLoading] = useState(false);
-  
-  // Sparkline data for holdings
-  const [sparklineData, setSparklineData] = useState<Record<string, HoldingSparklineData>>({});
 
   // Portfolio dialog
   const [portfolioDialogOpen, setPortfolioDialogOpen] = useState(false);
@@ -391,186 +375,80 @@ export function PortfolioPage() {
   const [holdingQty, setHoldingQty] = useState('');
   const [holdingAvgCost, setHoldingAvgCost] = useState('');
 
-  const loadPortfolios = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const data = await getPortfolios();
-      setPortfolios(data);
-      if (!selectedId && data.length > 0) {
-        setSelectedId(data[0].id);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load portfolios');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [selectedId]);
+  // TanStack Query hooks - replaces all manual data fetching
+  const pageData = usePortfolioPageData(selectedId);
+  const {
+    portfolios,
+    isLoadingPortfolios,
+    portfoliosError,
+    detail,
+    isLoadingDetail,
+    detailError,
+    riskAnalytics,
+    isLoadingRiskAnalytics: isRiskAnalyticsLoading,
+    riskAnalyticsError,
+    stockInfoMap,
+    sparklineData,
+  } = pageData;
 
-  const loadDetail = useCallback(async (portfolioId: number) => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const data = await getPortfolioDetail(portfolioId);
-      setDetail(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load portfolio details');
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
+  // Mutations
+  const createPortfolioMutation = useCreatePortfolio();
+  const updatePortfolioMutation = useUpdatePortfolio();
+  const deletePortfolioMutation = useDeletePortfolio();
+  const upsertHoldingMutation = useUpsertHolding();
+  const deleteHoldingMutation = useDeleteHolding();
+  const runAnalyticsMutation = useRunAnalytics();
+  const getAllocationMutation = useGetAllocation();
 
-  const loadRiskAnalytics = useCallback(async (portfolioId: number) => {
-    deferStateUpdate(() => setIsRiskAnalyticsLoading(true));
-    setRiskAnalyticsError(null);
-    try {
-      const data = await getPortfolioRiskAnalytics(portfolioId);
-      setRiskAnalytics(data);
-    } catch (err) {
-      setRiskAnalyticsError(err instanceof Error ? err.message : 'Failed to load portfolio insights');
-      setRiskAnalytics(null);
-    } finally {
-      setIsRiskAnalyticsLoading(false);
-    }
-  }, []);
+  // Analytics job polling
+  const analyticsJobQuery = usePortfolioAnalyticsJob(
+    selectedId,
+    toolAnalyticsJobId,
+    !!toolAnalyticsJobId
+  );
+
+  // Auto-select first portfolio
+  const firstPortfolioId = portfolios[0]?.id;
+  if (!selectedId && firstPortfolioId && !isLoadingPortfolios) {
+    setSelectedId(firstPortfolioId);
+  }
 
   const loadToolAnalytics = useCallback(
     async (portfolioId: number, tools: string[], forceRefresh = false) => {
-      deferStateUpdate(() => setIsToolAnalyticsLoading(true));
       setToolAnalyticsError(null);
       try {
-        const data = await runPortfolioAnalytics(portfolioId, {
+        const data = await runAnalyticsMutation.mutateAsync({
+          portfolioId,
           tools,
           force_refresh: forceRefresh,
         });
         setToolAnalytics((previous) => mergeAnalyticsResults(previous, data));
         if (data.job_id) {
-          setToolAnalyticsJob({
-            job_id: data.job_id,
-            portfolio_id: portfolioId,
-            status: data.job_status || 'pending',
-            tools: data.scheduled_tools.length ? data.scheduled_tools : tools,
-            results_count: 0,
-            created_at: new Date().toISOString(),
-          });
+          setToolAnalyticsJobId(data.job_id);
         } else {
-          setToolAnalyticsJob(null);
+          setToolAnalyticsJobId(null);
         }
       } catch (err) {
         setToolAnalyticsError(err instanceof Error ? err.message : 'Failed to run analytics tools');
-      } finally {
-        setIsToolAnalyticsLoading(false);
       }
     },
-    []
+    [runAnalyticsMutation]
   );
 
-  useEffect(() => {
-    loadPortfolios();
-  }, [loadPortfolios]);
-
-  useEffect(() => {
-    if (selectedId) {
-      loadDetail(selectedId);
-    }
-  }, [selectedId, loadDetail]);
-
-  useEffect(() => {
-    if (!selectedId) {
-      deferStateUpdate(() => {
-        setRiskAnalytics(null);
-        setToolAnalytics(null);
-        setToolAnalyticsJob(null);
-        setAllocationResult(null);
-      });
-      return;
-    }
-    if (!detail?.holdings || detail.holdings.length === 0) {
-      return;
-    }
-    const timeout = setTimeout(() => {
-      loadRiskAnalytics(selectedId);
-      loadToolAnalytics(selectedId, ['quantstats', 'pyfolio']);
-    }, 0);
-    return () => clearTimeout(timeout);
-  }, [selectedId, detail?.holdings, loadRiskAnalytics, loadToolAnalytics]);
-
-  useEffect(() => {
-    if (!detail?.holdings || detail.holdings.length === 0) {
-      deferStateUpdate(() => setStockInfoMap({}));
-      return;
-    }
-    let isActive = true;
-    const symbols = detail.holdings.map((holding) => holding.symbol);
-    const timeout = setTimeout(() => {
-      Promise.all(
-        symbols.map(async (symbol) => {
-          try {
-            const info = await getStockInfo(symbol);
-            return [symbol, info] as const;
-          } catch {
-            return [symbol, null] as const;
-          }
-        })
-      ).then((entries) => {
-        if (!isActive) return;
-        const nextMap: Record<string, StockInfo | null> = {};
-        for (const [symbol, info] of entries) {
-          nextMap[symbol] = info;
-        }
-        setStockInfoMap(nextMap);
-      });
-    }, 0);
-    return () => {
-      isActive = false;
-      clearTimeout(timeout);
-    };
-  }, [detail?.holdings]);
-
-  // Fetch sparkline data for holdings
-  useEffect(() => {
-    if (!selectedId || !detail?.holdings || detail.holdings.length === 0) {
-      setSparklineData({});
-      return;
-    }
-    let isActive = true;
-    const symbols = detail.holdings.map((h) => h.symbol);
-    
-    import('@/services/api').then(({ getHoldingsSparklines }) => {
-      getHoldingsSparklines(selectedId, symbols, 180)
-        .then((response) => {
-          if (isActive) {
-            setSparklineData(response.sparklines);
-          }
-        })
-        .catch((err) => {
-          console.error('Failed to load sparkline data:', err);
-        });
+  // Handle job completion
+  const jobData = analyticsJobQuery.data;
+  if (jobData?.status === 'completed' && selectedId && toolAnalyticsJobId) {
+    // Job completed - refetch analytics
+    loadToolAnalytics(selectedId, jobData.tools).then(() => {
+      setToolAnalyticsJobId(null);
     });
-    
-    return () => {
-      isActive = false;
-    };
-  }, [selectedId, detail?.holdings]);
+  }
 
-  useEffect(() => {
-    if (!selectedId || !toolAnalyticsJob?.job_id) return;
-    if (toolAnalyticsJob.status === 'completed' || toolAnalyticsJob.status === 'failed') {
-      return;
-    }
-    const timeout = setTimeout(async () => {
-      try {
-        const status = await getPortfolioAnalyticsJob(selectedId, toolAnalyticsJob.job_id);
-        setToolAnalyticsJob(status);
-        if (status.status === 'completed') {
-          await loadToolAnalytics(selectedId, status.tools);
-        }
-      } catch (err) {
-        setToolAnalyticsError(err instanceof Error ? err.message : 'Failed to load analytics status');
-      }
-    }, 10000);
-    return () => clearTimeout(timeout);
-  }, [selectedId, toolAnalyticsJob, loadToolAnalytics]);
+  // Derive computed values
+  const isLoading = isLoadingPortfolios || isLoadingDetail;
+  const error = portfoliosError?.message ?? detailError?.message ?? null;
+  const isToolAnalyticsLoading = runAnalyticsMutation.isPending;
+  const isAllocationLoading = getAllocationMutation.isPending;
 
   const selectedPortfolio = useMemo(
     () => portfolios.find((p) => p.id === selectedId) || null,
@@ -744,21 +622,23 @@ export function PortfolioPage() {
     if (!portfolioName.trim()) return;
     try {
       if (editingPortfolio) {
-        await updatePortfolio(editingPortfolio.id, {
-          name: portfolioName.trim(),
-          base_currency: portfolioCurrency.trim(),
+        await updatePortfolioMutation.mutateAsync({
+          portfolioId: editingPortfolio.id,
+          data: {
+            name: portfolioName.trim(),
+            base_currency: portfolioCurrency.trim(),
+          },
         });
       } else {
-        const created = await createPortfolio({
+        const created = await createPortfolioMutation.mutateAsync({
           name: portfolioName.trim(),
           base_currency: portfolioCurrency.trim(),
         });
         setSelectedId(created.id);
       }
-      await loadPortfolios();
       setPortfolioDialogOpen(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save portfolio');
+    } catch {
+      // Error handled by mutation
     }
   }
 
@@ -766,12 +646,10 @@ export function PortfolioPage() {
     if (!selectedPortfolio) return;
     if (!confirm('Are you sure you want to delete this portfolio?')) return;
     try {
-      await deletePortfolio(selectedPortfolio.id);
+      await deletePortfolioMutation.mutateAsync(selectedPortfolio.id);
       setSelectedId(null);
-      setDetail(null);
-      await loadPortfolios();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete portfolio');
+    } catch {
+      // Error handled by mutation
     }
   }
 
@@ -800,25 +678,24 @@ export function PortfolioPage() {
       return;
     }
     try {
-      await upsertHolding(selectedId, {
+      await upsertHoldingMutation.mutateAsync({
+        portfolioId: selectedId,
         symbol: holdingSymbol.trim().toUpperCase(),
         quantity: Number(holdingQty),
         avg_cost: Number(holdingAvgCost),
       });
-      await loadDetail(selectedId);
       setHoldingDialogOpen(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save holding');
+    } catch {
+      // Error handled by mutation
     }
   }
 
   async function handleDeleteHolding(symbol: string) {
     if (!selectedId) return;
     try {
-      await deleteHolding(selectedId, symbol);
-      await loadDetail(selectedId);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete holding');
+      await deleteHoldingMutation.mutateAsync({ portfolioId: selectedId, symbol });
+    } catch {
+      // Error handled by mutation
     }
   }
 
@@ -831,17 +708,15 @@ export function PortfolioPage() {
     }
     setAllocationError(null);
     setAllocationResult(null);
-    deferStateUpdate(() => setIsAllocationLoading(true));
     try {
-      const data = await getPortfolioAllocationRecommendation(selectedId, {
+      const data = await getAllocationMutation.mutateAsync({
+        portfolioId: selectedId,
         inflow_eur: inflow,
         method: allocationMethod,
       });
       setAllocationResult(data);
     } catch (err) {
       setAllocationError(err instanceof Error ? err.message : 'Failed to generate recommendations');
-    } finally {
-      setIsAllocationLoading(false);
     }
   }
 
@@ -1096,7 +971,7 @@ export function PortfolioPage() {
                 <p className="text-sm text-muted-foreground">Run analytics to see risk insights.</p>
               )}
               {riskAnalyticsError && (
-                <p className="text-xs text-destructive">{riskAnalyticsError}</p>
+                <p className="text-xs text-destructive">{riskAnalyticsError.message}</p>
               )}
             </CardContent>
           </Card>
@@ -1904,7 +1779,10 @@ export function PortfolioPage() {
           open={bulkImportOpen}
           onOpenChange={setBulkImportOpen}
           portfolioId={selectedId}
-          onImportComplete={() => loadDetail(selectedId)}
+          onImportComplete={() => {
+            queryClient.invalidateQueries({ queryKey: queryKeys.portfolios.detail(selectedId) });
+            queryClient.invalidateQueries({ queryKey: queryKeys.portfolios.riskAnalytics(selectedId) });
+          }}
         />
       )}
     </div>

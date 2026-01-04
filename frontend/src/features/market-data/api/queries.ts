@@ -213,7 +213,7 @@ export function useFundamentals(symbol: string | undefined) {
 // ============================================================================
 
 async function fetchBenchmarks(): Promise<Benchmark[]> {
-  const data = await apiGet<unknown[]>('/benchmarks');
+  const data = await apiGet<unknown[]>('/dips/benchmarks');
   return data.map(b => safeParse(BenchmarkSchema, b, 'Benchmark'));
 }
 

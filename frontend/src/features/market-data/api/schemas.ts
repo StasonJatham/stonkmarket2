@@ -126,14 +126,21 @@ export type SignalTriggersResponse = z.infer<typeof SignalTriggersResponseSchema
 // Current Signals Schema
 // ============================================================================
 
+export const SignalInfoSchema = z.object({
+  name: z.string(),
+  value: z.number(),
+  threshold: z.number(),
+  description: z.string().optional(),
+});
+
+export type SignalInfo = z.infer<typeof SignalInfoSchema>;
+
 export const CurrentSignalsSchema = z.object({
   symbol: z.string(),
-  signals: z.record(z.string(), z.object({
-    value: z.number(),
-    is_buy: z.boolean(),
-    description: z.string().optional(),
-  })),
-  as_of: z.string(),
+  buy_signals: z.array(SignalInfoSchema),
+  sell_signals: z.array(SignalInfoSchema),
+  overall_action: z.enum(['STRONG_BUY', 'BUY', 'WEAK_BUY', 'HOLD', 'SELL', 'STRONG_SELL']),
+  reasoning: z.string(),
 });
 
 export type CurrentSignals = z.infer<typeof CurrentSignalsSchema>;
@@ -143,10 +150,11 @@ export type CurrentSignals = z.infer<typeof CurrentSignalsSchema>;
 // ============================================================================
 
 export const BenchmarkSchema = z.object({
+  id: z.string().optional(), // May not be present in all responses
   symbol: z.string(),
   name: z.string(),
   description: z.string().nullable(),
-  is_public: z.boolean(),
+  is_public: z.boolean().optional(),
 });
 
 export type Benchmark = z.infer<typeof BenchmarkSchema>;
@@ -166,11 +174,30 @@ export const SymbolFundamentalsSchema = z.object({
   peg_ratio: z.number().nullable(),
   dividend_yield: z.number().nullable(),
   profit_margin: z.number().nullable(),
+  gross_margin: z.number().nullable(),
   revenue_growth: z.number().nullable(),
+  earnings_growth: z.number().nullable(),
   debt_to_equity: z.number().nullable(),
   current_ratio: z.number().nullable(),
   return_on_equity: z.number().nullable(),
+  return_on_assets: z.number().nullable(),
   free_cash_flow: z.number().nullable(),
+  price_to_book: z.number().nullable(),
+  price_to_sales: z.number().nullable(),
+  enterprise_value: z.number().nullable(),
+  ev_to_ebitda: z.number().nullable(),
+  beta: z.number().nullable(),
+  fifty_two_week_high: z.number().nullable(),
+  fifty_two_week_low: z.number().nullable(),
+  fifty_day_ma: z.number().nullable(),
+  two_hundred_day_ma: z.number().nullable(),
+  avg_volume: z.number().nullable(),
+  current_price: z.number().nullable(),
+  target_mean_price: z.number().nullable(),
+  recommendation: z.string().nullable(),
+  num_analyst_opinions: z.number().nullable(),
+  next_earnings_date: z.string().nullable(),
+  combined_ratio: z.number().nullable(),
   // Quality scores
   quality_score: z.number().nullable(),
   value_score: z.number().nullable(),

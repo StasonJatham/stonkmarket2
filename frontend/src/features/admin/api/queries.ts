@@ -13,10 +13,12 @@ import { apiGet, apiPost, apiPatch, apiDelete } from '@/lib/api-client';
 // ============================================================================
 
 interface ApiKeyInfo {
+  id: number;
   key_name: string;
-  masked_value: string;
+  key_hint: string;
   created_at: string;
-  updated_at: string | null;
+  updated_at: string;
+  created_by: string;
 }
 
 interface ApiKeysResponse {
@@ -334,5 +336,66 @@ export function useUpdateSymbol() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.admin.symbols() });
     },
+  });
+}
+
+// ============================================================================
+// MFA Status
+// ============================================================================
+
+interface MFAStatus {
+  enabled: boolean;
+}
+
+async function fetchMFAStatus(): Promise<MFAStatus> {
+  return apiGet<MFAStatus>('/auth/mfa/status');
+}
+
+export function useMFAStatus() {
+  return useQuery({
+    queryKey: ['auth', 'mfaStatus'],
+    queryFn: fetchMFAStatus,
+    staleTime: 60 * 1000,
+  });
+}
+
+// ============================================================================
+// MFA Session Check
+// ============================================================================
+
+interface MFASession {
+  has_session: boolean;
+}
+
+async function fetchMFASession(): Promise<MFASession> {
+  return apiGet<MFASession>('/auth/mfa/session');
+}
+
+export function useMFASession() {
+  return useQuery({
+    queryKey: ['auth', 'mfaSession'],
+    queryFn: fetchMFASession,
+    staleTime: 30 * 1000,
+  });
+}
+
+// ============================================================================
+// System Status
+// ============================================================================
+
+interface SystemStatus {
+  logo_dev_configured: boolean;
+  database_connected: boolean;
+}
+
+async function fetchSystemStatus(): Promise<SystemStatus> {
+  return apiGet<SystemStatus>('/system/status');
+}
+
+export function useSystemStatus() {
+  return useQuery({
+    queryKey: ['system', 'status'],
+    queryFn: fetchSystemStatus,
+    staleTime: 60 * 1000,
   });
 }

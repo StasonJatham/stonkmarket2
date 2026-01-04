@@ -5,13 +5,12 @@ import {
   getStockChart, 
   getStockInfo,
   getBenchmarkChart,
-  getBatchCharts,
   mergeChartData,
   aggregatePortfolioPerformance,
-  getAvailableBenchmarks,
   getDipCard,
   quantToStockCardData,
 } from '@/services/api';
+import { useBenchmarks, useBatchCharts } from '@/features/market-data/api/queries';
 import type { 
   DipStock, 
   ChartDataPoint, 
@@ -19,7 +18,6 @@ import type {
   BenchmarkType,
   ComparisonChartData,
   AggregatedPerformance,
-  PublicBenchmark,
   DipCard,
   StockCardData,
 } from '@/services/api';
@@ -128,6 +126,18 @@ export function Dashboard() {
   const [sortBy, setSortBy] = useState<SortBy>('chance');
   const [isMobileDetailOpen, setIsMobileDetailOpen] = useState(false);
   
+  // Benchmark data via TanStack Query - map to BenchmarkConfig type
+  const benchmarksQuery = useBenchmarks();
+  const availableBenchmarks = useMemo(() => 
+    (benchmarksQuery.data ?? []).map(b => ({
+      id: b.id ?? b.symbol, // Use symbol as fallback for id
+      symbol: b.symbol,
+      name: b.name,
+      description: b.description,
+    })),
+    [benchmarksQuery.data]
+  );
+  
   // Benchmark state
   const [benchmark, setBenchmark] = useState<BenchmarkType>(null);
   const [benchmarkData, setBenchmarkData] = useState<ChartDataPoint[]>([]);
@@ -135,7 +145,6 @@ export function Dashboard() {
   const [comparisonData, setComparisonData] = useState<ComparisonChartData[]>([]);
   const [aggregatedData, setAggregatedData] = useState<AggregatedPerformance[]>([]);
   const [showPortfolioChart, setShowPortfolioChart] = useState(false);
-  const [availableBenchmarks, setAvailableBenchmarks] = useState<PublicBenchmark[]>([]);
   
   // AI Analysis state
   const [aiData, setAiData] = useState<{
@@ -155,9 +164,6 @@ export function Dashboard() {
     sector?: string | null;
   } | null>(null);
   const [isLoadingAi, setIsLoadingAi] = useState(false);
-  
-  // Mini charts for card backgrounds
-  const [cardCharts, setCardCharts] = useState<Record<string, ChartDataPoint[]>>({});
   
   // Infinite scroll state
   const [visibleCount, setVisibleCount] = useState(20);
@@ -180,13 +186,6 @@ export function Dashboard() {
       { name: 'Dashboard', url: '/' },
     ]),
   });
-
-  // Fetch available benchmarks on mount
-  useEffect(() => {
-    getAvailableBenchmarks()
-      .then(setAvailableBenchmarks)
-      .catch(() => setAvailableBenchmarks([]));
-  }, []);
 
   // Sync URL params to state on mount
   useEffect(() => {
@@ -313,26 +312,10 @@ export function Dashboard() {
     return filteredStocks.slice(0, visibleCount);
   }, [filteredStocks, visibleCount]);
 
-  // Fetch mini charts for visible cards
-  useEffect(() => {
-    const symbolsNeedingCharts = visibleStocks
-      .map(s => s.symbol)
-      .filter(sym => !cardCharts[sym]);
-    
-    if (symbolsNeedingCharts.length > 0) {
-      // Use 90 days (3 months) for card background charts
-      getBatchCharts(symbolsNeedingCharts, 90)
-        .then(newCharts => {
-          setCardCharts(prev => ({
-            ...prev,
-            ...newCharts,
-          }));
-        })
-        .catch(() => {
-          // Silently fail - cards will just not have sparklines
-        });
-    }
-  }, [visibleStocks, cardCharts]);
+  // Fetch mini charts for visible cards via TanStack Query
+  const symbolsForCards = useMemo(() => visibleStocks.map(s => s.symbol), [visibleStocks]);
+  const cardChartsQuery = useBatchCharts(symbolsForCards, 90);
+  const cardCharts = cardChartsQuery.data ?? {};
 
   // Infinite scroll observer
   useEffect(() => {

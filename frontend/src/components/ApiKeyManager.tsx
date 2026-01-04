@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useMemo } from 'react';
 import { motion } from 'framer-motion';
+import { useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -26,34 +27,51 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { 
-  listApiKeys, 
-  createApiKey, 
-  revealApiKey, 
-  deleteApiKey, 
-  getMFAStatus,
-  getSystemStatus,
-  checkMfaSession,
-  type ApiKeyInfo 
-} from '@/services/api';
+  useApiKeys,
+  useCreateApiKey,
+  useRevealApiKey,
+  useDeleteApiKey,
+  useMFAStatus,
+  useMFASession,
+  useSystemStatus,
+} from '@/features/admin/api/queries';
 
 interface ApiKeyManagerProps {
   onError?: (error: string) => void;
   onSuccess?: (message: string) => void;
 }
 
-export function ApiKeyManager({ onError, onSuccess }: ApiKeyManagerProps) {
-  const [keys, setKeys] = useState<ApiKeyInfo[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [mfaEnabled, setMfaEnabled] = useState(false);
-  const [hasMfaSession, setHasMfaSession] = useState(false);
-  const [logoDevEnvConfigured, setLogoDevEnvConfigured] = useState(false);
+export function ApiKeyManager({ onSuccess }: ApiKeyManagerProps) {
+  const queryClient = useQueryClient();
+  
+  // TanStack Query for data fetching
+  const keysQuery = useApiKeys();
+  const mfaStatusQuery = useMFAStatus();
+  const mfaSessionQuery = useMFASession();
+  const systemStatusQuery = useSystemStatus();
+  
+  // Mutations
+  const createMutation = useCreateApiKey();
+  const revealMutation = useRevealApiKey();
+  const deleteMutation = useDeleteApiKey();
+  
+  // Derived state from queries
+  const keys = useMemo(() => keysQuery.data ?? [], [keysQuery.data]);
+  const isLoading = keysQuery.isLoading || mfaStatusQuery.isLoading || systemStatusQuery.isLoading;
+  const mfaEnabled = mfaStatusQuery.data?.enabled ?? false;
+  const hasMfaSession = mfaSessionQuery.data?.has_session ?? false;
+  
+  // Check if Logo.dev is configured via env (configured but not in database)
+  const logoDevEnvConfigured = useMemo(() => {
+    const logoDevDbKey = keys.find(k => k.key_name === 'logo_dev_public_key');
+    return (systemStatusQuery.data?.logo_dev_configured ?? false) && !logoDevDbKey;
+  }, [keys, systemStatusQuery.data]);
   
   // Add dialog
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [keyName, setKeyName] = useState('OPENAI_API_KEY');
   const [keyValue, setKeyValue] = useState('');
   const [mfaCode, setMfaCode] = useState('');
-  const [isSaving, setIsSaving] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
   
   // Reveal dialog
@@ -61,67 +79,36 @@ export function ApiKeyManager({ onError, onSuccess }: ApiKeyManagerProps) {
   const [revealingKey, setRevealingKey] = useState<string | null>(null);
   const [revealMfaCode, setRevealMfaCode] = useState('');
   const [revealedValue, setRevealedValue] = useState<string | null>(null);
-  const [isRevealing, setIsRevealing] = useState(false);
   const [revealError, setRevealError] = useState<string | null>(null);
   
   // Delete dialog
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
   const [deleteMfaCode, setDeleteMfaCode] = useState('');
-  const [isDeleting, setIsDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   
   const [copied, setCopied] = useState(false);
-
-  const loadData = useCallback(async () => {
-    setIsLoading(true);
-    try {
-      const [keysData, mfaStatus, systemStatus, mfaSession] = await Promise.all([
-        listApiKeys(),
-        getMFAStatus(),
-        getSystemStatus(),
-        checkMfaSession().catch(() => ({ has_session: false })),
-      ]);
-      setKeys(keysData.keys);
-      setMfaEnabled(mfaStatus.enabled);
-      setHasMfaSession(mfaSession.has_session);
-      // Check if Logo.dev is configured via env (configured but not in database)
-      const logoDevDbKey = keysData.keys.find(k => k.key_name === 'logo_dev_public_key');
-      setLogoDevEnvConfigured(systemStatus.logo_dev_configured && !logoDevDbKey);
-    } catch (err) {
-      onError?.(err instanceof Error ? err.message : 'Failed to load API keys');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [onError]);
-
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
 
   async function handleAdd(codeOverride?: string) {
     const code = codeOverride ?? mfaCode;
     // If we have a session, code can be empty; otherwise need 6 digits
     if (!keyName || !keyValue || (!hasMfaSession && code.length !== 6)) return;
     
-    setIsSaving(true);
     setAddError(null);
     try {
-      await createApiKey(keyName, keyValue, code);
-      await loadData();
+      await createMutation.mutateAsync({ key_name: keyName, key_value: keyValue, mfa_code: code || undefined });
+      // Invalidate MFA session query to refresh session state
+      queryClient.invalidateQueries({ queryKey: ['auth', 'mfaSession'] });
       setAddDialogOpen(false);
       setKeyName('OPENAI_API_KEY');
       setKeyValue('');
       setMfaCode('');
-      setHasMfaSession(true); // Session is now active
       setAddError(null);
       onSuccess?.('API key saved successfully');
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to save API key';
       setAddError(message);
       setMfaCode('');
-    } finally {
-      setIsSaving(false);
     }
   }
 
@@ -130,19 +117,17 @@ export function ApiKeyManager({ onError, onSuccess }: ApiKeyManagerProps) {
     // If we have a session, code can be empty; otherwise need 6 digits
     if (!revealingKey || (!hasMfaSession && code.length !== 6)) return;
     
-    setIsRevealing(true);
     setRevealError(null);
     try {
-      const result = await revealApiKey(revealingKey, code);
-      setRevealedValue(result.api_key);
-      setHasMfaSession(true); // Session is now active
+      const result = await revealMutation.mutateAsync({ key_name: revealingKey, mfa_code: code || undefined });
+      setRevealedValue(result.key_value);
+      // Invalidate MFA session query to refresh session state
+      queryClient.invalidateQueries({ queryKey: ['auth', 'mfaSession'] });
       setRevealError(null);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to reveal API key';
       setRevealError(message);
       setRevealMfaCode('');
-    } finally {
-      setIsRevealing(false);
     }
   }
 
@@ -151,23 +136,20 @@ export function ApiKeyManager({ onError, onSuccess }: ApiKeyManagerProps) {
     // If we have a session, code can be empty; otherwise need 6 digits
     if (!deletingKey || (!hasMfaSession && code.length !== 6)) return;
     
-    setIsDeleting(true);
     setDeleteError(null);
     try {
-      await deleteApiKey(deletingKey, code);
-      await loadData();
+      await deleteMutation.mutateAsync({ key_name: deletingKey, mfa_code: code || undefined });
+      // Invalidate MFA session query to refresh session state
+      queryClient.invalidateQueries({ queryKey: ['auth', 'mfaSession'] });
       setDeleteDialogOpen(false);
       setDeletingKey(null);
       setDeleteMfaCode('');
-      setHasMfaSession(true); // Session is now active
       setDeleteError(null);
       onSuccess?.('API key deleted');
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to delete API key';
       setDeleteError(message);
       setDeleteMfaCode('');
-    } finally {
-      setIsDeleting(false);
     }
   }
 
@@ -526,9 +508,9 @@ export function ApiKeyManager({ onError, onSuccess }: ApiKeyManagerProps) {
             </Button>
             <Button
               onClick={() => handleAdd()}
-              disabled={!keyName || !keyValue || (!hasMfaSession && mfaCode.length !== 6) || isSaving}
+              disabled={!keyName || !keyValue || (!hasMfaSession && mfaCode.length !== 6) || createMutation.isPending}
             >
-              {isSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              {createMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Save Key
             </Button>
           </DialogFooter>
@@ -604,9 +586,9 @@ export function ApiKeyManager({ onError, onSuccess }: ApiKeyManagerProps) {
             {!revealedValue && (
               <Button
                 onClick={() => handleReveal()}
-                disabled={(!hasMfaSession && revealMfaCode.length !== 6) || isRevealing}
+                disabled={(!hasMfaSession && revealMfaCode.length !== 6) || revealMutation.isPending}
               >
-                {isRevealing && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                {revealMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                 <Eye className="h-4 w-4 mr-2" />
                 Reveal
               </Button>
@@ -667,9 +649,9 @@ export function ApiKeyManager({ onError, onSuccess }: ApiKeyManagerProps) {
             <Button
               variant="destructive"
               onClick={() => handleDelete()}
-              disabled={(!hasMfaSession && deleteMfaCode.length !== 6) || isDeleting}
+              disabled={(!hasMfaSession && deleteMfaCode.length !== 6) || deleteMutation.isPending}
             >
-              {isDeleting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              {deleteMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Delete
             </Button>
           </DialogFooter>
