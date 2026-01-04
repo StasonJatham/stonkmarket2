@@ -194,8 +194,10 @@ async def _search_local_db(
         )
 
     def _build_universe_stmt(use_similarity: bool):
-        """Search FinanceDatabase universe for broader coverage."""
-        columns = [
+        """Search FinanceDatabase universe using UNION for optimal index usage."""
+        from sqlalchemy import union_all
+        
+        base_columns = [
             FinancialUniverse.id.label("id"),
             FinancialUniverse.symbol.label("symbol"),
             FinancialUniverse.name.label("name"),
@@ -205,30 +207,88 @@ async def _search_local_db(
             FinancialUniverse.exchange.label("exchange"),
             FinancialUniverse.market_cap_category.label("market_cap_category"),
         ]
-        if use_similarity:
-            columns.append(func.similarity(FinancialUniverse.name, normalized).label("name_similarity"))
-        else:
-            columns.append(literal(0).label("name_similarity"))
-
-        conditions = [
-            FinancialUniverse.symbol.ilike(f"{normalized}%"),
-            FinancialUniverse.name.ilike(f"%{normalized}%"),
-        ]
-        if use_similarity:
-            conditions.append(func.similarity(FinancialUniverse.name, normalized) > 0.2)
 
         # Exclude symbols already in our tracked symbols
         tracked_symbols = select(Symbol.symbol).where(Symbol.is_active == True)
-
+        base_filter = FinancialUniverse.is_active == True
+        not_tracked = ~FinancialUniverse.symbol.in_(tracked_symbols)
+        
+        # Query 1: Symbol prefix match (uses btree pattern index)
+        # Use func.upper() for case-insensitive match with pattern index
+        symbol_prefix_query = (
+            select(*base_columns)
+            .where(base_filter)
+            .where(not_tracked)
+            .where(func.upper(FinancialUniverse.symbol).like(f"{normalized}%"))
+            .limit(fetch_limit)
+        )
+        
+        if use_similarity:
+            # Query 2: Trigram similarity match (uses GIN trigram index)
+            # The % operator uses the trigram index efficiently
+            trigram_query = (
+                select(*base_columns)
+                .where(base_filter)
+                .where(not_tracked)
+                .where(FinancialUniverse.name.op("%")(normalized))
+                .limit(fetch_limit)
+            )
+            # UNION the two queries (deduplicates)
+            combined = union_all(symbol_prefix_query, trigram_query).subquery()
+        else:
+            # Query 2: Simple name ILIKE for fallback
+            name_query = (
+                select(*base_columns)
+                .where(base_filter)
+                .where(not_tracked)
+                .where(FinancialUniverse.name.ilike(f"%{normalized}%"))
+                .limit(fetch_limit)
+            )
+            combined = union_all(symbol_prefix_query, name_query).subquery()
+        
+        # Select from combined with similarity computed
+        if use_similarity:
+            final_columns = [
+                combined.c.id,
+                combined.c.symbol,
+                combined.c.name,
+                combined.c.sector,
+                combined.c.asset_class,
+                combined.c.country,
+                combined.c.exchange,
+                combined.c.market_cap_category,
+                func.similarity(combined.c.name, normalized).label("name_similarity"),
+            ]
+        else:
+            final_columns = [
+                combined.c.id,
+                combined.c.symbol,
+                combined.c.name,
+                combined.c.sector,
+                combined.c.asset_class,
+                combined.c.country,
+                combined.c.exchange,
+                combined.c.market_cap_category,
+                literal(0).label("name_similarity"),
+            ]
+        
+        # Use GROUP BY for deduplication instead of DISTINCT ON 
+        # (DISTINCT ON requires ORDER BY on the same column first)
         return (
-            select(*columns)
-            .where(FinancialUniverse.is_active == True)
-            .where(~FinancialUniverse.symbol.in_(tracked_symbols))
-            .where(or_(*conditions))
-            # Prioritize equities and ETFs over other asset classes
+            select(*final_columns)
+            .group_by(
+                combined.c.id,
+                combined.c.symbol,
+                combined.c.name,
+                combined.c.sector,
+                combined.c.asset_class,
+                combined.c.country,
+                combined.c.exchange,
+                combined.c.market_cap_category,
+            )
             .order_by(
                 # Put equity/etf first
-                (FinancialUniverse.asset_class.in_(["equity", "etf"])).desc(),
+                (combined.c.asset_class.in_(["equity", "etf"])).desc(),
             )
             .limit(fetch_limit)
         )
@@ -266,20 +326,26 @@ async def _search_local_db(
             .limit(fetch_limit)
         )
 
-    async with get_session() as session:
-        try:
-            symbol_rows = (await session.execute(_build_symbol_stmt(use_trigram))).mappings().all()
-            universe_rows = (await session.execute(_build_universe_stmt(use_trigram))).mappings().all()
-            cached_rows = (await session.execute(_build_cached_stmt(use_trigram))).mappings().all()
-        except ProgrammingError as exc:
-            if use_trigram:
-                logger.warning(f"pg_trgm unavailable, falling back to basic search: {exc}")
-                use_trigram = False
-                symbol_rows = (await session.execute(_build_symbol_stmt(False))).mappings().all()
-                universe_rows = (await session.execute(_build_universe_stmt(False))).mappings().all()
-                cached_rows = (await session.execute(_build_cached_stmt(False))).mappings().all()
-            else:
+    # Run all 3 queries in parallel for better performance
+    import asyncio
+    
+    async def _run_query(stmt_builder, with_trigram: bool):
+        """Execute a single query with its own session."""
+        async with get_session() as session:
+            try:
+                return (await session.execute(stmt_builder(with_trigram))).mappings().all()
+            except ProgrammingError as exc:
+                if with_trigram:
+                    logger.warning(f"pg_trgm unavailable, falling back to basic search: {exc}")
+                    return (await session.execute(stmt_builder(False))).mappings().all()
                 raise
+    
+    # Execute all 3 searches in parallel
+    symbol_rows, universe_rows, cached_rows = await asyncio.gather(
+        _run_query(_build_symbol_stmt, use_trigram),
+        _run_query(_build_universe_stmt, use_trigram),
+        _run_query(_build_cached_stmt, use_trigram),
+    )
 
     results = []
     seen_symbols = set()

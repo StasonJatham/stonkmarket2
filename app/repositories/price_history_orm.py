@@ -357,3 +357,18 @@ async def fix_null_adj_close(symbols: list[str] | None = None) -> int:
         fixed = result.rowcount
         logger.info(f"Fixed {fixed} rows with NULL adj_close")
         return fixed
+
+
+async def get_distinct_symbols() -> Sequence[str]:
+    """Get list of all symbols with price history data.
+    
+    Returns:
+        List of unique symbol names
+    """
+    async with get_session() as session:
+        result = await session.execute(
+            select(PriceHistory.symbol)
+            .distinct()
+            .order_by(PriceHistory.symbol)
+        )
+        return [row[0] for row in result.fetchall()]

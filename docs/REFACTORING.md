@@ -315,7 +315,7 @@ Request → DipFinderService
 | Phase 1 | 513 | 8 | ✅ |
 | Phase 2 | 550 | 8 | ✅ (37 new tests: 29 domain + 8 typed service) |
 | Phase 6 | 588 | 8 | ✅ |
-| Phase 7 | 588 | 8 | ✅ |
+| Phase 7 | 610 | 8 | ✅ (22 new price validation tests) |
 
 ---
 
@@ -387,8 +387,41 @@ Despite Phase 6 creating unified `PriceService`, legacy price methods still exis
 | 7.3.2 | Update remaining consumers to use `PriceService` | ✅ |
 | 7.3.3 | Remove `get_price_history`, `get_price_history_batch`, `get_price_history_typed` from `YFinanceService` | ✅ |
 | 7.3.4 | Update `app/hedge_fund/data/yfinance_service.py` to use `PriceService` | ✅ |
-| 7.3.5 | Run tests and verify no regressions | ✅ (588 passed, 8 skipped) |
+| 7.3.5 | Run tests and verify no regressions | ✅ (610 passed, 8 skipped) |
 | 7.3.6 | Run system tests against Docker stack | ✅ (13 passed, 1 skipped) |
+
+### 7.5 Price Data Integrity Tools
+
+Added new methods to `PriceService` for detecting and repairing data corruption:
+
+| Method | Purpose |
+| ------ | ------- |
+| `check_data_integrity()` | Scan all symbols for anomalies (>40% daily changes, negative prices, High<Low) |
+| `repair_symbol_data()` | Delete corrupt data and re-fetch from yfinance |
+
+**Usage:**
+```python
+from app.services.prices import get_price_service
+
+service = get_price_service()
+
+# Check for corruption
+report = await service.check_data_integrity()
+print(f"Anomalies found: {report['total_anomalies']}")
+
+# Repair a symbol
+result = await service.repair_symbol_data("SPY", delete_from_date=date(2025, 12, 20))
+```
+
+### 7.6 Validation Test Coverage
+
+Created `tests/test_price_validation.py` with 22 tests covering:
+
+- Empty/missing data rejection
+- Extreme daily change detection (>50%)
+- Continuity gap validation
+- Real-world corruption scenarios (SPY, MSFT, VTI)
+- Edge cases (single point, threshold values)
 
 ---
 

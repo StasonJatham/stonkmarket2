@@ -291,8 +291,14 @@ class PriceService:
             last_idx = db_df.index.max()
             last_date = last_idx.date() if hasattr(last_idx, "date") else last_idx
             
-            # If we have data up to yesterday or today, we're good
-            if last_date >= end_date - timedelta(days=1):
+            # Calculate days since last data, accounting for weekends
+            # If it's weekend (Sat=5, Sun=6), last trading day was Friday
+            today = date.today()
+            days_since = (today - last_date).days
+            
+            # Allow up to 3 calendar days gap (covers weekends + 1 day)
+            # This means: data from Friday is valid until Monday
+            if days_since <= 3:
                 return db_df
             
             # Need to fetch more recent data
@@ -583,6 +589,171 @@ class PriceService:
             "large_gaps_31_120_days": large_gaps,
             "no_data_or_stale": no_data,
             "gaps": sorted(gaps, key=lambda x: x["missing_days"], reverse=True)[:50],
+        }
+
+    async def check_data_integrity(
+        self,
+        symbols: Sequence[str] | None = None,
+        max_daily_change_pct: float = 40.0,
+    ) -> dict:
+        """
+        Check price data integrity for all or specified symbols.
+        
+        Detects:
+        1. Suspicious daily price changes (>40% by default)
+        2. Negative prices
+        3. High < Low violations
+        
+        Args:
+            symbols: Symbols to check. If None, check all tracked symbols.
+            max_daily_change_pct: Threshold for suspicious daily changes.
+        
+        Returns:
+            Dictionary with integrity report and list of anomalies.
+        """
+        from app.database.connection import get_session
+        from sqlalchemy import text
+        
+        # Get all symbols if not specified
+        if symbols is None:
+            symbols_repo = await price_history_orm.get_distinct_symbols()
+            symbols = list(symbols_repo)
+        
+        async with get_session() as session:
+            # Query for suspicious price jumps
+            result = await session.execute(text("""
+                WITH price_changes AS (
+                    SELECT 
+                        symbol,
+                        date,
+                        close,
+                        LAG(close) OVER (PARTITION BY symbol ORDER BY date) as prev_close,
+                        (close - LAG(close) OVER (PARTITION BY symbol ORDER BY date)) / 
+                        NULLIF(LAG(close) OVER (PARTITION BY symbol ORDER BY date), 0) * 100 as pct_change
+                    FROM price_history
+                    WHERE symbol = ANY(:symbols)
+                )
+                SELECT symbol, date, prev_close, close, pct_change
+                FROM price_changes
+                WHERE ABS(pct_change) > :threshold
+                ORDER BY ABS(pct_change) DESC
+                LIMIT 100
+            """), {"symbols": list(symbols), "threshold": max_daily_change_pct})
+            
+            anomalies = [
+                {
+                    "symbol": row.symbol,
+                    "date": str(row.date),
+                    "prev_close": float(row.prev_close) if row.prev_close else None,
+                    "close": float(row.close),
+                    "pct_change": round(float(row.pct_change), 2),
+                    "type": "suspicious_jump",
+                }
+                for row in result.fetchall()
+            ]
+            
+            # Query for negative prices
+            result = await session.execute(text("""
+                SELECT symbol, date, close
+                FROM price_history
+                WHERE symbol = ANY(:symbols)
+                AND (close < 0 OR open < 0 OR high < 0 OR low < 0)
+                ORDER BY date DESC
+                LIMIT 50
+            """), {"symbols": list(symbols)})
+            
+            for row in result.fetchall():
+                anomalies.append({
+                    "symbol": row.symbol,
+                    "date": str(row.date),
+                    "close": float(row.close),
+                    "type": "negative_price",
+                })
+            
+            # Query for High < Low violations
+            result = await session.execute(text("""
+                SELECT symbol, date, high, low
+                FROM price_history
+                WHERE symbol = ANY(:symbols)
+                AND high < low
+                ORDER BY date DESC
+                LIMIT 50
+            """), {"symbols": list(symbols)})
+            
+            for row in result.fetchall():
+                anomalies.append({
+                    "symbol": row.symbol,
+                    "date": str(row.date),
+                    "high": float(row.high),
+                    "low": float(row.low),
+                    "type": "high_low_violation",
+                })
+        
+        # Group anomalies by symbol
+        symbols_affected = set(a["symbol"] for a in anomalies)
+        
+        return {
+            "total_symbols_checked": len(symbols),
+            "symbols_with_anomalies": len(symbols_affected),
+            "total_anomalies": len(anomalies),
+            "affected_symbols": sorted(symbols_affected),
+            "anomalies": anomalies,
+            "recommendation": (
+                "Run repair for affected symbols" if anomalies
+                else "All data looks healthy"
+            ),
+        }
+
+    async def repair_symbol_data(
+        self,
+        symbol: str,
+        delete_from_date: date | None = None,
+    ) -> dict:
+        """
+        Repair price data for a symbol by deleting corrupt data and re-fetching.
+        
+        Args:
+            symbol: Symbol to repair
+            delete_from_date: Delete all data from this date onwards.
+                              If None, deletes last 30 days.
+        
+        Returns:
+            Dictionary with repair results.
+        """
+        from app.database.connection import get_session
+        from sqlalchemy import text
+        
+        symbol = symbol.upper()
+        
+        if delete_from_date is None:
+            delete_from_date = date.today() - timedelta(days=30)
+        
+        # Delete corrupt data
+        async with get_session() as session:
+            result = await session.execute(text("""
+                DELETE FROM price_history
+                WHERE symbol = :symbol
+                AND date >= :from_date
+            """), {"symbol": symbol, "from_date": delete_from_date})
+            deleted_count = result.rowcount
+            await session.commit()
+        
+        logger.info(f"Deleted {deleted_count} rows for {symbol} from {delete_from_date}")
+        
+        # Re-fetch data
+        end_date = date.today()
+        start_date = delete_from_date - timedelta(days=7)  # Overlap for continuity
+        
+        df = await self.get_prices(symbol, start_date, end_date)
+        
+        new_count = len(df) if df is not None else 0
+        
+        return {
+            "symbol": symbol,
+            "deleted_rows": deleted_count,
+            "new_rows_fetched": new_count,
+            "from_date": str(delete_from_date),
+            "success": new_count > 0,
         }
 
 

@@ -240,6 +240,11 @@ def ai_personas_weekly_task() -> str:
     return _run_job("ai_personas_weekly")
 
 
+@celery_app.task(name="jobs.batch_watchdog")
+def batch_watchdog_task() -> str:
+    return _run_job("batch_watchdog")
+
+
 # ai_agents_batch_submit and ai_agents_batch_collect are now merged into
 # ai_personas_weekly and ai_batch_poll respectively. Deleted.
 

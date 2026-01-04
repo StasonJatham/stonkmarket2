@@ -110,7 +110,7 @@ class Settings(BaseSettings):
     valkey_url: str = Field(
         default="redis://valkey:6379/0", description="Valkey connection URL"
     )
-    valkey_max_connections: int = Field(default=10, ge=1, le=100)
+    valkey_max_connections: int = Field(default=50, ge=1, le=200)  # Increased for concurrent load
     cache_default_ttl: int = Field(
         default=300, ge=1, description="Default cache TTL in seconds"
     )
