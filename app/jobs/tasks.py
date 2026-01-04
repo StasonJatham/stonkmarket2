@@ -11,7 +11,9 @@ from typing import Any
 import app.jobs.definitions  # noqa: F401 - register jobs
 from app.celery_app import celery_app
 from app.core.logging import get_logger
+from app.jobs.base_task import ReliableTask
 from app.jobs.executor import execute_job
+from app.jobs.job_defaults import get_time_limits
 from app.repositories import cronjobs_orm as cron_repo
 
 
@@ -43,7 +45,12 @@ def _run_async(coro: Any) -> Any:
 async def _execute_job_locked(job_name: str) -> str:
     from app.cache.distributed_lock import DistributedLock
 
-    lock = DistributedLock(f"job:{job_name}", timeout=60 * 30, blocking=False)
+    # Lock timeout must exceed job's hard_limit + buffer
+    # This prevents lock expiry while task is still running
+    limits = get_time_limits(job_name)
+    lock_timeout = limits["hard_limit"] + 120  # hard_limit + 2 min buffer
+
+    lock = DistributedLock(f"job:{job_name}", timeout=lock_timeout, blocking=False)
     acquired = await lock.acquire()
     if not acquired:
         try:
@@ -77,6 +84,26 @@ async def _execute_job_locked(job_name: str) -> str:
 
 def _run_job(job_name: str) -> str:
     return _run_async(_execute_job_locked(job_name))
+
+
+def _task_opts(job_name: str, **overrides: Any) -> dict[str, Any]:
+    """Build task decorator options with time limits and ReliableTask base.
+
+    Args:
+        job_name: Name of the job (used to lookup time limits)
+        **overrides: Any options to override defaults
+
+    Returns:
+        Dict of task options for @celery_app.task decorator
+    """
+    limits = get_time_limits(job_name)
+    opts = {
+        "base": ReliableTask,
+        "soft_time_limit": limits["soft_limit"],
+        "time_limit": limits["hard_limit"],
+    }
+    opts.update(overrides)
+    return opts
 
 
 async def _execute_symbol_task(symbol: str, coro: Awaitable[None]) -> str:
@@ -140,47 +167,53 @@ async def _execute_dipfinder_task(
         await lock.release()
 
 
-@celery_app.task(name="jobs.symbol_ingest")
+@celery_app.task(name="jobs.celery_health", **_task_opts("celery_health"))
+def celery_health_task() -> str:
+    """Health check task - verifies Celery and Valkey connectivity."""
+    return _run_job("celery_health")
+
+
+@celery_app.task(name="jobs.symbol_ingest", **_task_opts("symbol_ingest"))
 def symbol_ingest_task() -> str:
     return _run_job("symbol_ingest")
 
 
-@celery_app.task(name="jobs.prices_daily")
+@celery_app.task(name="jobs.prices_daily", **_task_opts("prices_daily"))
 def prices_daily_task() -> str:
     return _run_job("prices_daily")
 
 
-@celery_app.task(name="jobs.signals_daily")
+@celery_app.task(name="jobs.signals_daily", **_task_opts("signals_daily"))
 def signals_daily_task() -> str:
     return _run_job("signals_daily")
 
 
-@celery_app.task(name="jobs.regime_daily")
+@celery_app.task(name="jobs.regime_daily", **_task_opts("regime_daily"))
 def regime_daily_task() -> str:
     return _run_job("regime_daily")
 
 
-@celery_app.task(name="jobs.cache_warmup")
+@celery_app.task(name="jobs.cache_warmup", **_task_opts("cache_warmup"))
 def cache_warmup_task() -> str:
     return _run_job("cache_warmup")
 
 
-@celery_app.task(name="jobs.ai_bios_weekly")
+@celery_app.task(name="jobs.ai_bios_weekly", **_task_opts("ai_bios_weekly"))
 def ai_bios_weekly_task() -> str:
     return _run_job("ai_bios_weekly")
 
 
-@celery_app.task(name="jobs.ai_batch_poll")
+@celery_app.task(name="jobs.ai_batch_poll", **_task_opts("ai_batch_poll"))
 def ai_batch_poll_task() -> str:
     return _run_job("ai_batch_poll")
 
 
-@celery_app.task(name="jobs.fundamentals_daily")
+@celery_app.task(name="jobs.fundamentals_daily", **_task_opts("fundamentals_daily"))
 def fundamentals_daily_task() -> str:
     return _run_job("fundamentals_daily")
 
 
-@celery_app.task(name="jobs.refresh_fundamentals_symbol")
+@celery_app.task(name="jobs.refresh_fundamentals_symbol", **_task_opts("fundamentals_daily"))
 def refresh_fundamentals_symbol_task(symbol: str) -> str:
     """Refresh fundamentals for a single symbol with minimal scope."""
     from datetime import datetime, timedelta
@@ -235,12 +268,12 @@ def refresh_fundamentals_symbol_task(symbol: str) -> str:
     return _run_async(_run())
 
 
-@celery_app.task(name="jobs.ai_personas_weekly")
+@celery_app.task(name="jobs.ai_personas_weekly", **_task_opts("ai_personas_weekly"))
 def ai_personas_weekly_task() -> str:
     return _run_job("ai_personas_weekly")
 
 
-@celery_app.task(name="jobs.batch_watchdog")
+@celery_app.task(name="jobs.batch_watchdog", **_task_opts("batch_watchdog"))
 def batch_watchdog_task() -> str:
     return _run_job("batch_watchdog")
 
@@ -249,17 +282,17 @@ def batch_watchdog_task() -> str:
 # ai_personas_weekly and ai_batch_poll respectively. Deleted.
 
 
-@celery_app.task(name="jobs.cleanup_daily")
+@celery_app.task(name="jobs.cleanup_daily", **_task_opts("cleanup_daily"))
 def cleanup_daily_task() -> str:
     return _run_job("cleanup_daily")
 
 
-@celery_app.task(name="jobs.portfolio_worker")
+@celery_app.task(name="jobs.portfolio_worker", **_task_opts("portfolio_worker"))
 def portfolio_worker_task() -> str:
     return _run_job("portfolio_worker")
 
 
-@celery_app.task(name="jobs.process_new_symbol")
+@celery_app.task(name="jobs.process_new_symbol", **_task_opts("symbol_ingest"))
 def process_new_symbol_task(symbol: str) -> str:
     """Process a newly created symbol in the background."""
     from app.services.symbol_processing import process_new_symbol
@@ -268,7 +301,7 @@ def process_new_symbol_task(symbol: str) -> str:
     return _run_async(_execute_symbol_task(normalized, process_new_symbol(normalized)))
 
 
-@celery_app.task(name="jobs.process_approved_symbol")
+@celery_app.task(name="jobs.process_approved_symbol", **_task_opts("symbol_ingest"))
 def process_approved_symbol_task(symbol: str) -> str:
     """Process an approved suggestion in the background."""
     from app.services.symbol_processing import process_approved_symbol
@@ -279,7 +312,7 @@ def process_approved_symbol_task(symbol: str) -> str:
     )
 
 
-@celery_app.task(name="jobs.regenerate_symbol_summary")
+@celery_app.task(name="jobs.regenerate_symbol_summary", **_task_opts("ai_bios_weekly"))
 def regenerate_symbol_summary_task(symbol: str) -> str:
     """Regenerate AI summary for a symbol in the background."""
 
@@ -327,7 +360,7 @@ def regenerate_symbol_summary_task(symbol: str) -> str:
     )
 
 
-@celery_app.task(name="jobs.refresh_dip_ai")
+@celery_app.task(name="jobs.refresh_dip_ai", **_task_opts("ai_bios_weekly"))
 def refresh_dip_ai_task(symbol: str, field: str | None = None) -> str:
     """Refresh swipe AI analysis for a symbol in the background."""
 
@@ -355,13 +388,13 @@ def refresh_dip_ai_task(symbol: str, field: str | None = None) -> str:
     return _run_async(_execute_symbol_ai_task(symbol, _run(), lock_suffix=lock_suffix))
 
 
-@celery_app.task(name="jobs.dipfinder_run")
+@celery_app.task(name="jobs.dipfinder_run", **_task_opts("dipfinder_daily"))
 def dipfinder_run_task(tickers: list[str], benchmark: str, windows: list[int]) -> str:
     """Run DipFinder signals for a ticker list."""
     return _run_async(_execute_dipfinder_task(tickers, benchmark, windows))
 
 
-@celery_app.task(name="jobs.dipfinder_refresh_all")
+@celery_app.task(name="jobs.dipfinder_refresh_all", **_task_opts("dipfinder_daily"))
 def dipfinder_refresh_all_task(benchmark: str | None = None) -> str:
     """Refresh DipFinder signals for all tracked symbols."""
     from app.dipfinder.config import get_dipfinder_config
@@ -380,7 +413,7 @@ def dipfinder_refresh_all_task(benchmark: str | None = None) -> str:
     return _run_async(_run())
 
 
-@celery_app.task(name="jobs.quant_monthly")
+@celery_app.task(name="jobs.quant_monthly", **_task_opts("quant_monthly"))
 def quant_monthly_task() -> str:
     """Run monthly quant engine optimization for all portfolios."""
     return _run_job("quant_monthly")
@@ -391,7 +424,7 @@ def quant_monthly_task() -> str:
 # =============================================================================
 
 
-@celery_app.task(name="jobs.market_close_pipeline", soft_time_limit=7200, time_limit=7500)
+@celery_app.task(name="jobs.market_close_pipeline", **_task_opts("market_close_pipeline"))
 def market_close_pipeline_task() -> str:
     """
     Run the complete market close pipeline.
@@ -407,37 +440,53 @@ def market_close_pipeline_task() -> str:
 
 
 # =============================================================================
+# WEEKLY AI PIPELINE - Orchestrates all weekly AI jobs
+# =============================================================================
+
+
+@celery_app.task(name="jobs.weekly_ai_pipeline", **_task_opts("weekly_ai_pipeline"))
+def weekly_ai_pipeline_task() -> str:
+    """
+    Run the complete weekly AI pipeline.
+    
+    Runs all AI jobs sequentially: data_backfill → ai_personas → ai_bios
+    Sunday 2 AM UTC.
+    """
+    return _run_job("weekly_ai_pipeline")
+
+
+# =============================================================================
 # INDIVIDUAL PIPELINE JOBS (for manual triggers / retries)
 # =============================================================================
 # These are NOT scheduled - they run as part of market_close_pipeline
 # But they can be triggered manually via Flower/admin for debugging/retries
 
 
-@celery_app.task(name="jobs.quant_scoring_daily")
+@celery_app.task(name="jobs.quant_scoring_daily", **_task_opts("quant_scoring_daily"))
 def quant_scoring_daily_task() -> str:
     """Run daily quant scoring for all tracked symbols."""
     return _run_job("quant_scoring_daily")
 
 
-@celery_app.task(name="jobs.strategy_nightly")
+@celery_app.task(name="jobs.strategy_nightly", **_task_opts("strategy_nightly"))
 def strategy_nightly_task() -> str:
     """Run nightly strategy optimization for all symbols."""
     return _run_job("strategy_nightly")
 
 
-@celery_app.task(name="jobs.dipfinder_daily")
+@celery_app.task(name="jobs.dipfinder_daily", **_task_opts("dipfinder_daily"))
 def dipfinder_daily_task() -> str:
     """Run daily DipFinder signal refresh for all tracked symbols."""
     return _run_job("dipfinder_daily")
 
 
-@celery_app.task(name="jobs.data_backfill")
+@celery_app.task(name="jobs.data_backfill", **_task_opts("data_backfill"))
 def data_backfill_task() -> str:
     """Run weekly comprehensive data backfill for all data gaps."""
     return _run_job("data_backfill")
 
 
-@celery_app.task(name="jobs.quant_analysis_nightly")
+@celery_app.task(name="jobs.quant_analysis_nightly", **_task_opts("quant_analysis_nightly"))
 def quant_analysis_nightly_task() -> str:
     """Run nightly quant analysis pre-computation for all symbols."""
     return _run_job("quant_analysis_nightly")
@@ -448,7 +497,7 @@ def quant_analysis_nightly_task() -> str:
 # Regime doesn't change intraday, and prices only update daily anyway
 
 
-@celery_app.task(name="jobs.precompute_dip_entry")
+@celery_app.task(name="jobs.precompute_dip_entry", **_task_opts("dipfinder_daily"))
 def precompute_dip_entry_task(symbol: str) -> str:
     """Precompute dip entry analysis for a single symbol."""
     import asyncio
@@ -508,7 +557,7 @@ def precompute_dip_entry_task(symbol: str) -> str:
     return asyncio.run(_compute())
 
 
-@celery_app.task(name="jobs.fetch_suggestion_data")
+@celery_app.task(name="jobs.fetch_suggestion_data", **_task_opts("symbol_ingest"))
 def fetch_suggestion_data_task(symbol: str) -> str:
     """Fetch stock data for a pending suggestion asynchronously."""
     import asyncio

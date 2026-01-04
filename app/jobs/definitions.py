@@ -102,6 +102,75 @@ from .analysis import (  # noqa: E402, F401
 
 
 # =============================================================================
+# HEALTH CHECK - Celery/Valkey connectivity
+# =============================================================================
+
+
+@register_job("celery_health")
+async def celery_health_job() -> str:
+    """
+    Verify Celery and Valkey connectivity.
+
+    Runs every minute. If this task fails or times out, the task queue is unhealthy.
+    Designed to be the simplest possible task that exercises the full path.
+
+    Checks:
+    1. Valkey connection (read/write)
+    2. Task execution completes normally
+
+    Schedule: Every minute (* * * * *)
+    Time limits: 10s soft / 30s hard (fastest possible)
+    """
+    import secrets
+
+    from app.cache.cache import Cache
+
+    job_start = time.monotonic()
+
+    try:
+        # Test Valkey connectivity with a simple read/write cycle
+        cache = Cache(prefix="health", default_ttl=60)
+        test_key = f"celery_heartbeat:{secrets.token_hex(4)}"
+        test_value = {"timestamp": datetime.now(UTC).isoformat(), "status": "ok"}
+
+        # Write
+        await cache.set(test_key, test_value)
+
+        # Read back
+        result = await cache.get(test_key)
+        if result is None:
+            raise RuntimeError("Valkey write succeeded but read returned None")
+
+        # Cleanup
+        await cache.delete(test_key)
+
+        duration_ms = int((time.monotonic() - job_start) * 1000)
+
+        logger.debug(
+            "Celery health check passed",
+            extra={
+                "job": "celery_health",
+                "duration_ms": duration_ms,
+                "valkey": "ok",
+            },
+        )
+
+        return f"HEALTHY: Valkey OK ({duration_ms}ms)"
+
+    except Exception as e:
+        duration_ms = int((time.monotonic() - job_start) * 1000)
+        logger.error(
+            "Celery health check FAILED",
+            extra={
+                "job": "celery_health",
+                "duration_ms": duration_ms,
+                "error": str(e),
+            },
+        )
+        raise
+
+
+# =============================================================================
 # CACHE WARMUP - Pre-cache chart data
 # =============================================================================
 

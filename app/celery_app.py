@@ -43,8 +43,15 @@ celery_app.conf.update(
     task_default_priority=5,
     task_queue_max_priority=9,
     task_routes=_build_task_routes(),
+    # Serialization - JSON only, no pickle ever (security + debugging)
+    task_serializer="json",
+    result_serializer="json",
+    accept_content=["json"],
+    result_accept_content=["json"],
     broker_transport_options={
-        "visibility_timeout": 60 * 60,
+        # visibility_timeout MUST exceed longest task (market_close_pipeline = 2.5hr)
+        # Set to 3 hours to prevent Valkey from re-queueing running tasks
+        "visibility_timeout": 60 * 60 * 3,  # 3 hours
         "priority_steps": list(range(10)),
     },
     task_queues=(

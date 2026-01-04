@@ -44,6 +44,15 @@ from app.database.orm import CronJob
 
 DEFAULT_SCHEDULES: dict[str, tuple[str, str]] = {
     # =========================================================================
+    # 0. HEALTH CHECK - Every minute
+    # =========================================================================
+    "celery_health": (
+        "* * * * *",
+        "Celery health check - verifies Valkey connectivity and worker responsiveness. "
+        "Every minute. If this fails, Celery/Valkey is unhealthy."
+    ),
+
+    # =========================================================================
     # 1. REAL-TIME PROCESSING - Continuous background tasks
     # =========================================================================
     "symbol_ingest": (
@@ -198,6 +207,9 @@ DEFAULT_SCHEDULES: dict[str, tuple[str, str]] = {
 # Queue assignment and priority (higher = more important)
 
 JOB_PRIORITIES: dict[str, dict[str, int | str]] = {
+    # Health check - highest priority, fast queue
+    "celery_health": {"queue": "high", "priority": 10},
+
     # Pipeline orchestrators - highest priority
     "market_close_pipeline": {"queue": "batch", "priority": 9},
     "weekly_ai_pipeline": {"queue": "batch", "priority": 9},
@@ -237,8 +249,91 @@ JOB_PRIORITIES: dict[str, dict[str, int | str]] = {
 
 
 # =============================================================================
+# JOB TIME LIMITS
+# =============================================================================
+# Per-task time limits to prevent runaway tasks and ensure visibility_timeout works.
+#
+# soft_limit: Task receives SIGTERM, can catch and cleanup gracefully.
+# hard_limit: Task receives SIGKILL, forcefully terminated.
+#
+# Categories:
+#   - Quick (60s/120s): Fast operations like polling, cleanup
+#   - Standard (300s/600s): Normal jobs with API calls
+#   - Heavy (1800s/2100s): Bulk data processing
+#   - Pipeline (7200s/7500s): Full market close pipeline (~2.5 hours)
+#   - AI (3600s/4200s): OpenAI batch operations
+#
+# IMPORTANT: visibility_timeout (3 hours) MUST exceed the longest hard_limit.
+
+JOB_TIME_LIMITS: dict[str, dict[str, int]] = {
+    # =========================================================================
+    # QUICK JOBS (60s soft / 120s hard)
+    # =========================================================================
+    "batch_watchdog": {"soft_limit": 60, "hard_limit": 120},
+    "cleanup_daily": {"soft_limit": 60, "hard_limit": 120},
+    "cache_warmup": {"soft_limit": 60, "hard_limit": 120},
+    "celery_health": {"soft_limit": 10, "hard_limit": 30},
+
+    # =========================================================================
+    # STANDARD JOBS (300s soft / 600s hard)
+    # =========================================================================
+    # ai_batch_poll collects results from potentially many completed batches
+    # Each batch response can be large (AI analysis text). Give it 5 minutes.
+    "ai_batch_poll": {"soft_limit": 300, "hard_limit": 600},
+    "portfolio_worker": {"soft_limit": 300, "hard_limit": 600},
+    "symbol_ingest": {"soft_limit": 300, "hard_limit": 600},
+    "prices_daily": {"soft_limit": 300, "hard_limit": 600},
+    "signals_daily": {"soft_limit": 300, "hard_limit": 600},
+    "regime_daily": {"soft_limit": 300, "hard_limit": 600},
+    "dipfinder_daily": {"soft_limit": 300, "hard_limit": 600},
+    "quant_scoring_daily": {"soft_limit": 300, "hard_limit": 600},
+    # fundamentals_daily fetches from yfinance for many symbols
+    "fundamentals_daily": {"soft_limit": 600, "hard_limit": 900},
+
+    # =========================================================================
+    # HEAVY JOBS (1800s soft / 2100s hard) - 30-35 minutes
+    # =========================================================================
+    "strategy_nightly": {"soft_limit": 1800, "hard_limit": 2100},
+    "quant_analysis_nightly": {"soft_limit": 1800, "hard_limit": 2100},
+    "quant_monthly": {"soft_limit": 1800, "hard_limit": 2100},
+    "market_data_sync": {"soft_limit": 1800, "hard_limit": 2100},
+    "calendar_sync": {"soft_limit": 1800, "hard_limit": 2100},
+    "data_backfill": {"soft_limit": 1800, "hard_limit": 2100},
+
+    # =========================================================================
+    # AI JOBS (3600s soft / 4200s hard) - 1 hour
+    # =========================================================================
+    "ai_personas_weekly": {"soft_limit": 3600, "hard_limit": 4200},
+    "ai_bios_weekly": {"soft_limit": 3600, "hard_limit": 4200},
+
+    # =========================================================================
+    # PIPELINE ORCHESTRATORS (7200s soft / 7500s hard) - 2-2.5 hours
+    # =========================================================================
+    # These run multiple jobs sequentially and can take up to 2.5 hours.
+    # visibility_timeout (3 hours) provides sufficient buffer.
+    "market_close_pipeline": {"soft_limit": 7200, "hard_limit": 7500},
+    "weekly_ai_pipeline": {"soft_limit": 7200, "hard_limit": 7500},
+}
+
+# Default time limits for unknown jobs (conservative)
+DEFAULT_TIME_LIMITS: dict[str, int] = {"soft_limit": 300, "hard_limit": 600}
+
+
+# =============================================================================
 # HELPER FUNCTIONS
 # =============================================================================
+
+def get_time_limits(name: str) -> dict[str, int]:
+    """Return soft_limit and hard_limit for a job.
+
+    Args:
+        name: Job name to look up.
+
+    Returns:
+        Dict with 'soft_limit' and 'hard_limit' in seconds.
+    """
+    return JOB_TIME_LIMITS.get(name, DEFAULT_TIME_LIMITS)
+
 
 def get_job_schedule(name: str) -> tuple[str, str]:
     """Return (cron, description) for a job name."""
