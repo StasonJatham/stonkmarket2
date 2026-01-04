@@ -7,6 +7,7 @@
  * - Stale-while-revalidate pattern for optimal UX
  * - Request deduplication to prevent duplicate network calls
  * - ETag support for efficient revalidation
+ * - Data version tracking for automatic cache invalidation
  */
 
 interface CacheEntry<T> {
@@ -26,7 +27,9 @@ interface CacheOptions {
 const DEFAULT_TTL = 5 * 60 * 1000; // 5 minutes
 const STALE_TTL = 30 * 60 * 1000; // 30 minutes for stale-while-revalidate
 const STORAGE_PREFIX = 'stonkmarket_cache_';
+const DATA_VERSION_KEY = 'stonkmarket_data_version';
 const MAX_STORAGE_ENTRIES = 50; // Limit localStorage entries
+
 
 class ApiCache {
   private cache = new Map<string, CacheEntry<unknown>>();
@@ -312,6 +315,27 @@ class ApiCache {
     const entry = this.cache.get(key);
     if (!entry) return false;
     return Date.now() <= entry.expiresAt;
+  }
+
+  /**
+   * Check data version from server and clear cache if version changed.
+   * Called automatically when X-Data-Version header is received.
+   */
+  checkDataVersion(serverVersion: string): void {
+    if (typeof window === 'undefined') return;
+    
+    try {
+      const storedVersion = localStorage.getItem(DATA_VERSION_KEY);
+      
+      if (storedVersion && storedVersion !== serverVersion) {
+        console.log(`Data version changed: ${storedVersion} → ${serverVersion}. Clearing caches.`);
+        this.clear();
+      }
+      
+      localStorage.setItem(DATA_VERSION_KEY, serverVersion);
+    } catch {
+      // Storage unavailable
+    }
   }
 }
 

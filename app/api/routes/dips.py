@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import math
 from datetime import UTC, date, timedelta
 
+import pandas as pd
 from fastapi import APIRouter, Depends, Path, Query, Request
 from pydantic import BaseModel
 
 from app.api.dependencies import require_admin, require_user
 from app.cache.cache import Cache
+from app.cache.data_version import get_data_version
 from app.cache.http_cache import (
     CacheableResponse,
     CachePresets,
@@ -28,10 +31,61 @@ from app.services.stock_info import get_stock_info
 
 router = APIRouter()
 
+
+def _safe_float(value: float, default: float = 0.0) -> float:
+    """Convert value to a JSON-safe float (replace NaN/Inf/NA with default)."""
+    if value is None:
+        return default
+    # Handle pandas NA/NaT types
+    if pd.isna(value):
+        return default
+    try:
+        fval = float(value)
+        if math.isnan(fval) or math.isinf(fval):
+            return default
+        return fval
+    except (ValueError, TypeError):
+        return default
+
+
+def _get_close_col(df: pd.DataFrame) -> str:
+    """Get the best close column, preferring Adjusted Close for split-adjusted prices."""
+    if "Adj Close" in df.columns and df["Adj Close"].notna().any():
+        return "Adj Close"
+    return "Close"
+
+
+def _validate_chart_data(chart_points: list) -> list:
+    """
+    Validate chart data and skip points with impossible daily changes.
+    
+    Flags points where daily change exceeds 75% (impossible in real markets,
+    likely indicates corrupted/unadjusted split data).
+    """
+    if len(chart_points) < 2:
+        return chart_points
+    
+    validated = [chart_points[0]]  # Keep first point
+    for i in range(1, len(chart_points)):
+        prev_close = chart_points[i - 1].close
+        curr_close = chart_points[i].close
+        
+        if prev_close <= 0 or curr_close <= 0:
+            validated.append(chart_points[i])
+            continue
+        
+        change_pct = abs((curr_close - prev_close) / prev_close)
+        if change_pct <= 0.75:  # Accept changes up to 75%
+            validated.append(chart_points[i])
+        # else: skip this corrupted data point
+    
+    return validated
+
 # Caches - TTLs are applied dynamically from runtime settings when setting values
 _ranking_cache = Cache(prefix="ranking", default_ttl=300)
 _chart_cache = Cache(prefix="chart", default_ttl=600)
 _info_cache = Cache(prefix="stockinfo", default_ttl=300)
+
 
 
 def _validate_symbol_path(symbol: str = Path(..., min_length=1, max_length=10)) -> str:
@@ -329,6 +383,8 @@ async def refresh_ranking(
     admin: TokenData = Depends(require_admin),
 ) -> list[RankingEntry]:
     """Force refresh of dip ranking (fetches new data)."""
+    from app.cache.data_version import bump_data_version
+    
     # Invalidate both cache keys
     await _ranking_cache.delete("all:True")
     await _ranking_cache.delete("all:False")
@@ -340,6 +396,9 @@ async def refresh_ranking(
     ttl = get_cache_ttl("ranking")
     await _ranking_cache.set("all:True", [r.model_dump() for r in all_entries], ttl=ttl)
     await _ranking_cache.set("all:False", [r.model_dump() for r in filtered_entries], ttl=ttl)
+
+    # Bump data version so frontend caches invalidate
+    await bump_data_version()
 
     return all_entries
 
@@ -465,42 +524,51 @@ async def get_chart(
                 details={"symbol": symbol},
             )
 
+        # Use Adjusted Close for split-adjusted prices (prevents chart corruption)
+        close_col = _get_close_col(prices)
+        
         # Convert to chart points
         chart_points = []
-        ref_high = float(prices["Close"].max()) if "Close" in prices.columns else 0.0
+        ref_high = _safe_float(prices[close_col].max())
         threshold = ref_high * (1.0 - min_dip_pct)
 
         # Calculate ref_high date and dip low date from the prices data
         ref_high_date = None
         dip_start_date = None
-        if "Close" in prices.columns and not prices.empty:
+        if close_col in prices.columns and not prices.empty:
             # Find the index of the highest price (52-week or period high)
-            ref_high_idx = prices["Close"].idxmax()
+            ref_high_idx = prices[close_col].idxmax()
             ref_high_date = str(ref_high_idx.date()) if hasattr(ref_high_idx, "date") else str(ref_high_idx)
 
             # Get prices after the peak to find the lowest point (actual dip bottom)
             prices_after_peak = prices.loc[ref_high_idx:]
             if len(prices_after_peak) > 1:
                 # Find the lowest point after the peak - this is the actual dip
-                dip_low_idx = prices_after_peak["Close"].idxmin()
+                dip_low_idx = prices_after_peak[close_col].idxmin()
                 dip_start_date = str(dip_low_idx.date()) if hasattr(dip_low_idx, "date") else str(dip_low_idx)
 
         for idx, row_data in prices.iterrows():
-            close = float(row_data["Close"]) if "Close" in row_data else 0.0
+            close = _safe_float(row_data.get(close_col, 0.0))
+            # Skip rows with zero/invalid close price
+            if close <= 0:
+                continue
             drawdown = (close - ref_high) / ref_high if ref_high > 0 else 0.0
 
             chart_points.append(
                 ChartPoint(
                     date=str(idx.date()) if hasattr(idx, "date") else str(idx),
-                    close=close,
-                    ref_high=float(ref_high),
-                    threshold=float(threshold),
-                    drawdown=float(drawdown),
+                    close=_safe_float(close),
+                    ref_high=_safe_float(ref_high),
+                    threshold=_safe_float(threshold),
+                    drawdown=_safe_float(drawdown),
                     since_dip=None,  # Would need dip start calculation
                     dip_start_date=dip_start_date,
                     ref_high_date=ref_high_date,
                 )
             )
+
+        # Validate and filter out corrupted data points (e.g., unadjusted splits)
+        chart_points = _validate_chart_data(chart_points)
 
         # Cache the result with dynamic TTL
         data = [p.model_dump(mode="json") for p in chart_points]
@@ -549,7 +617,7 @@ async def get_batch_charts(
             cached = await _chart_cache.get(cache_key)
             if cached:
                 # Extract just date and close for mini chart (last 50 points)
-                points = [{"date": p["date"], "close": p["close"]} for p in cached[-50:]]
+                points = [{"date": p["date"], "close": _safe_float(p["close"])} for p in cached[-50:] if _safe_float(p["close"]) > 0]
                 return MiniChartData(symbol=symbol, points=points)
             
             # Fetch from service
@@ -563,10 +631,15 @@ async def get_batch_charts(
             if prices is None or prices.empty:
                 return None
             
+            # Use Adjusted Close for split-adjusted prices
+            close_col = _get_close_col(prices)
+            
             # Convert to mini chart points (last 50)
             points = []
             for idx, row_data in list(prices.iterrows())[-50:]:
-                close = float(row_data["Close"]) if "Close" in row_data else 0.0
+                close = _safe_float(row_data.get(close_col, 0.0))
+                if close <= 0:
+                    continue
                 points.append({
                     "date": str(idx.date()) if hasattr(idx, "date") else str(idx),
                     "close": close,

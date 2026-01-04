@@ -892,7 +892,13 @@ export function StockDetailsPanel({
                       {(currentSignals?.overall_action || agentAnalysis?.overall_signal || 'ANALYZING').replace('_', ' ').toUpperCase()}
                     </span>
                   </div>
-                  {agentAnalysis && (
+                  {/* Show counts matching the signal source being used */}
+                  {currentSignals?.overall_action ? (
+                    <div className="flex gap-2 text-xs items-center">
+                      <span className="text-success flex items-center gap-0.5"><ArrowUpCircle className="h-3 w-3" /> {currentSignals.buy_signals?.length || 0}</span>
+                      <span className="text-danger flex items-center gap-0.5"><ArrowDownCircle className="h-3 w-3" /> {currentSignals.sell_signals?.length || 0}</span>
+                    </div>
+                  ) : agentAnalysis && (
                     <div className="flex gap-2 text-xs items-center">
                       <span className="text-success flex items-center gap-0.5"><ArrowUpCircle className="h-3 w-3" /> {agentAnalysis.bullish_count || 0}</span>
                       <span className="text-muted-foreground flex items-center gap-0.5"><MinusCircle className="h-3 w-3" /> {agentAnalysis.neutral_count || 0}</span>

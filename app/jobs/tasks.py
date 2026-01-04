@@ -500,7 +500,7 @@ def precompute_dip_entry_task(symbol: str) -> str:
         
         return f"Precomputed dip entry for {symbol_upper}"
     
-    return asyncio.get_event_loop().run_until_complete(_compute())
+    return asyncio.run(_compute())
 
 
 @celery_app.task(name="jobs.fetch_suggestion_data")
@@ -542,4 +542,4 @@ def fetch_suggestion_data_task(symbol: str) -> str:
             )
             return f"Failed to fetch data for {symbol}: {e}"
     
-    return asyncio.get_event_loop().run_until_complete(_fetch())
+    return asyncio.run(_fetch())

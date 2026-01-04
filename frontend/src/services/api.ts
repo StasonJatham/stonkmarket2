@@ -1,8 +1,18 @@
-import { getAuthHeaders } from './auth';
+import { getAuthHeaders, isAuthenticated } from './auth';
 import { apiCache, CACHE_TTL } from '@/lib/cache';
 import { getDeviceFingerprint, getDeviceFingerprintSync, recordLocalVote, hasVotedLocally, getLocalVotes } from '@/lib/fingerprint';
 
 const API_BASE = '/api';
+
+/**
+ * Error thrown when an authenticated API call is made without a valid token.
+ */
+export class AuthRequiredError extends Error {
+  constructor(endpoint: string) {
+    super(`Authentication required for ${endpoint}`);
+    this.name = 'AuthRequiredError';
+  }
+}
 
 // ETag storage for conditional requests
 const etagStore = new Map<string, string>();
@@ -11,10 +21,21 @@ const etagDataStore = new Map<string, unknown>();
 
 interface FetchOptions extends RequestInit {
   useEtag?: boolean;
+  /**
+   * If true, check authentication before making the request.
+   * Throws AuthRequiredError if not authenticated (prevents 401 spam).
+   */
+  requireAuth?: boolean;
 }
 
 async function fetchAPI<T>(endpoint: string, options: FetchOptions = {}): Promise<T> {
-  const { useEtag = false, ...fetchOptions } = options;
+  const { useEtag = false, requireAuth = false, ...fetchOptions } = options;
+  
+  // Check auth before making request to avoid 401 errors
+  if (requireAuth && !isAuthenticated()) {
+    throw new AuthRequiredError(endpoint);
+  }
+  
   const headers: HeadersInit = {
     'Content-Type': 'application/json',
     ...getAuthHeaders(),
@@ -57,6 +78,12 @@ async function fetchAPI<T>(endpoint: string, options: FetchOptions = {}): Promis
   }
 
   const data = await response.json();
+
+  // Check data version header - auto-invalidate cache if backend data changed
+  const dataVersion = response.headers.get('X-Data-Version');
+  if (dataVersion) {
+    apiCache.checkDataVersion(dataVersion);
+  }
 
   // Store ETag and data from response if present
   const etag = response.headers.get('ETag');
@@ -222,9 +249,39 @@ export async function getRanking(skipCache = false, showAll = false): Promise<Ra
   });
 }
 
+/**
+ * Validate chart data integrity - detect corrupted/impossible price data
+ */
+function validateChartData(data: ChartDataPoint[]): boolean {
+  if (!data || data.length < 2) return true; // Can't validate single point
+  
+  for (let i = 1; i < data.length; i++) {
+    const prev = data[i - 1].close;
+    const curr = data[i].close;
+    if (prev <= 0 || curr <= 0) continue;
+    
+    const changePercent = Math.abs((curr - prev) / prev);
+    // Flag as invalid if any daily change exceeds 75% (impossible in real markets)
+    if (changePercent > 0.75) {
+      console.warn(`Chart data validation failed: ${changePercent * 100}% change detected`);
+      return false;
+    }
+  }
+  return true;
+}
+
 export async function getStockChart(symbol: string, days: number = 180): Promise<ChartDataPoint[]> {
   const endpoint = `/dips/${symbol}/chart?days=${days}`;
   const cacheKey = `chart:${symbol}:${days}`;
+  
+  // Get cached data to check validity
+  const cached = apiCache.get<ChartDataPoint[]>(cacheKey);
+  
+  // If cached data exists but fails validation, invalidate it
+  if (cached && !validateChartData(cached.data)) {
+    console.warn(`Invalidating corrupted chart cache for ${symbol}`);
+    apiCache.invalidate(cacheKey);
+  }
   
   return apiCache.fetch(
     cacheKey,
@@ -622,7 +679,7 @@ export async function getAvailableBenchmarks(): Promise<PublicBenchmark[]> {
 export async function getCronJobs(): Promise<CronJob[]> {
   return apiCache.fetch(
     'cronjobs',
-    () => fetchAPI<CronJob[]>('/cronjobs'),
+    () => fetchAPI<CronJob[]>('/cronjobs', { requireAuth: true }),
     { ttl: CACHE_TTL.CRON_JOBS }
   );
 }
@@ -638,24 +695,26 @@ export async function getCronLogs(
   params.append('offset', offset.toString());
   if (search) params.append('search', search);
   if (status) params.append('status', status);
-  return fetchAPI<CronLogsResponse>(`/cronjobs/logs/all?${params.toString()}`);
+  return fetchAPI<CronLogsResponse>(`/cronjobs/logs/all?${params.toString()}`, { requireAuth: true });
 }
 
 export async function updateCronJob(name: string, cron: string): Promise<CronJob> {
   return fetchAPI<CronJob>(`/cronjobs/${name}`, {
     method: 'PUT',
     body: JSON.stringify({ cron }),
+    requireAuth: true,
   });
 }
 
 export async function runCronJobNow(name: string): Promise<CronLogEntry> {
   return fetchAPI<CronLogEntry>(`/cronjobs/${name}/run`, {
     method: 'POST',
+    requireAuth: true,
   });
 }
 
 export async function getTaskStatus(taskId: string): Promise<TaskStatus> {
-  return fetchAPI<TaskStatus>(`/cronjobs/tasks/${taskId}`);
+  return fetchAPI<TaskStatus>(`/cronjobs/tasks/${taskId}`, { requireAuth: true });
 }
 
 export async function getTaskStatuses(taskIds: string[]): Promise<TaskStatus[]> {
@@ -663,6 +722,7 @@ export async function getTaskStatuses(taskIds: string[]): Promise<TaskStatus[]> 
   const response = await fetchAPI<{ tasks: TaskStatus[] }>(`/cronjobs/tasks/batch`, {
     method: 'POST',
     body: JSON.stringify({ task_ids: taskIds }),
+    requireAuth: true,
   });
   return response.tasks;
 }
@@ -772,9 +832,16 @@ export async function getCeleryTasks(limit = 50): Promise<CeleryTaskInfo[]> {
 }
 
 export async function refreshData(): Promise<DipStock[]> {
-  return fetchAPI<DipStock[]>('/dips/refresh', {
+  const result = await fetchAPI<DipStock[]>('/dips/refresh', {
     method: 'POST',
+    requireAuth: true,
   });
+  
+  // Clear all chart caches to ensure fresh data
+  apiCache.invalidate(/^chart:/);
+  apiCache.invalidate(/^ranking/);
+  
+  return result;
 }
 
 // Benchmark types and functions
@@ -1078,6 +1145,7 @@ export async function voteDip(symbol: string, voteType: VoteType): Promise<{ sym
   const result = await fetchAPI<{ symbol: string; vote_type: string; message: string }>(`/swipe/cards/${symbol}/vote`, {
     method: 'PUT',
     body: JSON.stringify({ vote_type: voteType }),
+    requireAuth: true,  // Voting requires authentication
   });
 
   // Ensure swipe lists reflect vote exclusions immediately
@@ -1093,6 +1161,7 @@ export async function getDipStats(symbol: string): Promise<DipStats> {
 export async function refreshAiAnalysis(symbol: string): Promise<DipCard> {
   return fetchAPI<DipCard>(`/swipe/cards/${symbol}/refresh-ai`, {
     method: 'POST',
+    requireAuth: true,
   });
 }
 
@@ -1121,6 +1190,7 @@ export async function refreshAiField(symbol: string, field: AiFieldType): Promis
   
   const result = await fetchAPI<DipCard>(`/swipe/cards/${symbol}/refresh-ai/${field}`, {
     method: 'POST',
+    requireAuth: true,
   });
   
   return result;
@@ -1133,6 +1203,7 @@ export async function refreshAiField(symbol: string, field: AiFieldType): Promis
 export async function regenerateSymbolAiSummary(symbol: string): Promise<AISummaryResponse> {
   const result = await fetchAPI<AISummaryResponse>(`/symbols/${symbol}/ai/summary`, {
     method: 'POST',
+    requireAuth: true,
   });
   
   // Invalidate relevant caches
@@ -1637,6 +1708,7 @@ export async function createSymbol(data: { symbol: string; min_dip_pct?: number;
   const result = await fetchAPI<Symbol>('/symbols', {
     method: 'POST',
     body: JSON.stringify(data),
+    requireAuth: true,
   });
   // Invalidate symbols and ranking cache on add
   apiCache.invalidate(/^symbols/);
@@ -1649,6 +1721,7 @@ export async function updateSymbol(symbol: string, data: { min_dip_pct?: number;
   const result = await fetchAPI<Symbol>(`/symbols/${symbol}`, {
     method: 'PUT',
     body: JSON.stringify(data),
+    requireAuth: true,
   });
   // Invalidate symbols and ranking cache on update
   apiCache.invalidate(/^symbols/);
@@ -1660,6 +1733,7 @@ export async function updateSymbol(symbol: string, data: { min_dip_pct?: number;
 export async function deleteSymbol(symbol: string): Promise<void> {
   await fetchAPI(`/symbols/${symbol}`, {
     method: 'DELETE',
+    requireAuth: true,
   });
   // Invalidate symbols and ranking cache on delete
   apiCache.invalidate(/^symbols/);
@@ -1822,17 +1896,18 @@ export interface MFAVerifyResponse {
 }
 
 export async function getMFAStatus(): Promise<MFAStatus> {
-  return fetchAPI<MFAStatus>('/auth/mfa/status');
+  return fetchAPI<MFAStatus>('/auth/mfa/status', { requireAuth: true });
 }
 
 export async function setupMFA(): Promise<MFASetupResponse> {
-  return fetchAPI<MFASetupResponse>('/auth/mfa/setup', { method: 'POST' });
+  return fetchAPI<MFASetupResponse>('/auth/mfa/setup', { method: 'POST', requireAuth: true });
 }
 
 export async function verifyMFA(code: string): Promise<MFAVerifyResponse> {
   return fetchAPI<MFAVerifyResponse>('/auth/mfa/verify', {
     method: 'POST',
     body: JSON.stringify({ code }),
+    requireAuth: true,
   });
 }
 
@@ -1840,6 +1915,7 @@ export async function disableMFA(code: string): Promise<void> {
   await fetchAPI('/auth/mfa/disable', {
     method: 'POST',
     body: JSON.stringify({ code }),
+    requireAuth: true,
   });
 }
 
@@ -1847,6 +1923,7 @@ export async function regenerateBackupCodes(code: string): Promise<{ backup_code
   return fetchAPI<{ backup_codes: string[] }>('/auth/mfa/backup-codes/regenerate', {
     method: 'POST',
     body: JSON.stringify({ code }),
+    requireAuth: true,
   });
 }
 
@@ -1868,13 +1945,14 @@ export interface ApiKeyList {
 }
 
 export async function listApiKeys(): Promise<ApiKeyList> {
-  return fetchAPI<ApiKeyList>('/admin/api-keys');
+  return fetchAPI<ApiKeyList>('/admin/api-keys', { requireAuth: true });
 }
 
 export async function createApiKey(keyName: string, apiKey: string, mfaCode: string): Promise<ApiKeyInfo> {
   return fetchAPI<ApiKeyInfo>('/admin/api-keys', {
     method: 'POST',
     body: JSON.stringify({ key_name: keyName, api_key: apiKey, mfa_code: mfaCode }),
+    requireAuth: true,
   });
 }
 
@@ -1882,6 +1960,7 @@ export async function revealApiKey(keyName: string, mfaCode: string): Promise<{ 
   return fetchAPI<{ key_name: string; api_key: string }>(`/admin/api-keys/${keyName}/reveal`, {
     method: 'POST',
     body: JSON.stringify({ mfa_code: mfaCode }),
+    requireAuth: true,
   });
 }
 
@@ -1889,15 +1968,16 @@ export async function deleteApiKey(keyName: string, mfaCode: string): Promise<vo
   await fetchAPI(`/admin/api-keys/${keyName}`, {
     method: 'DELETE',
     body: JSON.stringify({ mfa_code: mfaCode }),
+    requireAuth: true,
   });
 }
 
 export async function checkApiKey(keyName: string): Promise<{ key_name: string; exists: boolean; key_hint: string | null }> {
-  return fetchAPI<{ key_name: string; exists: boolean; key_hint: string | null }>(`/admin/api-keys/check/${keyName}`);
+  return fetchAPI<{ key_name: string; exists: boolean; key_hint: string | null }>(`/admin/api-keys/check/${keyName}`, { requireAuth: true });
 }
 
 export async function checkMfaSession(): Promise<{ has_session: boolean }> {
-  return fetchAPI<{ has_session: boolean }>('/admin/api-keys/mfa-session');
+  return fetchAPI<{ has_session: boolean }>('/admin/api-keys/mfa-session', { requireAuth: true });
 }
 
 // =============================================================================
@@ -1947,22 +2027,23 @@ export interface CreateUserKeyResponse {
 }
 
 export async function listUserApiKeys(activeOnly: boolean = true): Promise<UserApiKey[]> {
-  return fetchAPI<UserApiKey[]>(`/admin/user-keys?active_only=${activeOnly}`);
+  return fetchAPI<UserApiKey[]>(`/admin/user-keys?active_only=${activeOnly}`, { requireAuth: true });
 }
 
 export async function createUserApiKey(request: CreateUserKeyRequest): Promise<CreateUserKeyResponse> {
   return fetchAPI<CreateUserKeyResponse>('/admin/user-keys', {
     method: 'POST',
     body: JSON.stringify(request),
+    requireAuth: true,
   });
 }
 
 export async function getUserApiKeyStats(): Promise<UserApiKeyStats> {
-  return fetchAPI<UserApiKeyStats>('/admin/user-keys/stats');
+  return fetchAPI<UserApiKeyStats>('/admin/user-keys/stats', { requireAuth: true });
 }
 
 export async function getUserApiKey(keyId: number): Promise<UserApiKey> {
-  return fetchAPI<UserApiKey>(`/admin/user-keys/${keyId}`);
+  return fetchAPI<UserApiKey>(`/admin/user-keys/${keyId}`, { requireAuth: true });
 }
 
 export async function updateUserApiKey(
@@ -1972,24 +2053,28 @@ export async function updateUserApiKey(
   return fetchAPI<UserApiKey>(`/admin/user-keys/${keyId}`, {
     method: 'PATCH',
     body: JSON.stringify(updates),
+    requireAuth: true,
   });
 }
 
 export async function deactivateUserApiKey(keyId: number): Promise<void> {
   await fetchAPI(`/admin/user-keys/${keyId}/deactivate`, {
     method: 'POST',
+    requireAuth: true,
   });
 }
 
 export async function reactivateUserApiKey(keyId: number): Promise<void> {
   await fetchAPI(`/admin/user-keys/${keyId}/reactivate`, {
     method: 'POST',
+    requireAuth: true,
   });
 }
 
 export async function deleteUserApiKey(keyId: number): Promise<void> {
   await fetchAPI(`/admin/user-keys/${keyId}`, {
     method: 'DELETE',
+    requireAuth: true,
   });
 }
 
@@ -2082,13 +2167,13 @@ export interface SystemStatus {
 }
 
 export async function getAppSettings(): Promise<AppSettings> {
-  return fetchAPI<AppSettings>('/admin/settings/app');
+  return fetchAPI<AppSettings>('/admin/settings/app', { requireAuth: true });
 }
 
 export async function getRuntimeSettings(): Promise<RuntimeSettings> {
   return apiCache.fetch(
     'runtime-settings',
-    () => fetchAPI<RuntimeSettings>('/admin/settings/runtime'),
+    () => fetchAPI<RuntimeSettings>('/admin/settings/runtime', { requireAuth: true }),
     { ttl: CACHE_TTL.SETTINGS }
   );
 }
@@ -2097,6 +2182,7 @@ export async function updateRuntimeSettings(updates: Partial<RuntimeSettings>): 
   const result = await fetchAPI<RuntimeSettings>('/admin/settings/runtime', {
     method: 'PATCH',
     body: JSON.stringify(updates),
+    requireAuth: true,
   });
   // Invalidate settings caches on update
   apiCache.invalidate(/^(runtime-settings|suggestion-settings|benchmarks)/);
@@ -2107,11 +2193,11 @@ export async function updateRuntimeSettings(updates: Partial<RuntimeSettings>): 
 }
 
 export async function getSystemStatus(): Promise<SystemStatus> {
-  return fetchAPI<SystemStatus>('/admin/settings/status');
+  return fetchAPI<SystemStatus>('/admin/settings/status', { requireAuth: true });
 }
 
 export async function checkOpenAIStatus(): Promise<{ configured: boolean }> {
-  return fetchAPI<{ configured: boolean }>('/admin/settings/openai-status');
+  return fetchAPI<{ configured: boolean }>('/admin/settings/openai-status', { requireAuth: true });
 }
 
 // =============================================================================
@@ -2128,6 +2214,7 @@ export async function updateCredentials(data: UserCredentialsUpdate): Promise<{ 
   return fetchAPI<{ username: string; is_admin: boolean }>('/auth/credentials', {
     method: 'PUT',
     body: JSON.stringify(data),
+    requireAuth: true,
   });
 }
 
@@ -2303,6 +2390,7 @@ export async function getAllSuggestions(
 export async function approveSuggestion(suggestionId: number): Promise<{ message: string; symbol: string; task_id?: string | null }> {
   const result = await fetchAPI<{ message: string; symbol: string; task_id?: string | null }>(`/suggestions/${suggestionId}/approve`, {
     method: 'POST',
+    requireAuth: true,
   });
   // Invalidate symbols and ranking cache so the new stock appears immediately
   apiCache.invalidate(/^symbols/);
@@ -2316,6 +2404,7 @@ export async function rejectSuggestion(suggestionId: number, reason?: string): P
   const params = reason ? `?reason=${encodeURIComponent(reason)}` : '';
   const result = await fetchAPI<{ message: string }>(`/suggestions/${suggestionId}/reject${params}`, {
     method: 'POST',
+    requireAuth: true,
   });
   apiCache.invalidate(/^suggestions:/);
   return result;
@@ -2327,7 +2416,7 @@ export async function updateSuggestion(
 ): Promise<{ message: string; old_symbol: string; new_symbol: string }> {
   const result = await fetchAPI<{ message: string; old_symbol: string; new_symbol: string }>(
     `/suggestions/${suggestionId}?new_symbol=${encodeURIComponent(newSymbol.toUpperCase())}`,
-    { method: 'PATCH' }
+    { method: 'PATCH', requireAuth: true }
   );
   apiCache.invalidate(/^suggestions:/);
   return result;
@@ -2338,7 +2427,7 @@ export async function refreshSuggestionData(
 ): Promise<{ message: string; symbol: string; task_id?: string | null }> {
   const result = await fetchAPI<{ message: string; symbol: string; task_id?: string | null }>(
     `/suggestions/${suggestionId}/refresh`,
-    { method: 'POST' }
+    { method: 'POST', requireAuth: true }
   );
   apiCache.invalidate(/^suggestions:/);
   return result;
@@ -2349,7 +2438,7 @@ export async function retrySuggestionFetch(
 ): Promise<{ message: string; symbol: string; fetch_status: FetchStatus; fetch_error: string | null }> {
   const result = await fetchAPI<{ message: string; symbol: string; fetch_status: FetchStatus; fetch_error: string | null }>(
     `/suggestions/${suggestionId}/retry`,
-    { method: 'POST' }
+    { method: 'POST', requireAuth: true }
   );
   apiCache.invalidate(/^suggestions:/);
   return result;
@@ -2360,7 +2449,7 @@ export async function backfillSuggestions(
 ): Promise<{ message: string; processed: number; total: number; errors: Array<{ symbol: string; error: string }> | null }> {
   return fetchAPI<{ message: string; processed: number; total: number; errors: Array<{ symbol: string; error: string }> | null }>(
     `/suggestions/backfill?limit=${limit}`,
-    { method: 'POST' }
+    { method: 'POST', requireAuth: true }
   );
 }
 
@@ -2398,21 +2487,22 @@ export async function getBatchJobs(
   includeCompleted: boolean = true
 ): Promise<BatchJobListResponse> {
   return fetchAPI<BatchJobListResponse>(
-    `/admin/settings/batch-jobs?limit=${limit}&offset=${offset}&include_completed=${includeCompleted}`
+    `/admin/settings/batch-jobs?limit=${limit}&offset=${offset}&include_completed=${includeCompleted}`,
+    { requireAuth: true }
   );
 }
 
 export async function cancelBatchJob(batchId: string): Promise<{ success: boolean; batch_id: string; status: string }> {
   return fetchAPI<{ success: boolean; batch_id: string; status: string }>(
     `/admin/settings/batch-jobs/${batchId}/cancel`,
-    { method: 'POST' }
+    { method: 'POST', requireAuth: true }
   );
 }
 
 export async function deleteBatchJob(jobId: number): Promise<{ success: boolean; job_id: number; batch_id: string }> {
   return fetchAPI<{ success: boolean; job_id: number; batch_id: string }>(
     `/admin/settings/batch-jobs/${jobId}`,
-    { method: 'DELETE' }
+    { method: 'DELETE', requireAuth: true }
   );
 }
 
@@ -2580,7 +2670,7 @@ export interface PortfolioAllocationRecommendation {
 }
 
 export async function getPortfolios(): Promise<Portfolio[]> {
-  return fetchAPI<Portfolio[]>('/portfolios');
+  return fetchAPI<Portfolio[]>('/portfolios', { requireAuth: true });
 }
 
 export async function createPortfolio(payload: {
@@ -2591,6 +2681,7 @@ export async function createPortfolio(payload: {
   const result = await fetchAPI<Portfolio>('/portfolios', {
     method: 'POST',
     body: JSON.stringify(payload),
+    requireAuth: true,
   });
   invalidateEtagCache(/\/portfolios/);
   return result;
@@ -2608,18 +2699,19 @@ export async function updatePortfolio(
   const result = await fetchAPI<Portfolio>(`/portfolios/${portfolioId}`, {
     method: 'PATCH',
     body: JSON.stringify(payload),
+    requireAuth: true,
   });
   invalidateEtagCache(/\/portfolios/);
   return result;
 }
 
 export async function deletePortfolio(portfolioId: number): Promise<void> {
-  await fetchAPI<void>(`/portfolios/${portfolioId}`, { method: 'DELETE' });
+  await fetchAPI<void>(`/portfolios/${portfolioId}`, { method: 'DELETE', requireAuth: true });
   invalidateEtagCache(/\/portfolios/);
 }
 
 export async function getPortfolioDetail(portfolioId: number): Promise<PortfolioDetail> {
-  return fetchAPI<PortfolioDetail>(`/portfolios/${portfolioId}`);
+  return fetchAPI<PortfolioDetail>(`/portfolios/${portfolioId}`, { requireAuth: true });
 }
 
 export async function upsertHolding(
@@ -2629,18 +2721,19 @@ export async function upsertHolding(
   const result = await fetchAPI<Holding>(`/portfolios/${portfolioId}/holdings`, {
     method: 'POST',
     body: JSON.stringify(payload),
+    requireAuth: true,
   });
   invalidateEtagCache(new RegExp(`/portfolios/${portfolioId}`));
   return result;
 }
 
 export async function deleteHolding(portfolioId: number, symbol: string): Promise<void> {
-  await fetchAPI<void>(`/portfolios/${portfolioId}/holdings/${symbol}`, { method: 'DELETE' });
+  await fetchAPI<void>(`/portfolios/${portfolioId}/holdings/${symbol}`, { method: 'DELETE', requireAuth: true });
   invalidateEtagCache(new RegExp(`/portfolios/${portfolioId}`));
 }
 
 export async function getTransactions(portfolioId: number, limit: number = 200): Promise<Transaction[]> {
-  return fetchAPI<Transaction[]>(`/portfolios/${portfolioId}/transactions?limit=${limit}`);
+  return fetchAPI<Transaction[]>(`/portfolios/${portfolioId}/transactions?limit=${limit}`, { requireAuth: true });
 }
 
 export async function addTransaction(
@@ -2658,13 +2751,14 @@ export async function addTransaction(
   const result = await fetchAPI<Transaction>(`/portfolios/${portfolioId}/transactions`, {
     method: 'POST',
     body: JSON.stringify(payload),
+    requireAuth: true,
   });
   invalidateEtagCache(new RegExp(`/portfolios/${portfolioId}`));
   return result;
 }
 
 export async function deleteTransaction(portfolioId: number, transactionId: number): Promise<void> {
-  await fetchAPI<void>(`/portfolios/${portfolioId}/transactions/${transactionId}`, { method: 'DELETE' });
+  await fetchAPI<void>(`/portfolios/${portfolioId}/transactions/${transactionId}`, { method: 'DELETE', requireAuth: true });
   invalidateEtagCache(new RegExp(`/portfolios/${portfolioId}`));
 }
 
@@ -2702,6 +2796,7 @@ export async function getHoldingsSparklines(
   return fetchAPI<BatchSparklineResponse>(`/portfolios/${portfolioId}/sparklines`, {
     method: 'POST',
     body: JSON.stringify({ symbols, days }),
+    requireAuth: true,
   });
 }
 
@@ -2720,6 +2815,7 @@ export async function runPortfolioAnalytics(
   return fetchAPI<PortfolioAnalyticsResponse>(`/portfolios/${portfolioId}/analytics`, {
     method: 'POST',
     body: JSON.stringify(payload),
+    requireAuth: true,
   });
 }
 
@@ -2728,14 +2824,15 @@ export async function getPortfolioAnalyticsJob(
   jobId: string
 ): Promise<PortfolioAnalyticsJob> {
   return fetchAPI<PortfolioAnalyticsJob>(
-    `/portfolios/${portfolioId}/analytics/jobs/${jobId}`
+    `/portfolios/${portfolioId}/analytics/jobs/${jobId}`,
+    { requireAuth: true }
   );
 }
 
 export async function getPortfolioRiskAnalytics(
   portfolioId: number
 ): Promise<PortfolioRiskAnalyticsResponse> {
-  return fetchAPI<PortfolioRiskAnalyticsResponse>(`/portfolios/${portfolioId}/analytics`);
+  return fetchAPI<PortfolioRiskAnalyticsResponse>(`/portfolios/${portfolioId}/analytics`, { requireAuth: true });
 }
 
 export async function getPortfolioAllocationRecommendation(
@@ -2753,7 +2850,7 @@ export async function getPortfolioAllocationRecommendation(
   }
   return fetchAPI<PortfolioAllocationRecommendation>(
     `/portfolios/${portfolioId}/allocate?${searchParams.toString()}`,
-    { method: 'POST' }
+    { method: 'POST', requireAuth: true }
   );
 }
 
@@ -2854,6 +2951,7 @@ export async function bulkImportPositions(
     {
       method: 'POST',
       body: JSON.stringify(payload),
+      requireAuth: true,
     }
   );
   invalidateEtagCache(new RegExp(`/portfolios/${portfolioId}`));
@@ -2898,6 +2996,7 @@ export async function updateAIPersona(personaKey: string, updates: AIPersonaUpda
   return fetchAPI<AIPersona>(`/ai-personas/${personaKey}`, {
     method: 'PUT',
     body: JSON.stringify(updates),
+    requireAuth: true,
   });
 }
 
@@ -2935,6 +3034,7 @@ export async function uploadAIPersonaAvatar(
 export async function deleteAIPersonaAvatar(personaKey: string): Promise<{ message: string }> {
   return fetchAPI<{ message: string }>(`/ai-personas/${personaKey}/avatar`, {
     method: 'DELETE',
+    requireAuth: true,
   });
 }
 

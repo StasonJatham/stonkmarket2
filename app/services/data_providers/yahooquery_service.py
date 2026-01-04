@@ -260,7 +260,7 @@ class YahooQueryService:
             logger.debug("yahooquery not available")
             return None
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(_executor, self._fetch_ticker_info_sync, symbol)
 
     # =========================================================================
@@ -461,7 +461,7 @@ class YahooQueryService:
         if not YAHOOQUERY_AVAILABLE:
             return None
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(_executor, self._fetch_financials_sync, symbol)
 
     # =========================================================================
@@ -525,7 +525,7 @@ class YahooQueryService:
         if not YAHOOQUERY_AVAILABLE:
             return None
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(_executor, self._fetch_valuation_measures_sync, symbol)
 
     # =========================================================================
@@ -595,7 +595,7 @@ class YahooQueryService:
         if not YAHOOQUERY_AVAILABLE:
             return None
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             _executor,
             self._fetch_price_history_sync,
@@ -701,7 +701,7 @@ class YahooQueryService:
         if not YAHOOQUERY_AVAILABLE:
             return None
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             _executor,
             self._fetch_domain_specific_data_sync,
@@ -779,7 +779,7 @@ class YahooQueryService:
         if not YAHOOQUERY_AVAILABLE or not symbols:
             return {}
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(_executor, self._fetch_batch_ticker_info_sync, symbols)
 
 

@@ -62,12 +62,35 @@ from app.database.orm import (
     SymbolSearchResult,
     YfinanceInfoCache,
 )
+from app.domain import PriceHistory, TickerInfo, TickerSearchResult
+from app.services.data_providers.resilience import (
+    CircuitBreaker,
+    CircuitOpenError,
+    RequestCoalescer,
+)
 
 
 logger = get_logger("data_providers.yfinance")
 
 # Single shared executor for ALL yfinance calls
-_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="yfinance")
+# Increased to 8 workers for better throughput with I/O-bound yfinance calls
+_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="yfinance")
+
+# Semaphore to limit concurrent executor submissions (prevents queue saturation)
+_executor_semaphore = asyncio.Semaphore(16)  # Allow 2x pool size in queue
+
+# Resilience patterns for yfinance API
+# Circuit breaker: Opens after 5 consecutive failures, half-open after 30s
+_circuit_breaker = CircuitBreaker(
+    failure_threshold=5,
+    recovery_timeout=30.0,
+    name="yfinance",
+    # Don't count rate limits as failures (we handle them separately)
+    excluded_exceptions=(),
+)
+
+# Request coalescer: Deduplicates concurrent requests for same symbol
+_request_coalescer = RequestCoalescer(max_wait=30.0)
 
 # In-memory cache (L1) - very short TTL for request coalescing
 _MEMORY_CACHE: dict[str, tuple[float, Any]] = {}
@@ -782,10 +805,36 @@ class YFinanceService:
                     await self._info_cache.set(cache_key, data)
                     return data
 
-        # Cache miss - fetch from yfinance
+        # Cache miss - fetch from yfinance with resilience patterns
         logger.debug(f"Cache miss for {symbol}, fetching from yfinance")
-        loop = asyncio.get_event_loop()
-        data = await loop.run_in_executor(_executor, self._fetch_ticker_info_sync, symbol)
+
+        async def _do_fetch() -> dict[str, Any] | None:
+            """Inner fetch with circuit breaker protection."""
+            # Check circuit before making request
+            try:
+                await _circuit_breaker.guard()
+            except CircuitOpenError as e:
+                logger.warning(f"Circuit open for yfinance, skipping {symbol}: {e}")
+                return None
+
+            async with _executor_semaphore:
+                loop = asyncio.get_running_loop()
+                try:
+                    data = await loop.run_in_executor(
+                        _executor, self._fetch_ticker_info_sync, symbol
+                    )
+                    if data is not None:
+                        _circuit_breaker.record_success()
+                    return data
+                except Exception as e:
+                    _circuit_breaker.record_failure(e)
+                    raise
+
+        # Use request coalescing to deduplicate concurrent requests
+        data = await _request_coalescer.execute(
+            f"info:{symbol}",
+            _do_fetch,
+        )
 
         if data:
             # Store in all cache levels
@@ -865,10 +914,25 @@ class YFinanceService:
                     return data, "cached"
 
         logger.debug(f"Cache miss for {symbol}, fetching from yfinance")
-        loop = asyncio.get_event_loop()
-        data, status = await loop.run_in_executor(
-            _executor, self._fetch_ticker_info_with_status_sync, symbol
-        )
+        
+        # Check circuit breaker first
+        try:
+            await _circuit_breaker.guard()
+        except CircuitOpenError as e:
+            logger.warning(f"Circuit open for yfinance, skipping {symbol}: {e}")
+            return None, "error"
+        
+        async with _executor_semaphore:
+            loop = asyncio.get_running_loop()
+            try:
+                data, status = await loop.run_in_executor(
+                    _executor, self._fetch_ticker_info_with_status_sync, symbol
+                )
+                if data is not None:
+                    _circuit_breaker.record_success()
+            except Exception as e:
+                _circuit_breaker.record_failure(e)
+                raise
 
         if status == "fetched" and data:
             self._set_in_memory(cache_key, data)
@@ -936,6 +1000,14 @@ class YFinanceService:
 
         # Cache miss - try yahooquery first (richer financial data)
         data = None
+        
+        # Check circuit breaker first - if open, skip all external calls
+        try:
+            await _circuit_breaker.guard()
+        except CircuitOpenError as e:
+            logger.warning(f"Circuit open for yfinance, skipping financials {symbol}: {e}")
+            return None
+        
         try:
             from app.services.data_providers.yahooquery_service import get_yahooquery_service
             yq_service = get_yahooquery_service()
@@ -944,14 +1016,23 @@ class YFinanceService:
                 data = await yq_service.get_financials(symbol)
                 if data:
                     logger.debug(f"Got financials from yahooquery for {symbol}")
+                    _circuit_breaker.record_success()
         except Exception as e:
             logger.debug(f"yahooquery financials failed for {symbol}: {e}")
+            _circuit_breaker.record_failure(e)
 
         # Fallback to yfinance if yahooquery failed
         if not data:
             logger.debug(f"Falling back to yfinance for financials: {symbol}")
-            loop = asyncio.get_event_loop()
-            data = await loop.run_in_executor(_executor, self._fetch_financials_sync, symbol)
+            async with _executor_semaphore:
+                loop = asyncio.get_running_loop()
+                try:
+                    data = await loop.run_in_executor(_executor, self._fetch_financials_sync, symbol)
+                    if data:
+                        _circuit_breaker.record_success()
+                except Exception as e:
+                    _circuit_breaker.record_failure(e)
+                    raise
 
         if data:
             # Store in cache
@@ -1002,26 +1083,48 @@ class YFinanceService:
         """
         symbol = symbol.upper()
 
-        loop = asyncio.get_event_loop()
+        async def _do_fetch() -> pd.DataFrame | None:
+            """Inner fetch with circuit breaker protection."""
+            try:
+                await _circuit_breaker.guard()
+            except CircuitOpenError as e:
+                logger.warning(f"Circuit open for yfinance prices, skipping {symbol}: {e}")
+                return None
 
+            async with _executor_semaphore:
+                loop = asyncio.get_running_loop()
+                try:
+                    if start_date and end_date:
+                        # Specific date range - use batch method
+                        results = await loop.run_in_executor(
+                            _executor,
+                            self._fetch_price_history_batch_sync,
+                            [symbol],
+                            start_date.isoformat(),
+                            end_date.isoformat(),
+                        )
+                        result = results.get(symbol)
+                    else:
+                        result = await loop.run_in_executor(
+                            _executor,
+                            self._fetch_price_history_sync,
+                            symbol,
+                            period,
+                            interval,
+                        )
+                    if result is not None:
+                        _circuit_breaker.record_success()
+                    return result
+                except Exception as e:
+                    _circuit_breaker.record_failure(e)
+                    raise
+
+        # Use request coalescing for price history
+        coalesce_key = f"prices:{symbol}:{period}:{interval}"
         if start_date and end_date:
-            # Specific date range - use batch method
-            results = await loop.run_in_executor(
-                _executor,
-                self._fetch_price_history_batch_sync,
-                [symbol],
-                start_date.isoformat(),
-                end_date.isoformat(),
-            )
-            df = results.get(symbol)
-        else:
-            df = await loop.run_in_executor(
-                _executor,
-                self._fetch_price_history_sync,
-                symbol,
-                period,
-                interval,
-            )
+            coalesce_key = f"prices:{symbol}:{start_date}:{end_date}"
+
+        df = await _request_coalescer.execute(coalesce_key, _do_fetch)
 
         if df is None or df.empty:
             return None, None
@@ -1061,14 +1164,28 @@ class YFinanceService:
         """
         symbols = [s.upper() for s in symbols]
 
-        loop = asyncio.get_event_loop()
-        raw_results = await loop.run_in_executor(
-            _executor,
-            self._fetch_price_history_batch_sync,
-            symbols,
-            start_date.isoformat(),
-            end_date.isoformat(),
-        )
+        # Check circuit breaker first
+        try:
+            await _circuit_breaker.guard()
+        except CircuitOpenError as e:
+            logger.warning(f"Circuit open for yfinance, skipping batch price history: {e}")
+            return {}
+
+        async with _executor_semaphore:
+            loop = asyncio.get_running_loop()
+            try:
+                raw_results = await loop.run_in_executor(
+                    _executor,
+                    self._fetch_price_history_batch_sync,
+                    symbols,
+                    start_date.isoformat(),
+                    end_date.isoformat(),
+                )
+                if raw_results:
+                    _circuit_breaker.record_success()
+            except Exception as e:
+                _circuit_breaker.record_failure(e)
+                raise
 
         results = {}
         for symbol, df in raw_results.items():
@@ -1110,13 +1227,31 @@ class YFinanceService:
         if len(query.strip()) < 2:
             return []
 
-        loop = asyncio.get_event_loop()
-        results = await loop.run_in_executor(
-            _executor,
-            self._search_tickers_sync,
-            query,
-            max_results * 2,  # Fetch more, filter later
-        )
+        async def _do_search() -> list[dict[str, Any]]:
+            """Inner search with circuit breaker protection."""
+            try:
+                await _circuit_breaker.guard()
+            except CircuitOpenError as e:
+                logger.warning(f"Circuit open for yfinance, skipping search '{query}': {e}")
+                return []
+
+            async with _executor_semaphore:
+                loop = asyncio.get_running_loop()
+                try:
+                    result = await loop.run_in_executor(
+                        _executor,
+                        self._search_tickers_sync,
+                        query,
+                        max_results * 2,  # Fetch more, filter later
+                    )
+                    if result:
+                        _circuit_breaker.record_success()
+                    return result
+                except Exception as e:
+                    _circuit_breaker.record_failure(e)
+                    raise
+
+        results = await _request_coalescer.execute(f"search:{query}", _do_search)
 
         if save_to_db and results:
             # Save to symbol_search_results for future local search
@@ -1184,8 +1319,28 @@ class YFinanceService:
                 )
                 return cached, version
 
-        loop = asyncio.get_event_loop()
-        data = await loop.run_in_executor(_executor, self._fetch_calendar_sync, symbol)
+        async def _do_fetch() -> dict[str, Any] | None:
+            """Inner fetch with circuit breaker protection."""
+            try:
+                await _circuit_breaker.guard()
+            except CircuitOpenError as e:
+                logger.warning(f"Circuit open for yfinance, skipping calendar {symbol}: {e}")
+                return None
+
+            async with _executor_semaphore:
+                loop = asyncio.get_running_loop()
+                try:
+                    result = await loop.run_in_executor(
+                        _executor, self._fetch_calendar_sync, symbol
+                    )
+                    if result is not None:
+                        _circuit_breaker.record_success()
+                    return result
+                except Exception as e:
+                    _circuit_breaker.record_failure(e)
+                    raise
+
+        data = await _request_coalescer.execute(f"calendar:{symbol}", _do_fetch)
 
         if data:
             await self._calendar_cache.set(cache_key, data)
@@ -1276,6 +1431,111 @@ class YFinanceService:
             await session.execute(stmt)
             await session.commit()
 
+    # =========================================================================
+    # Typed Domain Model Wrappers
+    # =========================================================================
+
+    async def get_ticker_info_typed(
+        self,
+        symbol: str,
+        skip_cache: bool = False,
+    ) -> TickerInfo | None:
+        """
+        Get ticker info as a validated Pydantic model.
+        
+        This is the preferred method for new code. Returns a TickerInfo
+        domain model with validated data and computed fields.
+        
+        Args:
+            symbol: Ticker symbol
+            skip_cache: If True, bypass cache and fetch fresh data
+            
+        Returns:
+            TickerInfo model or None if not found
+        """
+        data = await self.get_ticker_info(symbol, skip_cache=skip_cache)
+        if data is None:
+            return None
+        try:
+            return TickerInfo.model_validate(data)
+        except Exception as e:
+            logger.warning(f"Failed to validate TickerInfo for {symbol}: {e}")
+            return None
+
+    async def get_price_history_typed(
+        self,
+        symbol: str,
+        period: str = "1y",
+        interval: str = "1d",
+        skip_cache: bool = False,
+    ) -> PriceHistory | None:
+        """
+        Get price history as a validated Pydantic model.
+        
+        This is the preferred method for new code. Returns a PriceHistory
+        domain model with PriceBar objects and utility methods.
+        
+        Args:
+            symbol: Ticker symbol
+            period: Time period (1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y, 10y, ytd, max)
+            interval: Bar interval (1m, 5m, 15m, 30m, 1h, 1d, 1wk, 1mo)
+            skip_cache: If True, bypass cache and fetch fresh data
+            
+        Returns:
+            PriceHistory model or None if not found
+        """
+        df, version_hash = await self.get_price_history(
+            symbol,
+            period=period,
+            interval=interval,
+            skip_cache=skip_cache,
+        )
+        if df is None or df.empty:
+            return None
+        try:
+            return PriceHistory.from_dataframe(
+                symbol=symbol.upper(),
+                df=df,
+                interval=interval,  # type: ignore
+                version_hash=version_hash,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to create PriceHistory for {symbol}: {e}")
+            return None
+
+    async def search_tickers_typed(
+        self,
+        query: str,
+        max_results: int = 10,
+    ) -> list[TickerSearchResult]:
+        """
+        Search for tickers and return validated Pydantic models.
+        
+        This is the preferred method for new code. Returns a list of
+        TickerSearchResult domain models.
+        
+        Args:
+            query: Search query
+            max_results: Maximum number of results
+            
+        Returns:
+            List of TickerSearchResult models
+        """
+        results = await self.search_tickers(query, max_results=max_results)
+        typed_results = []
+        for r in results:
+            try:
+                typed_results.append(TickerSearchResult(
+                    symbol=r.get("symbol", ""),
+                    name=r.get("name"),
+                    exchange=r.get("exchange"),
+                    quote_type=r.get("quote_type"),
+                    score=r.get("relevance_score") or r.get("confidence_score") or 0.0,
+                ))
+            except Exception as e:
+                logger.debug(f"Failed to validate search result: {e}")
+        return typed_results
+
     async def has_data_changed(
         self,
         symbol: str,
@@ -1324,3 +1584,17 @@ def get_yfinance_service() -> YFinanceService:
     if _instance is None:
         _instance = YFinanceService()
     return _instance
+
+
+def get_circuit_breaker_stats() -> dict[str, Any]:
+    """
+    Get current circuit breaker statistics for health monitoring.
+    
+    Returns:
+        Dict with circuit breaker state information:
+        - state: current state (closed, open, half-open)
+        - failure_count: consecutive failures
+        - is_open: whether circuit is blocking requests
+        - time_until_recovery: seconds until half-open (if open)
+    """
+    return _circuit_breaker.get_stats()

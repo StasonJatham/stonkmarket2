@@ -118,6 +118,11 @@ async def lifespan(app: FastAPI):
     try:
         await get_valkey_client()
         logger.info("Valkey connection established")
+        
+        # Initialize data version for cache invalidation headers
+        from app.cache.data_version import init_data_version
+        await init_data_version()
+        logger.info("Data version initialized")
     except Exception as e:
         logger.warning(f"Valkey connection failed (cache disabled): {e}")
 

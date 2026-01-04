@@ -123,6 +123,15 @@ class QualityMetrics:
             "fields_total": self.fields_total,
         }
 
+    def to_pydantic(self) -> "QualityMetricsPydantic":
+        """Convert to Pydantic domain model for type-safe API responses.
+        
+        Returns:
+            app.domain.QualityMetrics Pydantic model instance
+        """
+        from app.domain import QualityMetrics as QualityMetricsPydantic
+        return QualityMetricsPydantic.model_validate(self.to_dict())
+
 
 def _safe_float(value: Any, default: float | None = None) -> float | None:
     """Safely convert value to float, handling None and invalid values."""

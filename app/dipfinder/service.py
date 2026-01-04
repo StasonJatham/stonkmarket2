@@ -209,8 +209,27 @@ class DatabasePriceProvider:
         return results
 
     async def _save_prices_to_db(self, ticker: str, df: pd.DataFrame) -> None:
-        """Save price data to database."""
+        """Save price data to database with validation."""
         try:
+            # Validate prices before saving
+            from app.services.data_providers.smart_price_fetcher import get_smart_price_fetcher
+            fetcher = get_smart_price_fetcher()
+            
+            # Get existing last price for continuity check
+            existing_prices = await price_history_repo.get_latest_prices([ticker])
+            existing_price = existing_prices.get(ticker.upper())
+            
+            validation = fetcher.validate_prices(ticker, df, existing_price)
+            if not validation.valid:
+                logger.warning(f"Skipping save for {ticker}: {validation.error}")
+                return
+            
+            if validation.suspicious_dates:
+                logger.warning(
+                    f"{ticker} has {len(validation.suspicious_dates)} suspicious "
+                    f"price points - saving but flagging for review"
+                )
+            
             count = await price_history_repo.save_prices(ticker, df)
             logger.debug(f"Cached {count} price records for {ticker}")
         except Exception as e:

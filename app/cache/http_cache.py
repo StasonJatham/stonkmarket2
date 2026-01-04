@@ -40,6 +40,21 @@ logger = get_logger("cache.http")
 
 T = TypeVar("T")
 
+# Global data version - updated when data changes
+# This is set by bump_data_version() and used by CacheableResponse
+_data_version: str | None = None
+
+
+def set_data_version(version: str) -> None:
+    """Set the current data version for inclusion in responses."""
+    global _data_version
+    _data_version = version
+
+
+def get_data_version_sync() -> str | None:
+    """Get current data version (sync, for use in response headers)."""
+    return _data_version
+
 
 def generate_etag(data: Any) -> str:
     """Generate a weak ETag from data.
@@ -116,6 +131,10 @@ class CacheableResponse(JSONResponse):
                 "%a, %d %b %Y %H:%M:%S GMT"
             )
 
+        # Add data version for frontend cache invalidation
+        if _data_version:
+            self.headers["X-Data-Version"] = _data_version
+
 
 class NotModifiedResponse(Response):
     """304 Not Modified response for conditional requests."""
@@ -127,6 +146,9 @@ class NotModifiedResponse(Response):
             headers=headers,
         )
         self.headers["ETag"] = etag
+        # Add data version for frontend cache invalidation
+        if _data_version:
+            self.headers["X-Data-Version"] = _data_version
 
 
 def check_if_none_match(request: Request, etag: str) -> bool:

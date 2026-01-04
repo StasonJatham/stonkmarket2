@@ -146,7 +146,7 @@ def _fetch_economic_events_calendar(start: datetime, end: datetime) -> list[dict
 
 async def _run_in_executor(func, *args):
     """Run blocking yfinance call in thread pool."""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, func, *args)
 
 

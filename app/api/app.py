@@ -48,12 +48,14 @@ logger = get_logger("api")
 async def lifespan(app: FastAPI):
     """Manage application lifecycle - initialize and cleanup resources."""
     from app.cache.client import close_valkey_client, init_valkey_pool
+    from app.cache.data_version import init_data_version
     from app.database.connection import close_pg_pool, init_pg_pool
 
     # Initialize resources on startup
     try:
         await init_pg_pool()
         await init_valkey_pool()
+        await init_data_version()  # Load data version for response headers
     except Exception as e:
         logger.warning(f"Resource initialization failed (may be ok in tests): {e}")
 

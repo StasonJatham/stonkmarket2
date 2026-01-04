@@ -548,3 +548,77 @@ async def trigger_universe_sync(
             "message": str(e),
             "stats": {},
         }
+
+
+# =============================================================================
+# Price Data Management
+# =============================================================================
+
+
+@router.get(
+    "/prices/gaps",
+    summary="Get price data gap summary",
+    description="Analyze price data gaps for all tracked symbols.",
+)
+async def get_price_gaps(
+    user: TokenData = Depends(require_admin),
+) -> dict:
+    """Get summary of price data gaps."""
+    from app.repositories import symbols_orm as symbols_repo
+    from app.services.data_providers.smart_price_fetcher import get_smart_price_fetcher
+    
+    all_symbols = await symbols_repo.list_symbols()
+    tickers = [s.symbol for s in all_symbols if s.symbol not in ("SPY", "^GSPC", "URTH")]
+    
+    fetcher = get_smart_price_fetcher()
+    summary = await fetcher.get_gaps_summary(tickers)
+    
+    return summary
+
+
+@router.post(
+    "/prices/refresh",
+    summary="Refresh price data",
+    description="Smart batch refresh of price data - only fetches missing data.",
+)
+async def refresh_prices(
+    user: TokenData = Depends(require_admin),
+    symbols: list[str] | None = None,
+) -> dict:
+    """Refresh price data with smart batching.
+    
+    Args:
+        symbols: Optional list of symbols to refresh (default: all)
+    """
+    from app.repositories import symbols_orm as symbols_repo
+    from app.services.data_providers.smart_price_fetcher import get_smart_price_fetcher
+    
+    logger.info(f"Price refresh triggered by {user.username}")
+    
+    if symbols:
+        tickers = [s.upper() for s in symbols]
+    else:
+        all_symbols = await symbols_repo.list_symbols()
+        tickers = [s.symbol for s in all_symbols if s.symbol not in ("SPY", "^GSPC", "URTH")]
+    
+    fetcher = get_smart_price_fetcher()
+    
+    try:
+        results = await fetcher.fetch_and_save(tickers, validate=True)
+        
+        total_records = sum(results.values())
+        symbols_updated = sum(1 for count in results.values() if count > 0)
+        
+        return {
+            "success": True,
+            "message": f"Updated {symbols_updated} symbols ({total_records} records)",
+            "symbols_requested": len(tickers),
+            "symbols_updated": symbols_updated,
+            "total_records": total_records,
+        }
+    except Exception as e:
+        logger.exception(f"Price refresh failed: {e}")
+        return {
+            "success": False,
+            "message": str(e),
+        }

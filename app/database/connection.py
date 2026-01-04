@@ -245,6 +245,19 @@ async def get_engine() -> AsyncEngine:
     return _engine
 
 
+async def get_session_factory() -> async_sessionmaker[AsyncSession]:
+    """Get SQLAlchemy session factory, initializing if necessary.
+    
+    This is used by the session dependency in app/database/session.py.
+    """
+    global _session_factory
+    if _session_factory is None:
+        await init_sqlalchemy_engine()
+    if _session_factory is None:
+        raise RuntimeError("Session factory not initialized")
+    return _session_factory
+
+
 @asynccontextmanager
 async def get_session() -> AsyncIterator[AsyncSession]:
     """Get an async SQLAlchemy session.

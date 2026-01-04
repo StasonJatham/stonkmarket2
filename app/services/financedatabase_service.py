@@ -76,7 +76,7 @@ async def _fallback_get_by_symbol(symbol: str) -> dict[str, Any] | None:
         ("fund", fd.Funds),
     ]:
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             df = await loop.run_in_executor(None, lambda: loader_cls().select())
             
             if symbol_upper in df.index:
@@ -141,7 +141,7 @@ async def _fallback_search(
             continue
             
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             df = await loop.run_in_executor(None, lambda ac=asset_class: loader_map[ac]().select())
             df = df.reset_index().rename(columns={"index": "symbol"})
             
@@ -303,7 +303,7 @@ async def ingest_asset_class(asset_class: str) -> int:
     logger.info(f"Loading {asset_class} data from financedatabase...")
     
     # Load data in thread pool (synchronous pandas I/O)
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     df = await loop.run_in_executor(None, _load_financedatabase_class, asset_class)
     
     logger.info(f"Loaded {len(df)} {asset_class} records, normalizing...")
