@@ -32,6 +32,9 @@ def _portfolio_to_dict(p: Portfolio) -> dict[str, Any]:
         "description": p.description,
         "base_currency": p.base_currency,
         "is_active": p.is_active,
+        "visibility": p.visibility or "private",
+        "share_token": p.share_token,
+        "shared_at": p.shared_at,
         "ai_analysis_summary": p.ai_analysis_summary,
         "ai_analysis_hash": p.ai_analysis_hash,
         "ai_analysis_at": p.ai_analysis_at,
@@ -46,6 +49,7 @@ async def create_portfolio(
     *,
     description: str | None = None,
     base_currency: str = "USD",
+    visibility: str = "private",
 ) -> dict[str, Any]:
     """Create a new portfolio."""
     async with get_session() as session:
@@ -55,6 +59,7 @@ async def create_portfolio(
             description=description,
             base_currency=base_currency,
             is_active=True,
+            visibility=visibility,
         )
         session.add(portfolio)
         await session.commit()
@@ -151,6 +156,101 @@ async def archive_portfolio(portfolio_id: int, user_id: int) -> bool:
         portfolio.updated_at = datetime.now()
         await session.commit()
         return True
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+# Visibility & Sharing (Multi-Tenant)
+# ───────────────────────────────────────────────────────────────────────────────
+
+
+async def get_portfolio_with_visibility(portfolio_id: int) -> dict[str, Any] | None:
+    """
+    Get portfolio with visibility info for authorization checks.
+    
+    This function does NOT check ownership - use for authorization layer.
+    """
+    async with get_session() as session:
+        result = await session.execute(
+            select(Portfolio).where(
+                Portfolio.id == portfolio_id,
+                Portfolio.is_active == True,
+            )
+        )
+        portfolio = result.scalar_one_or_none()
+        return _portfolio_to_dict(portfolio) if portfolio else None
+
+
+async def get_portfolio_by_share_token(share_token: str) -> dict[str, Any] | None:
+    """Get a portfolio by its share token (for public/shared access)."""
+    async with get_session() as session:
+        result = await session.execute(
+            select(Portfolio).where(
+                Portfolio.share_token == share_token,
+                Portfolio.is_active == True,
+            )
+        )
+        portfolio = result.scalar_one_or_none()
+        return _portfolio_to_dict(portfolio) if portfolio else None
+
+
+async def set_share_token(
+    portfolio_id: int,
+    share_token: str | None,
+    visibility: str,
+) -> bool:
+    """Set or revoke share token and update visibility."""
+    async with get_session() as session:
+        result = await session.execute(
+            select(Portfolio).where(Portfolio.id == portfolio_id)
+        )
+        portfolio = result.scalar_one_or_none()
+        if not portfolio:
+            return False
+        
+        portfolio.share_token = share_token
+        portfolio.visibility = visibility
+        portfolio.shared_at = datetime.now() if share_token else None
+        portfolio.updated_at = datetime.now()
+        await session.commit()
+        return True
+
+
+async def update_portfolio_visibility(
+    portfolio_id: int,
+    visibility: str,
+) -> bool:
+    """Update portfolio visibility."""
+    async with get_session() as session:
+        result = await session.execute(
+            select(Portfolio).where(Portfolio.id == portfolio_id)
+        )
+        portfolio = result.scalar_one_or_none()
+        if not portfolio:
+            return False
+        
+        portfolio.visibility = visibility
+        portfolio.updated_at = datetime.now()
+        await session.commit()
+        return True
+
+
+async def list_public_portfolios(
+    limit: int = 20,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    """List public portfolios for discovery."""
+    async with get_session() as session:
+        result = await session.execute(
+            select(Portfolio)
+            .where(
+                Portfolio.visibility == "public",
+                Portfolio.is_active == True,
+            )
+            .order_by(desc(Portfolio.updated_at))
+            .limit(limit)
+            .offset(offset)
+        )
+        return [_portfolio_to_dict(p) for p in result.scalars().all()]
 
 
 # ───────────────────────────────────────────────────────────────────────────────

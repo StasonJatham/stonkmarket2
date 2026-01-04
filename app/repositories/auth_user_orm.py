@@ -22,18 +22,36 @@ from app.database.orm import AuthUser as AuthUserORM
 logger = get_logger("repositories.auth_user_orm")
 
 
+# Default preferences for new users
+DEFAULT_USER_PREFERENCES = {
+    "theme": "system",
+    "chart_period": "1Y",
+    "currency": "USD",
+    "notifications": True,
+    "onboarding_complete": False,
+}
+
+
 @dataclass
 class AuthUser:
-    """Authentication user with MFA support."""
+    """Authentication user with multi-tenant and MFA support."""
 
     id: int
     username: str
-    password_hash: str
+    password_hash: str | None
     is_admin: bool = False
+    email: str | None = None
+    email_verified: bool = False
+    avatar_url: str | None = None
+    preferences: dict | None = None
+    auth_provider: str = "local"
+    provider_id: str | None = None
     mfa_secret: str | None = None
     mfa_enabled: bool = False
     mfa_backup_codes: str | None = None  # JSON list of hashed backup codes
+    created_at: datetime | None = None
     updated_at: datetime | None = None
+    last_login_at: datetime | None = None
 
     @classmethod
     def from_orm(cls, user: AuthUserORM) -> AuthUser:
@@ -43,10 +61,18 @@ class AuthUser:
             username=user.username,
             password_hash=user.password_hash,
             is_admin=user.is_admin or False,
+            email=user.email,
+            email_verified=user.email_verified or False,
+            avatar_url=user.avatar_url,
+            preferences=user.preferences or {},
+            auth_provider=user.auth_provider or "local",
+            provider_id=user.provider_id,
             mfa_secret=user.mfa_secret,
             mfa_enabled=user.mfa_enabled or False,
             mfa_backup_codes=user.mfa_backup_codes,
+            created_at=user.created_at,
             updated_at=user.updated_at,
+            last_login_at=user.last_login_at,
         )
 
 
@@ -318,3 +344,216 @@ async def seed_admin_from_env() -> None:
             await session.execute(stmt)
             await session.commit()
         logger.info(f"Created admin user '{username}' from environment")
+
+
+# =============================================================================
+# OAUTH & SOCIAL AUTH FUNCTIONS
+# =============================================================================
+
+
+async def get_user_by_email(email: str) -> AuthUser | None:
+    """Get a user by email address."""
+    async with get_session() as session:
+        result = await session.execute(
+            select(AuthUserORM).where(AuthUserORM.email == email.lower())
+        )
+        user = result.scalar_one_or_none()
+
+        if user:
+            return AuthUser.from_orm(user)
+        return None
+
+
+async def get_user_by_provider(provider: str, provider_id: str) -> AuthUser | None:
+    """Get a user by OAuth provider and provider ID."""
+    async with get_session() as session:
+        result = await session.execute(
+            select(AuthUserORM).where(
+                AuthUserORM.auth_provider == provider,
+                AuthUserORM.provider_id == provider_id,
+            )
+        )
+        user = result.scalar_one_or_none()
+
+        if user:
+            return AuthUser.from_orm(user)
+        return None
+
+
+async def create_oauth_user(
+    username: str,
+    email: str | None,
+    avatar_url: str | None,
+    auth_provider: str,
+    provider_id: str,
+) -> AuthUser:
+    """Create a new user from OAuth provider."""
+    from app.repositories import portfolios_orm as portfolios_repo
+    
+    now = datetime.now(UTC)
+    
+    async with get_session() as session:
+        # Check if username exists, if so append a random suffix
+        base_username = username.lower()
+        final_username = base_username
+        counter = 1
+        
+        while True:
+            result = await session.execute(
+                select(AuthUserORM.id).where(AuthUserORM.username == final_username)
+            )
+            if result.scalar_one_or_none() is None:
+                break
+            final_username = f"{base_username}{counter}"
+            counter += 1
+        
+        new_user = AuthUserORM(
+            username=final_username,
+            email=email.lower() if email else None,
+            email_verified=True if email else False,  # OAuth emails are verified
+            avatar_url=avatar_url,
+            auth_provider=auth_provider,
+            provider_id=provider_id,
+            password_hash=None,  # No password for OAuth users
+            preferences=DEFAULT_USER_PREFERENCES.copy(),
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(new_user)
+        await session.flush()  # Get user.id
+        
+        user_id = new_user.id
+        await session.commit()
+    
+    # Create default portfolio for new user (outside the auth session)
+    await portfolios_repo.create_portfolio(
+        user_id=user_id,
+        name="My Portfolio",
+        description="Your first portfolio - add holdings to get started!",
+        base_currency="USD",
+    )
+    
+    return await get_user_by_id(user_id)  # type: ignore
+
+
+async def link_provider(user_id: int, provider: str, provider_id: str) -> bool:
+    """Link an OAuth provider to an existing user account."""
+    async with get_session() as session:
+        result = await session.execute(
+            select(AuthUserORM).where(AuthUserORM.id == user_id)
+        )
+        user = result.scalar_one_or_none()
+        
+        if user:
+            user.auth_provider = provider
+            user.provider_id = provider_id
+            user.updated_at = datetime.now(UTC)
+            await session.commit()
+            return True
+        return False
+
+
+async def update_last_login(user_id: int) -> None:
+    """Update last login timestamp for a user."""
+    async with get_session() as session:
+        result = await session.execute(
+            select(AuthUserORM).where(AuthUserORM.id == user_id)
+        )
+        user = result.scalar_one_or_none()
+        
+        if user:
+            user.last_login_at = datetime.now(UTC)
+            await session.commit()
+
+
+async def update_user_preferences(user_id: int, preferences: dict) -> dict:
+    """Update user preferences (merge with existing)."""
+    async with get_session() as session:
+        result = await session.execute(
+            select(AuthUserORM).where(AuthUserORM.id == user_id)
+        )
+        user = result.scalar_one_or_none()
+        
+        if user:
+            existing_prefs = user.preferences or {}
+            merged_prefs = {**existing_prefs, **preferences}
+            user.preferences = merged_prefs
+            user.updated_at = datetime.now(UTC)
+            await session.commit()
+            return merged_prefs
+        return {}
+
+
+async def get_user_preferences(user_id: int) -> dict:
+    """Get user preferences."""
+    async with get_session() as session:
+        result = await session.execute(
+            select(AuthUserORM.preferences).where(AuthUserORM.id == user_id)
+        )
+        prefs = result.scalar_one_or_none()
+        return prefs or DEFAULT_USER_PREFERENCES.copy()
+
+
+async def update_user_profile(
+    user_id: int,
+    email: str | None = None,
+    avatar_url: str | None = None,
+) -> AuthUser | None:
+    """Update user profile fields."""
+    async with get_session() as session:
+        result = await session.execute(
+            select(AuthUserORM).where(AuthUserORM.id == user_id)
+        )
+        user = result.scalar_one_or_none()
+        
+        if user:
+            if email is not None:
+                user.email = email.lower()
+                user.email_verified = False  # Needs re-verification
+            if avatar_url is not None:
+                user.avatar_url = avatar_url
+            user.updated_at = datetime.now(UTC)
+            await session.commit()
+            return AuthUser.from_orm(user)
+        return None
+
+
+async def create_user_with_defaults(
+    username: str,
+    password_hash: str,
+    email: str | None = None,
+) -> AuthUser:
+    """
+    Create a new user with default portfolio and preferences.
+    
+    Used for local registration (not OAuth).
+    """
+    from app.repositories import portfolios_orm as portfolios_repo
+    
+    now = datetime.now(UTC)
+    
+    async with get_session() as session:
+        new_user = AuthUserORM(
+            username=username.lower(),
+            email=email.lower() if email else None,
+            password_hash=password_hash,
+            auth_provider="local",
+            preferences=DEFAULT_USER_PREFERENCES.copy(),
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(new_user)
+        await session.flush()
+        
+        user_id = new_user.id
+        await session.commit()
+    
+    # Create default portfolio
+    await portfolios_repo.create_portfolio(
+        user_id=user_id,
+        name="My Portfolio",
+        description="Your first portfolio - add holdings to get started!",
+        base_currency="USD",
+    )
+    
+    return await get_user_by_id(user_id)  # type: ignore

@@ -30,6 +30,7 @@ from .routes import (
     market,
     metrics,
     mfa,
+    oauth,
     portfolios,
     quant_engine,
     seo,
@@ -38,6 +39,7 @@ from .routes import (
     swipe,
     symbols,
     user_api_keys,
+    users,
 )
 
 
@@ -49,6 +51,7 @@ async def lifespan(app: FastAPI):
     """Manage application lifecycle - initialize and cleanup resources."""
     from app.cache.client import close_valkey_client, init_valkey_pool
     from app.cache.data_version import init_data_version
+    from app.core.oauth import configure_oauth
     from app.database.connection import close_pg_pool, init_pg_pool
 
     # Initialize resources on startup
@@ -56,6 +59,7 @@ async def lifespan(app: FastAPI):
         await init_pg_pool()
         await init_valkey_pool()
         await init_data_version()  # Load data version for response headers
+        configure_oauth()  # Setup OAuth providers
     except Exception as e:
         logger.warning(f"Resource initialization failed (may be ok in tests): {e}")
 
@@ -192,7 +196,9 @@ def create_api_app() -> FastAPI:
     # Include routers
     app.include_router(health.router, tags=["Health"])
     app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
+    app.include_router(oauth.router, tags=["OAuth"])
     app.include_router(mfa.router, prefix="/auth/mfa", tags=["MFA"])
+    app.include_router(users.router, tags=["Users"])
     app.include_router(api_keys.router, prefix="/admin/api-keys", tags=["API Keys"])
     app.include_router(
         admin_settings.router, prefix="/admin/settings", tags=["Admin Settings"]

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
+from enum import Enum as PyEnum
 
 from sqlalchemy import (
     BigInteger,
@@ -24,6 +25,7 @@ from sqlalchemy import (
     CheckConstraint,
     Date,
     DateTime,
+    Enum,
     ForeignKey,
     Index,
     Integer,
@@ -61,23 +63,55 @@ class Base(DeclarativeBase):
 
 
 # =============================================================================
+# ENUMS
+# =============================================================================
+
+
+class AuthProvider(str, PyEnum):
+    """Authentication provider types."""
+    LOCAL = "local"
+    GOOGLE = "google"
+    GITHUB = "github"
+
+
+class ResourceVisibility(str, PyEnum):
+    """Visibility levels for shareable resources."""
+    PRIVATE = "private"
+    PUBLIC = "public"
+    SHARED_LINK = "shared_link"
+
+
+# =============================================================================
 # AUTH & SECURITY
 # =============================================================================
 
 
 class AuthUser(Base):
-    """Authentication user with MFA support."""
+    """Authentication user with multi-tenant and MFA support."""
     __tablename__ = "auth_user"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     username: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
-    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    email: Mapped[str | None] = mapped_column(String(255), unique=True)
+    email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    password_hash: Mapped[str | None] = mapped_column(String(255))  # Nullable for OAuth users
+    avatar_url: Mapped[str | None] = mapped_column(Text)
+    preferences: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}")
+    
+    # Auth provider tracking for social login
+    auth_provider: Mapped[str] = mapped_column(String(20), default="local")
+    provider_id: Mapped[str | None] = mapped_column(String(255))  # External provider's user ID
+    
+    # Admin & MFA
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     mfa_secret: Mapped[str | None] = mapped_column(String(64))
     mfa_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     mfa_backup_codes: Mapped[str | None] = mapped_column(Text)  # JSON array of hashed codes
+    
+    # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     # Relationships
     api_keys: Mapped[list[UserApiKey]] = relationship(back_populates="user")
@@ -87,6 +121,8 @@ class AuthUser(Base):
 
     __table_args__ = (
         Index("idx_auth_user_username", "username"),
+        Index("idx_auth_user_email", "email", postgresql_where=text("email IS NOT NULL")),
+        Index("idx_auth_user_provider", "auth_provider", "provider_id", postgresql_where=text("provider_id IS NOT NULL")),
     )
 
 
@@ -1029,7 +1065,7 @@ class FinancialUniverse(Base):
 
 
 class Portfolio(Base):
-    """User-managed investment portfolio."""
+    """User-managed investment portfolio with visibility controls."""
     __tablename__ = "portfolios"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -1038,6 +1074,12 @@ class Portfolio(Base):
     description: Mapped[str | None] = mapped_column(Text)
     base_currency: Mapped[str] = mapped_column(String(10), default="USD")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    
+    # Visibility controls for multi-tenant sharing
+    visibility: Mapped[str] = mapped_column(String(20), default="private")
+    share_token: Mapped[str | None] = mapped_column(String(32), unique=True)
+    shared_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    
     # AI analysis tracking
     ai_analysis_summary: Mapped[str | None] = mapped_column(Text)
     ai_analysis_hash: Mapped[str | None] = mapped_column(String(32))  # MD5 of holdings state
@@ -1055,6 +1097,8 @@ class Portfolio(Base):
     __table_args__ = (
         Index("idx_portfolios_user", "user_id"),
         Index("idx_portfolios_active", "is_active", postgresql_where=text("is_active = TRUE")),
+        Index("idx_portfolios_visibility", "visibility", postgresql_where=text("visibility = 'public'")),
+        Index("idx_portfolios_share_token", "share_token", postgresql_where=text("share_token IS NOT NULL")),
     )
 
 

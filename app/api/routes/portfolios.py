@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
-from datetime import date
+import secrets
+from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, Query, UploadFile, File, Form, status
 from pydantic import BaseModel
 
-from app.api.dependencies import require_user
+from app.api.dependencies import (
+    CurrentAdmin,
+    EditPortfolio,
+    SharePortfolio,
+    ViewPortfolio,
+    require_user,
+)
+from app.core.config import settings
 from app.core.exceptions import NotFoundError, ValidationError
 from app.core.security import TokenData
 from app.portfolio.service import (
@@ -37,9 +45,13 @@ from app.schemas.portfolio import (
     PortfolioDetailResponse,
     PortfolioResponse,
     PortfolioUpdateRequest,
+    PortfolioVisibility,
+    PublicPortfolioSummary,
+    ShareLinkResponse,
     ToolResult,
     TransactionInput,
     TransactionResponse,
+    VisibilityUpdateRequest,
 )
 
 
@@ -73,9 +85,46 @@ async def create_portfolio(
         payload.name,
         description=payload.description,
         base_currency=payload.base_currency,
-        cash_balance=payload.cash_balance or 0,
+        visibility=payload.visibility.value,
     )
     return PortfolioResponse(**created)
+
+
+# ============================================================================
+# Public/Shared Endpoints (MUST be before /{portfolio_id} to avoid route conflicts)
+# ============================================================================
+
+
+@router.get("/public", response_model=list[PublicPortfolioSummary])
+async def list_public_portfolios(
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+) -> list[PublicPortfolioSummary]:
+    """List all public portfolios for discovery."""
+    rows = await portfolios_repo.list_public_portfolios(limit=limit, offset=offset)
+    return [PublicPortfolioSummary(**r) for r in rows]
+
+
+@router.get("/shared/{share_token}", response_model=PortfolioDetailResponse)
+async def get_shared_portfolio(
+    share_token: str,
+) -> PortfolioDetailResponse:
+    """Access a portfolio via share link (no authentication required)."""
+    portfolio = await portfolios_repo.get_portfolio_by_share_token(share_token)
+    if not portfolio:
+        raise NotFoundError(message="Portfolio not found or sharing expired")
+    holdings = await portfolios_repo.list_holdings(portfolio["id"])
+    transactions = await portfolios_repo.list_transactions(portfolio["id"])
+    return PortfolioDetailResponse(
+        **portfolio,
+        holdings=[HoldingResponse(**h) for h in holdings],
+        transactions=[TransactionResponse(**t) for t in transactions],
+    )
+
+
+# ============================================================================
+# Authenticated Portfolio Endpoints
+# ============================================================================
 
 
 @router.get("/{portfolio_id}", response_model=PortfolioDetailResponse)
@@ -128,6 +177,57 @@ async def delete_portfolio(
     if not success:
         raise NotFoundError(message="Portfolio not found")
     await invalidate_portfolio_analytics_cache(portfolio_id)
+
+
+# ============================================================================
+# Visibility & Sharing Endpoints
+# ============================================================================
+
+
+@router.patch("/{portfolio_id}/visibility", response_model=PortfolioResponse)
+async def update_visibility(
+    payload: VisibilityUpdateRequest,
+    portfolio_id: SharePortfolio,
+) -> PortfolioResponse:
+    """Update portfolio visibility (private, public, shared_link)."""
+    updated = await portfolios_repo.update_portfolio_visibility(
+        portfolio_id,
+        visibility=payload.visibility.value,
+    )
+    if not updated:
+        raise NotFoundError(message="Portfolio not found")
+    return PortfolioResponse(**updated)
+
+
+@router.post("/{portfolio_id}/share", response_model=ShareLinkResponse)
+async def create_share_link(
+    portfolio_id: SharePortfolio,
+) -> ShareLinkResponse:
+    """Generate a share link for the portfolio."""
+    # Generate a URL-safe token
+    token = secrets.token_urlsafe(32)
+    
+    updated = await portfolios_repo.set_share_token(portfolio_id, token)
+    if not updated:
+        raise NotFoundError(message="Portfolio not found")
+    
+    # Construct the share URL
+    base_url = settings.oauth_redirect_url or "https://stonkmarket.app"
+    share_url = f"{base_url}/portfolios/shared/{token}"
+    
+    return ShareLinkResponse(
+        share_token=token,
+        share_url=share_url,
+        shared_at=updated["shared_at"],
+    )
+
+
+@router.delete("/{portfolio_id}/share", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_share_link(
+    portfolio_id: SharePortfolio,
+) -> None:
+    """Revoke the share link for the portfolio."""
+    await portfolios_repo.set_share_token(portfolio_id, None)
 
 
 @router.get("/{portfolio_id}/holdings", response_model=list[HoldingResponse])

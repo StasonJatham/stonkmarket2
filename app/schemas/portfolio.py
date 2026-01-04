@@ -9,12 +9,22 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator
 
 
+class PortfolioVisibility(str, Enum):
+    """Portfolio visibility options."""
+    
+    private = "private"
+    public = "public"
+    shared_link = "shared_link"
+
+
 class PortfolioCreateRequest(BaseModel):
     """Create portfolio request."""
 
     name: str = Field(..., min_length=1, max_length=120)
     description: str | None = Field(default=None, max_length=2000)
     base_currency: str = Field(default="USD", max_length=10)
+    cash_balance: float | None = Field(default=None, ge=0)
+    visibility: PortfolioVisibility = Field(default=PortfolioVisibility.private)
 
 
 class PortfolioUpdateRequest(BaseModel):
@@ -24,6 +34,7 @@ class PortfolioUpdateRequest(BaseModel):
     description: str | None = Field(default=None, max_length=2000)
     base_currency: str | None = Field(default=None, max_length=10)
     is_active: bool | None = None
+    visibility: PortfolioVisibility | None = None
 
 
 class PortfolioResponse(BaseModel):
@@ -35,6 +46,10 @@ class PortfolioResponse(BaseModel):
     description: str | None = None
     base_currency: str
     is_active: bool
+    # Visibility settings
+    visibility: PortfolioVisibility = Field(default=PortfolioVisibility.private)
+    share_token: str | None = None
+    shared_at: datetime | None = None
     # AI analysis
     ai_analysis_summary: str | None = None
     ai_analysis_at: datetime | None = None
@@ -219,3 +234,28 @@ class AIPortfolioAnalysis(BaseModel):
         max_length=3,
         description="0-3 risk alerts (empty if none)"
     )
+
+
+class VisibilityUpdateRequest(BaseModel):
+    """Update portfolio visibility."""
+    
+    visibility: PortfolioVisibility
+
+
+class ShareLinkResponse(BaseModel):
+    """Response with share link details."""
+    
+    share_token: str
+    share_url: str
+    shared_at: datetime
+
+
+class PublicPortfolioSummary(BaseModel):
+    """Public portfolio for discovery listings."""
+    
+    id: int
+    name: str
+    description: str | None = None
+    holdings_count: int
+    owner_username: str
+    created_at: datetime

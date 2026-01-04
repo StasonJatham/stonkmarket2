@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from fastapi import Cookie, Depends, Header, Request
+from dataclasses import dataclass
+from enum import Enum
+from typing import Annotated
+
+from fastapi import Cookie, Depends, Header, Path, Request
 
 from app.cache.rate_limit import check_rate_limit
 from app.core.client_identity import (
@@ -12,12 +16,19 @@ from app.core.client_identity import (
     get_vote_identifier,
 )
 from app.core.config import settings
-from app.core.exceptions import AuthenticationError, AuthorizationError
+from app.core.exceptions import AuthenticationError, AuthorizationError, NotFoundError
 from app.core.security import TokenData, decode_access_token, validate_token_not_revoked
 
 
 # Re-export identity functions
 __all__ = [
+    "CurrentAdmin",
+    "DeletePortfolio",
+    "EditPortfolio",
+    "Permission",
+    "ResourceAccess",
+    "ViewPortfolio",
+    "check_portfolio_access",
     "get_client_ip",
     "get_current_user",
     "get_db",
@@ -29,6 +40,145 @@ __all__ = [
     "require_admin",
     "require_user",
 ]
+
+
+# =============================================================================
+# RESOURCE-BASED AUTHORIZATION
+# =============================================================================
+
+
+class Permission(str, Enum):
+    """Resource permissions for authorization checks."""
+    VIEW = "view"
+    EDIT = "edit"
+    DELETE = "delete"
+    SHARE = "share"
+
+
+@dataclass
+class ResourceAccess:
+    """Result of an authorization check."""
+    allowed: bool
+    reason: str
+    is_owner: bool = False
+    is_admin: bool = False
+    is_public: bool = False
+
+
+async def _get_user_id_from_token(user: TokenData) -> int | None:
+    """Get user ID from token data."""
+    from app.repositories import auth_user_orm as auth_repo
+    record = await auth_repo.get_user(user.sub)
+    return record.id if record else None
+
+
+async def check_portfolio_access(
+    portfolio_id: int,
+    user: TokenData | None,
+    permission: Permission = Permission.VIEW,
+) -> ResourceAccess:
+    """
+    Check if user can access a portfolio.
+    
+    Authorization Logic:
+    1. Owner -> Full access (view, edit, delete, share)
+    2. Admin -> Full access (for support/moderation)
+    3. Public visibility -> View only
+    4. Shared link -> View only (checked separately)
+    5. Else -> Denied
+    
+    Returns:
+        ResourceAccess with allowed=True/False and reason
+    """
+    from app.repositories import portfolios_orm as portfolios_repo
+    
+    # Fetch portfolio with visibility info
+    portfolio = await portfolios_repo.get_portfolio_with_visibility(portfolio_id)
+    
+    if not portfolio:
+        return ResourceAccess(allowed=False, reason="Portfolio not found")
+    
+    # Check 1: Owner
+    if user:
+        user_id = await _get_user_id_from_token(user)
+        if user_id and portfolio["user_id"] == user_id:
+            return ResourceAccess(
+                allowed=True, 
+                reason="Owner access",
+                is_owner=True,
+            )
+    
+    # Check 2: Admin
+    if user and user.is_admin:
+        return ResourceAccess(
+            allowed=True,
+            reason="Admin access",
+            is_admin=True,
+        )
+    
+    # Check 3: Public visibility (view only)
+    visibility = portfolio.get("visibility", "private")
+    if visibility == "public" and permission == Permission.VIEW:
+        return ResourceAccess(
+            allowed=True,
+            reason="Public portfolio",
+            is_public=True,
+        )
+    
+    # Check 4: Non-view permission on public resource
+    if visibility == "public" and permission != Permission.VIEW:
+        return ResourceAccess(
+            allowed=False,
+            reason="Public portfolios are read-only",
+        )
+    
+    # Default: Denied
+    return ResourceAccess(
+        allowed=False,
+        reason="Access denied",
+    )
+
+
+async def _require_portfolio_access(
+    portfolio_id: int,
+    permission: Permission,
+    user: TokenData | None,
+) -> int:
+    """
+    Validate portfolio access and return portfolio_id if allowed.
+    
+    Raises appropriate HTTP exceptions if access denied.
+    """
+    access = await check_portfolio_access(portfolio_id, user, permission)
+    
+    if not access.allowed:
+        if access.reason == "Portfolio not found":
+            raise NotFoundError(message="Portfolio not found")
+        raise AuthorizationError(
+            message=access.reason,
+            error_code="PORTFOLIO_ACCESS_DENIED",
+        )
+    
+    return portfolio_id
+
+
+def PortfolioAccess(permission: Permission):
+    """Factory to create a dependency for specific permission level."""
+    async def dependency(
+        portfolio_id: int = Path(...),
+        user: TokenData = Depends(require_user),
+    ) -> int:
+        return await _require_portfolio_access(portfolio_id, permission, user)
+    return dependency
+
+
+# NOTE: PortfolioAccessOptionalAuth and typed aliases are defined after get_current_user
+# See "PORTFOLIO ACCESS DEPENDENCIES" section below
+
+
+# =============================================================================
+# TOKEN EXTRACTION
+# =============================================================================
 
 
 def _extract_token(
@@ -173,6 +323,31 @@ async def require_admin(
             error_code="ADMIN_REQUIRED",
         )
     return user
+
+
+# =============================================================================
+# PORTFOLIO ACCESS DEPENDENCIES (defined after get_current_user/require_user)
+# =============================================================================
+
+
+def PortfolioAccessOptionalAuth(permission: Permission):
+    """Factory for routes that allow public access (optional auth)."""
+    async def dependency(
+        portfolio_id: int = Path(...),
+        user: TokenData | None = Depends(get_current_user),
+    ) -> int:
+        return await _require_portfolio_access(portfolio_id, permission, user)
+    return dependency
+
+
+# Typed aliases for common portfolio access patterns
+ViewPortfolio = Annotated[int, Depends(PortfolioAccessOptionalAuth(Permission.VIEW))]
+EditPortfolio = Annotated[int, Depends(PortfolioAccess(Permission.EDIT))]
+DeletePortfolio = Annotated[int, Depends(PortfolioAccess(Permission.DELETE))]
+SharePortfolio = Annotated[int, Depends(PortfolioAccess(Permission.SHARE))]
+
+# Typed alias for admin-only endpoints
+CurrentAdmin = Annotated[TokenData, Depends(require_admin)]
 
 
 async def rate_limit_auth(

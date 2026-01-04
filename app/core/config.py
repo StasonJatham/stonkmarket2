@@ -171,6 +171,24 @@ class Settings(BaseSettings):
         default=90, ge=1, le=365, description="Days to cache logos before refetching"
     )
 
+    # OAuth / Social Authentication
+    google_client_id: str = Field(
+        default="", description="Google OAuth client ID"
+    )
+    google_client_secret: str = Field(
+        default="", description="Google OAuth client secret"
+    )
+    github_client_id: str = Field(
+        default="", description="GitHub OAuth client ID"
+    )
+    github_client_secret: str = Field(
+        default="", description="GitHub OAuth client secret"
+    )
+    oauth_redirect_url: str = Field(
+        default="http://localhost:5173",
+        description="URL to redirect to after OAuth callback (frontend)",
+    )
+
     # Logging
     log_level: str = Field(
         default="INFO", description="Log level: DEBUG, INFO, WARNING, ERROR"
