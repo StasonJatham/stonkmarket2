@@ -1,12 +1,14 @@
 """
-Unified YFinance Service - Single source of truth for ALL Yahoo Finance data.
+Unified YFinance Service - Single source of truth for Yahoo Finance metadata.
 
-This module centralizes ALL yfinance API calls to:
-1. Enforce rate limiting consistently via single entry point
-2. Maximize cache hit rate with 3-tier caching (memory → Valkey → DB)
-3. Track data versions for change detection (prices, fundamentals, calendar)
-4. Save ALL search results to DB for future local-first lookups
-5. Eliminate duplicate yfinance calls across the codebase
+This module centralizes yfinance API calls for:
+1. Ticker info (fundamentals, company data)
+2. Symbol search
+3. Calendar events (earnings, dividends)
+4. Financial statements
+
+NOTE: Price history is handled by app/services/prices.py (PriceService)
+which provides validation, caching, and DB persistence.
 
 Architecture:
 - Single ThreadPoolExecutor for all blocking yfinance calls
@@ -21,9 +23,6 @@ Usage:
     # Get stock info (3-tier cache, rate limited)
     info = await service.get_ticker_info("AAPL")
     
-    # Get price history with version tracking
-    prices, version = await service.get_price_history("AAPL", period="1y")
-    
     # Search symbols (saves to DB)
     results = await service.search_tickers("apple")
     
@@ -32,6 +31,11 @@ Usage:
     
     # Check if data changed
     changed = await service.has_data_changed("AAPL", "fundamentals", old_hash)
+    
+    # For price data, use PriceService instead:
+    from app.services.prices import get_price_service
+    price_service = get_price_service()
+    df = await price_service.get_prices("AAPL", start_date, end_date)
 """
 
 from __future__ import annotations
@@ -62,7 +66,7 @@ from app.database.orm import (
     SymbolSearchResult,
     YfinanceInfoCache,
 )
-from app.domain import PriceHistory, TickerInfo, TickerSearchResult
+from app.domain import TickerInfo, TickerSearchResult
 from app.services.data_providers.resilience import (
     CircuitBreaker,
     CircuitOpenError,
@@ -400,113 +404,6 @@ class YFinanceService:
         """Fetch complete ticker info from yfinance (blocking)."""
         data, status = self._fetch_ticker_info_with_status_sync(symbol)
         return data if status == "fetched" else None
-
-    def _fetch_price_history_sync(
-        self,
-        symbol: str,
-        period: str = "1y",
-        interval: str = "1d",
-    ) -> pd.DataFrame | None:
-        """Fetch price history from yfinance (blocking)."""
-        if not self._limiter.acquire_sync():
-            logger.warning(f"Rate limit timeout for price history: {symbol}")
-            return None
-
-        try:
-            df = yf.download(
-                symbol,
-                period=period,
-                interval=interval,
-                auto_adjust=True,
-                progress=False,
-                timeout=30,
-            )
-
-            if df.empty:
-                return None
-
-            # Handle MultiIndex columns (newer yfinance)
-            if isinstance(df.columns, pd.MultiIndex):
-                ticker_upper = symbol.upper()
-                try:
-                    if ticker_upper in df.columns.get_level_values(1):
-                        df = df.xs(ticker_upper, axis=1, level=1)
-                    else:
-                        df.columns = df.columns.droplevel(1)
-                except Exception:
-                    pass
-
-            return df
-        except Exception as e:
-            logger.warning(f"yfinance price history failed for {symbol}: {e}")
-            return None
-
-    def _fetch_price_history_batch_sync(
-        self,
-        symbols: list[str],
-        start: str,
-        end: str,
-    ) -> dict[str, pd.DataFrame]:
-        """Batch fetch price history (blocking)."""
-        if not self._limiter.acquire_sync():
-            logger.warning("Rate limit timeout for batch price history")
-            return {}
-
-        try:
-            if len(symbols) == 1:
-                df = yf.download(
-                    symbols[0],
-                    start=start,
-                    end=end,
-                    auto_adjust=True,
-                    progress=False,
-                    timeout=30,
-                )
-                if df.empty:
-                    return {}
-                # Normalize
-                if isinstance(df.columns, pd.MultiIndex):
-                    try:
-                        df.columns = df.columns.droplevel(1)
-                    except Exception:
-                        pass
-                return {symbols[0]: df}
-
-            df = yf.download(
-                " ".join(symbols),
-                start=start,
-                end=end,
-                auto_adjust=True,
-                group_by="ticker",
-                progress=False,
-                timeout=30,
-            )
-
-            if df.empty:
-                return {}
-
-            results = {}
-            for symbol in symbols:
-                try:
-                    if isinstance(df.columns, pd.MultiIndex):
-                        if symbol in df.columns.get_level_values(0):
-                            ticker_df = df[symbol]
-                        elif symbol.upper() in df.columns.get_level_values(1):
-                            ticker_df = df.xs(symbol.upper(), axis=1, level=1)
-                        else:
-                            continue
-                    else:
-                        ticker_df = df
-
-                    if not ticker_df.empty:
-                        results[symbol] = ticker_df
-                except Exception as e:
-                    logger.debug(f"Failed to extract {symbol} from batch: {e}")
-
-            return results
-        except Exception as e:
-            logger.warning(f"yfinance batch price history failed: {e}")
-            return {}
 
     def _search_tickers_sync(self, query: str, max_results: int = 10) -> list[dict[str, Any]]:
         """Search for tickers (blocking)."""
@@ -1067,152 +964,6 @@ class YFinanceService:
 
         return info
 
-    async def get_price_history(
-        self,
-        symbol: str,
-        period: str = "1y",
-        interval: str = "1d",
-        start_date: date | None = None,
-        end_date: date | None = None,
-    ) -> tuple[pd.DataFrame | None, DataVersion | None]:
-        """
-        Get price history with version tracking.
-        
-        Returns:
-            Tuple of (DataFrame, DataVersion) for change detection
-        """
-        symbol = symbol.upper()
-
-        async def _do_fetch() -> pd.DataFrame | None:
-            """Inner fetch with circuit breaker protection."""
-            try:
-                await _circuit_breaker.guard()
-            except CircuitOpenError as e:
-                logger.warning(f"Circuit open for yfinance prices, skipping {symbol}: {e}")
-                return None
-
-            async with _executor_semaphore:
-                loop = asyncio.get_running_loop()
-                try:
-                    if start_date and end_date:
-                        # Specific date range - use batch method
-                        results = await loop.run_in_executor(
-                            _executor,
-                            self._fetch_price_history_batch_sync,
-                            [symbol],
-                            start_date.isoformat(),
-                            end_date.isoformat(),
-                        )
-                        result = results.get(symbol)
-                    else:
-                        result = await loop.run_in_executor(
-                            _executor,
-                            self._fetch_price_history_sync,
-                            symbol,
-                            period,
-                            interval,
-                        )
-                    if result is not None:
-                        _circuit_breaker.record_success()
-                    return result
-                except Exception as e:
-                    _circuit_breaker.record_failure(e)
-                    raise
-
-        # Use request coalescing for price history
-        coalesce_key = f"prices:{symbol}:{period}:{interval}"
-        if start_date and end_date:
-            coalesce_key = f"prices:{symbol}:{start_date}:{end_date}"
-
-        df = await _request_coalescer.execute(coalesce_key, _do_fetch)
-
-        if df is None or df.empty:
-            return None, None
-
-        # Find last non-NaN close value (some markets may have holidays)
-        valid_closes = df["Close"].dropna()
-        if len(valid_closes) > 0:
-            last_date = valid_closes.index[-1]
-            last_close = float(valid_closes.iloc[-1])
-        else:
-            last_date = df.index[-1] if len(df) > 0 else None
-            last_close = None
-
-        version = DataVersion(
-            hash=_compute_hash(df),
-            timestamp=datetime.now(UTC),
-            source="prices",
-            metadata={
-                "last_date": str(last_date.date()) if last_date else None,
-                "last_close": last_close,
-                "row_count": len(valid_closes) if len(valid_closes) > 0 else 0,
-            },
-        )
-
-        return df, version
-
-    async def get_price_history_batch(
-        self,
-        symbols: list[str],
-        start_date: date,
-        end_date: date,
-    ) -> dict[str, tuple[pd.DataFrame, DataVersion]]:
-        """
-        Batch fetch price history for multiple symbols.
-        
-        More efficient than individual calls due to single yfinance request.
-        """
-        symbols = [s.upper() for s in symbols]
-
-        # Check circuit breaker first
-        try:
-            await _circuit_breaker.guard()
-        except CircuitOpenError as e:
-            logger.warning(f"Circuit open for yfinance, skipping batch price history: {e}")
-            return {}
-
-        async with _executor_semaphore:
-            loop = asyncio.get_running_loop()
-            try:
-                raw_results = await loop.run_in_executor(
-                    _executor,
-                    self._fetch_price_history_batch_sync,
-                    symbols,
-                    start_date.isoformat(),
-                    end_date.isoformat(),
-                )
-                if raw_results:
-                    _circuit_breaker.record_success()
-            except Exception as e:
-                _circuit_breaker.record_failure(e)
-                raise
-
-        results = {}
-        for symbol, df in raw_results.items():
-            if df is not None and not df.empty:
-                # Find last non-NaN close value (some markets may have holidays)
-                valid_closes = df["Close"].dropna()
-                if len(valid_closes) > 0:
-                    last_date = valid_closes.index[-1]
-                    last_close = float(valid_closes.iloc[-1])
-                else:
-                    last_date = df.index[-1] if len(df) > 0 else None
-                    last_close = None
-
-                version = DataVersion(
-                    hash=_compute_hash(df),
-                    timestamp=datetime.now(UTC),
-                    source="prices",
-                    metadata={
-                        "last_date": str(last_date.date()) if last_date else None,
-                        "last_close": last_close,
-                        "row_count": len(valid_closes),
-                    },
-                )
-                results[symbol] = (df, version)
-
-        return results
-
     async def search_tickers(
         self,
         query: str,
@@ -1460,47 +1211,6 @@ class YFinanceService:
             return TickerInfo.model_validate(data)
         except Exception as e:
             logger.warning(f"Failed to validate TickerInfo for {symbol}: {e}")
-            return None
-
-    async def get_price_history_typed(
-        self,
-        symbol: str,
-        period: str = "1y",
-        interval: str = "1d",
-        skip_cache: bool = False,
-    ) -> PriceHistory | None:
-        """
-        Get price history as a validated Pydantic model.
-        
-        This is the preferred method for new code. Returns a PriceHistory
-        domain model with PriceBar objects and utility methods.
-        
-        Args:
-            symbol: Ticker symbol
-            period: Time period (1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y, 10y, ytd, max)
-            interval: Bar interval (1m, 5m, 15m, 30m, 1h, 1d, 1wk, 1mo)
-            skip_cache: If True, bypass cache and fetch fresh data
-            
-        Returns:
-            PriceHistory model or None if not found
-        """
-        df, version_hash = await self.get_price_history(
-            symbol,
-            period=period,
-            interval=interval,
-            skip_cache=skip_cache,
-        )
-        if df is None or df.empty:
-            return None
-        try:
-            return PriceHistory.from_dataframe(
-                symbol=symbol.upper(),
-                df=df,
-                interval=interval,  # type: ignore
-                version_hash=version_hash,
-            )
-        except Exception as e:
-            logger.warning(f"Failed to create PriceHistory for {symbol}: {e}")
             return None
 
     async def search_tickers_typed(

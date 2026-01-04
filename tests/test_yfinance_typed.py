@@ -109,41 +109,29 @@ class TestYFinanceTypedMethods:
             assert result is None
 
     @pytest.mark.asyncio
-    async def test_get_price_history_typed_returns_model(
+    async def test_price_history_model_from_dataframe(
         self,
-        yf_service,
         mock_price_df,
     ):
-        """get_price_history_typed should return PriceHistory model."""
-        with patch.object(
-            yf_service,
-            "get_price_history",
-            new_callable=AsyncMock,
-            return_value=(mock_price_df, "abc123"),
-        ):
-            result = await yf_service.get_price_history_typed("AAPL", period="1y")
-
-            assert result is not None
-            assert isinstance(result, PriceHistory)
-            assert result.symbol == "AAPL"
-            assert len(result) == 3
-            assert result.latest_close == 109.0
-            assert result.version_hash == "abc123"
+        """PriceHistory model can be created from DataFrame."""
+        # Create PriceHistory directly from DataFrame
+        history = PriceHistory.from_dataframe("AAPL", mock_price_df)
+        
+        assert history is not None
+        assert isinstance(history, PriceHistory)
+        assert history.symbol == "AAPL"
+        assert len(history) == 3
+        assert history.latest_close == 109.0
 
     @pytest.mark.asyncio
-    async def test_get_price_history_typed_returns_none_when_empty(
-        self,
-        yf_service,
-    ):
-        """get_price_history_typed should return None if DataFrame is empty."""
-        with patch.object(
-            yf_service,
-            "get_price_history",
-            new_callable=AsyncMock,
-            return_value=(pd.DataFrame(), None),
-        ):
-            result = await yf_service.get_price_history_typed("INVALID")
-            assert result is None
+    async def test_price_history_model_empty_dataframe(self):
+        """PriceHistory model handles empty DataFrame."""
+        empty_df = pd.DataFrame()
+        history = PriceHistory.from_dataframe("INVALID", empty_df)
+        
+        assert history is not None
+        assert len(history) == 0
+        assert history.latest_close is None
 
     @pytest.mark.asyncio
     async def test_search_tickers_typed_returns_models(
@@ -184,33 +172,27 @@ class TestYFinanceTypedMethods:
     @pytest.mark.asyncio
     async def test_price_history_model_utility_methods(
         self,
-        yf_service,
         mock_price_df,
     ):
         """PriceHistory model should have working utility methods."""
-        with patch.object(
-            yf_service,
-            "get_price_history",
-            new_callable=AsyncMock,
-            return_value=(mock_price_df, "hash123"),
-        ):
-            history = await yf_service.get_price_history_typed("AAPL")
-            assert history is not None
+        # Create PriceHistory directly from DataFrame
+        history = PriceHistory.from_dataframe("AAPL", mock_price_df)
+        assert history is not None
 
-            # Test slice
-            sliced = history.slice(2)
-            assert len(sliced) == 2
-            assert sliced.symbol == "AAPL"
+        # Test slice
+        sliced = history.slice(2)
+        assert len(sliced) == 2
+        assert sliced.symbol == "AAPL"
 
-            # Test to_dataframe roundtrip
-            df = history.to_dataframe()
-            assert len(df) == 3
-            assert list(df.columns) == ["Open", "High", "Low", "Close", "Volume"]
+        # Test to_dataframe roundtrip
+        df = history.to_dataframe()
+        assert len(df) == 3
+        assert list(df.columns) == ["Open", "High", "Low", "Close", "Volume"]
 
-            # Test iteration
-            bars = list(history)
-            assert len(bars) == 3
-            assert bars[0].close == 102.0
+        # Test iteration
+        bars = list(history)
+        assert len(bars) == 3
+        assert bars[0].close == 102.0
 
     @pytest.mark.asyncio
     async def test_ticker_info_computed_fields(

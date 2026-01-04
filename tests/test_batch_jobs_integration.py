@@ -1309,7 +1309,8 @@ class TestRealDBDataUnifiedBatch:
         from app.repositories import symbols_orm as symbols_repo
         from app.services.fundamentals import refresh_fundamentals, get_fundamentals_from_db
         from app.database.connection import fetch_one, fetch_all, execute
-        from app.services.data_providers import get_yfinance_service
+        from app.services.prices import get_price_service
+        from datetime import date, timedelta
 
         test_symbol = "NVDA"
         
@@ -1342,31 +1343,15 @@ class TestRealDBDataUnifiedBatch:
         print(f"      P/E: {db_fundamentals.get('pe_ratio')}")
         print(f"      Market Cap: {db_fundamentals.get('market_cap')}")
 
-        # Step 4: Fetch and store price history
+        # Step 4: Fetch and store price history using PriceService
         print(f"   🔄 Fetching price history...")
-        yf_service = get_yfinance_service()
-        prices, _ = await yf_service.get_price_history(test_symbol, period="3mo")
+        price_service = get_price_service()
+        end_date = date.today()
+        start_date = end_date - timedelta(days=90)  # 3 months
+        prices = await price_service.get_prices(test_symbol, start_date, end_date)
         
         if prices is not None and not prices.empty:
-            # Store a sample of prices
-            for idx, row in list(prices.iterrows())[:5]:  # Just first 5 for test
-                price_date = idx.date() if hasattr(idx, 'date') else idx
-                await execute(
-                    """
-                    INSERT INTO price_history (symbol, date, open, high, low, close, volume)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7)
-                    ON CONFLICT (symbol, date) DO UPDATE SET
-                        close = EXCLUDED.close
-                    """,
-                    test_symbol,
-                    price_date,
-                    float(row.get("Open", 0)),
-                    float(row.get("High", 0)),
-                    float(row.get("Low", 0)),
-                    float(row.get("Close", 0)),
-                    int(row.get("Volume", 0)),
-                )
-            print(f"   ✅ Stored {len(prices)} price points")
+            print(f"   ✅ PriceService returned {len(prices)} price points (auto-saved to DB)")
 
         # Verify price history
         price_count = await fetch_one(

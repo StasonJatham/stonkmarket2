@@ -314,6 +314,7 @@ Request → DipFinderService
 | Phase 1 | 513 | 8 | ✅ |
 | Phase 2 | 550 | 8 | ✅ (37 new tests: 29 domain + 8 typed service) |
 | Phase 6 | 588 | 8 | ✅ |
+| Phase 7 | 588 | 8 | ✅ |
 
 ---
 
@@ -330,39 +331,57 @@ Request → DipFinderService
 | P2 | Deprecated `get_event_loop()` | Multiple | ✅ Fixed |
 | P3 | Monolithic job definitions | `definitions.py` | ✅ Fixed (Phase 4) |
 | P3 | Overlapping price providers | Multiple | ✅ Fixed (Phase 6) |
-| P2 | Legacy price methods in YFinanceService | `yfinance_service.py` | 🔄 Phase 7 |
-| P2 | Duplicate hedge_fund yfinance wrapper | `hedge_fund/data/yfinance_service.py` | 🔄 Phase 7 |
+| P2 | Legacy price methods in YFinanceService | `yfinance_service.py` | ✅ Fixed (Phase 7) |
+| P2 | Duplicate hedge_fund yfinance wrapper | `hedge_fund/data/yfinance_service.py` | ✅ Fixed (Phase 7) |
 
 ---
 
-## Phase 7: Architecture Cleanup 🔄 IN PROGRESS
+## Phase 7: Architecture Cleanup ✅ COMPLETED
 
 ### 7.1 Problem Statement
 
-Despite Phase 6 creating unified `PriceService`, legacy price methods still exist in:
+Despite Phase 6 creating unified `PriceService`, legacy price methods still existed in:
 
-1. `YFinanceService.get_price_history()` - 1600 line file, price methods are redundant
+1. `YFinanceService.get_price_history()` - 1600 line file, price methods were redundant
 2. `YFinanceService.get_price_history_batch()` - Same issue
 3. `YFinanceService.get_price_history_typed()` - Wrapper around deprecated method
-4. `app/hedge_fund/data/yfinance_service.py` - Duplicate yfinance wrapper for hedge fund module
+4. `app/hedge_fund/data/yfinance_service.py` - Used `YFinanceService.get_price_history` instead of `PriceService`
 
-### 7.2 Goals
+### 7.2 Solution
 
-- **Remove legacy price methods** from `YFinanceService` 
-- **Consolidate hedge fund module** to use unified services
-- **Reduce `yfinance_service.py`** from 1600 lines to <1000 lines
-- **No backward compatibility layers** - full removal of old code
+- **Removed legacy price methods** from `YFinanceService`:
+  - `get_price_history()` - DELETED
+  - `get_price_history_batch()` - DELETED
+  - `get_price_history_typed()` - DELETED
+  - `_fetch_price_history_sync()` - DELETED
+  - `_fetch_price_history_batch_sync()` - DELETED
+  - Removed unused `PriceHistory` import
 
-### 7.3 Execution Plan
+- **Updated hedge fund module** to use `PriceService`:
+  - `app/hedge_fund/data/yfinance_service.py::get_price_history()` now uses `PriceService`
+
+- **Updated tests**:
+  - `tests/test_yfinance_typed.py` - Tests now use `PriceHistory.from_dataframe()` directly
+  - `tests/test_batch_jobs_integration.py` - Uses `PriceService` instead of `YFinanceService`
+
+### 7.3 Results
+
+| Metric | Before | After |
+| ------ | ------ | ----- |
+| `yfinance_service.py` line count | 1600 | 1310 |
+| Price fetching implementations | 2 | 1 (`PriceService`) |
+| Lines of legacy code removed | 0 | ~290 |
+
+### 7.4 Execution Plan
 
 | Step | Task | Status |
 | ---- | ---- | ------ |
-| 7.3.1 | Audit all usages of `get_price_history*` methods | ⏳ |
-| 7.3.2 | Update remaining consumers to use `PriceService` | ⏳ |
-| 7.3.3 | Remove `get_price_history`, `get_price_history_batch`, `get_price_history_typed` from `YFinanceService` | ⏳ |
-| 7.3.4 | Remove or consolidate `app/hedge_fund/data/yfinance_service.py` | ⏳ |
-| 7.3.5 | Run tests and verify no regressions | ⏳ |
-| 7.3.6 | Run system tests against Docker stack | ⏳ |
+| 7.3.1 | Audit all usages of `get_price_history*` methods | ✅ |
+| 7.3.2 | Update remaining consumers to use `PriceService` | ✅ |
+| 7.3.3 | Remove `get_price_history`, `get_price_history_batch`, `get_price_history_typed` from `YFinanceService` | ✅ |
+| 7.3.4 | Update `app/hedge_fund/data/yfinance_service.py` to use `PriceService` | ✅ |
+| 7.3.5 | Run tests and verify no regressions | ✅ (588 passed, 8 skipped) |
+| 7.3.6 | Run system tests against Docker stack | ✅ (13 passed, 1 skipped) |
 
 ---
 

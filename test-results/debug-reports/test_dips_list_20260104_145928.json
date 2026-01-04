@@ -1,0 +1,39 @@
+{
+  "test_id": "system_tests/smoke/test_stack_healthy.py::TestCriticalEndpoints::test_dips_list",
+  "test_name": "test_dips_list",
+  "test_start": "2026-01-04T14:59:28.267190+00:00",
+  "test_end": "2026-01-04T14:59:29.444374+00:00",
+  "duration_seconds": 1.177184,
+  "summary": "2 warning(s)",
+  "errors": [],
+  "tracebacks": [],
+  "warnings": [
+    "2026-01-04T14:59:29.018428629Z {\"timestamp\": \"2026-01-04T14:59:29.018319+00:00\", \"level\": \"WARNING\", \"logger\": \"stonkmarket.services.prices\", \"message\": \"Rejecting MSFT: Gap from existing $472.94 to new $209.08 (55.8%)\", \"request_id\": \"d2d62b7f-35b3-4a86-9176-3d544530f9e6\", \"location\": {\"file\": \"prices.py\", \"line\": 421, \"function\": \"get_prices_batch\"}}",
+    "2026-01-04T14:59:29.018727629Z {\"timestamp\": \"2026-01-04T14:59:29.018686+00:00\", \"level\": \"WARNING\", \"logger\": \"stonkmarket.services.prices\", \"message\": \"Rejecting SPY: Gap from existing $226.50 to new $346.63 (53.0%)\", \"request_id\": \"d2d62b7f-35b3-4a86-9176-3d544530f9e6\", \"location\": {\"file\": \"prices.py\", \"line\": 421, \"function\": \"get_prices_batch\"}}"
+  ],
+  "container_logs": {
+    "api": [
+      "2026-01-04T14:59:28.356587920Z {\"timestamp\": \"2026-01-04T14:59:28.356450+00:00\", \"level\": \"DEBUG\", \"logger\": \"stonkmarket.cache\", \"message\": \"Cache miss: stonkmarket:v1:dipfinder:MSFT_SPY_30_2026-01-04\", \"request_id\": \"d2d62b7f-35b3-4a86-9176-3d544530f9e6\", \"location\": {\"file\": \"cache.py\", \"line\": 71, \"function\": \"get\"}}",
+      "2026-01-04T14:59:28.406640170Z {\"timestamp\": \"2026-01-04T14:59:28.406531+00:00\", \"level\": \"DEBUG\", \"logger\": \"peewee\", \"message\": \"('CREATE TABLE IF NOT EXISTS \\\"_tz_kv\\\" (\\\"key\\\" VARCHAR(255) NOT NULL PRIMARY KEY, \\\"value\\\" VARCHAR(255)) WITHOUT ROWID', [])\", \"location\": {\"file\": \"peewee.py\", \"line\": 3319, \"function\": \"execute_sql\"}}",
+      "2026-01-04T14:59:28.406993420Z {\"timestamp\": \"2026-01-04T14:59:28.406953+00:00\", \"level\": \"DEBUG\", \"logger\": \"peewee\", \"message\": \"('SELECT \\\"t1\\\".\\\"key\\\", \\\"t1\\\".\\\"value\\\" FROM \\\"_tz_kv\\\" AS \\\"t1\\\" WHERE (\\\"t1\\\".\\\"key\\\" = ?) LIMIT ? OFFSET ?', ['MSFT', 1, 0])\", \"location\": {\"file\": \"peewee.py\", \"line\": 3319, \"function\": \"execute_sql\"}}",
+      "2026-01-04T14:59:28.407887337Z {\"timestamp\": \"2026-01-04T14:59:28.407820+00:00\", \"level\": \"DEBUG\", \"logger\": \"peewee\", \"message\": \"('CREATE TABLE IF NOT EXISTS \\\"_tz_kv\\\" (\\\"key\\\" VARCHAR(255) NOT NULL PRIMARY KEY, \\\"value\\\" VARCHAR(255)) WITHOUT ROWID', [])\", \"location\": {\"file\": \"peewee.py\", \"line\": 3319, \"function\": \"execute_sql\"}}",
+      "2026-01-04T14:59:28.408004253Z {\"timestamp\": \"2026-01-04T14:59:28.407964+00:00\", \"level\": \"DEBUG\", \"logger\": \"peewee\", \"message\": \"('SELECT \\\"t1\\\".\\\"key\\\", \\\"t1\\\".\\\"value\\\" FROM \\\"_tz_kv\\\" AS \\\"t1\\\" WHERE (\\\"t1\\\".\\\"key\\\" = ?) LIMIT ? OFFSET ?', ['SPY', 1, 0])\", \"location\": {\"file\": \"peewee.py\", \"line\": 3319, \"function\": \"execute_sql\"}}",
+      "2026-01-04T14:59:28.422000920Z {\"timestamp\": \"2026-01-04T14:59:28.421936+00:00\", \"level\": \"DEBUG\", \"logger\": \"peewee\", \"message\": \"('CREATE TABLE IF NOT EXISTS \\\"_cookieschema\\\" (\\\"strategy\\\" VARCHAR(255) NOT NULL PRIMARY KEY, \\\"fetch_date\\\" DATETIME NOT NULL, \\\"cookie_bytes\\\" BLOB NOT NULL) WITHOUT ROWID', [])\", \"location\": {\"file\": \"peewee.py\", \"line\": 3319, \"function\": \"execute_sql\"}}",
+      "2026-01-04T14:59:28.422106212Z {\"timestamp\": \"2026-01-04T14:59:28.422067+00:00\", \"level\": \"DEBUG\", \"logger\": \"peewee\", \"message\": \"('SELECT \\\"t1\\\".\\\"strategy\\\", \\\"t1\\\".\\\"fetch_date\\\", \\\"t1\\\".\\\"cookie_bytes\\\" FROM \\\"_cookieschema\\\" AS \\\"t1\\\" WHERE (\\\"t1\\\".\\\"strategy\\\" = ?) LIMIT ? OFFSET ?', ['curlCffi', 1, 0])\", \"location\": {\"file\": \"peewee.py\", \"line\": 3319, \"function\": \"execute_sql\"}}",
+      "2026-01-04T14:59:29.018428629Z {\"timestamp\": \"2026-01-04T14:59:29.018319+00:00\", \"level\": \"WARNING\", \"logger\": \"stonkmarket.services.prices\", \"message\": \"Rejecting MSFT: Gap from existing $472.94 to new $209.08 (55.8%)\", \"request_id\": \"d2d62b7f-35b3-4a86-9176-3d544530f9e6\", \"location\": {\"file\": \"prices.py\", \"line\": 421, \"function\": \"get_prices_batch\"}}",
+      "2026-01-04T14:59:29.018727629Z {\"timestamp\": \"2026-01-04T14:59:29.018686+00:00\", \"level\": \"WARNING\", \"logger\": \"stonkmarket.services.prices\", \"message\": \"Rejecting SPY: Gap from existing $226.50 to new $346.63 (53.0%)\", \"request_id\": \"d2d62b7f-35b3-4a86-9176-3d544530f9e6\", \"location\": {\"file\": \"prices.py\", \"line\": 421, \"function\": \"get_prices_batch\"}}",
+      "2026-01-04T14:59:29.020128754Z {\"timestamp\": \"2026-01-04T14:59:29.020071+00:00\", \"level\": \"DEBUG\", \"logger\": \"stonkmarket.cache\", \"message\": \"Cache hit: stonkmarket:v1:yf_info:info_MSFT\", \"request_id\": \"d2d62b7f-35b3-4a86-9176-3d544530f9e6\", \"location\": {\"file\": \"cache.py\", \"line\": 68, \"function\": \"get\"}}",
+      "2026-01-04T14:59:29.020235754Z {\"timestamp\": \"2026-01-04T14:59:29.020181+00:00\", \"level\": \"DEBUG\", \"logger\": \"stonkmarket.data_providers.yfinance\", \"message\": \"Cache hit L2 (valkey) for MSFT\", \"request_id\": \"d2d62b7f-35b3-4a86-9176-3d544530f9e6\", \"location\": {\"file\": \"yfinance_service.py\", \"line\": 676, \"function\": \"get_ticker_info\"}}",
+      "2026-01-04T14:59:29.041121712Z {\"timestamp\": \"2026-01-04T14:59:29.040995+00:00\", \"level\": \"DEBUG\", \"logger\": \"stonkmarket.cache\", \"message\": \"Cache set: stonkmarket:v1:dipfinder:MSFT_SPY_30_2026-01-04, TTL: 1800s\", \"request_id\": \"d2d62b7f-35b3-4a86-9176-3d544530f9e6\", \"location\": {\"file\": \"cache.py\", \"line\": 108, \"function\": \"set\"}}",
+      "2026-01-04T14:59:29.051699004Z {\"timestamp\": \"2026-01-04T14:59:29.051625+00:00\", \"level\": \"INFO\", \"logger\": \"stonkmarket.api\", \"message\": \"GET /api/dipfinder/signals -> 200 (0.700s)\", \"request_id\": \"d2d62b7f-35b3-4a86-9176-3d544530f9e6\", \"location\": {\"file\": \"app.py\", \"line\": 138, \"function\": \"dispatch\"}}"
+    ],
+    "worker": [],
+    "worker-batch": [],
+    "postgres": [],
+    "valkey": []
+  },
+  "request": null,
+  "response": null,
+  "database": null,
+  "assertion_error": null
+}
