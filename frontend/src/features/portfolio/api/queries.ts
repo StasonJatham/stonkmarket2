@@ -6,12 +6,11 @@
 
 import { useQuery, useQueries } from '@tanstack/react-query';
 import { queryKeys } from '@/lib/query';
-import { apiGet, buildUrl } from '@/lib/api-client';
+import { apiGet, apiPost, buildUrl } from '@/lib/api-client';
 import type {
   Portfolio,
   PortfolioDetail,
   PortfolioRiskAnalyticsResponse,
-  PortfolioAnalyticsResponse,
   PortfolioAnalyticsJob,
   PortfolioAllocationRecommendation,
   StockInfo,
@@ -174,9 +173,9 @@ async function fetchSparklines(
   days: number
 ): Promise<Record<string, HoldingSparklineData>> {
   if (symbols.length === 0) return {};
-  const response = await apiGet<BatchSparklineResponse>(`/portfolios/${portfolioId}/sparklines`, {
-    method: 'POST',
-    body: JSON.stringify({ symbols, days }),
+  const response = await apiPost<BatchSparklineResponse>(`/portfolios/${portfolioId}/sparklines`, {
+    symbols,
+    days,
   });
   return response.sparklines;
 }

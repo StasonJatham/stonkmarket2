@@ -187,6 +187,7 @@ export type SymbolFundamentals = z.infer<typeof SymbolFundamentalsSchema>;
 // ============================================================================
 
 export const AgentVerdictSchema = z.object({
+  agent_id: z.string(),
   agent_name: z.string(),
   agent_style: z.string().nullable().optional(),
   signal: z.enum(['strong_buy', 'buy', 'hold', 'sell', 'strong_sell', 'bullish', 'bearish', 'neutral']),

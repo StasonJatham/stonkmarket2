@@ -9,7 +9,6 @@ import { queryKeys } from '@/lib/query';
 import { apiPost, apiPatch, apiDelete } from '@/lib/api-client';
 import type {
   Portfolio,
-  PortfolioDetail,
   Holding,
   PortfolioAnalyticsResponse,
   PortfolioAllocationRecommendation,

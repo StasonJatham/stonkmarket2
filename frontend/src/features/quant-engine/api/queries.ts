@@ -78,15 +78,28 @@ export function usePortfolioStats(inflow: number = 1000, limit: number = 40) {
 
 import { 
   useStockChart, 
-  useBatchCharts, 
-  useSignalTriggers, 
+  useBatchCharts,
   useAgentAnalysis 
 } from '@/features/market-data/api/queries';
+import { getSignalTriggers } from '@/services/api';
 
 const LANDING_SIGNAL_BOARD_COUNT = 8;
 const LANDING_MINI_CHART_DAYS = 45;
 const LANDING_HERO_CHART_DAYS = 365;
 const LANDING_SIGNAL_LOOKBACK_DAYS = 365;
+
+/**
+ * Hook for signal triggers with full summary data.
+ * Uses the quant engine endpoint which includes benchmark comparison metrics.
+ */
+function useHeroSignalTriggers(symbol: string | undefined, lookbackDays: number = 365) {
+  return useQuery({
+    queryKey: ['quant', 'signalTriggers', symbol, lookbackDays],
+    queryFn: () => getSignalTriggers(symbol!, lookbackDays),
+    enabled: !!symbol,
+    staleTime: 10 * 60 * 1000, // 10 minutes
+  });
+}
 
 /**
  * Combined hook for Landing page.
@@ -110,8 +123,8 @@ export function useLandingData(inflow: number = 1000, limit: number = 25) {
   // Hero chart (larger timeframe for featured stock)
   const heroChartQuery = useStockChart(heroSymbol || undefined, LANDING_HERO_CHART_DAYS);
   
-  // Hero signals
-  const heroSignalsQuery = useSignalTriggers(heroSymbol || undefined, LANDING_SIGNAL_LOOKBACK_DAYS);
+  // Hero signals - use the full quant endpoint with benchmark metrics
+  const heroSignalsQuery = useHeroSignalTriggers(heroSymbol || undefined, LANDING_SIGNAL_LOOKBACK_DAYS);
   
   // Hero agent analysis
   const heroAgentQuery = useAgentAnalysis(heroSymbol || undefined);

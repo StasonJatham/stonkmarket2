@@ -130,7 +130,7 @@ export interface DipStock {
   sector: string | null;
   pe_ratio: number | null;
   volume: number | null;
-  symbol_type?: 'stock' | 'index';
+  symbol_type?: 'stock' | 'index' | 'etf';
   // Added for UI calculations
   dip_score?: number;
   recovery_potential?: number;
