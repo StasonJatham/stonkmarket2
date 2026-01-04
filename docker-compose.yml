@@ -129,6 +129,7 @@ services:
       --appendonly yes
       --maxmemory 256mb
       --maxmemory-policy allkeys-lru
+      --maxclients 500
       --tcp-keepalive 300
     volumes:
       - valkey_data:/data

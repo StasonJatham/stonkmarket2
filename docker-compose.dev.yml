@@ -102,6 +102,8 @@ services:
       --appendonly yes
       --maxmemory 128mb
       --maxmemory-policy allkeys-lru
+      --maxclients 500
+      --tcp-keepalive 300
     ports:
       - "6379:6379"
     volumes:

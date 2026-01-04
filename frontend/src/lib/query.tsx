@@ -90,7 +90,12 @@ export const queryKeys = {
     detail: (id: number) => ['portfolios', 'detail', id] as const,
     analytics: (id: number) => ['portfolios', 'analytics', id] as const,
     risk: (id: number) => ['portfolios', 'risk', id] as const,
-    allocation: (id: number) => ['portfolios', 'allocation', id] as const,
+    riskAnalytics: (id: number) => ['portfolios', 'riskAnalytics', id] as const,
+    allocation: (id: number, inflow?: number, method?: string) => 
+      ['portfolios', 'allocation', id, { inflow, method }] as const,
+    analyticsJob: (id: number, jobId: string) => ['portfolios', 'analyticsJob', id, jobId] as const,
+    sparklines: (id: number, symbols: string[], days: number) => 
+      ['portfolios', 'sparklines', id, { symbols: symbols.join(','), days }] as const,
   },
   
   // Suggestions

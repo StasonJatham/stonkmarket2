@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useCallback } from 'react';
+import { useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, useMotionValue, useTransform, animate } from 'framer-motion';
 import {
@@ -12,17 +12,8 @@ import {
 } from 'recharts';
 import { useTheme } from '@/context/ThemeContext';
 import { useAuth } from '@/context/AuthContext';
-import {
-  getStockChart,
-  getBatchCharts,
-  getQuantRecommendations,
-  getAgentAnalysis,
-  getSignalTriggers,
-  type ChartDataPoint,
-  type QuantRecommendation,
-  type AgentAnalysis,
-  type SignalTrigger,
-} from '@/services/api';
+import { useLandingData } from '@/features/quant-engine/api/queries';
+import type { ChartDataPoint, QuantRecommendation, AgentAnalysis, SignalTrigger } from '@/services/api';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -689,258 +680,29 @@ function SignalGalleryCard({
   );
 }
 
-// Cache configuration for landing page
-const LANDING_CACHE_KEY = 'landing_page_cache';
-const LANDING_CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
-const LANDING_RECOMMENDATIONS_LIMIT = 12;
+// Constants for signal board display
 const LANDING_SIGNAL_BOARD_COUNT = 4;
-const LANDING_MINI_CHART_DAYS = 60;
-const LANDING_HERO_CHART_DAYS = 180;
-const LANDING_SIGNAL_LOOKBACK_DAYS = 180;
-
-interface HeroSignalSummary {
-  edgeVsBuyHoldPct: number | null;
-  buyHoldReturnPct: number | null;
-  signalReturnPct: number | null;
-  nTrades: number | null;
-  beatsBuyHold: boolean | null;
-  signalName: string | null;
-}
-
-interface LandingCacheData {
-  recommendations: QuantRecommendation[];
-  marketMessage: string | null;
-  portfolioStats: {
-    expectedReturn: number;
-    expectedRisk: number;
-    totalTrades: number;
-  };
-  chartDataMap: Record<string, ChartDataPoint[]>;
-  heroChart: ChartDataPoint[];
-  heroSymbol: string;
-  heroRec: QuantRecommendation | null;
-  heroAgentAnalysis: AgentAnalysis | null;
-  heroSignals: SignalTrigger[];  // Keep array format for cache
-  heroSignalSummary: HeroSignalSummary | null;
-  lastUpdatedAt: number | null;
-  cachedAt: number;
-}
-
-function getLandingCache(): LandingCacheData | null {
-  try {
-    const cached = localStorage.getItem(LANDING_CACHE_KEY);
-    if (!cached) return null;
-
-    const data: LandingCacheData = JSON.parse(cached);
-    return data;
-  } catch {
-    return null;
-  }
-}
-
-function isLandingCacheFresh(data: LandingCacheData): boolean {
-  return Date.now() - data.cachedAt <= LANDING_CACHE_TTL_MS;
-}
-
-function setLandingCache(data: Omit<LandingCacheData, 'cachedAt'>): void {
-  try {
-    const cacheData: LandingCacheData = {
-      ...data,
-      cachedAt: Date.now(),
-    };
-    localStorage.setItem(LANDING_CACHE_KEY, JSON.stringify(cacheData));
-  } catch {
-    // localStorage might be full or disabled
-    console.warn('Failed to cache landing data');
-  }
-}
 
 export function Landing() {
   const navigate = useNavigate();
   const { isAuthenticated } = useAuth();
-  const [recommendations, setRecommendations] = useState<QuantRecommendation[]>([]);
-  const [marketMessage, setMarketMessage] = useState<string | null>(null);
-  const [portfolioStats, setPortfolioStats] = useState({
-    expectedReturn: 0,
-    expectedRisk: 0,
-    totalTrades: 0,
-  });
-  const [chartDataMap, setChartDataMap] = useState<Record<string, ChartDataPoint[]>>({});
-  const [heroChart, setHeroChart] = useState<ChartDataPoint[]>([]);
-  const [heroSymbol, setHeroSymbol] = useState('');
-  const [heroRec, setHeroRec] = useState<QuantRecommendation | null>(null);
-  const [heroAgentAnalysis, setHeroAgentAnalysis] = useState<AgentAnalysis | null>(null);
-  const [heroSignals, setHeroSignals] = useState<SignalTrigger[]>([]);
-  const [heroSignalSummary, setHeroSignalSummary] = useState<HeroSignalSummary | null>(null);
-  const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isLoadingHero, setIsLoadingHero] = useState(true);
-
-  // Fetch quant recommendations data with caching
-  useEffect(() => {
-    let isActive = true;
-
-    const applyCache = (cached: LandingCacheData) => {
-      setRecommendations(cached.recommendations);
-      setMarketMessage(cached.marketMessage ?? null);
-      setPortfolioStats(cached.portfolioStats);
-      setChartDataMap(cached.chartDataMap);
-      setHeroChart(cached.heroChart);
-      setHeroSymbol(cached.heroSymbol);
-      setHeroRec(cached.heroRec);
-      setHeroAgentAnalysis(cached.heroAgentAnalysis);
-      setHeroSignals(cached.heroSignals ?? []);
-      setHeroSignalSummary(cached.heroSignalSummary ?? null);
-      setLastUpdatedAt(cached.lastUpdatedAt ?? cached.cachedAt);
-      setIsLoading(false);
-      setIsLoadingHero(false);
-    };
-
-    const loadData = async (skipCache = false) => {
-      if (!skipCache) {
-        const cached = getLandingCache();
-        if (cached) {
-          applyCache(cached);
-          if (!isLandingCacheFresh(cached)) {
-            loadData(true);
-          }
-          return;
-        }
-      }
-
-      if (!skipCache) {
-        setIsLoading(true);
-        setIsLoadingHero(true);
-      }
-
-      try {
-        const data = await getQuantRecommendations(1000, LANDING_RECOMMENDATIONS_LIMIT);
-        if (!isActive) return;
-
-        setRecommendations(data.recommendations);
-        setMarketMessage(data.market_message);
-        const newPortfolioStats = {
-          expectedReturn: data.expected_portfolio_return,
-          expectedRisk: data.expected_portfolio_risk,
-          totalTrades: data.total_trades,
-        };
-        setPortfolioStats(newPortfolioStats);
-
-        const parsedAsOf = data.as_of_date ? Date.parse(data.as_of_date) : Number.NaN;
-        const updatedAt = Number.isNaN(parsedAsOf) ? Date.now() : parsedAsOf;
-        setLastUpdatedAt(updatedAt);
-
-        if (!skipCache) {
-          setIsLoading(false);
-        }
-
-        const signalBoardRecs = data.recommendations.slice(0, LANDING_SIGNAL_BOARD_COUNT);
-        const boardSymbols = signalBoardRecs.map((rec) => rec.ticker);
-        const buyRec = data.recommendations.find((r) => r.action === 'BUY') || data.recommendations[0] || null;
-        const newHeroSymbol = buyRec?.ticker ?? '';
-        const newHeroRec = buyRec ?? null;
-
-        if (!skipCache) {
-          setHeroAgentAnalysis(null);
-          setHeroSignals([]);
-          setHeroSignalSummary(null);
-        }
-
-        const batchChartsPromise = boardSymbols.length > 0
-          ? getBatchCharts([...boardSymbols], LANDING_MINI_CHART_DAYS)
-          : Promise.resolve({} as Record<string, ChartDataPoint[]>);
-        const heroChartPromise = buyRec
-          ? getStockChart(buyRec.ticker, LANDING_HERO_CHART_DAYS)
-          : Promise.resolve([] as ChartDataPoint[]);
-
-        const [batchChartsResult, heroChartResult] = await Promise.allSettled([
-          batchChartsPromise,
-          heroChartPromise,
-        ]);
-
-        if (!isActive) return;
-        const resolvedCharts = batchChartsResult.status === 'fulfilled'
-          ? batchChartsResult.value
-          : {};
-        const resolvedHeroChart = heroChartResult.status === 'fulfilled'
-          ? heroChartResult.value
-          : [];
-        setChartDataMap(resolvedCharts ?? {});
-        setHeroChart(resolvedHeroChart ?? []);
-        setHeroSymbol(newHeroSymbol);
-        setHeroRec(newHeroRec);
-        if (!skipCache) {
-          setIsLoadingHero(false);
-        }
-
-        let newHeroSignals: SignalTrigger[] = [];
-        let newHeroAgentAnalysis: AgentAnalysis | null = null;
-        let newHeroSignalSummary: HeroSignalSummary | null = null;
-
-        if (buyRec) {
-          const [signalsResult, agentResult] = await Promise.allSettled([
-            getSignalTriggers(buyRec.ticker, LANDING_SIGNAL_LOOKBACK_DAYS),
-            getAgentAnalysis(buyRec.ticker),
-          ]);
-
-          if (!isActive) return;
-
-          if (signalsResult.status === 'fulfilled') {
-            newHeroSignals = signalsResult.value.triggers;
-            newHeroSignalSummary = {
-              edgeVsBuyHoldPct: signalsResult.value.edge_vs_buy_hold_pct,
-              buyHoldReturnPct: signalsResult.value.buy_hold_return_pct,
-              signalReturnPct: signalsResult.value.signal_return_pct,
-              nTrades: signalsResult.value.n_trades,
-              beatsBuyHold: signalsResult.value.beats_buy_hold,
-              signalName: signalsResult.value.signal_name,
-            };
-            setHeroSignals(newHeroSignals);
-            setHeroSignalSummary(newHeroSignalSummary);
-          } else {
-            console.warn('Failed to load signals for hero:', signalsResult.reason);
-          }
-
-          if (agentResult.status === 'fulfilled') {
-            newHeroAgentAnalysis = agentResult.value;
-            setHeroAgentAnalysis(newHeroAgentAnalysis);
-          } else {
-            console.warn('Failed to load agent analysis for hero:', agentResult.reason);
-          }
-        }
-
-        setLandingCache({
-          recommendations: data.recommendations,
-          marketMessage: data.market_message,
-          portfolioStats: newPortfolioStats,
-          chartDataMap: resolvedCharts ?? {},
-          heroChart: resolvedHeroChart ?? [],
-          heroSymbol: buyRec?.ticker ?? '',
-          heroRec: buyRec ?? null,
-          heroAgentAnalysis: newHeroAgentAnalysis,
-          heroSignals: newHeroSignals,
-          heroSignalSummary: newHeroSignalSummary,
-          lastUpdatedAt: updatedAt,
-        });
-      } catch (err) {
-        console.error('Failed to load landing data:', err);
-        if (!skipCache) {
-          setIsLoading(false);
-          setIsLoadingHero(false);
-        }
-      }
-    };
-
-    loadData();
-    const refreshInterval = setInterval(() => {
-      loadData(true);
-    }, LANDING_CACHE_TTL_MS);
-
-    return () => {
-      isActive = false;
-      clearInterval(refreshInterval);
-    };
-  }, []);
+  
+  // All data fetching via TanStack Query - no more manual caching!
+  const {
+    recommendations,
+    marketMessage,
+    portfolioStats,
+    chartDataMap,
+    heroChart,
+    heroSymbol,
+    heroRec,
+    heroAgentAnalysis,
+    heroSignals,
+    heroSignalSummary,
+    lastUpdatedAt,
+    isLoading,
+    isLoadingHero,
+  } = useLandingData(1000, 12);
 
   const handleCTA = useCallback(() => {
     navigate(isAuthenticated ? '/dashboard' : '/login');
@@ -954,14 +716,9 @@ export function Landing() {
   );
 
   const signalBoardRecs = recommendations.slice(0, LANDING_SIGNAL_BOARD_COUNT);
-  const updatedLabel = useMemo(
-    () => (lastUpdatedAt ? formatUpdatedLabel(lastUpdatedAt) : 'Updating...'),
-    [lastUpdatedAt]
-  );
-  const buyCount = useMemo(
-    () => recommendations.filter((rec) => rec.action === 'BUY').length,
-    [recommendations]
-  );
+  const updatedLabel = lastUpdatedAt ? formatUpdatedLabel(lastUpdatedAt) : 'Updating...';
+  const buyCount = recommendations.filter((rec) => rec.action === 'BUY').length;
+  
   const heroVerdicts = heroAgentAnalysis?.verdicts ?? [];
   const verdictCounts = useMemo(() => {
     const bullishCount = heroVerdicts.filter((v) => v.signal === 'buy' || v.signal === 'strong_buy').length;

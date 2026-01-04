@@ -319,6 +319,37 @@ export function useStockDetail(symbol: string | undefined, chartDays: number = 3
 
 import { queryClient } from '@/lib/query';
 
+// ============================================================================
+// Batch Charts (for Landing page signal board)
+// ============================================================================
+
+async function fetchBatchCharts(symbols: string[], days: number): Promise<Record<string, ChartDataPoint[]>> {
+  if (symbols.length === 0) return {};
+  const data = await apiGet<Record<string, unknown>>(buildUrl('/stocks/batch-charts', { 
+    symbols: symbols.join(','),
+    days,
+  }));
+  // Parse each chart individually
+  const result: Record<string, ChartDataPoint[]> = {};
+  for (const [symbol, chartData] of Object.entries(data)) {
+    try {
+      result[symbol] = safeParse(ChartDataSchema, chartData, `BatchChart:${symbol}`);
+    } catch {
+      result[symbol] = [];
+    }
+  }
+  return result;
+}
+
+export function useBatchCharts(symbols: string[], days: number = 45) {
+  return useQuery({
+    queryKey: ['stocks', 'batchCharts', symbols.join(','), days],
+    queryFn: () => fetchBatchCharts(symbols, days),
+    enabled: symbols.length > 0,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
 /**
  * Prefetch stock data for hover/preload scenarios
  */

@@ -159,14 +159,23 @@ export function StockDetailPage() {
   // Track when dots should be visible (after chart animation completes)
   const [dotsVisible, setDotsVisible] = useState(false);
   
+  // Generate a key for the current chart state to trigger re-render of dots visibility
+  const chartKey = `${chartPeriod}-${displayChartData.length}`;
+  
   // When chart period or data changes, hide dots and show them after animation completes
   useEffect(() => {
-    setDotsVisible(false);
+    // Use a micro-task to avoid synchronous setState warning from React Compiler
+    const rafId = requestAnimationFrame(() => {
+      setDotsVisible(false);
+    });
     const timer = setTimeout(() => {
       setDotsVisible(true);
     }, CHART_ANIMATION.animationDuration + 50);
-    return () => clearTimeout(timer);
-  }, [chartPeriod, displayChartData]);
+    return () => {
+      cancelAnimationFrame(rafId);
+      clearTimeout(timer);
+    };
+  }, [chartKey]);
 
   // SEO for stock detail page
   useSEO({

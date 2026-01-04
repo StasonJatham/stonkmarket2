@@ -71,3 +71,91 @@ export function usePortfolioStats(inflow: number = 1000, limit: number = 40) {
     } : undefined,
   };
 }
+
+// ============================================================================
+// Landing Page Data (combines recommendations + charts + hero analysis)
+// ============================================================================
+
+import { 
+  useStockChart, 
+  useBatchCharts, 
+  useSignalTriggers, 
+  useAgentAnalysis 
+} from '@/features/market-data/api/queries';
+
+const LANDING_SIGNAL_BOARD_COUNT = 8;
+const LANDING_MINI_CHART_DAYS = 45;
+const LANDING_HERO_CHART_DAYS = 365;
+const LANDING_SIGNAL_LOOKBACK_DAYS = 365;
+
+/**
+ * Combined hook for Landing page.
+ * Replaces the massive useEffect chain with declarative data fetching.
+ */
+export function useLandingData(inflow: number = 1000, limit: number = 25) {
+  // Primary data: quant recommendations
+  const recsQuery = useQuantRecommendations(inflow, limit);
+  
+  // Derive hero symbol (first BUY recommendation)
+  const recommendations = recsQuery.data?.recommendations ?? [];
+  const heroRec = recommendations.find(r => r.action === 'BUY') ?? recommendations[0] ?? null;
+  const heroSymbol = heroRec?.ticker ?? '';
+  
+  // Signal board symbols (top N recommendations)
+  const signalBoardSymbols = recommendations.slice(0, LANDING_SIGNAL_BOARD_COUNT).map(r => r.ticker);
+  
+  // Batch charts for signal board
+  const batchChartsQuery = useBatchCharts(signalBoardSymbols, LANDING_MINI_CHART_DAYS);
+  
+  // Hero chart (larger timeframe for featured stock)
+  const heroChartQuery = useStockChart(heroSymbol || undefined, LANDING_HERO_CHART_DAYS);
+  
+  // Hero signals
+  const heroSignalsQuery = useSignalTriggers(heroSymbol || undefined, LANDING_SIGNAL_LOOKBACK_DAYS);
+  
+  // Hero agent analysis
+  const heroAgentQuery = useAgentAnalysis(heroSymbol || undefined);
+  
+  // Derive as_of timestamp
+  const asOfDate = recsQuery.data?.as_of_date;
+  const lastUpdatedAt = asOfDate ? Date.parse(asOfDate) : null;
+  
+  return {
+    // Recommendations data
+    recommendations,
+    marketMessage: recsQuery.data?.market_message ?? null,
+    portfolioStats: recsQuery.data ? {
+      expectedReturn: recsQuery.data.expected_portfolio_return,
+      expectedRisk: recsQuery.data.expected_portfolio_risk,
+      totalTrades: recsQuery.data.total_trades,
+    } : { expectedReturn: 0, expectedRisk: 0, totalTrades: 0 },
+    lastUpdatedAt,
+    
+    // Chart data
+    chartDataMap: batchChartsQuery.data ?? {},
+    heroChart: heroChartQuery.data ?? [],
+    heroSymbol,
+    heroRec,
+    
+    // Hero analysis
+    heroAgentAnalysis: heroAgentQuery.data ?? null,
+    heroSignals: heroSignalsQuery.data?.triggers ?? [],
+    heroSignalSummary: heroSignalsQuery.data ? {
+      edgeVsBuyHoldPct: heroSignalsQuery.data.edge_vs_buy_hold_pct,
+      buyHoldReturnPct: heroSignalsQuery.data.buy_hold_return_pct,
+      signalReturnPct: heroSignalsQuery.data.signal_return_pct,
+      nTrades: heroSignalsQuery.data.n_trades,
+      beatsBuyHold: heroSignalsQuery.data.beats_buy_hold,
+      signalName: heroSignalsQuery.data.signal_name,
+    } : null,
+    
+    // Loading states
+    isLoading: recsQuery.isLoading,
+    isLoadingCharts: batchChartsQuery.isLoading,
+    isLoadingHero: heroChartQuery.isLoading || heroSignalsQuery.isLoading || heroAgentQuery.isLoading,
+    
+    // Error state
+    isError: recsQuery.isError,
+    error: recsQuery.error,
+  };
+}

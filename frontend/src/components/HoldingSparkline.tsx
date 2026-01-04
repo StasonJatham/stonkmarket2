@@ -1,4 +1,3 @@
-import { useMemo } from 'react';
 import {
   Area,
   AreaChart,
@@ -75,22 +74,21 @@ export function HoldingSparkline({
       : chartColors.danger;
 
   // Transform data for recharts
-  const chartData = useMemo(() => {
-    if (!data?.prices.length) return [];
-    
-    return data.prices.map((p) => ({
-      date: p.date,
-      price: p.close,
-    }));
-  }, [data?.prices]);
+  // Note: With React Compiler, manual useMemo is not needed - compiler handles memoization
+  const prices = data?.prices ?? [];
+  const chartData = prices.length === 0 ? [] : prices.map((p) => ({
+    date: p.date,
+    price: p.close,
+  }));
 
   // Find trade markers that fall on chart dates
-  const tradeMarkers = useMemo(() => {
-    if (!data?.trades.length || !chartData.length) return [];
+  const trades = data?.trades ?? [];
+  const tradeMarkers = (() => {
+    if (trades.length === 0 || chartData.length === 0) return [];
     
     const chartDates = new Set(chartData.map((d) => d.date));
     
-    return data.trades
+    return trades
       .filter((t) => chartDates.has(t.date))
       .map((t) => {
         const point = chartData.find((d) => d.date === t.date);
@@ -99,7 +97,7 @@ export function HoldingSparkline({
           price: point?.price ?? t.price,
         };
       });
-  }, [data?.trades, chartData]);
+  })();
 
   if (!data || chartData.length < 2) {
     // Show placeholder for insufficient data

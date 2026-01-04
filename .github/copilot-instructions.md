@@ -18,6 +18,8 @@ You are an expert in:
 - **ALWAYS** use `.venv` virtual environment for local tests
 - Run tests with: `python -m pytest tests/ -v --tb=short`
 - Activate venv: `source .venv/bin/activate`
+- Only run tests after changes and when code was edited if affected. general tests are not required.
+- Decide what to test, pytest, heuristic test for actual functions on test docker or playwright tests for front end 
 
 ### Docker Development
 
