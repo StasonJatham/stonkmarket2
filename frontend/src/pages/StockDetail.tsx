@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
@@ -12,16 +12,8 @@ import {
 } from 'recharts';
 import { ChartTooltip, SimpleChartTooltipContent } from '@/components/ui/chart';
 import { CHART_LINE_ANIMATION, CHART_TRENDLINE_ANIMATION, CHART_ANIMATION } from '@/lib/chartConfig';
-import { 
-  getStockInfo, 
-  getStockChart, 
-  getDipCard,
-  getAgentAnalysis,
-  type StockInfo, 
-  type ChartDataPoint,
-  type DipCard,
-  type AgentAnalysis,
-} from '@/services/api';
+import { useStockDetail, useStockChart } from '@/features/market-data/api/queries';
+import type { StockInfo, DipCard } from '@/features/market-data/api/schemas';
 import { useSEO, generateBreadcrumbJsonLd } from '@/lib/seo';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -146,14 +138,23 @@ function StatItem({ icon: Icon, label, value, valueColor }: StatItemProps) {
 export function StockDetailPage() {
   const { symbol } = useParams<{ symbol: string }>();
   const upperSymbol = symbol?.toUpperCase() || '';
-  
-  const [info, setInfo] = useState<StockInfo | null>(null);
-  const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
-  const [dipCard, setDipCard] = useState<DipCard | null>(null);
-  const [agentAnalysis, setAgentAnalysis] = useState<AgentAnalysis | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [chartPeriod, setChartPeriod] = useState(365);
+
+  // Use TanStack Query for all data fetching
+  const { 
+    info, 
+    chartData, 
+    dipCard, 
+    agentAnalysis,
+    isLoading,
+    isError,
+  } = useStockDetail(upperSymbol, chartPeriod);
+
+  // Separate chart query for period changes (will use cached data when period is in cache)
+  const chartQuery = useStockChart(upperSymbol, chartPeriod);
+
+  // Use chart data from the dedicated chart query when available (for period changes)
+  const displayChartData = chartQuery.data ?? chartData;
 
   // Track when dots should be visible (after chart animation completes)
   const [dotsVisible, setDotsVisible] = useState(false);
@@ -165,7 +166,7 @@ export function StockDetailPage() {
       setDotsVisible(true);
     }, CHART_ANIMATION.animationDuration + 50);
     return () => clearTimeout(timer);
-  }, [chartPeriod, chartData]);
+  }, [chartPeriod, displayChartData]);
 
   // SEO for stock detail page
   useSEO({
@@ -181,28 +182,28 @@ export function StockDetailPage() {
         { name: 'Stocks', url: '/' },
         { name: upperSymbol, url: `/stock/${upperSymbol.toLowerCase()}` },
       ]),
-      generateStockJsonLd(upperSymbol, info, dipCard),
+      generateStockJsonLd(upperSymbol, info ?? null, dipCard ?? null),
     ],
   });
 
   // Format chart data with display dates
   const formattedChartData = useMemo(() => {
-    return chartData.map((point) => ({
+    return displayChartData.map((point) => ({
       ...point,
       displayDate: new Date(point.date).toLocaleDateString('en-US', {
         month: 'short',
         day: 'numeric',
       }),
     }));
-  }, [chartData]);
+  }, [displayChartData]);
 
   // Find ref high point index for marker
   const refHighIndex = useMemo(() => {
-    if (chartData.length === 0) return -1;
-    const refDate = chartData[0]?.ref_high_date;
+    if (displayChartData.length === 0) return -1;
+    const refDate = displayChartData[0]?.ref_high_date;
     if (!refDate) return -1;
     return formattedChartData.findIndex(p => p.date === refDate);
-  }, [chartData, formattedChartData]);
+  }, [displayChartData, formattedChartData]);
 
   // Get the display date for ref high point (for ReferenceDot x value)
   const refHighDisplayDate = useMemo(() => {
@@ -224,9 +225,9 @@ export function StockDetailPage() {
 
   // Get the ref high price
   const refHighPrice = useMemo(() => {
-    if (chartData.length === 0) return null;
-    return chartData[0]?.ref_high ?? null;
-  }, [chartData]);
+    if (displayChartData.length === 0) return null;
+    return displayChartData[0]?.ref_high ?? null;
+  }, [displayChartData]);
 
   // Create chart data with trendline, reference lines, and animated dot positions
   const chartDataWithTrendline = useMemo(() => {
@@ -255,68 +256,18 @@ export function StockDetailPage() {
 
   // Calculate price change for chart period
   const priceChange = useMemo(() => {
-    if (chartData.length < 2) return 0;
-    const first = chartData[0].close;
-    const last = chartData[chartData.length - 1].close;
+    if (displayChartData.length < 2) return 0;
+    const first = displayChartData[0].close;
+    const last = displayChartData[displayChartData.length - 1].close;
     return ((last - first) / first) * 100;
-  }, [chartData]);
+  }, [displayChartData]);
 
   const isPositive = priceChange >= 0;
   const chartColor = isPositive ? 'var(--success)' : 'var(--danger)';
 
-  const loadData = useCallback(async () => {
-    if (!upperSymbol) return;
-    
-    setIsLoading(true);
-    setError(null);
-    
-    try {
-      const [infoData, chartResult, dipCardResult, agentResult] = await Promise.allSettled([
-        getStockInfo(upperSymbol),
-        getStockChart(upperSymbol, chartPeriod),
-        getDipCard(upperSymbol),
-        getAgentAnalysis(upperSymbol),
-      ]);
-
-      if (infoData.status === 'fulfilled') {
-        setInfo(infoData.value);
-      }
-      
-      if (chartResult.status === 'fulfilled') {
-        setChartData(chartResult.value);
-      }
-      
-      if (dipCardResult.status === 'fulfilled') {
-        setDipCard(dipCardResult.value);
-      }
-      
-      if (agentResult.status === 'fulfilled' && agentResult.value) {
-        setAgentAnalysis(agentResult.value);
-      }
-
-      if (infoData.status === 'rejected' && chartResult.status === 'rejected') {
-        setError('Stock not found or data unavailable');
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load stock data');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [upperSymbol, chartPeriod]);
-
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
-
-  // Handle chart period change
-  const handlePeriodChange = async (days: number) => {
+  // Handle chart period change - just update state, query handles fetching
+  const handlePeriodChange = (days: number) => {
     setChartPeriod(days);
-    try {
-      const newChartData = await getStockChart(upperSymbol, days);
-      setChartData(newChartData);
-    } catch (err) {
-      console.error('Failed to load chart data:', err);
-    }
   };
 
   if (isLoading) {
@@ -338,12 +289,12 @@ export function StockDetailPage() {
     );
   }
 
-  if (error) {
+  if (isError) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[50vh] space-y-4">
         <AlertTriangle className="h-16 w-16 text-muted-foreground" />
         <h1 className="text-2xl font-bold">Stock Not Found</h1>
-        <p className="text-muted-foreground">{error}</p>
+        <p className="text-muted-foreground">Stock not found or data unavailable</p>
         <Button asChild>
           <Link to="/">
             <ArrowLeft className="mr-2 h-4 w-4" />
@@ -356,8 +307,8 @@ export function StockDetailPage() {
 
   const dipPct = dipCard?.dip_pct ? (dipCard.dip_pct * 100).toFixed(1) : null;
   const minDipPct = dipCard?.min_dip_pct ? (dipCard.min_dip_pct * 100).toFixed(1) : null;
-  const currentPriceValue = dipCard?.current_price || chartData[chartData.length - 1]?.close;
-  const refHigh = dipCard?.ref_high || chartData[0]?.ref_high;
+  const currentPriceValue = dipCard?.current_price || displayChartData[displayChartData.length - 1]?.close;
+  const refHigh = dipCard?.ref_high || displayChartData[0]?.ref_high;
 
   return (
     <motion.div
@@ -871,7 +822,7 @@ export function StockDetailPage() {
             <div className="grid gap-4 md:grid-cols-2">
               {agentAnalysis.verdicts.map((verdict) => (
                 <div 
-                  key={verdict.agent_id}
+                  key={verdict.agent_name}
                   className="p-4 rounded-lg bg-background/50 border"
                 >
                   <div className="flex items-start justify-between mb-2">

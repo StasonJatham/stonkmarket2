@@ -1,0 +1,1205 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]:
+      - generic [ref=e5]:
+        - button "SPY $226.50 -67.2% -66.8%" [ref=e6] [cursor=pointer]:
+          - generic [ref=e7]: SPY
+          - generic [ref=e8]: $226.50
+          - generic [ref=e9]:
+            - img [ref=e10]
+            - generic [ref=e13]: "-67.2%"
+          - generic [ref=e14]:
+            - img [ref=e15]
+            - generic [ref=e18]: "-66.8%"
+        - button "VTI $116.90 -65.6% -65.1%" [ref=e19] [cursor=pointer]:
+          - generic [ref=e20]: VTI
+          - generic [ref=e21]: $116.90
+          - generic [ref=e22]:
+            - img [ref=e23]
+            - generic [ref=e26]: "-65.6%"
+          - generic [ref=e27]:
+            - img [ref=e28]
+            - generic [ref=e31]: "-65.1%"
+        - button "WMT $112.76 -64.3% +1.2%" [ref=e32] [cursor=pointer]:
+          - generic [ref=e33]: WMT
+          - generic [ref=e34]: $112.76
+          - generic [ref=e35]:
+            - img [ref=e36]
+            - generic [ref=e39]: "-64.3%"
+          - generic [ref=e40]:
+            - img [ref=e41]
+            - generic [ref=e44]: +1.2%
+        - button "ADBE $333.30 -51.6% -4.8%" [ref=e45] [cursor=pointer]:
+          - generic [ref=e46]: ADBE
+          - generic [ref=e47]: $333.30
+          - generic [ref=e48]:
+            - img [ref=e49]
+            - generic [ref=e52]: "-51.6%"
+          - generic [ref=e53]:
+            - img [ref=e54]
+            - generic [ref=e57]: "-4.8%"
+        - button "DIS $111.85 -43.3% -1.7%" [ref=e58] [cursor=pointer]:
+          - generic [ref=e59]: DIS
+          - generic [ref=e60]: $111.85
+          - generic [ref=e61]:
+            - img [ref=e62]
+            - generic [ref=e65]: "-43.3%"
+          - generic [ref=e66]:
+            - img [ref=e67]
+            - generic [ref=e70]: "-1.7%"
+        - button "NFLX $90.99 -32.1% -3.0%" [ref=e71] [cursor=pointer]:
+          - generic [ref=e72]: NFLX
+          - generic [ref=e73]: $90.99
+          - generic [ref=e74]:
+            - img [ref=e75]
+            - generic [ref=e78]: "-32.1%"
+          - generic [ref=e79]:
+            - img [ref=e80]
+            - generic [ref=e83]: "-3.0%"
+        - button "CRM $253.62 -30.5% -4.3%" [ref=e84] [cursor=pointer]:
+          - generic [ref=e85]: CRM
+          - generic [ref=e86]: $253.62
+          - generic [ref=e87]:
+            - img [ref=e88]
+            - generic [ref=e91]: "-30.5%"
+          - generic [ref=e92]:
+            - img [ref=e93]
+            - generic [ref=e96]: "-4.3%"
+        - button "HOOD $115.21 -24.4% +1.9%" [ref=e97] [cursor=pointer]:
+          - generic [ref=e98]: HOOD
+          - generic [ref=e99]: $115.21
+          - generic [ref=e100]:
+            - img [ref=e101]
+            - generic [ref=e104]: "-24.4%"
+          - generic [ref=e105]:
+            - img [ref=e106]
+            - generic [ref=e109]: +1.9%
+        - button "NET $196.02 -22.6% -0.6%" [ref=e110] [cursor=pointer]:
+          - generic [ref=e111]: NET
+          - generic [ref=e112]: $196.02
+          - generic [ref=e113]:
+            - img [ref=e114]
+            - generic [ref=e117]: "-22.6%"
+          - generic [ref=e118]:
+            - img [ref=e119]
+            - generic [ref=e122]: "-0.6%"
+        - button "CRWD $453.58 -18.6% -3.2%" [ref=e123] [cursor=pointer]:
+          - generic [ref=e124]: CRWD
+          - generic [ref=e125]: $453.58
+          - generic [ref=e126]:
+            - img [ref=e127]
+            - generic [ref=e130]: "-18.6%"
+          - generic [ref=e131]:
+            - img [ref=e132]
+            - generic [ref=e135]: "-3.2%"
+        - button "HD $345.82 -17.8% +0.5%" [ref=e136] [cursor=pointer]:
+          - generic [ref=e137]: HD
+          - generic [ref=e138]: $345.82
+          - generic [ref=e139]:
+            - img [ref=e140]
+            - generic [ref=e143]: "-17.8%"
+          - generic [ref=e144]:
+            - img [ref=e145]
+            - generic [ref=e148]: +0.5%
+        - button "META $650.41 -17.5% -1.5%" [ref=e149] [cursor=pointer]:
+          - generic [ref=e150]: META
+          - generic [ref=e151]: $650.41
+          - generic [ref=e152]:
+            - img [ref=e153]
+            - generic [ref=e156]: "-17.5%"
+          - generic [ref=e157]:
+            - img [ref=e158]
+            - generic [ref=e161]: "-1.5%"
+        - button "AMD $223.47 -15.5% +4.3%" [ref=e162] [cursor=pointer]:
+          - generic [ref=e163]: AMD
+          - generic [ref=e164]: $223.47
+          - generic [ref=e165]:
+            - img [ref=e166]
+            - generic [ref=e169]: "-15.5%"
+          - generic [ref=e170]:
+            - img [ref=e171]
+            - generic [ref=e174]: +4.3%
+        - button "CHLSY $14.81 -13.6% +2.8%" [ref=e175] [cursor=pointer]:
+          - generic [ref=e176]: CHLSY
+          - generic [ref=e177]: $14.81
+          - generic [ref=e178]:
+            - img [ref=e179]
+            - generic [ref=e182]: "-13.6%"
+          - generic [ref=e183]:
+            - img [ref=e184]
+            - generic [ref=e187]: +2.8%
+        - button "MSFT $472.94 -12.6% -2.2%" [ref=e188] [cursor=pointer]:
+          - generic [ref=e189]: MSFT
+          - generic [ref=e190]: $472.94
+          - generic [ref=e191]:
+            - img [ref=e192]
+            - generic [ref=e195]: "-12.6%"
+          - generic [ref=e196]:
+            - img [ref=e197]
+            - generic [ref=e200]: "-2.2%"
+        - button "AMZN $226.50 -10.8% -1.9%" [ref=e201] [cursor=pointer]:
+          - generic [ref=e202]: AMZN
+          - generic [ref=e203]: $226.50
+          - generic [ref=e204]:
+            - img [ref=e205]
+            - generic [ref=e208]: "-10.8%"
+          - generic [ref=e209]:
+            - img [ref=e210]
+            - generic [ref=e213]: "-1.9%"
+        - button "TSLA $438.07 -10.6% -2.6%" [ref=e214] [cursor=pointer]:
+          - generic [ref=e215]: TSLA
+          - generic [ref=e216]: $438.07
+          - generic [ref=e217]:
+            - img [ref=e218]
+            - generic [ref=e221]: "-10.6%"
+          - generic [ref=e222]:
+            - img [ref=e223]
+            - generic [ref=e226]: "-2.6%"
+        - button "XLRE $40.38 -10.6% +0.1%" [ref=e227] [cursor=pointer]:
+          - generic [ref=e228]: XLRE
+          - generic [ref=e229]: $40.38
+          - generic [ref=e230]:
+            - img [ref=e231]
+            - generic [ref=e234]: "-10.6%"
+          - generic [ref=e235]:
+            - img [ref=e236]
+            - generic [ref=e239]: +0.1%
+        - button "BLK $1085.06 -9.3% +1.4%" [ref=e240] [cursor=pointer]:
+          - generic [ref=e241]: BLK
+          - generic [ref=e242]: $1085.06
+          - generic [ref=e243]:
+            - img [ref=e244]
+            - generic [ref=e247]: "-9.3%"
+          - generic [ref=e248]:
+            - img [ref=e249]
+            - generic [ref=e252]: +1.4%
+        - button "NVDA $188.85 -8.8% +1.3%" [ref=e253] [cursor=pointer]:
+          - generic [ref=e254]: NVDA
+          - generic [ref=e255]: $188.85
+          - generic [ref=e256]:
+            - img [ref=e257]
+            - generic [ref=e260]: "-8.8%"
+          - generic [ref=e261]:
+            - img [ref=e262]
+            - generic [ref=e265]: +1.3%
+        - button "O $57.31 -8.2% +1.7%" [ref=e266] [cursor=pointer]:
+          - generic [ref=e267]: O
+          - generic [ref=e268]: $57.31
+          - generic [ref=e269]:
+            - img [ref=e270]
+            - generic [ref=e273]: "-8.2%"
+          - generic [ref=e274]:
+            - img [ref=e275]
+            - generic [ref=e278]: +1.7%
+        - button "V $346.48 -6.8% -1.2%" [ref=e279] [cursor=pointer]:
+          - generic [ref=e280]: V
+          - generic [ref=e281]: $346.48
+          - generic [ref=e282]:
+            - img [ref=e283]
+            - generic [ref=e286]: "-6.8%"
+          - generic [ref=e287]:
+            - img [ref=e288]
+            - generic [ref=e291]: "-1.2%"
+        - button "XLU $43.18 -6.3% +1.1%" [ref=e292] [cursor=pointer]:
+          - generic [ref=e293]: XLU
+          - generic [ref=e294]: $43.18
+          - generic [ref=e295]:
+            - img [ref=e296]
+            - generic [ref=e299]: "-6.3%"
+          - generic [ref=e300]:
+            - img [ref=e301]
+            - generic [ref=e304]: +1.1%
+        - button "MA $563.13 -5.9% -1.4%" [ref=e305] [cursor=pointer]:
+          - generic [ref=e306]: MA
+          - generic [ref=e307]: $563.13
+          - generic [ref=e308]:
+            - img [ref=e309]
+            - generic [ref=e312]: "-5.9%"
+          - generic [ref=e313]:
+            - img [ref=e314]
+            - generic [ref=e317]: "-1.4%"
+        - button "AAPL $271.01 -5.3% -0.3%" [ref=e318] [cursor=pointer]:
+          - generic [ref=e319]: AAPL
+          - generic [ref=e320]: $271.01
+          - generic [ref=e321]:
+            - img [ref=e322]
+            - generic [ref=e325]: "-5.3%"
+          - generic [ref=e326]:
+            - img [ref=e327]
+            - generic [ref=e330]: "-0.3%"
+        - button "XLP $77.69 -5.3% +0.0%" [ref=e331] [cursor=pointer]:
+          - generic [ref=e332]: XLP
+          - generic [ref=e333]: $77.69
+          - generic [ref=e334]:
+            - img [ref=e335]
+            - generic [ref=e338]: "-5.3%"
+          - generic [ref=e339]:
+            - img [ref=e340]
+            - generic [ref=e343]: +0.0%
+        - button "XLK $144.30 -5.0% +0.2%" [ref=e344] [cursor=pointer]:
+          - generic [ref=e345]: XLK
+          - generic [ref=e346]: $144.30
+          - generic [ref=e347]:
+            - img [ref=e348]
+            - generic [ref=e351]: "-5.0%"
+          - generic [ref=e352]:
+            - img [ref=e353]
+            - generic [ref=e356]: +0.2%
+        - button "AIR.DE $203.90 -4.7% +2.9%" [ref=e357] [cursor=pointer]:
+          - generic [ref=e358]: AIR.DE
+          - generic [ref=e359]: $203.90
+          - generic [ref=e360]:
+            - img [ref=e361]
+            - generic [ref=e364]: "-4.7%"
+          - generic [ref=e365]:
+            - img [ref=e366]
+            - generic [ref=e369]: +2.9%
+        - button "SIE.DE $241.10 -3.7% +0.8%" [ref=e370] [cursor=pointer]:
+          - generic [ref=e371]: SIE.DE
+          - generic [ref=e372]: $241.10
+          - generic [ref=e373]:
+            - img [ref=e374]
+            - generic [ref=e377]: "-3.7%"
+          - generic [ref=e378]:
+            - img [ref=e379]
+            - generic [ref=e382]: +0.8%
+        - button "XLY $118.35 -3.5% -0.9%" [ref=e383] [cursor=pointer]:
+          - generic [ref=e384]: XLY
+          - generic [ref=e385]: $118.35
+          - generic [ref=e386]:
+            - img [ref=e387]
+            - generic [ref=e390]: "-3.5%"
+          - generic [ref=e391]:
+            - img [ref=e392]
+            - generic [ref=e395]: "-0.9%"
+        - button "XLB $46.12 -3.1% +1.7%" [ref=e396] [cursor=pointer]:
+          - generic [ref=e397]: XLB
+          - generic [ref=e398]: $46.12
+          - generic [ref=e399]:
+            - img [ref=e400]
+            - generic [ref=e403]: "-3.1%"
+          - generic [ref=e404]:
+            - img [ref=e405]
+            - generic [ref=e408]: +1.7%
+        - button "GOOG $315.32 -2.5% +0.5%" [ref=e409] [cursor=pointer]:
+          - generic [ref=e410]: GOOG
+          - generic [ref=e411]: $315.32
+          - generic [ref=e412]:
+            - img [ref=e413]
+            - generic [ref=e416]: "-2.5%"
+          - generic [ref=e417]:
+            - img [ref=e418]
+            - generic [ref=e421]: +0.5%
+        - button "QQQ $619.43 -2.4% +0.8%" [ref=e422] [cursor=pointer]:
+          - generic [ref=e423]: QQQ
+          - generic [ref=e424]: $619.43
+          - generic [ref=e425]:
+            - img [ref=e426]
+            - generic [ref=e429]: "-2.4%"
+          - generic [ref=e430]:
+            - img [ref=e431]
+            - generic [ref=e434]: +0.8%
+        - button "XLE $45.65 -2.2% +2.1%" [ref=e435] [cursor=pointer]:
+          - generic [ref=e436]: XLE
+          - generic [ref=e437]: $45.65
+          - generic [ref=e438]:
+            - img [ref=e439]
+            - generic [ref=e442]: "-2.2%"
+          - generic [ref=e443]:
+            - img [ref=e444]
+            - generic [ref=e447]: +2.1%
+        - button "MNST $76.16 -1.9% -0.7%" [ref=e448] [cursor=pointer]:
+          - generic [ref=e449]: MNST
+          - generic [ref=e450]: $76.16
+          - generic [ref=e451]:
+            - img [ref=e452]
+            - generic [ref=e455]: "-1.9%"
+          - generic [ref=e456]:
+            - img [ref=e457]
+            - generic [ref=e460]: "-0.7%"
+        - button "XLV $155.51 -1.6% +0.5%" [ref=e461] [cursor=pointer]:
+          - generic [ref=e462]: XLV
+          - generic [ref=e463]: $155.51
+          - generic [ref=e464]:
+            - img [ref=e465]
+            - generic [ref=e468]: "-1.6%"
+          - generic [ref=e469]:
+            - img [ref=e470]
+            - generic [ref=e473]: +0.5%
+        - button "XLC $116.90 -1.4% -0.7%" [ref=e474] [cursor=pointer]:
+          - generic [ref=e475]: XLC
+          - generic [ref=e476]: $116.90
+          - generic [ref=e477]:
+            - img [ref=e478]
+            - generic [ref=e481]: "-1.4%"
+          - generic [ref=e482]:
+            - img [ref=e483]
+            - generic [ref=e486]: "-0.7%"
+        - button "XLF $54.93 -1.4% +0.3%" [ref=e487] [cursor=pointer]:
+          - generic [ref=e488]: XLF
+          - generic [ref=e489]: $54.93
+          - generic [ref=e490]:
+            - img [ref=e491]
+            - generic [ref=e494]: "-1.4%"
+          - generic [ref=e495]:
+            - img [ref=e496]
+            - generic [ref=e499]: +0.3%
+        - button "JPM $325.48 -0.7% +1.0%" [ref=e500] [cursor=pointer]:
+          - generic [ref=e501]: JPM
+          - generic [ref=e502]: $325.48
+          - generic [ref=e503]:
+            - img [ref=e504]
+            - generic [ref=e507]: "-0.7%"
+          - generic [ref=e508]:
+            - img [ref=e509]
+            - generic [ref=e512]: +1.0%
+        - button "ENR.DE $122.80 -0.6% +2.0%" [ref=e513] [cursor=pointer]:
+          - generic [ref=e514]: ENR.DE
+          - generic [ref=e515]: $122.80
+          - generic [ref=e516]:
+            - img [ref=e517]
+            - generic [ref=e520]: "-0.6%"
+          - generic [ref=e521]:
+            - img [ref=e522]
+            - generic [ref=e525]: +2.0%
+        - button "SPY $226.50 -67.2% -66.8%" [ref=e526] [cursor=pointer]:
+          - generic [ref=e527]: SPY
+          - generic [ref=e528]: $226.50
+          - generic [ref=e529]:
+            - img [ref=e530]
+            - generic [ref=e533]: "-67.2%"
+          - generic [ref=e534]:
+            - img [ref=e535]
+            - generic [ref=e538]: "-66.8%"
+        - button "VTI $116.90 -65.6% -65.1%" [ref=e539] [cursor=pointer]:
+          - generic [ref=e540]: VTI
+          - generic [ref=e541]: $116.90
+          - generic [ref=e542]:
+            - img [ref=e543]
+            - generic [ref=e546]: "-65.6%"
+          - generic [ref=e547]:
+            - img [ref=e548]
+            - generic [ref=e551]: "-65.1%"
+        - button "WMT $112.76 -64.3% +1.2%" [ref=e552] [cursor=pointer]:
+          - generic [ref=e553]: WMT
+          - generic [ref=e554]: $112.76
+          - generic [ref=e555]:
+            - img [ref=e556]
+            - generic [ref=e559]: "-64.3%"
+          - generic [ref=e560]:
+            - img [ref=e561]
+            - generic [ref=e564]: +1.2%
+        - button "ADBE $333.30 -51.6% -4.8%" [ref=e565] [cursor=pointer]:
+          - generic [ref=e566]: ADBE
+          - generic [ref=e567]: $333.30
+          - generic [ref=e568]:
+            - img [ref=e569]
+            - generic [ref=e572]: "-51.6%"
+          - generic [ref=e573]:
+            - img [ref=e574]
+            - generic [ref=e577]: "-4.8%"
+        - button "DIS $111.85 -43.3% -1.7%" [ref=e578] [cursor=pointer]:
+          - generic [ref=e579]: DIS
+          - generic [ref=e580]: $111.85
+          - generic [ref=e581]:
+            - img [ref=e582]
+            - generic [ref=e585]: "-43.3%"
+          - generic [ref=e586]:
+            - img [ref=e587]
+            - generic [ref=e590]: "-1.7%"
+        - button "NFLX $90.99 -32.1% -3.0%" [ref=e591] [cursor=pointer]:
+          - generic [ref=e592]: NFLX
+          - generic [ref=e593]: $90.99
+          - generic [ref=e594]:
+            - img [ref=e595]
+            - generic [ref=e598]: "-32.1%"
+          - generic [ref=e599]:
+            - img [ref=e600]
+            - generic [ref=e603]: "-3.0%"
+        - button "CRM $253.62 -30.5% -4.3%" [ref=e604] [cursor=pointer]:
+          - generic [ref=e605]: CRM
+          - generic [ref=e606]: $253.62
+          - generic [ref=e607]:
+            - img [ref=e608]
+            - generic [ref=e611]: "-30.5%"
+          - generic [ref=e612]:
+            - img [ref=e613]
+            - generic [ref=e616]: "-4.3%"
+        - button "HOOD $115.21 -24.4% +1.9%" [ref=e617] [cursor=pointer]:
+          - generic [ref=e618]: HOOD
+          - generic [ref=e619]: $115.21
+          - generic [ref=e620]:
+            - img [ref=e621]
+            - generic [ref=e624]: "-24.4%"
+          - generic [ref=e625]:
+            - img [ref=e626]
+            - generic [ref=e629]: +1.9%
+        - button "NET $196.02 -22.6% -0.6%" [ref=e630] [cursor=pointer]:
+          - generic [ref=e631]: NET
+          - generic [ref=e632]: $196.02
+          - generic [ref=e633]:
+            - img [ref=e634]
+            - generic [ref=e637]: "-22.6%"
+          - generic [ref=e638]:
+            - img [ref=e639]
+            - generic [ref=e642]: "-0.6%"
+        - button "CRWD $453.58 -18.6% -3.2%" [ref=e643] [cursor=pointer]:
+          - generic [ref=e644]: CRWD
+          - generic [ref=e645]: $453.58
+          - generic [ref=e646]:
+            - img [ref=e647]
+            - generic [ref=e650]: "-18.6%"
+          - generic [ref=e651]:
+            - img [ref=e652]
+            - generic [ref=e655]: "-3.2%"
+        - button "HD $345.82 -17.8% +0.5%" [ref=e656] [cursor=pointer]:
+          - generic [ref=e657]: HD
+          - generic [ref=e658]: $345.82
+          - generic [ref=e659]:
+            - img [ref=e660]
+            - generic [ref=e663]: "-17.8%"
+          - generic [ref=e664]:
+            - img [ref=e665]
+            - generic [ref=e668]: +0.5%
+        - button "META $650.41 -17.5% -1.5%" [ref=e669] [cursor=pointer]:
+          - generic [ref=e670]: META
+          - generic [ref=e671]: $650.41
+          - generic [ref=e672]:
+            - img [ref=e673]
+            - generic [ref=e676]: "-17.5%"
+          - generic [ref=e677]:
+            - img [ref=e678]
+            - generic [ref=e681]: "-1.5%"
+        - button "AMD $223.47 -15.5% +4.3%" [ref=e682] [cursor=pointer]:
+          - generic [ref=e683]: AMD
+          - generic [ref=e684]: $223.47
+          - generic [ref=e685]:
+            - img [ref=e686]
+            - generic [ref=e689]: "-15.5%"
+          - generic [ref=e690]:
+            - img [ref=e691]
+            - generic [ref=e694]: +4.3%
+        - button "CHLSY $14.81 -13.6% +2.8%" [ref=e695] [cursor=pointer]:
+          - generic [ref=e696]: CHLSY
+          - generic [ref=e697]: $14.81
+          - generic [ref=e698]:
+            - img [ref=e699]
+            - generic [ref=e702]: "-13.6%"
+          - generic [ref=e703]:
+            - img [ref=e704]
+            - generic [ref=e707]: +2.8%
+        - button "MSFT $472.94 -12.6% -2.2%" [ref=e708] [cursor=pointer]:
+          - generic [ref=e709]: MSFT
+          - generic [ref=e710]: $472.94
+          - generic [ref=e711]:
+            - img [ref=e712]
+            - generic [ref=e715]: "-12.6%"
+          - generic [ref=e716]:
+            - img [ref=e717]
+            - generic [ref=e720]: "-2.2%"
+        - button "AMZN $226.50 -10.8% -1.9%" [ref=e721] [cursor=pointer]:
+          - generic [ref=e722]: AMZN
+          - generic [ref=e723]: $226.50
+          - generic [ref=e724]:
+            - img [ref=e725]
+            - generic [ref=e728]: "-10.8%"
+          - generic [ref=e729]:
+            - img [ref=e730]
+            - generic [ref=e733]: "-1.9%"
+        - button "TSLA $438.07 -10.6% -2.6%" [ref=e734] [cursor=pointer]:
+          - generic [ref=e735]: TSLA
+          - generic [ref=e736]: $438.07
+          - generic [ref=e737]:
+            - img [ref=e738]
+            - generic [ref=e741]: "-10.6%"
+          - generic [ref=e742]:
+            - img [ref=e743]
+            - generic [ref=e746]: "-2.6%"
+        - button "XLRE $40.38 -10.6% +0.1%" [ref=e747] [cursor=pointer]:
+          - generic [ref=e748]: XLRE
+          - generic [ref=e749]: $40.38
+          - generic [ref=e750]:
+            - img [ref=e751]
+            - generic [ref=e754]: "-10.6%"
+          - generic [ref=e755]:
+            - img [ref=e756]
+            - generic [ref=e759]: +0.1%
+        - button "BLK $1085.06 -9.3% +1.4%" [ref=e760] [cursor=pointer]:
+          - generic [ref=e761]: BLK
+          - generic [ref=e762]: $1085.06
+          - generic [ref=e763]:
+            - img [ref=e764]
+            - generic [ref=e767]: "-9.3%"
+          - generic [ref=e768]:
+            - img [ref=e769]
+            - generic [ref=e772]: +1.4%
+        - button "NVDA $188.85 -8.8% +1.3%" [ref=e773] [cursor=pointer]:
+          - generic [ref=e774]: NVDA
+          - generic [ref=e775]: $188.85
+          - generic [ref=e776]:
+            - img [ref=e777]
+            - generic [ref=e780]: "-8.8%"
+          - generic [ref=e781]:
+            - img [ref=e782]
+            - generic [ref=e785]: +1.3%
+        - button "O $57.31 -8.2% +1.7%" [ref=e786] [cursor=pointer]:
+          - generic [ref=e787]: O
+          - generic [ref=e788]: $57.31
+          - generic [ref=e789]:
+            - img [ref=e790]
+            - generic [ref=e793]: "-8.2%"
+          - generic [ref=e794]:
+            - img [ref=e795]
+            - generic [ref=e798]: +1.7%
+        - button "V $346.48 -6.8% -1.2%" [ref=e799] [cursor=pointer]:
+          - generic [ref=e800]: V
+          - generic [ref=e801]: $346.48
+          - generic [ref=e802]:
+            - img [ref=e803]
+            - generic [ref=e806]: "-6.8%"
+          - generic [ref=e807]:
+            - img [ref=e808]
+            - generic [ref=e811]: "-1.2%"
+        - button "XLU $43.18 -6.3% +1.1%" [ref=e812] [cursor=pointer]:
+          - generic [ref=e813]: XLU
+          - generic [ref=e814]: $43.18
+          - generic [ref=e815]:
+            - img [ref=e816]
+            - generic [ref=e819]: "-6.3%"
+          - generic [ref=e820]:
+            - img [ref=e821]
+            - generic [ref=e824]: +1.1%
+        - button "MA $563.13 -5.9% -1.4%" [ref=e825] [cursor=pointer]:
+          - generic [ref=e826]: MA
+          - generic [ref=e827]: $563.13
+          - generic [ref=e828]:
+            - img [ref=e829]
+            - generic [ref=e832]: "-5.9%"
+          - generic [ref=e833]:
+            - img [ref=e834]
+            - generic [ref=e837]: "-1.4%"
+        - button "AAPL $271.01 -5.3% -0.3%" [ref=e838] [cursor=pointer]:
+          - generic [ref=e839]: AAPL
+          - generic [ref=e840]: $271.01
+          - generic [ref=e841]:
+            - img [ref=e842]
+            - generic [ref=e845]: "-5.3%"
+          - generic [ref=e846]:
+            - img [ref=e847]
+            - generic [ref=e850]: "-0.3%"
+        - button "XLP $77.69 -5.3% +0.0%" [ref=e851] [cursor=pointer]:
+          - generic [ref=e852]: XLP
+          - generic [ref=e853]: $77.69
+          - generic [ref=e854]:
+            - img [ref=e855]
+            - generic [ref=e858]: "-5.3%"
+          - generic [ref=e859]:
+            - img [ref=e860]
+            - generic [ref=e863]: +0.0%
+        - button "XLK $144.30 -5.0% +0.2%" [ref=e864] [cursor=pointer]:
+          - generic [ref=e865]: XLK
+          - generic [ref=e866]: $144.30
+          - generic [ref=e867]:
+            - img [ref=e868]
+            - generic [ref=e871]: "-5.0%"
+          - generic [ref=e872]:
+            - img [ref=e873]
+            - generic [ref=e876]: +0.2%
+        - button "AIR.DE $203.90 -4.7% +2.9%" [ref=e877] [cursor=pointer]:
+          - generic [ref=e878]: AIR.DE
+          - generic [ref=e879]: $203.90
+          - generic [ref=e880]:
+            - img [ref=e881]
+            - generic [ref=e884]: "-4.7%"
+          - generic [ref=e885]:
+            - img [ref=e886]
+            - generic [ref=e889]: +2.9%
+        - button "SIE.DE $241.10 -3.7% +0.8%" [ref=e890] [cursor=pointer]:
+          - generic [ref=e891]: SIE.DE
+          - generic [ref=e892]: $241.10
+          - generic [ref=e893]:
+            - img [ref=e894]
+            - generic [ref=e897]: "-3.7%"
+          - generic [ref=e898]:
+            - img [ref=e899]
+            - generic [ref=e902]: +0.8%
+        - button "XLY $118.35 -3.5% -0.9%" [ref=e903] [cursor=pointer]:
+          - generic [ref=e904]: XLY
+          - generic [ref=e905]: $118.35
+          - generic [ref=e906]:
+            - img [ref=e907]
+            - generic [ref=e910]: "-3.5%"
+          - generic [ref=e911]:
+            - img [ref=e912]
+            - generic [ref=e915]: "-0.9%"
+        - button "XLB $46.12 -3.1% +1.7%" [ref=e916] [cursor=pointer]:
+          - generic [ref=e917]: XLB
+          - generic [ref=e918]: $46.12
+          - generic [ref=e919]:
+            - img [ref=e920]
+            - generic [ref=e923]: "-3.1%"
+          - generic [ref=e924]:
+            - img [ref=e925]
+            - generic [ref=e928]: +1.7%
+        - button "GOOG $315.32 -2.5% +0.5%" [ref=e929] [cursor=pointer]:
+          - generic [ref=e930]: GOOG
+          - generic [ref=e931]: $315.32
+          - generic [ref=e932]:
+            - img [ref=e933]
+            - generic [ref=e936]: "-2.5%"
+          - generic [ref=e937]:
+            - img [ref=e938]
+            - generic [ref=e941]: +0.5%
+        - button "QQQ $619.43 -2.4% +0.8%" [ref=e942] [cursor=pointer]:
+          - generic [ref=e943]: QQQ
+          - generic [ref=e944]: $619.43
+          - generic [ref=e945]:
+            - img [ref=e946]
+            - generic [ref=e949]: "-2.4%"
+          - generic [ref=e950]:
+            - img [ref=e951]
+            - generic [ref=e954]: +0.8%
+        - button "XLE $45.65 -2.2% +2.1%" [ref=e955] [cursor=pointer]:
+          - generic [ref=e956]: XLE
+          - generic [ref=e957]: $45.65
+          - generic [ref=e958]:
+            - img [ref=e959]
+            - generic [ref=e962]: "-2.2%"
+          - generic [ref=e963]:
+            - img [ref=e964]
+            - generic [ref=e967]: +2.1%
+        - button "MNST $76.16 -1.9% -0.7%" [ref=e968] [cursor=pointer]:
+          - generic [ref=e969]: MNST
+          - generic [ref=e970]: $76.16
+          - generic [ref=e971]:
+            - img [ref=e972]
+            - generic [ref=e975]: "-1.9%"
+          - generic [ref=e976]:
+            - img [ref=e977]
+            - generic [ref=e980]: "-0.7%"
+        - button "XLV $155.51 -1.6% +0.5%" [ref=e981] [cursor=pointer]:
+          - generic [ref=e982]: XLV
+          - generic [ref=e983]: $155.51
+          - generic [ref=e984]:
+            - img [ref=e985]
+            - generic [ref=e988]: "-1.6%"
+          - generic [ref=e989]:
+            - img [ref=e990]
+            - generic [ref=e993]: +0.5%
+        - button "XLC $116.90 -1.4% -0.7%" [ref=e994] [cursor=pointer]:
+          - generic [ref=e995]: XLC
+          - generic [ref=e996]: $116.90
+          - generic [ref=e997]:
+            - img [ref=e998]
+            - generic [ref=e1001]: "-1.4%"
+          - generic [ref=e1002]:
+            - img [ref=e1003]
+            - generic [ref=e1006]: "-0.7%"
+        - button "XLF $54.93 -1.4% +0.3%" [ref=e1007] [cursor=pointer]:
+          - generic [ref=e1008]: XLF
+          - generic [ref=e1009]: $54.93
+          - generic [ref=e1010]:
+            - img [ref=e1011]
+            - generic [ref=e1014]: "-1.4%"
+          - generic [ref=e1015]:
+            - img [ref=e1016]
+            - generic [ref=e1019]: +0.3%
+        - button "JPM $325.48 -0.7% +1.0%" [ref=e1020] [cursor=pointer]:
+          - generic [ref=e1021]: JPM
+          - generic [ref=e1022]: $325.48
+          - generic [ref=e1023]:
+            - img [ref=e1024]
+            - generic [ref=e1027]: "-0.7%"
+          - generic [ref=e1028]:
+            - img [ref=e1029]
+            - generic [ref=e1032]: +1.0%
+        - button "ENR.DE $122.80 -0.6% +2.0%" [ref=e1033] [cursor=pointer]:
+          - generic [ref=e1034]: ENR.DE
+          - generic [ref=e1035]: $122.80
+          - generic [ref=e1036]:
+            - img [ref=e1037]
+            - generic [ref=e1040]: "-0.6%"
+          - generic [ref=e1041]:
+            - img [ref=e1042]
+            - generic [ref=e1045]: +2.0%
+      - banner [ref=e1046]:
+        - generic [ref=e1047]:
+          - link "StonkMarket" [ref=e1048] [cursor=pointer]:
+            - /url: /
+            - img [ref=e1049]
+            - generic [ref=e1052]: StonkMarket
+          - navigation [ref=e1053]:
+            - link "Dashboard" [ref=e1054] [cursor=pointer]:
+              - /url: /dashboard
+            - link "DipSwipe" [ref=e1055] [cursor=pointer]:
+              - /url: /swipe
+              - img [ref=e1056]
+              - text: DipSwipe
+            - link "Methodology" [ref=e1058] [cursor=pointer]:
+              - /url: /learn
+          - generic [ref=e1059]:
+            - button "Suggest" [ref=e1060] [cursor=pointer]:
+              - img
+              - generic [ref=e1061]: Suggest
+            - button "Toggle theme" [ref=e1062] [cursor=pointer]:
+              - img
+              - generic [ref=e1063]: Toggle theme
+            - link "Sign in" [ref=e1064] [cursor=pointer]:
+              - /url: /login
+              - button "Sign in" [ref=e1065]
+      - main [ref=e1066]:
+        - generic [ref=e1068]:
+          - generic [ref=e1073]:
+            - generic [ref=e1074]:
+              - generic [ref=e1076]:
+                - img
+                - text: AI-Powered Signal Engine
+              - heading "Catch real dips with AI-backed conviction." [level=1] [ref=e1077]:
+                - text: Catch real dips with
+                - text: AI-backed conviction.
+              - paragraph [ref=e1078]: StonkMarket scans the market, flags high-probability reversals, and explains the signal in plain language.
+              - generic [ref=e1079]:
+                - generic [ref=e1080]:
+                  - img
+                  - text: Live signals
+                - generic [ref=e1081]:
+                  - img
+                  - text: AI debate
+                - generic [ref=e1082]:
+                  - img
+                  - text: Optimized entries
+              - generic [ref=e1083]:
+                - button "Get Started Free" [ref=e1084] [cursor=pointer]:
+                  - text: Get Started Free
+                  - img
+                - button "Learn More" [ref=e1085] [cursor=pointer]:
+                  - text: Learn More
+                  - img
+              - generic [ref=e1086]:
+                - generic [ref=e1087]:
+                  - img [ref=e1088]
+                  - text: Updated 17h ago
+                - generic [ref=e1091]: 12 ranked | 0 buy signals
+            - generic [ref=e1095]:
+              - generic [ref=e1096]:
+                - generic [ref=e1097]:
+                  - generic [ref=e1098]:
+                    - generic [ref=e1099]:
+                      - img "HOOD logo" [ref=e1101]
+                      - generic [ref=e1102]:
+                        - generic [ref=e1103]: HOOD
+                        - generic [ref=e1104]: Live signal preview
+                    - generic [ref=e1105]:
+                      - paragraph [ref=e1106]: $115.21
+                      - paragraph [ref=e1107]: +26.23%
+                  - generic [ref=e1108]:
+                    - img
+                    - text: 8 signals detected
+                - img [ref=e1113]:
+                  - generic [ref=e1115]:
+                    - generic [ref=e1117]: Aug 14
+                    - generic [ref=e1119]: Sep 18
+                    - generic [ref=e1121]: Oct 22
+                    - generic [ref=e1123]: Nov 25
+                    - generic [ref=e1125]: Jan 2
+                  - generic [ref=e1127]:
+                    - generic [ref=e1129]: $100
+                    - generic [ref=e1131]: $115
+                    - generic [ref=e1133]: $130
+                    - generic [ref=e1135]: $152
+              - generic [ref=e1156]:
+                - generic [ref=e1157]:
+                  - generic [ref=e1158]:
+                    - generic [ref=e1159]:
+                      - img [ref=e1160]
+                      - text: Live Signal Briefing
+                    - generic [ref=e1162]:
+                      - img
+                      - text: HOLD
+                  - generic [ref=e1163]:
+                    - generic [ref=e1164]:
+                      - paragraph [ref=e1165]: "-24.4%"
+                      - paragraph [ref=e1166]: Dip Depth
+                    - generic [ref=e1167]:
+                      - paragraph [ref=e1168]: 86%
+                      - paragraph [ref=e1169]: P(Recovery)
+                    - generic [ref=e1170]:
+                      - paragraph [ref=e1171]: 21d
+                      - paragraph [ref=e1172]: Avg Recovery
+                - generic [ref=e1173]:
+                  - generic [ref=e1174]:
+                    - paragraph [ref=e1175]: "Why this signal:"
+                    - generic [ref=e1176]:
+                      - generic [ref=e1177]:
+                        - img [ref=e1178]
+                        - generic [ref=e1181]: "P(rec):"
+                        - generic [ref=e1182]: 86%
+                      - generic [ref=e1183]:
+                        - img [ref=e1184]
+                        - generic [ref=e1186]: "vs typical:"
+                        - generic [ref=e1187]: 1.5x
+                      - generic [ref=e1188]:
+                        - img [ref=e1189]
+                        - generic [ref=e1191]: "Unusual:"
+                        - generic [ref=e1192]: "Yes"
+                      - generic [ref=e1193]:
+                        - img [ref=e1194]
+                        - generic [ref=e1200]: "Win rate:"
+                        - generic [ref=e1201]: 75%
+                  - generic [ref=e1202]:
+                    - generic [ref=e1203]:
+                      - img [ref=e1204]
+                      - text: 5 trades backtested
+                      - generic [ref=e1207]: "• Edge: -152.3%"
+                    - button "Full Analysis" [ref=e1208] [cursor=pointer]:
+                      - text: Full Analysis
+                      - img
+                  - paragraph [ref=e1209]:
+                    - img [ref=e1210]
+                    - text: "Dip -23.2% (>=20%) from recent high (153.86->118.13) - deep dip meets strong-buy depth criterion; dip type unspecified (possible stock-specific or mixed) and no structural red flags noted. Cited facts: -23.2% dip, current price $118.13 vs recent high $153.86."
+          - generic [ref=e1219]:
+            - generic [ref=e1220]:
+              - generic [ref=e1221]:
+                - heading "Live Signal Board" [level=2] [ref=e1222]
+                - paragraph [ref=e1223]: Top-ranked opportunities, refreshed every 15 minutes.
+              - button "View Full Board" [ref=e1224] [cursor=pointer]:
+                - text: View Full Board
+                - img
+            - alert [ref=e1225]:
+              - img [ref=e1226]
+              - generic [ref=e1228]: "No actionable opportunities today. Top score: 91/100."
+            - generic [ref=e1229]:
+              - generic [ref=e1232] [cursor=pointer]:
+                - generic [ref=e1233]:
+                  - generic [ref=e1234]:
+                    - img "HOOD logo" [ref=e1236]
+                    - generic [ref=e1237]:
+                      - generic [ref=e1238]:
+                        - generic [ref=e1239]: HOOD
+                        - generic [ref=e1240]:
+                          - img
+                          - text: HOLD
+                      - paragraph [ref=e1241]: Robinhood Markets, Inc.
+                  - generic [ref=e1242]:
+                    - paragraph [ref=e1243]: $115.21
+                    - paragraph [ref=e1244]: "-19.14%"
+                - generic [ref=e1245]:
+                  - generic [ref=e1246]:
+                    - paragraph [ref=e1247]: Expected Return
+                    - paragraph [ref=e1248]: 0.0%
+                  - generic [ref=e1249]:
+                    - paragraph [ref=e1250]: Signal Score
+                    - paragraph [ref=e1251]: "91"
+                - img [ref=e1255]
+              - generic [ref=e1262] [cursor=pointer]:
+                - generic [ref=e1263]:
+                  - generic [ref=e1264]:
+                    - img "NVDA logo" [ref=e1266]
+                    - generic [ref=e1267]:
+                      - generic [ref=e1268]:
+                        - generic [ref=e1269]: NVDA
+                        - generic [ref=e1270]:
+                          - img
+                          - text: HOLD
+                      - paragraph [ref=e1271]: NVIDIA Corporation
+                  - generic [ref=e1272]:
+                    - paragraph [ref=e1273]: $188.85
+                    - paragraph [ref=e1274]: "-3.25%"
+                - generic [ref=e1275]:
+                  - generic [ref=e1276]:
+                    - paragraph [ref=e1277]: Expected Return
+                    - paragraph [ref=e1278]: 0.0%
+                  - generic [ref=e1279]:
+                    - paragraph [ref=e1280]: Signal Score
+                    - paragraph [ref=e1281]: "91"
+                - img [ref=e1285]
+              - generic [ref=e1292] [cursor=pointer]:
+                - generic [ref=e1293]:
+                  - generic [ref=e1294]:
+                    - img "MSFT logo" [ref=e1296]
+                    - generic [ref=e1297]:
+                      - generic [ref=e1298]:
+                        - generic [ref=e1299]: MSFT
+                        - generic [ref=e1300]:
+                          - img
+                          - text: HOLD
+                      - paragraph [ref=e1301]: Microsoft Corporation
+                  - generic [ref=e1302]:
+                    - paragraph [ref=e1303]: $472.94
+                    - paragraph [ref=e1304]: "-6.57%"
+                - generic [ref=e1305]:
+                  - generic [ref=e1306]:
+                    - paragraph [ref=e1307]: Expected Return
+                    - paragraph [ref=e1308]: 0.0%
+                  - generic [ref=e1309]:
+                    - paragraph [ref=e1310]: Signal Score
+                    - paragraph [ref=e1311]: "89"
+                - img [ref=e1315]
+              - generic [ref=e1322] [cursor=pointer]:
+                - generic [ref=e1323]:
+                  - generic [ref=e1324]:
+                    - img "META logo" [ref=e1326]
+                    - generic [ref=e1327]:
+                      - generic [ref=e1328]:
+                        - generic [ref=e1329]: META
+                        - generic [ref=e1330]:
+                          - img
+                          - text: HOLD
+                      - paragraph [ref=e1331]: Meta Platforms, Inc.
+                  - generic [ref=e1332]:
+                    - paragraph [ref=e1333]: $650.41
+                    - paragraph [ref=e1334]: +2.36%
+                - generic [ref=e1335]:
+                  - generic [ref=e1336]:
+                    - paragraph [ref=e1337]: Expected Return
+                    - paragraph [ref=e1338]: 0.0%
+                  - generic [ref=e1339]:
+                    - paragraph [ref=e1340]: Signal Score
+                    - paragraph [ref=e1341]: "88"
+                - img [ref=e1345]
+          - generic [ref=e1351]:
+            - generic [ref=e1352]:
+              - heading "The AI pipeline behind every signal" [level=2] [ref=e1353]
+              - paragraph [ref=e1354]: From raw price action to AI consensus to validated entry decisions.
+            - generic [ref=e1357]:
+              - generic [ref=e1359]:
+                - img [ref=e1361]
+                - heading "Scan" [level=4] [ref=e1364]
+                - paragraph [ref=e1365]: Detect dips & momentum shifts
+              - generic [ref=e1367]:
+                - img [ref=e1369]
+                - heading "Debate" [level=4] [ref=e1374]
+                - paragraph [ref=e1375]: AI personas challenge the signal
+              - generic [ref=e1377]:
+                - img [ref=e1379]
+                - heading "Optimize Entry" [level=4] [ref=e1383]
+                - paragraph [ref=e1384]: Find optimal buy zone
+              - generic [ref=e1386]:
+                - img [ref=e1388]
+                - heading "Backtest" [level=4] [ref=e1390]
+                - paragraph [ref=e1391]: Validate with historical data
+            - generic [ref=e1392]:
+              - generic [ref=e1393]:
+                - paragraph [ref=e1394]: "5"
+                - paragraph [ref=e1395]: Signals Detected
+              - generic [ref=e1396]:
+                - paragraph [ref=e1397]: —
+                - paragraph [ref=e1398]: AI Personas
+              - generic [ref=e1399]:
+                - paragraph [ref=e1400]: +32.7%
+                - paragraph [ref=e1401]: Expected Return
+              - generic [ref=e1402]:
+                - paragraph [ref=e1403]: "5"
+                - paragraph [ref=e1404]: Backtested Trades
+          - generic [ref=e1406]:
+            - generic [ref=e1407]:
+              - generic [ref=e1408]:
+                - img
+                - text: Verified Performance
+              - heading "Real backtest results" [level=2] [ref=e1409]
+              - paragraph [ref=e1410]: Historical performance of our signals, not simulated scenarios.
+            - generic [ref=e1411]:
+              - generic [ref=e1414]:
+                - img [ref=e1416]
+                - paragraph [ref=e1422]:
+                  - generic [ref=e1423]: 75%
+                - paragraph [ref=e1424]: Win Rate
+                - paragraph [ref=e1425]: 5 trades analyzed
+              - generic [ref=e1428]:
+                - img [ref=e1430]
+                - paragraph [ref=e1433]: "-152.3%"
+                - paragraph [ref=e1434]: Avg Return
+                - paragraph [ref=e1435]: Edge vs buy-and-hold
+              - generic [ref=e1438]:
+                - img [ref=e1440]
+                - paragraph [ref=e1442]: "-8.2%"
+                - paragraph [ref=e1443]: Max Drawdown
+                - paragraph [ref=e1444]: Worst peak-to-trough
+            - paragraph [ref=e1445]:
+              - img [ref=e1446]
+              - text: Data as of Jan 4, 2026 • Past performance does not guarantee future results
+          - generic [ref=e1450]:
+            - generic [ref=e1451]:
+              - heading "Today's signal gallery" [level=2] [ref=e1452]
+              - paragraph [ref=e1453]: Real tickers with real dips and real AI analysis. This is what you're getting.
+            - generic [ref=e1454]:
+              - generic [ref=e1457] [cursor=pointer]:
+                - generic [ref=e1458]:
+                  - img "HOOD logo" [ref=e1460]
+                  - generic [ref=e1461]:
+                    - generic [ref=e1462]:
+                      - generic [ref=e1463]: HOOD
+                      - generic [ref=e1464]: HOLD
+                    - paragraph [ref=e1465]: Robinhood Markets, Inc.
+                - generic [ref=e1466]:
+                  - generic [ref=e1467]:
+                    - paragraph [ref=e1468]: Dip
+                    - paragraph [ref=e1469]: "-24.4%"
+                  - generic [ref=e1470]:
+                    - paragraph [ref=e1471]: P(rec)
+                    - paragraph [ref=e1472]: 86%
+                - paragraph [ref=e1473]: "AI: Dip -23.2% (>=20%) from recent high (153.86->118.13) - deep dip meets strong-buy depth criterion; dip type unspecified (possible stock-specific or mixed) and no structural red flags noted. Cited facts: -23.2% dip, current price $118.13 vs recent high $153.86."
+                - button "Analyze" [ref=e1475]:
+                  - text: Analyze
+                  - img
+              - generic [ref=e1478] [cursor=pointer]:
+                - generic [ref=e1479]:
+                  - img "NVDA logo" [ref=e1481]
+                  - generic [ref=e1482]:
+                    - generic [ref=e1483]:
+                      - generic [ref=e1484]: NVDA
+                      - generic [ref=e1485]: HOLD
+                    - paragraph [ref=e1486]: NVIDIA Corporation
+                - generic [ref=e1487]:
+                  - generic [ref=e1488]:
+                    - paragraph [ref=e1489]: Dip
+                    - paragraph [ref=e1490]: "-8.8%"
+                  - generic [ref=e1491]:
+                    - paragraph [ref=e1492]: P(rec)
+                    - paragraph [ref=e1493]: 84%
+                - button "Analyze" [ref=e1495]:
+                  - text: Analyze
+                  - img
+              - generic [ref=e1498] [cursor=pointer]:
+                - generic [ref=e1499]:
+                  - img "MSFT logo" [ref=e1501]
+                  - generic [ref=e1502]:
+                    - generic [ref=e1503]:
+                      - generic [ref=e1504]: MSFT
+                      - generic [ref=e1505]: HOLD
+                    - paragraph [ref=e1506]: Microsoft Corporation
+                - generic [ref=e1507]:
+                  - generic [ref=e1508]:
+                    - paragraph [ref=e1509]: Dip
+                    - paragraph [ref=e1510]: "-12.6%"
+                  - generic [ref=e1511]:
+                    - paragraph [ref=e1512]: P(rec)
+                    - paragraph [ref=e1513]: 90%
+                - button "Analyze" [ref=e1515]:
+                  - text: Analyze
+                  - img
+              - generic [ref=e1518] [cursor=pointer]:
+                - generic [ref=e1519]:
+                  - img "META logo" [ref=e1521]
+                  - generic [ref=e1522]:
+                    - generic [ref=e1523]:
+                      - generic [ref=e1524]: META
+                      - generic [ref=e1525]: HOLD
+                    - paragraph [ref=e1526]: Meta Platforms, Inc.
+                - generic [ref=e1527]:
+                  - generic [ref=e1528]:
+                    - paragraph [ref=e1529]: Dip
+                    - paragraph [ref=e1530]: "-17.5%"
+                  - generic [ref=e1531]:
+                    - paragraph [ref=e1532]: P(rec)
+                    - paragraph [ref=e1533]: 91%
+                - button "Analyze" [ref=e1535]:
+                  - text: Analyze
+                  - img
+              - generic [ref=e1538] [cursor=pointer]:
+                - generic [ref=e1539]:
+                  - img "GOOG logo" [ref=e1541]
+                  - generic [ref=e1542]:
+                    - generic [ref=e1543]:
+                      - generic [ref=e1544]: GOOG
+                      - generic [ref=e1545]: HOLD
+                    - paragraph [ref=e1546]: Alphabet Inc.
+                - generic [ref=e1547]:
+                  - generic [ref=e1548]:
+                    - paragraph [ref=e1549]: Dip
+                    - paragraph [ref=e1550]: "-2.5%"
+                  - generic [ref=e1551]:
+                    - paragraph [ref=e1552]: P(rec)
+                    - paragraph [ref=e1553]: 79%
+                - button "Analyze" [ref=e1555]:
+                  - text: Analyze
+                  - img
+              - generic [ref=e1558] [cursor=pointer]:
+                - generic [ref=e1559]:
+                  - img "JPM logo" [ref=e1561]
+                  - generic [ref=e1562]:
+                    - generic [ref=e1563]:
+                      - generic [ref=e1564]: JPM
+                      - generic [ref=e1565]: HOLD
+                    - paragraph [ref=e1566]: JP Morgan Chase & Co.
+                - generic [ref=e1567]:
+                  - generic [ref=e1568]:
+                    - paragraph [ref=e1569]: Dip
+                    - paragraph [ref=e1570]: "-0.7%"
+                  - generic [ref=e1571]:
+                    - paragraph [ref=e1572]: P(rec)
+                    - paragraph [ref=e1573]: 89%
+                - button "Analyze" [ref=e1575]:
+                  - text: Analyze
+                  - img
+            - button "Explore All Signals" [ref=e1577] [cursor=pointer]:
+              - text: Explore All Signals
+              - img
+          - generic [ref=e1579]:
+            - generic [ref=e1580]:
+              - heading "AI investor council for HOOD" [level=2] [ref=e1581]
+              - paragraph [ref=e1582]: See how legendary investing styles react to the same setup.
+            - generic [ref=e1584]: Loading AI debate for this signal...
+          - generic [ref=e1586]:
+            - generic [ref=e1587]:
+              - heading "Built for signal-driven traders" [level=2] [ref=e1588]
+              - paragraph [ref=e1589]: A quant + AI stack that turns noisy markets into clear entry decisions.
+            - generic [ref=e1590]:
+              - generic [ref=e1592]:
+                - generic [ref=e1593]:
+                  - img [ref=e1595]
+                  - generic [ref=e1597]: Signal Engine
+                - generic [ref=e1599]: Detects oversold conditions with mean-reversion, volatility filters, and statistical validation.
+              - generic [ref=e1601]:
+                - generic [ref=e1602]:
+                  - img [ref=e1604]
+                  - generic [ref=e1612]: AI Personas
+                - generic [ref=e1614]: Explains each setup with multiple investor viewpoints so you see the risks and the upside.
+              - generic [ref=e1616]:
+                - generic [ref=e1617]:
+                  - img [ref=e1619]
+                  - generic [ref=e1623]: Portfolio Optimizer
+                - generic [ref=e1625]: Position sizing based on expected return, risk, and correlation for smarter allocations.
+          - generic [ref=e1628]:
+            - heading "Ready to trade with AI conviction?" [level=2] [ref=e1629]
+            - paragraph [ref=e1630]: Join traders using StonkMarket to move faster on signals that are explained, tested, and optimized.
+            - button "Start Trading Smarter" [ref=e1631] [cursor=pointer]:
+              - text: Start Trading Smarter
+              - img
+      - contentinfo [ref=e1632]:
+        - generic [ref=e1633]:
+          - generic [ref=e1634]:
+            - generic [ref=e1636]: StonkMarket • Not financial advice
+            - generic [ref=e1637]:
+              - generic [ref=e1638]:
+                - generic [ref=e1640]:
+                  - button "Up color" [ref=e1641] [cursor=pointer]:
+                    - img [ref=e1642]
+                  - button "Down color" [ref=e1646] [cursor=pointer]:
+                    - img [ref=e1647]
+                  - button "Reset colors" [ref=e1651] [cursor=pointer]:
+                    - img [ref=e1652]
+                - button "Colorblind" [ref=e1655] [cursor=pointer]:
+                  - img [ref=e1656]
+                  - generic [ref=e1661]: Colorblind
+              - generic [ref=e1662]:
+                - link "About" [ref=e1663] [cursor=pointer]:
+                  - /url: /about
+                - link "Contact" [ref=e1664] [cursor=pointer]:
+                  - /url: /contact
+                  - img [ref=e1665]
+                  - text: Contact
+              - button "Donate" [ref=e1668] [cursor=pointer]:
+                - img [ref=e1669]
+                - generic [ref=e1671]: Donate
+          - link "Logos provided by Logo.dev" [ref=e1673] [cursor=pointer]:
+            - /url: https://logo.dev
+    - generic [ref=e1674]:
+      - img [ref=e1676]
+      - button "Open Tanstack query devtools" [ref=e1724] [cursor=pointer]:
+        - img [ref=e1725]
+  - generic [ref=e1773]: $100
+```

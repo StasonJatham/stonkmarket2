@@ -25,15 +25,16 @@ test.describe('Dashboard', () => {
   });
 
   test('should display stock cards or ranking table', async ({ page }) => {
-    // Wait for data to load
-    await page.waitForLoadState('networkidle');
+    // Wait for content to load by looking for specific elements instead of networkidle
+    // TanStack Query keeps connections open, so networkidle never resolves
+    // Use data-slot="card" which is on all shadcn Card components
+    await page.waitForSelector('[data-slot="card"], table', { timeout: 15000 });
     
     // Should have either stock cards or a ranking table
-    const hasStockCards = await page.locator('[data-testid="stock-card"]').count() > 0;
+    const hasStockCards = await page.locator('[data-slot="card"]').count() > 0;
     const hasRankingTable = await page.locator('table').count() > 0;
-    const hasStockList = await page.locator('[class*="card"], [class*="stock"]').count() > 0;
     
-    expect(hasStockCards || hasRankingTable || hasStockList).toBeTruthy();
+    expect(hasStockCards || hasRankingTable).toBeTruthy();
   });
 
   test('should be responsive on mobile viewport', async ({ page }) => {
@@ -102,10 +103,11 @@ test.describe('Navigation', () => {
 test.describe('Stock Interactions', () => {
   test('should open stock details when clicking a card', async ({ page }) => {
     await page.goto('/');
-    await page.waitForLoadState('networkidle');
+    // Wait for cards to load using data-slot="card" which is on all shadcn cards
+    await page.waitForSelector('[data-slot="card"]', { timeout: 15000 });
     
-    // Find a clickable stock element
-    const stockElement = page.locator('[data-testid="stock-card"], [class*="stock"], table tbody tr').first();
+    // Find a clickable stock element - use data-slot="card" which contains stock info
+    const stockElement = page.locator('[data-slot="card"]').first();
     
     if (await stockElement.isVisible()) {
       await stockElement.click();
@@ -127,13 +129,14 @@ test.describe('Stock Interactions', () => {
     // Set mobile viewport
     await page.setViewportSize({ width: 375, height: 667 });
     await page.goto('/');
-    await page.waitForLoadState('networkidle');
+    // Wait for cards to appear using data-slot="card"
+    await page.waitForSelector('[data-slot="card"]', { timeout: 15000 });
     
-    // Wait for stocks to load and animations to complete
-    await page.waitForTimeout(2000);
+    // Wait for animations to complete
+    await page.waitForTimeout(1000);
     
-    // Find a stock card - be more specific about what we're looking for
-    const stockCards = page.locator('[data-testid="stock-card"]');
+    // Find a stock card - use data-slot="card" 
+    const stockCards = page.locator('[data-slot="card"]');
     const stockCount = await stockCards.count();
     
     if (stockCount > 0) {
@@ -208,7 +211,8 @@ test.describe('Stock Interactions', () => {
 test.describe('Suggest Stock Feature', () => {
   test('should open suggest stock dialog', async ({ page }) => {
     await page.goto('/');
-    await page.waitForLoadState('networkidle');
+    // Wait for page content to load instead of networkidle
+    await page.waitForSelector('button:has-text("Suggest"), nav, header', { timeout: 15000 });
     
     // Find and click the suggest button
     const suggestButton = page.locator('button:has-text("Suggest")').first();
@@ -228,7 +232,8 @@ test.describe('Suggest Stock Feature', () => {
   
   test('should search for stocks in suggest dialog', async ({ page }) => {
     await page.goto('/');
-    await page.waitForLoadState('networkidle');
+    // Wait for page content to load instead of networkidle
+    await page.waitForSelector('button:has-text("Suggest"), nav, header', { timeout: 15000 });
     
     // Open suggest dialog
     const suggestButton = page.locator('button:has-text("Suggest")').first();

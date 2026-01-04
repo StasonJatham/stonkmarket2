@@ -23,8 +23,7 @@ import type {
   DipCard,
   StockCardData,
 } from '@/services/api';
-import { useDips } from '@/context/DipContext';
-import { useQuant } from '@/context/QuantContext';
+import { useQuantRecommendations } from '@/features/quant-engine/api/queries';
 import { useSEO, generateBreadcrumbJsonLd } from '@/lib/seo';
 import { StockCardV2 } from '@/components/cards/StockCardV2';
 import { StockDetailsPanel } from '@/components/StockDetailsPanel';
@@ -78,10 +77,28 @@ const item = {
 };
 
 export function Dashboard() {
+  // Local state for UI toggles that were previously in DipContext
+  const [showAllStocks, setShowAllStocks] = useState(false);
+  // Inflow amount for quant engine - could be exposed in UI later
+  const inflow = 1000;
+  
   // Use quant engine for primary stock ranking (sorted by marginal utility)
-  const { stocks: quantStocks, recommendations, isLoading: isLoadingQuant, asOfDate, marketMessage, error: quantError, portfolioStats } = useQuant();
-  // Keep dip context for showAllStocks toggle (legacy compatibility)
-  const { showAllStocks, setShowAllStocks } = useDips();
+  // TanStack Query replaces the old QuantContext with proper caching
+  const quantQuery = useQuantRecommendations(inflow, 40);
+  
+  // Extract data from query - the select transform gives us 'stocks' already
+  const recommendations = quantQuery.data?.recommendations ?? [];
+  const quantStocks = quantQuery.data?.stocks ?? [];
+  const asOfDate = quantQuery.data?.as_of_date ?? null;
+  const marketMessage = quantQuery.data?.market_message ?? null;
+  const portfolioStats = quantQuery.data ? {
+    expectedReturn: quantQuery.data.expected_portfolio_return,
+    expectedRisk: quantQuery.data.expected_portfolio_risk,
+    totalTrades: quantQuery.data.total_trades,
+    transactionCostEur: quantQuery.data.total_transaction_cost_eur,
+  } : null;
+  const isLoadingQuant = quantQuery.isLoading;
+  const quantError = quantQuery.error?.message ?? null;
   
   // Use quant stocks as primary data source
   const stocks = quantStocks;

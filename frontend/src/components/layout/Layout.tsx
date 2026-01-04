@@ -1,7 +1,7 @@
 import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
 import { Header } from './Header';
 import { DipTicker } from '@/components/DipTicker';
-import { useDips } from '@/context/DipContext';
+import { useRanking } from '@/features/market-data/api/queries';
 import { useTheme } from '@/context/ThemeContext';
 import { useObfuscatedContact } from '@/lib/obfuscate';
 import { ColorPickerInline } from '@/components/ui/color-picker';
@@ -12,7 +12,10 @@ const ENABLE_LEGAL_PAGES = import.meta.env.VITE_ENABLE_LEGAL_PAGES === 'true';
 
 export function Layout() {
   const { decoded, decode, getPayPalLink } = useObfuscatedContact();
-  const { tickerStocks, isLoadingTicker } = useDips();
+  // Use ranking query for ticker - always show top 40 stocks
+  const rankingQuery = useRanking(true); // showAll=true to get full ranking
+  const tickerStocks = rankingQuery.data?.ranking.slice(0, 40) ?? [];
+  const isLoadingTicker = rankingQuery.isLoading;
   const { colorblindMode, setColorblindMode, customColors, setCustomColors, resetColors } = useTheme();
   const navigate = useNavigate();
   const location = useLocation();
