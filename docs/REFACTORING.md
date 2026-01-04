@@ -226,11 +226,12 @@ Update `tests/conftest.py` to only manage SQLAlchemy state.
 
 ### 6.1 Problem Statement
 
-Price fetching code was scattered across 4+ overlapping implementations:
+Price fetching code was scattered across 5+ overlapping implementations:
 - `YFinancePriceProvider` in `app/dipfinder/service.py`
 - `DatabasePriceProvider` in `app/dipfinder/service.py`
 - `SmartPriceFetcher` in `app/services/data_providers/smart_price_fetcher.py`
 - `YFinanceService.get_price_history_batch()` in `app/services/data_providers/yfinance_service.py`
+- `YahooQueryService.get_price_history()` in `app/services/data_providers/yahooquery_service.py`
 
 This caused data corruption issues where corrupt yfinance data was merged even after validation failed.
 
@@ -333,6 +334,7 @@ Request → DipFinderService
 | P3 | Overlapping price providers | Multiple | ✅ Fixed (Phase 6) |
 | P2 | Legacy price methods in YFinanceService | `yfinance_service.py` | ✅ Fixed (Phase 7) |
 | P2 | Duplicate hedge_fund yfinance wrapper | `hedge_fund/data/yfinance_service.py` | ✅ Fixed (Phase 7) |
+| P2 | Dead price methods in YahooQueryService | `yahooquery_service.py` | ✅ Fixed (Phase 7) |
 
 ---
 
@@ -357,6 +359,10 @@ Despite Phase 6 creating unified `PriceService`, legacy price methods still exis
   - `_fetch_price_history_batch_sync()` - DELETED
   - Removed unused `PriceHistory` import
 
+- **Removed dead code** from `YahooQueryService`:
+  - `get_price_history()` - DELETED (was never called)
+  - `_fetch_price_history_sync()` - DELETED
+
 - **Updated hedge fund module** to use `PriceService`:
   - `app/hedge_fund/data/yfinance_service.py::get_price_history()` now uses `PriceService`
 
@@ -369,8 +375,9 @@ Despite Phase 6 creating unified `PriceService`, legacy price methods still exis
 | Metric | Before | After |
 | ------ | ------ | ----- |
 | `yfinance_service.py` line count | 1600 | 1310 |
-| Price fetching implementations | 2 | 1 (`PriceService`) |
-| Lines of legacy code removed | 0 | ~290 |
+| `yahooquery_service.py` line count | 796 | 723 |
+| Price fetching implementations | 6 | 1 (`PriceService`) |
+| Lines of legacy code removed | 0 | ~360 |
 
 ### 7.4 Execution Plan
 

@@ -312,12 +312,7 @@ async def symbol_ingest_job() -> str:
         raise
 
 
-async def _store_price_history(symbol: str, prices: "pd.DataFrame") -> None:
-    """Store price history in database."""
-    if prices.empty:
-        return
-
-    await price_history_repo.save_prices(symbol, prices)
+# NOTE: _store_price_history removed - use PriceService for all price operations
 
 
 async def add_to_ingest_queue(symbol: str, priority: int = 0) -> bool:

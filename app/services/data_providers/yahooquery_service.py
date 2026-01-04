@@ -528,81 +528,8 @@ class YahooQueryService:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(_executor, self._fetch_valuation_measures_sync, symbol)
 
-    # =========================================================================
-    # Price History
-    # =========================================================================
-
-    def _fetch_price_history_sync(
-        self,
-        symbol: str,
-        period: str = "1y",
-        interval: str = "1d",
-    ) -> pd.DataFrame | None:
-        """
-        Fetch price history from yahooquery (blocking).
-        
-        Args:
-            symbol: Stock ticker symbol
-            period: Time period (1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y, 10y, ytd, max)
-            interval: Data interval (1m, 2m, 5m, 15m, 30m, 60m, 90m, 1h, 1d, 5d, 1wk, 1mo, 3mo)
-        
-        Returns:
-            DataFrame with date index and columns: Open, High, Low, Close, Volume, Adjclose
-        """
-        if not YAHOOQUERY_AVAILABLE:
-            return None
-
-        try:
-            ticker = Ticker(symbol, asynchronous=False)
-            
-            df = ticker.history(period=period, interval=interval)
-            
-            if df is None or isinstance(df, str) or df.empty:
-                return None
-
-            # yahooquery returns multi-index (symbol, date), flatten it
-            if isinstance(df.index, pd.MultiIndex):
-                if symbol.upper() in df.index.get_level_values(0):
-                    df = df.loc[symbol.upper()]
-                else:
-                    # Try lowercase
-                    df = df.loc[symbol.lower()] if symbol.lower() in df.index.get_level_values(0) else df
-
-            # Standardize column names to match yfinance
-            column_mapping = {
-                "open": "Open",
-                "high": "High", 
-                "low": "Low",
-                "close": "Close",
-                "volume": "Volume",
-                "adjclose": "Adj Close",
-            }
-            df = df.rename(columns=column_mapping)
-
-            return df
-
-        except Exception as e:
-            logger.warning(f"yahooquery price history failed for {symbol}: {e}")
-            return None
-
-    async def get_price_history(
-        self,
-        symbol: str,
-        period: str = "1y",
-        interval: str = "1d",
-    ) -> pd.DataFrame | None:
-        """Get price history from yahooquery."""
-        if not YAHOOQUERY_AVAILABLE:
-            return None
-
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            _executor,
-            self._fetch_price_history_sync,
-            symbol,
-            period,
-            interval,
-        )
+    # NOTE: Price history methods removed - use PriceService for all price data
+    # See app/services/prices.py for the unified price fetching solution
 
     # =========================================================================
     # Domain-Specific Helpers
