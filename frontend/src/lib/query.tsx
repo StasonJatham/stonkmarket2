@@ -125,6 +125,17 @@ export const queryKeys = {
     benchmarks: () => ['admin', 'benchmarks'] as const,
   },
   
+  // Notifications
+  notifications: {
+    all: ['notifications'] as const,
+    channels: () => ['notifications', 'channels'] as const,
+    rules: () => ['notifications', 'rules'] as const,
+    history: (page?: number, pageSize?: number) => 
+      ['notifications', 'history', { page, pageSize }] as const,
+    summary: () => ['notifications', 'summary'] as const,
+    triggerTypes: () => ['notifications', 'triggerTypes'] as const,
+  },
+  
   // Benchmarks
   benchmarks: {
     all: ['benchmarks'] as const,

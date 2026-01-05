@@ -30,6 +30,7 @@ from .routes import (
     market,
     metrics,
     mfa,
+    notifications,
     oauth,
     portfolios,
     quant_engine,
@@ -223,5 +224,6 @@ def create_api_app() -> FastAPI:
     app.include_router(ai_personas.router, tags=["AI Personas"])
     app.include_router(market.router, tags=["Market Data"])
     app.include_router(calendar.router, tags=["Calendar"])
+    app.include_router(notifications.router, prefix="/notifications", tags=["Notifications"])
 
     return app

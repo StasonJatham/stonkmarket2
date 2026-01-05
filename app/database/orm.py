@@ -118,6 +118,8 @@ class AuthUser(Base):
     secure_keys: Mapped[list[SecureApiKey]] = relationship(back_populates="created_by_user")
     portfolios: Mapped[list[Portfolio]] = relationship(back_populates="user")
     portfolio_analytics_jobs: Mapped[list[PortfolioAnalyticsJob]] = relationship(back_populates="user")
+    notification_channels: Mapped[list[NotificationChannel]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    notification_rules: Mapped[list[NotificationRule]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
     __table_args__ = (
         Index("idx_auth_user_username", "username"),
@@ -1093,6 +1095,7 @@ class Portfolio(Base):
     transactions: Mapped[list[PortfolioTransaction]] = relationship(back_populates="portfolio")
     analytics: Mapped[list[PortfolioAnalytics]] = relationship(back_populates="portfolio")
     analytics_jobs: Mapped[list[PortfolioAnalyticsJob]] = relationship(back_populates="portfolio")
+    notification_rules: Mapped[list[NotificationRule]] = relationship(back_populates="portfolio")
 
     __table_args__ = (
         Index("idx_portfolios_user", "user_id"),
@@ -1772,3 +1775,147 @@ class CalendarEconomicEvent(Base):
         UniqueConstraint("event_name", "event_date", name="uq_calendar_econ_event_date"),
     )
 
+
+# =============================================================================
+# NOTIFICATIONS
+# =============================================================================
+
+
+class NotificationChannel(Base):
+    """User notification channels (Discord, Telegram, Email, etc.).
+    
+    Stores encrypted Apprise URLs for sending notifications to various services.
+    Supports verification, error tracking, and activation status.
+    """
+    __tablename__ = "notification_channels"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("auth_user.id", ondelete="CASCADE"), nullable=False)
+    
+    # Channel identification
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    channel_type: Mapped[str] = mapped_column(String(30), nullable=False)  # discord, telegram, email, etc.
+    encrypted_url: Mapped[str] = mapped_column(Text, nullable=False)  # Fernet encrypted Apprise URL
+    
+    # Validation
+    is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    
+    # Status
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    error_count: Mapped[int] = mapped_column(Integer, default=0)  # Consecutive failures
+    last_error: Mapped[str | None] = mapped_column(Text)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    # Relationships
+    user: Mapped[AuthUser] = relationship(back_populates="notification_channels")
+    rules: Mapped[list[NotificationRule]] = relationship(back_populates="channel", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "name", name="uq_notification_channel_user_name"),
+        Index("idx_notification_channels_user", "user_id"),
+        Index("idx_notification_channels_active", "is_active", postgresql_where=text("is_active = TRUE")),
+    )
+
+
+class NotificationRule(Base):
+    """User-defined notification rules.
+    
+    Defines trigger conditions, thresholds, and cooldown periods for alerts.
+    Links to a notification channel for delivery.
+    """
+    __tablename__ = "notification_rules"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("auth_user.id", ondelete="CASCADE"), nullable=False)
+    channel_id: Mapped[int] = mapped_column(ForeignKey("notification_channels.id", ondelete="CASCADE"), nullable=False)
+    
+    # Rule definition
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    trigger_type: Mapped[str] = mapped_column(String(50), nullable=False)  # TriggerType enum value
+    
+    # Target (what to watch)
+    target_symbol: Mapped[str | None] = mapped_column(String(20))
+    target_portfolio_id: Mapped[int | None] = mapped_column(ForeignKey("portfolios.id", ondelete="CASCADE"))
+    
+    # Condition
+    comparison_operator: Mapped[str] = mapped_column(String(10), default="GT")  # ComparisonOperator enum
+    target_value: Mapped[Decimal | None] = mapped_column(Numeric(20, 6))
+    smart_payload: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}")
+    
+    # Anti-spam
+    cooldown_minutes: Mapped[int] = mapped_column(Integer, default=60)
+    last_triggered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    trigger_count: Mapped[int] = mapped_column(Integer, default=0)
+    
+    # Status
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    priority: Mapped[str] = mapped_column(String(10), default="normal")  # low, normal, high, critical
+    
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    # Relationships
+    user: Mapped[AuthUser] = relationship(back_populates="notification_rules")
+    channel: Mapped[NotificationChannel] = relationship(back_populates="rules")
+    portfolio: Mapped[Portfolio | None] = relationship(back_populates="notification_rules")
+    logs: Mapped[list[NotificationLog]] = relationship(back_populates="rule", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index("idx_notification_rules_user", "user_id"),
+        Index("idx_notification_rules_active", "is_active", postgresql_where=text("is_active = TRUE")),
+        Index("idx_notification_rules_symbol", "target_symbol", postgresql_where=text("target_symbol IS NOT NULL")),
+        Index("idx_notification_rules_portfolio", "target_portfolio_id", postgresql_where=text("target_portfolio_id IS NOT NULL")),
+        Index("idx_notification_rules_trigger", "trigger_type"),
+    )
+
+
+class NotificationLog(Base):
+    """Audit log for sent notifications.
+    
+    Tracks all notification attempts, successes, and failures for debugging
+    and user visibility.
+    """
+    __tablename__ = "notification_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    rule_id: Mapped[int | None] = mapped_column(ForeignKey("notification_rules.id", ondelete="SET NULL"))
+    channel_id: Mapped[int | None] = mapped_column(ForeignKey("notification_channels.id", ondelete="SET NULL"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("auth_user.id", ondelete="CASCADE"), nullable=False)
+    
+    # What triggered
+    trigger_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    trigger_symbol: Mapped[str | None] = mapped_column(String(20))
+    trigger_value: Mapped[Decimal | None] = mapped_column(Numeric(20, 6))
+    threshold_value: Mapped[Decimal | None] = mapped_column(Numeric(20, 6))
+    
+    # Message content
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    
+    # Delivery status
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending, sent, failed, skipped
+    error_message: Mapped[str | None] = mapped_column(Text)
+    
+    # Timing
+    triggered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    
+    # Deduplication
+    content_hash: Mapped[str | None] = mapped_column(String(64))  # SHA-256 of title+body
+
+    # Relationships
+    rule: Mapped[NotificationRule | None] = relationship(back_populates="logs")
+
+    __table_args__ = (
+        Index("idx_notification_logs_user", "user_id"),
+        Index("idx_notification_logs_rule", "rule_id"),
+        Index("idx_notification_logs_status", "status"),
+        Index("idx_notification_logs_triggered", "triggered_at"),
+        Index("idx_notification_logs_hash", "content_hash"),
+    )

@@ -26,6 +26,7 @@ const AboutPage = lazy(() => import('@/pages/About').then(m => ({ default: m.Abo
 const StockDetailPage = lazy(() => import('@/pages/StockDetail').then(m => ({ default: m.StockDetailPage })));
 const LearnPage = lazy(() => import('@/pages/Learn').then(m => ({ default: m.LearnPage })));
 const PortfolioPage = lazy(() => import('@/pages/Portfolio').then(m => ({ default: m.PortfolioPage })));
+const NotificationsPage = lazy(() => import('@/pages/Notifications').then(m => ({ default: m.NotificationsPage })));
 
 // Loading fallback component - minimal to avoid layout shift
 const PageLoader = memo(function PageLoader() {
@@ -79,6 +80,14 @@ function App() {
                       element={
                         <ProtectedRoute>
                           <PortfolioPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/notifications"
+                      element={
+                        <ProtectedRoute>
+                          <NotificationsPage />
                         </ProtectedRoute>
                       }
                     />

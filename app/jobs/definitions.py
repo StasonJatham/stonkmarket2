@@ -92,6 +92,12 @@ from .analysis import (  # noqa: E402, F401
     regime_daily_job,
 )
 
+# Re-export notification jobs so they're registered
+from .notifications import (  # noqa: E402, F401
+    notification_check_job,
+    notification_cleanup_job,
+)
+
 
 # Data ingestion jobs moved to app/jobs/data/__init__.py:
 # - universe_sync_job
