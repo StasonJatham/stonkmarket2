@@ -498,144 +498,216 @@ function EvidenceChip({
   );
 }
 
-// Horizontal pipeline with animated checkpoints - professional design
-function HorizontalPipeline() {
+// AI Pipeline Step Component - Professional card-based design
+function PipelineStep({
+  step,
+  index,
+  isActive = false,
+}: {
+  step: {
+    icon: typeof Search;
+    title: string;
+    description: string;
+    detail: string;
+    color: string;
+    bgColor: string;
+  };
+  index: number;
+  isActive?: boolean;
+}) {
+  return (
+    <motion.div
+      className="relative group"
+      initial={{ opacity: 0, y: 30 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true, amount: 0.3 }}
+      transition={{ duration: 0.5, delay: index * 0.15 }}
+    >
+      <Card className={`h-full transition-all duration-300 hover:shadow-xl hover:-translate-y-1 ${isActive ? 'ring-2 ring-primary' : ''}`}>
+        <CardContent className="p-6">
+          {/* Step number */}
+          <div className="flex items-center justify-between mb-4">
+            <span className="text-xs font-mono font-bold text-muted-foreground tracking-widest">
+              STEP {String(index + 1).padStart(2, '0')}
+            </span>
+            <motion.div
+              className="h-2 w-2 rounded-full bg-success"
+              initial={{ scale: 0 }}
+              whileInView={{ scale: 1 }}
+              viewport={{ once: true }}
+              transition={{ delay: index * 0.15 + 0.3 }}
+            />
+          </div>
+          
+          {/* Icon */}
+          <div className={`h-14 w-14 rounded-2xl ${step.bgColor} flex items-center justify-center mb-4 transition-transform group-hover:scale-110`}>
+            <step.icon className={`h-7 w-7 ${step.color}`} />
+          </div>
+          
+          {/* Content */}
+          <h3 className="font-bold text-lg mb-2">{step.title}</h3>
+          <p className="text-sm text-muted-foreground mb-4 leading-relaxed">
+            {step.description}
+          </p>
+          
+          {/* Detail badge */}
+          <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-muted/50 border text-xs">
+            <CheckCircle2 className="h-3.5 w-3.5 text-success" />
+            <span className="text-muted-foreground">{step.detail}</span>
+          </div>
+        </CardContent>
+      </Card>
+      
+      {/* Connector arrow (hidden on last item and mobile) */}
+      {index < 3 && (
+        <div className="hidden lg:block absolute top-1/2 -right-3 -translate-y-1/2 z-10">
+          <ChevronRight className="h-6 w-6 text-muted-foreground/30" />
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
+// Full AI Pipeline Section Component
+function AIPipelineSection({
+  signalCount,
+  verdictCount,
+  expectedReturn,
+  backtestTrades,
+}: {
+  signalCount: number;
+  verdictCount: number;
+  expectedReturn: number;
+  backtestTrades: number | null;
+}) {
   const steps = [
-    { 
-      icon: Search, 
-      title: 'Market Scan', 
-      description: 'Screen 8,000+ tickers for price anomalies',
-      stat: '8k+',
-      statLabel: 'symbols'
+    {
+      icon: Search,
+      title: 'Market Scanner',
+      description: 'Continuously monitors 8,000+ US stocks and ETFs for significant price anomalies and dip patterns.',
+      detail: 'Updates every 15 min',
+      color: 'text-blue-600',
+      bgColor: 'bg-blue-500/10',
     },
-    { 
-      icon: Users, 
-      title: 'AI Debate', 
-      description: 'Multiple AI personas analyze & challenge signals',
-      stat: '5',
-      statLabel: 'perspectives'
+    {
+      icon: Brain,
+      title: 'AI Debate Engine',
+      description: 'Multiple AI personas (value, growth, technical) analyze each signal and challenge assumptions.',
+      detail: '5 investor perspectives',
+      color: 'text-purple-600',
+      bgColor: 'bg-purple-500/10',
     },
-    { 
-      icon: Target, 
-      title: 'Entry Optimization', 
-      description: 'Find statistically optimal buy zones',
-      stat: '95%',
-      statLabel: 'accuracy'
+    {
+      icon: Target,
+      title: 'Entry Optimizer',
+      description: 'Calculates optimal entry zones using statistical analysis and volatility-adjusted position sizing.',
+      detail: 'Risk-adjusted entries',
+      color: 'text-amber-600',
+      bgColor: 'bg-amber-500/10',
     },
-    { 
-      icon: BarChart3, 
-      title: 'Backtest Validation', 
-      description: 'Verify edge with 5+ years of historical data',
-      stat: '5yr',
-      statLabel: 'history'
+    {
+      icon: BarChart3,
+      title: 'Backtest Validator',
+      description: 'Every signal is validated against 5+ years of historical data to verify statistical edge.',
+      detail: 'Verified performance',
+      color: 'text-emerald-600',
+      bgColor: 'bg-emerald-500/10',
     },
   ];
 
+  const stats = [
+    { value: signalCount || '—', label: 'Active Signals', icon: Zap },
+    { value: verdictCount || '—', label: 'AI Verdicts', icon: Users },
+    { value: expectedReturn >= 0 ? `+${expectedReturn.toFixed(1)}%` : `${expectedReturn.toFixed(1)}%`, label: 'Expected Return', icon: TrendingUp, isPositive: expectedReturn >= 0 },
+    { value: backtestTrades ?? '—', label: 'Backtested', icon: ShieldCheck },
+  ];
+
   return (
-    <div className="w-full">
-      {/* Desktop: Horizontal timeline */}
-      <div className="hidden md:block">
-        <div className="relative">
-          {/* Background connector line */}
-          <div className="absolute top-10 left-[12.5%] right-[12.5%] h-0.5 bg-border" />
-          
-          {/* Animated progress line */}
-          <motion.div 
-            className="absolute top-10 left-[12.5%] h-0.5 bg-gradient-to-r from-primary via-primary to-primary/50"
-            initial={{ width: 0 }}
-            whileInView={{ width: '75%' }}
-            viewport={{ once: true }}
-            transition={{ duration: 1.5, ease: 'easeOut' }}
-          />
-          
-          <div className="grid grid-cols-4 gap-6">
-            {steps.map((step, idx) => (
-              <motion.div
-                key={step.title}
-                className="flex flex-col items-center text-center relative"
-                initial={{ opacity: 0, y: 24 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                transition={{ duration: 0.5, delay: idx * 0.2 }}
-              >
-                {/* Step number badge */}
-                <div className="absolute -top-2 left-1/2 -translate-x-1/2 text-[10px] font-bold text-muted-foreground">
-                  {String(idx + 1).padStart(2, '0')}
-                </div>
-                
-                {/* Icon container with ring animation */}
-                <motion.div
-                  className="relative h-20 w-20 rounded-2xl bg-card border-2 border-primary/20 flex items-center justify-center mb-4 shadow-lg"
-                  whileHover={{ scale: 1.05, borderColor: 'hsl(var(--primary))' }}
-                  transition={{ type: 'spring', stiffness: 400, damping: 17 }}
-                >
-                  <div className="absolute inset-0 rounded-2xl bg-primary/5" />
-                  <step.icon className="h-8 w-8 text-primary relative z-10" />
-                  
-                  {/* Completion checkmark */}
-                  <motion.div
-                    className="absolute -bottom-1 -right-1 h-6 w-6 rounded-full bg-success flex items-center justify-center shadow-md"
-                    initial={{ scale: 0 }}
-                    whileInView={{ scale: 1 }}
-                    viewport={{ once: true }}
-                    transition={{ delay: idx * 0.2 + 0.5, type: 'spring' }}
-                  >
-                    <CheckCircle2 className="h-4 w-4 text-success-foreground" />
-                  </motion.div>
-                </motion.div>
-                
-                <h4 className="font-semibold text-base mb-1">{step.title}</h4>
-                <p className="text-xs text-muted-foreground leading-relaxed max-w-[160px]">
-                  {step.description}
-                </p>
-                
-                {/* Mini stat */}
-                <div className="mt-3 px-3 py-1.5 rounded-full bg-muted/50 border">
-                  <span className="font-mono font-bold text-sm text-primary">{step.stat}</span>
-                  <span className="text-[10px] text-muted-foreground ml-1">{step.statLabel}</span>
-                </div>
-              </motion.div>
-            ))}
-          </div>
-        </div>
-      </div>
+    <section className="py-20 md:py-28 px-4 relative overflow-hidden">
+      {/* Background decoration */}
+      <div className="absolute inset-0 bg-gradient-to-b from-muted/30 via-muted/50 to-muted/30" />
+      <div className="absolute top-0 left-1/4 w-96 h-96 bg-primary/5 rounded-full blur-3xl" />
+      <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-emerald-500/5 rounded-full blur-3xl" />
       
-      {/* Mobile: Vertical timeline */}
-      <div className="md:hidden space-y-4">
-        {steps.map((step, idx) => (
-          <motion.div
-            key={step.title}
-            className="flex items-start gap-4"
-            initial={{ opacity: 0, x: -20 }}
-            whileInView={{ opacity: 1, x: 0 }}
-            viewport={{ once: true }}
-            transition={{ duration: 0.4, delay: idx * 0.1 }}
-          >
-            <div className="relative flex-shrink-0">
-              <div className="h-12 w-12 rounded-xl bg-card border-2 border-primary/20 flex items-center justify-center shadow-md">
-                <step.icon className="h-5 w-5 text-primary" />
-              </div>
-              {idx < steps.length - 1 && (
-                <div className="absolute top-12 left-1/2 -translate-x-1/2 w-0.5 h-8 bg-border" />
-              )}
+      <div className="container mx-auto max-w-6xl relative">
+        {/* Header */}
+        <motion.div
+          className="text-center mb-16"
+          initial={{ opacity: 0, y: 20 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          transition={{ duration: 0.5 }}
+        >
+          <Badge variant="secondary" className="mb-4 gap-1.5">
+            <Sparkles className="h-3 w-3" />
+            How It Works
+          </Badge>
+          <h2 className="text-3xl md:text-4xl font-bold mb-4">
+            The AI pipeline behind every signal
+          </h2>
+          <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
+            From raw market data to validated trade opportunities — 
+            a systematic approach that removes emotion from investing.
+          </p>
+        </motion.div>
+
+        {/* Pipeline Steps Grid */}
+        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6 mb-16">
+          {steps.map((step, idx) => (
+            <PipelineStep key={step.title} step={step} index={idx} />
+          ))}
+        </div>
+
+        {/* Animated flow indicator */}
+        <motion.div
+          className="hidden lg:flex items-center justify-center mb-16"
+          initial={{ opacity: 0 }}
+          whileInView={{ opacity: 1 }}
+          viewport={{ once: true }}
+          transition={{ delay: 0.8 }}
+        >
+          <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-background border shadow-sm">
+            <div className="flex gap-1">
+              {[0, 1, 2].map((i) => (
+                <motion.div
+                  key={i}
+                  className="h-1.5 w-1.5 rounded-full bg-primary"
+                  animate={{ opacity: [0.3, 1, 0.3] }}
+                  transition={{ duration: 1.5, repeat: Infinity, delay: i * 0.2 }}
+                />
+              ))}
             </div>
-            <div className="flex-1 pt-1">
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-bold text-muted-foreground">
-                  {String(idx + 1).padStart(2, '0')}
-                </span>
-                <h4 className="font-semibold text-sm">{step.title}</h4>
-              </div>
-              <p className="text-xs text-muted-foreground mt-0.5">{step.description}</p>
-              <div className="mt-2 inline-flex px-2 py-1 rounded-full bg-muted/50 border">
-                <span className="font-mono font-bold text-xs text-primary">{step.stat}</span>
-                <span className="text-[10px] text-muted-foreground ml-1">{step.statLabel}</span>
-              </div>
-            </div>
-          </motion.div>
-        ))}
+            <span className="text-xs font-medium text-muted-foreground">Processing signals in real-time</span>
+            <Activity className="h-3.5 w-3.5 text-success animate-pulse" />
+          </div>
+        </motion.div>
+
+        {/* Live Stats Row */}
+        <motion.div
+          className="grid grid-cols-2 md:grid-cols-4 gap-4"
+          initial={{ opacity: 0, y: 20 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          transition={{ delay: 0.6 }}
+        >
+          {stats.map((stat) => (
+            <Card key={stat.label} className="bg-background/80 backdrop-blur-sm">
+              <CardContent className="p-5 flex items-center gap-4">
+                <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
+                  <stat.icon className="h-5 w-5 text-primary" />
+                </div>
+                <div>
+                  <p className={`text-xl font-bold font-mono ${stat.isPositive === false ? 'text-danger' : stat.isPositive === true ? 'text-success' : ''}`}>
+                    {stat.value}
+                  </p>
+                  <p className="text-xs text-muted-foreground">{stat.label}</p>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </motion.div>
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -787,11 +859,14 @@ export function Landing() {
     heroSymbol,
     heroRec,
     heroAgentAnalysis,
+    heroAgentPending,
     heroSignals,
     heroSignalSummary,
+    heroDipEntry,
     lastUpdatedAt,
     isLoading,
     isLoadingHero,
+    isLoadingAgents,
   } = useLandingData(1000, 12);
 
   function handleCTA() {
@@ -1052,13 +1127,31 @@ export function Landing() {
                         <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground py-2 border-t border-border/50">
                           <span className="flex items-center gap-2">
                             <CheckCircle2 className="h-3 w-3 text-success" />
-                            {heroSignalSummary?.nTrades != null
-                              ? `${heroSignalSummary.nTrades} trades backtested`
-                              : 'Signal stats loading'}
-                            {edgeVsBuyHold != null && (
-                              <span className={`font-medium ${edgeClassName}`}>
-                                • Edge: {formatSignedPercent(edgeVsBuyHold, 1)}
-                              </span>
+                            {heroSignalSummary?.beatsBuyHold ? (
+                              // Show optimized strategy stats when it beats B&H
+                              <>
+                                {heroSignalSummary.nTrades != null
+                                  ? `${heroSignalSummary.nTrades} trades backtested`
+                                  : 'Signal stats loading'}
+                                {edgeVsBuyHold != null && (
+                                  <span className={`font-medium ${edgeClassName}`}>
+                                    • Edge: {formatSignedPercent(edgeVsBuyHold, 1)}
+                                  </span>
+                                )}
+                              </>
+                            ) : heroDipEntry?.backtest ? (
+                              // Show dip strategy stats when no optimized strategy beats B&H
+                              <>
+                                {heroDipEntry.backtest.n_trades} dip trades
+                                <span className={`font-medium ${heroDipEntry.backtest.vs_buy_hold_pct >= 0 ? 'text-success' : 'text-danger'}`}>
+                                  • {formatSignedPercent(heroDipEntry.backtest.strategy_return_pct, 0)} return
+                                </span>
+                                <span className="text-muted-foreground">
+                                  • {heroDipEntry.backtest.years_tested.toFixed(1)}y
+                                </span>
+                              </>
+                            ) : (
+                              'Signal stats loading'
                             )}
                           </span>
                           <Button
@@ -1136,54 +1229,13 @@ export function Landing() {
         </div>
       </section>
 
-      {/* AI Pipeline Section - Visual Timeline */}
-      <section className="py-16 md:py-20 px-4 bg-muted/30">
-        <div className="container mx-auto max-w-5xl">
-          <motion.div
-            className="text-center mb-12"
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            transition={{ duration: 0.5 }}
-          >
-            <h2 className="text-2xl md:text-3xl font-bold mb-3">
-              The AI pipeline behind every signal
-            </h2>
-            <p className="text-muted-foreground max-w-2xl mx-auto">
-              From raw price action to AI consensus to validated entry decisions.
-            </p>
-          </motion.div>
-
-          {/* Horizontal Pipeline Timeline */}
-          <div className="flex justify-center mb-10">
-            <HorizontalPipeline />
-          </div>
-
-          {/* Quick Stats Row */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <div className="flex flex-col items-center justify-center p-4 rounded-lg bg-background/60 border">
-              <p className="text-2xl font-bold font-mono text-primary">{signalCount || '—'}</p>
-              <p className="text-xs text-muted-foreground text-center">Signals Detected</p>
-            </div>
-            <div className="flex flex-col items-center justify-center p-4 rounded-lg bg-background/60 border">
-              <p className="text-2xl font-bold font-mono text-primary">{heroVerdicts.length || '—'}</p>
-              <p className="text-xs text-muted-foreground text-center">AI Personas</p>
-            </div>
-            <div className="flex flex-col items-center justify-center p-4 rounded-lg bg-background/60 border">
-              <p className={`text-2xl font-bold font-mono ${expectedReturnPercent >= 0 ? 'text-success' : 'text-danger'}`}>
-                {formatSignedPercent(expectedReturnPercent, 1)}
-              </p>
-              <p className="text-xs text-muted-foreground text-center">Expected Return</p>
-            </div>
-            <div className="flex flex-col items-center justify-center p-4 rounded-lg bg-background/60 border">
-              <p className="text-2xl font-bold font-mono text-foreground">
-                {heroSignalSummary?.nTrades ?? '—'}
-              </p>
-              <p className="text-xs text-muted-foreground text-center">Backtested Trades</p>
-            </div>
-          </div>
-        </div>
-      </section>
+      {/* AI Pipeline Section - Complete Redesign */}
+      <AIPipelineSection
+        signalCount={signalCount}
+        verdictCount={heroVerdicts.length}
+        expectedReturn={expectedReturnPercent}
+        backtestTrades={heroSignalSummary?.nTrades ?? null}
+      />
 
       {/* Backtest Proof Section */}
       <section className="py-16 px-4">
@@ -1312,7 +1364,40 @@ export function Landing() {
             </p>
           </motion.div>
 
-          {heroVerdicts.length > 0 ? (
+          {isLoadingAgents ? (
+            <Card>
+              <CardContent className="py-8">
+                <div className="flex items-center justify-center gap-3">
+                  <div className="h-5 w-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                  <span className="text-sm text-muted-foreground">Loading AI analysis...</span>
+                </div>
+              </CardContent>
+            </Card>
+          ) : heroAgentPending ? (
+            <Card className="bg-gradient-to-br from-amber-500/5 to-orange-500/5 border-amber-500/20">
+              <CardContent className="py-10">
+                <div className="flex flex-col items-center text-center gap-4">
+                  <div className="h-14 w-14 rounded-full bg-amber-500/10 flex items-center justify-center">
+                    <Brain className="h-7 w-7 text-amber-600 animate-pulse" />
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-lg mb-1">AI Analysis in Progress</h3>
+                    <p className="text-sm text-muted-foreground max-w-md">
+                      Our AI council is analyzing {heroSymbol}. This typically takes 30-60 seconds for new signals.
+                    </p>
+                  </div>
+                  <div className="flex gap-3 mt-2">
+                    {['Warren Buffett', 'Peter Lynch', 'Ray Dalio', 'Cathie Wood'].map((name) => (
+                      <div key={name} className="flex flex-col items-center gap-1">
+                        <div className="h-10 w-10 rounded-full bg-muted animate-pulse" />
+                        <span className="text-[10px] text-muted-foreground">{name.split(' ')[0]}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ) : heroVerdicts.length > 0 ? (
             <Card className="bg-gradient-to-br from-amber-500/5 to-emerald-500/10 border-amber-500/20">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -1395,8 +1480,13 @@ export function Landing() {
             </Card>
           ) : (
             <Card className="border-dashed">
-              <CardContent className="py-10 text-center text-sm text-muted-foreground">
-                {heroRec ? 'Loading AI debate for this signal...' : 'Loading AI debate...'}
+              <CardContent className="py-10 text-center">
+                <div className="flex flex-col items-center gap-3">
+                  <Users className="h-8 w-8 text-muted-foreground/50" />
+                  <p className="text-sm text-muted-foreground">
+                    No AI analysis available for this signal yet.
+                  </p>
+                </div>
               </CardContent>
             </Card>
           )}

@@ -81,7 +81,7 @@ import {
   useBatchCharts,
   useAgentAnalysis 
 } from '@/features/market-data/api/queries';
-import { getSignalTriggers } from '@/services/api';
+import { getSignalTriggers, getDipEntry } from '@/services/api';
 
 const LANDING_SIGNAL_BOARD_COUNT = 8;
 const LANDING_MINI_CHART_DAYS = 45;
@@ -96,6 +96,18 @@ function useHeroSignalTriggers(symbol: string | undefined, lookbackDays: number 
   return useQuery({
     queryKey: ['quant', 'signalTriggers', symbol, lookbackDays],
     queryFn: () => getSignalTriggers(symbol!, lookbackDays),
+    enabled: !!symbol,
+    staleTime: 10 * 60 * 1000, // 10 minutes
+  });
+}
+
+/**
+ * Hook for dip entry analysis data.
+ */
+function useHeroDipEntry(symbol: string | undefined) {
+  return useQuery({
+    queryKey: ['quant', 'dipEntry', symbol],
+    queryFn: () => getDipEntry(symbol!),
     enabled: !!symbol,
     staleTime: 10 * 60 * 1000, // 10 minutes
   });
@@ -129,6 +141,9 @@ export function useLandingData(inflow: number = 1000, limit: number = 25) {
   // Hero agent analysis
   const heroAgentQuery = useAgentAnalysis(heroSymbol || undefined);
   
+  // Hero dip entry analysis (for fallback when no strategy beats B&H)
+  const heroDipEntryQuery = useHeroDipEntry(heroSymbol || undefined);
+  
   // Derive as_of timestamp
   const asOfDate = recsQuery.data?.as_of_date;
   const lastUpdatedAt = asOfDate ? Date.parse(asOfDate) : null;
@@ -152,6 +167,7 @@ export function useLandingData(inflow: number = 1000, limit: number = 25) {
     
     // Hero analysis
     heroAgentAnalysis: heroAgentQuery.data ?? null,
+    heroAgentPending: heroAgentQuery.data?.agent_pending ?? false,
     heroSignals: heroSignalsQuery.data?.triggers ?? [],
     heroSignalSummary: heroSignalsQuery.data ? {
       edgeVsBuyHoldPct: heroSignalsQuery.data.edge_vs_buy_hold_pct,
@@ -161,11 +177,14 @@ export function useLandingData(inflow: number = 1000, limit: number = 25) {
       beatsBuyHold: heroSignalsQuery.data.beats_buy_hold,
       signalName: heroSignalsQuery.data.signal_name,
     } : null,
+    heroDipEntry: heroDipEntryQuery.data ?? null,
     
     // Loading states
     isLoading: recsQuery.isLoading,
     isLoadingCharts: batchChartsQuery.isLoading,
-    isLoadingHero: heroChartQuery.isLoading || heroSignalsQuery.isLoading || heroAgentQuery.isLoading,
+    isLoadingHero: heroChartQuery.isLoading || heroSignalsQuery.isLoading,
+    isLoadingAgents: heroAgentQuery.isLoading,
+    isLoadingDipEntry: heroDipEntryQuery.isLoading,
     
     // Error state
     isError: recsQuery.isError,

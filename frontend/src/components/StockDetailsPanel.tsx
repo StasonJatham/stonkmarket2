@@ -1498,6 +1498,99 @@ export function StockDetailsPanel({
               </div>
             )}
 
+            {/* Dip Strategy Backtest - Show when no optimized strategy beats B&H */}
+            {dipEntry?.backtest && (!strategySignal?.benchmarks.beats_buy_hold || !hasValidStrategy) && (
+              <div className="mb-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <TrendingDown className="h-4 w-4 text-primary" />
+                  <span className="text-sm font-semibold">Dip Buying Strategy</span>
+                  <Badge variant="outline" className="text-[10px] border-muted-foreground/50 text-muted-foreground bg-muted/20">
+                    Historical
+                  </Badge>
+                </div>
+                
+                {/* Strategy explanation */}
+                <div className={cn(
+                  "p-3 rounded-lg border mb-3",
+                  dipEntry.is_buy_now && "bg-success/10 border-success/30",
+                  !dipEntry.is_buy_now && "bg-muted/30 border-border",
+                )}>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <Badge 
+                        variant="outline"
+                        className={cn(
+                          "text-xs font-semibold",
+                          dipEntry.is_buy_now ? "border-success text-success" : "border-muted-foreground text-muted-foreground",
+                        )}
+                      >
+                        {dipEntry.is_buy_now ? '● ACTIVE' : 'WAIT'}
+                      </Badge>
+                      <span className="text-xs text-muted-foreground">
+                        Buy at {dipEntry.max_profit_threshold}% dip
+                      </span>
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
+                    {dipEntry.is_buy_now 
+                      ? `Stock is below ${dipEntry.max_profit_threshold}% threshold - buy signal active`
+                      : `Wait for price to drop ${Math.abs(dipEntry.max_profit_threshold - dipEntry.current_drawdown_pct).toFixed(1)}% more to optimal entry`
+                    }
+                  </p>
+                </div>
+                
+                {/* Performance metrics */}
+                <div className="grid grid-cols-4 gap-2 mb-3">
+                  <div className="text-center">
+                    <p className="text-xs text-muted-foreground">Win Rate</p>
+                    <p className={cn(
+                      "text-sm font-bold",
+                      dipEntry.backtest.win_rate >= 60 && "text-success",
+                      dipEntry.backtest.win_rate < 50 && "text-danger"
+                    )}>
+                      {dipEntry.backtest.win_rate.toFixed(0)}%
+                    </p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-xs text-muted-foreground">Total Return</p>
+                    <p className={cn(
+                      "text-sm font-bold",
+                      dipEntry.backtest.strategy_return_pct >= 0 ? "text-success" : "text-danger"
+                    )}>
+                      {dipEntry.backtest.strategy_return_pct >= 0 ? '+' : ''}
+                      {dipEntry.backtest.strategy_return_pct.toFixed(0)}%
+                    </p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-xs text-muted-foreground">Sharpe</p>
+                    <p className={cn(
+                      "text-sm font-bold",
+                      dipEntry.backtest.sharpe_ratio >= 1.5 && "text-success",
+                      dipEntry.backtest.sharpe_ratio < 0.5 && "text-danger"
+                    )}>
+                      {dipEntry.backtest.sharpe_ratio.toFixed(2)}
+                    </p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-xs text-muted-foreground">vs B&H</p>
+                    <p className={cn(
+                      "text-sm font-bold",
+                      dipEntry.backtest.vs_buy_hold_pct >= 0 ? "text-success" : "text-danger"
+                    )}>
+                      {dipEntry.backtest.vs_buy_hold_pct >= 0 ? '+' : ''}
+                      {dipEntry.backtest.vs_buy_hold_pct.toFixed(0)}%
+                    </p>
+                  </div>
+                </div>
+                
+                {/* Stats footer */}
+                <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                  <span>{dipEntry.backtest.n_trades} trades over {dipEntry.backtest.years_tested.toFixed(1)} years</span>
+                  <span>Avg {dipEntry.backtest.avg_return_per_trade.toFixed(1)}% per trade</span>
+                </div>
+              </div>
+            )}
+
             <Separator className="my-3" />
             
             {/* Fundamentals & Company Info */}

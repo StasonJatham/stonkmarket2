@@ -75,6 +75,20 @@ class ThresholdStats(BaseModel):
     avg_return_60d: float = Field(default=0.0, description="Average return after 60 days")
 
 
+class DipEntryBacktest(BaseModel):
+    """Backtest results for dip-based strategy."""
+    
+    strategy_return_pct: float = Field(default=0.0, description="Total return from dip strategy")
+    buy_hold_return_pct: float = Field(default=0.0, description="Buy-and-hold return over same period")
+    vs_buy_hold_pct: float = Field(default=0.0, description="Edge vs buy-and-hold (strategy - B&H)")
+    n_trades: int = Field(default=0, description="Number of dip trades executed")
+    win_rate: float = Field(default=0.0, description="Percentage of winning trades")
+    avg_return_per_trade: float = Field(default=0.0, description="Average return per trade")
+    sharpe_ratio: float = Field(default=0.0, description="Risk-adjusted return")
+    max_drawdown: float = Field(default=0.0, description="Maximum drawdown during backtest")
+    years_tested: float = Field(default=0.0, description="Years of historical data used")
+
+
 class DipEntryResponse(BaseModel):
     """Dip entry analysis response."""
     
@@ -105,6 +119,11 @@ class DipEntryResponse(BaseModel):
     )
     max_profit_total_return: float = Field(
         default=0.0, description="Expected total return at max profit threshold"
+    )
+    
+    # Backtest results - max profit strategy vs buy-and-hold
+    backtest: DipEntryBacktest | None = Field(
+        default=None, description="Backtest results for max profit dip strategy"
     )
     
     # Current signal
@@ -196,6 +215,42 @@ async def get_dip_entry(
         recent_high = float(dip_state.ref_high) if dip_state and dip_state.ref_high else 0.0
         current_drawdown = float(dip_state.dip_percentage) if dip_state and dip_state.dip_percentage else 0.0
         
+        # Parse threshold analysis to build backtest data
+        threshold_analysis = [ThresholdStats(**t) for t in (precomputed.dip_entry_threshold_analysis or [])]
+        
+        # Compute years tested from data_start and data_end
+        years_tested = 5.0  # Default
+        if precomputed.data_start and precomputed.data_end:
+            days_diff = (precomputed.data_end - precomputed.data_start).days
+            years_tested = round(days_diff / 365.25, 1)
+        
+        # Build backtest from max profit threshold data
+        backtest_data = None
+        max_profit_threshold = float(precomputed.dip_entry_max_profit_threshold) if precomputed.dip_entry_max_profit_threshold else None
+        if max_profit_threshold is not None and threshold_analysis:
+            # Find the threshold stats for max profit threshold
+            max_profit_stats = next(
+                (t for t in threshold_analysis if abs(t.threshold - max_profit_threshold) < 0.1),
+                None
+            )
+            if max_profit_stats:
+                # Compute buy-and-hold return from precomputed or estimate from data
+                # Use the buy_hold_return from quant_precomputed if available
+                buy_hold_return = float(precomputed.backtest_buy_hold_return_pct) if precomputed.backtest_buy_hold_return_pct else 0.0
+                strategy_return = max_profit_stats.total_profit_compounded if max_profit_stats.total_profit_compounded else max_profit_stats.total_profit
+                
+                backtest_data = DipEntryBacktest(
+                    strategy_return_pct=strategy_return,
+                    buy_hold_return_pct=buy_hold_return,
+                    vs_buy_hold_pct=strategy_return - buy_hold_return,
+                    n_trades=max_profit_stats.occurrences,
+                    win_rate=max_profit_stats.win_rate,
+                    avg_return_per_trade=max_profit_stats.avg_return,
+                    sharpe_ratio=max_profit_stats.sharpe_ratio,
+                    max_drawdown=max_profit_stats.max_further_drawdown,
+                    years_tested=years_tested,
+                )
+        
         return DipEntryResponse(
             symbol=symbol,
             current_price=current_price,
@@ -204,9 +259,10 @@ async def get_dip_entry(
             volatility_regime="normal",  # Could be enhanced
             optimal_dip_threshold=float(precomputed.dip_entry_optimal_threshold),
             optimal_entry_price=float(precomputed.dip_entry_optimal_price) if precomputed.dip_entry_optimal_price else current_price,
-            max_profit_threshold=float(precomputed.dip_entry_max_profit_threshold) if precomputed.dip_entry_max_profit_threshold else 0.0,
+            max_profit_threshold=max_profit_threshold or 0.0,
             max_profit_entry_price=float(precomputed.dip_entry_max_profit_price) if precomputed.dip_entry_max_profit_price else 0.0,
             max_profit_total_return=float(precomputed.dip_entry_max_profit_total_return) if precomputed.dip_entry_max_profit_total_return else 0.0,
+            backtest=backtest_data,
             is_buy_now=precomputed.dip_entry_is_buy_now,
             buy_signal_strength=float(precomputed.dip_entry_signal_strength) if precomputed.dip_entry_signal_strength else 0.0,
             signal_reason=precomputed.dip_entry_signal_reason or "",
@@ -214,7 +270,8 @@ async def get_dip_entry(
             avg_dips_per_year=DipFrequency(**{"10_pct": 2.0, "15_pct": 1.0, "20_pct": 0.5}),
             fundamentals_healthy=True,
             fundamental_notes=[],
-            threshold_analysis=[ThresholdStats(**t) for t in (precomputed.dip_entry_threshold_analysis or [])],
+            data_years=years_tested,
+            threshold_analysis=threshold_analysis,
             analyzed_at=precomputed.computed_at or datetime.now(),
         )
     

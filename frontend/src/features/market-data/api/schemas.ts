@@ -237,6 +237,7 @@ export const AgentAnalysisSchema = z.object({
   bullish_count: z.number().optional(),
   bearish_count: z.number().optional(),
   neutral_count: z.number().optional(),
+  agent_pending: z.boolean().optional(),
 });
 
 export type AgentAnalysis = z.infer<typeof AgentAnalysisSchema>;

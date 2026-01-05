@@ -3207,6 +3207,18 @@ export interface DipThresholdStats {
   avg_return_60d: number;
 }
 
+export interface DipEntryBacktest {
+  strategy_return_pct: number;
+  buy_hold_return_pct: number;
+  vs_buy_hold_pct: number;
+  n_trades: number;
+  win_rate: number;
+  avg_return_per_trade: number;
+  sharpe_ratio: number;
+  max_drawdown: number;
+  years_tested: number;
+}
+
 export interface DipEntryResponse {
   symbol: string;
   current_price: number;
@@ -3220,6 +3232,8 @@ export interface DipEntryResponse {
   max_profit_threshold: number;
   max_profit_entry_price: number;
   max_profit_total_return: number;
+  // Backtest results for dip strategy
+  backtest: DipEntryBacktest | null;
   // Current signal
   is_buy_now: boolean;
   buy_signal_strength: number;
