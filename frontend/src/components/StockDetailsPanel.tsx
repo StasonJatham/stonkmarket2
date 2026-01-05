@@ -21,7 +21,6 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { ComparisonChart } from '@/components/ComparisonChart';
-import { DipThresholdChart } from '@/components/DipThresholdChart';
 import { 
   TrendingUp, 
   TrendingDown, 
@@ -1102,18 +1101,7 @@ export function StockDetailsPanel({
               </div>
             )}
 
-            {/* Dip Threshold Analysis Chart */}
-            {dipEntry && dipEntry.threshold_analysis && dipEntry.threshold_analysis.length > 0 && (
-              <div className="mb-4">
-                <DipThresholdChart
-                  thresholdStats={dipEntry.threshold_analysis}
-                  optimalThreshold={dipEntry.optimal_dip_threshold}
-                  maxProfitThreshold={dipEntry.max_profit_threshold || dipEntry.optimal_dip_threshold}
-                  currentDrawdown={dipEntry.current_drawdown_pct}
-                  height={220}
-                />
-              </div>
-            )}
+
 
             {/* Domain-Specific Metrics (Banks, REITs, Insurance) - Collapsed by default */}
             {fundamentals && fundamentals.domain && fundamentals.domain !== 'stock' && (
@@ -1558,6 +1546,50 @@ export function StockDetailsPanel({
                   <div className="flex items-center gap-1.5 text-xs text-success">
                     <CheckCircle2 className="h-3.5 w-3.5" />
                     <span>Fundamentals pass quality filters</span>
+                  </div>
+                )}
+                
+                {/* Strategy Comparison Table - DCA vs B&H vs Dips */}
+                {strategySignal.comparison && (
+                  <div className="mt-3 pt-3 border-t border-border/50">
+                    <p className="text-xs font-medium text-muted-foreground mb-2">
+                      Strategy Comparison (${strategySignal.comparison.initial_capital.toLocaleString()} start + ${strategySignal.comparison.monthly_contribution.toLocaleString()}/mo)
+                    </p>
+                    <div className="space-y-1.5">
+                      {['buy_dips', 'dca', 'buy_hold', 'spy_dca'].map(key => {
+                        const strat = strategySignal.comparison?.strategies[key];
+                        if (!strat) return null;
+                        const isWinner = strategySignal.comparison?.winner?.toLowerCase().replace(/ & /g, '_').replace(/ /g, '_') === key || 
+                                         strategySignal.comparison?.winner === strat.name;
+                        return (
+                          <div key={key} className={cn(
+                            "flex items-center justify-between text-xs p-2 rounded",
+                            isWinner ? "bg-success/10 border border-success/30" : "bg-muted/30"
+                          )}>
+                            <div className="flex items-center gap-2">
+                              {isWinner && <CheckCircle2 className="h-3 w-3 text-success" />}
+                              <span className={isWinner ? 'font-medium text-foreground' : 'text-muted-foreground'}>
+                                {strat.name}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <span className="text-muted-foreground text-[10px]">
+                                ${strat.total_invested.toLocaleString()} →
+                              </span>
+                              <span className={cn("font-mono font-medium", isWinner ? "text-success" : "text-foreground")}>
+                                ${strat.final_value.toLocaleString()}
+                              </span>
+                              <span className={cn("font-mono text-[10px]", strat.total_return_pct >= 0 ? "text-success" : "text-danger")}>
+                                ({strat.total_return_pct >= 0 ? '+' : ''}{strat.total_return_pct.toFixed(0)}%)
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <p className="text-[10px] text-muted-foreground mt-2">
+                      {strategySignal.comparison.backtest_days} trading days • 3y backtest period
+                    </p>
                   </div>
                 )}
                 

@@ -1316,6 +1316,7 @@ export interface QuantRecommendation {
   strategy_signal: string | null;
   strategy_win_rate: number | null;
   strategy_vs_bh_pct: number | null;
+  strategy_total_return_pct: number | null;
   strategy_name: string | null;
   strategy_recent_trades: Array<{
     entry_date: string;
@@ -1326,6 +1327,23 @@ export interface QuantRecommendation {
     exit_reason: string;
     holding_days: number | null;
   }> | null;
+  strategy_comparison: {
+    initial_capital: number;
+    monthly_contribution: number;
+    backtest_days: number;
+    strategies: {
+      [key: string]: {
+        name: string;
+        description: string;
+        total_invested: number;
+        final_value: number;
+        total_return_pct: number;
+        n_buys: number;
+      };
+    };
+    ranked_by_return: string[];
+    winner: string;
+  } | null;
   // Dip Entry Optimizer
   dip_entry_optimal_pct: number | null;
   dip_entry_price: number | null;
@@ -3166,6 +3184,24 @@ export interface TradeRecord {
   holding_days: number | null;
 }
 
+export interface StrategyComparisonItem {
+  name: string;
+  description: string;
+  total_invested: number;
+  final_value: number;
+  total_return_pct: number;
+  n_buys: number;
+}
+
+export interface StrategyComparison {
+  initial_capital: number;
+  monthly_contribution: number;
+  backtest_days: number;
+  strategies: Record<string, StrategyComparisonItem>;
+  ranked_by_return: string[];
+  winner: string;
+}
+
 export interface StrategySignalResponse {
   symbol: string;
   strategy_name: string;
@@ -3178,6 +3214,7 @@ export interface StrategySignalResponse {
   is_statistically_valid: boolean;
   indicators_used: string[];
   recent_trades: TradeRecord[];
+  comparison: StrategyComparison | null;
   optimized_at: string | null;
 }
 

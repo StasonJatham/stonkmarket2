@@ -714,10 +714,12 @@ async def get_recommendations(
         strategy_signal_type = None
         strategy_win_rate_val = None
         strategy_vs_bh_pct = None
+        strategy_total_return_pct = None
         expected_recovery_days = None
         win_rate = None
         strategy_name = None
         strategy_recent_trades = None
+        strategy_comparison = None
         
         strategy_n_trades = None
         if strategy:
@@ -725,6 +727,7 @@ async def get_recommendations(
                 # StrategySignal has flat columns, not nested dicts
                 strategy_signal_type = strategy.signal_type
                 strategy_vs_bh_pct = float(strategy.vs_buy_hold_pct) if strategy.vs_buy_hold_pct else None
+                strategy_total_return_pct = float(strategy.total_return_pct) if strategy.total_return_pct else None
                 strategy_beats_bh = strategy.beats_buy_hold
                 strategy_beats_spy = getattr(strategy, 'beats_spy', False) or False
                 strategy_win_rate_val = float(strategy.win_rate) if strategy.win_rate else None
@@ -733,6 +736,7 @@ async def get_recommendations(
                 expected_recovery_days = getattr(strategy, 'typical_recovery_days', None)
                 strategy_name = getattr(strategy, 'strategy_name', None)
                 strategy_recent_trades = getattr(strategy, 'recent_trades', None)
+                strategy_comparison = getattr(strategy, 'strategy_comparison', None)
             except Exception:
                 pass
         
@@ -921,8 +925,10 @@ async def get_recommendations(
             strategy_signal=strategy_signal_type,
             strategy_win_rate=strategy_win_rate_val,
             strategy_vs_bh_pct=strategy_vs_bh_pct,
+            strategy_total_return_pct=strategy_total_return_pct,
             strategy_name=strategy_name,
             strategy_recent_trades=strategy_recent_trades,
+            strategy_comparison=strategy_comparison,
             best_chance_score=best_chance_score,
             best_chance_reason=" • ".join(best_chance_reasons[:3]) if best_chance_reasons else None,
             # APUS + DOUS Dual-Mode Scoring

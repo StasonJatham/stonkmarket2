@@ -55,7 +55,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 
 type ViewMode = 'grid' | 'list';
-type SortBy = 'chance' | 'utility' | 'return' | 'depth' | 'name';
+type SortBy = 'signal' | 'return' | 'depth' | 'name';
 
 const container = {
   hidden: { opacity: 0 },
@@ -124,7 +124,7 @@ export function Dashboard() {
   const [isLoadingInfo, setIsLoadingInfo] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
-  const [sortBy, setSortBy] = useState<SortBy>('chance');
+  const [sortBy, setSortBy] = useState<SortBy>('signal');
   const [isMobileDetailOpen, setIsMobileDetailOpen] = useState(false);
   
   // Benchmark data via TanStack Query - map to BenchmarkConfig type
@@ -193,7 +193,7 @@ export function Dashboard() {
     const urlShowAll = searchParams.get('showAll');
     
     if (urlSearch !== null) setSearchQuery(urlSearch);
-    if (urlSort && ['chance', 'utility', 'return', 'depth', 'name'].includes(urlSort)) setSortBy(urlSort);
+    if (urlSort && ['signal', 'chance', 'utility', 'return', 'depth', 'name'].includes(urlSort)) setSortBy(urlSort);
     if (urlView && ['grid', 'list'].includes(urlView)) setViewMode(urlView);
     if (urlShowAll === 'true') setShowAllStocks(true);
   }, [searchParams, setShowAllStocks]);
@@ -269,15 +269,29 @@ export function Dashboard() {
 
     // Sort
     result.sort((a, b) => {
+      // Get enhanced data for sorting (has quant_gate_pass, dip_entry_is_buy_now etc)
+      const aCard = stockCardDataMap.get(a.symbol);
+      const bCard = stockCardDataMap.get(b.symbol);
+      
       switch (sortBy) {
+        case 'signal':
+          // Best chance score = composite of all our quant factors
+          // Computed in backend: stationary bootstrap, deflated Sharpe, recovery probability,
+          // fundamental momentum, valuation z-score, sector relative performance
+          // P1: Mode A certified buys (pass gate: P_outperf >= 75%, CI_low > 0, DSR >= 50%)
+          const aGate = aCard?.quant_gate_pass ? 1 : 0;
+          const bGate = bCard?.quant_gate_pass ? 1 : 0;
+          if (bGate !== aGate) return bGate - aGate;
+          // P2: Sort by best_chance_score (already in dip_score)
+          return (b.dip_score ?? 0) - (a.dip_score ?? 0);
         case 'chance':
-          // Sort by best_chance_score from quant engine (or dip_score as fallback)
+          // Sort by best_chance_score from quant engine
           return (b.dip_score ?? 0) - (a.dip_score ?? 0);
         case 'utility':
-          // dip_score now contains marginal_utility from quant engine
+          // dip_score now contains best_chance_score (not marginal_utility)
           return (b.dip_score ?? 0) - (a.dip_score ?? 0);
         case 'return':
-          // recovery_potential now contains mu_hat (expected return)
+          // recovery_potential contains mu_hat (expected return)
           return (b.recovery_potential ?? 0) - (a.recovery_potential ?? 0);
         case 'depth':
           return b.depth - a.depth;
@@ -632,17 +646,11 @@ export function Dashboard() {
             <DropdownMenuContent align="end">
               <DropdownMenuLabel>Sort by</DropdownMenuLabel>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => setSortBy('chance')}>
-                <Badge variant={sortBy === 'chance' ? 'default' : 'outline'} className="mr-2">
-                  {sortBy === 'chance' && '✓'}
+              <DropdownMenuItem onClick={() => setSortBy('signal')}>
+                <Badge variant={sortBy === 'signal' ? 'default' : 'outline'} className="mr-2">
+                  {sortBy === 'signal' && '✓'}
                 </Badge>
-                Best Chance
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setSortBy('utility')}>
-                <Badge variant={sortBy === 'utility' ? 'default' : 'outline'} className="mr-2">
-                  {sortBy === 'utility' && '✓'}
-                </Badge>
-                Marginal Utility
+                Best Chance Score
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setSortBy('return')}>
                 <Badge variant={sortBy === 'return' ? 'default' : 'outline'} className="mr-2">

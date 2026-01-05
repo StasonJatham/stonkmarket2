@@ -1319,6 +1319,9 @@ class StrategySignal(Base):
     # Recent trades (last 5)
     recent_trades: Mapped[list] = mapped_column(JSONB, default=list)
     
+    # Full strategy comparison (DCA vs Buy Dips vs Buy & Hold with dollar values)
+    strategy_comparison: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    
     # Indicators used
     indicators_used: Mapped[list] = mapped_column(JSONB, default=list)
     

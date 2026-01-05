@@ -144,11 +144,13 @@ async def strategy_nightly_job() -> str:
         
         logger.info(f"[STRATEGY] Optimizing strategies for {len(symbol_list)} symbols using backtest_v2")
         
-        # Get SPY for benchmark comparison (use 10 years for proper backtest)
+        # Get SPY for benchmark comparison
+        # Use 3 years by default (matches hero chart), 5 years if stock has enough data
         from datetime import date, timedelta
         end_date = date.today()
-        start_date = end_date - timedelta(days=3650)  # 10 years for thorough backtesting
-        spy_df = await price_history_repo.get_prices_as_dataframe("SPY", start_date, end_date)
+        # Fetch 5 years of SPY, will be trimmed to match each stock's period
+        spy_start_date = end_date - timedelta(days=1825)  # 5 years
+        spy_df = await price_history_repo.get_prices_as_dataframe("SPY", spy_start_date, end_date)
         
         processed = 0
         failed = 0
@@ -166,17 +168,37 @@ async def strategy_nightly_job() -> str:
             
             for symbol in symbol_list:
                 try:
-                    # Get price history (10 years for proper backtesting)
-                    df = await price_history_repo.get_prices_as_dataframe(symbol, start_date, end_date)
+                    # Get price history - use 3 years (matches hero chart), 5 years for established stocks
+                    # This ensures strategy comparison matches what user sees on chart
+                    start_3y = end_date - timedelta(days=1095)  # 3 years
+                    start_5y = end_date - timedelta(days=1825)  # 5 years
                     
-                    if df is None or len(df) < 200:
+                    # First check how much data the stock has
+                    df_all = await price_history_repo.get_prices_as_dataframe(symbol, start_5y, end_date)
+                    
+                    if df_all is None or len(df_all) < 200:
                         logger.warning(f"[STRATEGY] Insufficient data for {symbol}, skipping")
                         continue
+                    
+                    # Use 3 years by default (matches hero chart)
+                    # Only use 5 years if stock has 5+ years of data
+                    if len(df_all) >= 1250:  # ~5 years of trading days
+                        df = df_all
+                    else:
+                        # Use 3 years - trim to match hero chart period
+                        df = await price_history_repo.get_prices_as_dataframe(symbol, start_3y, end_date)
+                        if df is None or len(df) < 200:
+                            # Fallback to all available data if 3y is too short
+                            df = df_all
+                    
+                    # Trim SPY to match the stock's date range for fair comparison
+                    stock_start = df.index[0]
+                    spy_trimmed = spy_df[spy_df.index >= stock_start].copy() if spy_df is not None else None
                     
                     # Run BaselineEngine comparison (DCA vs B&H vs Dips vs Technical)
                     engine = BaselineEngine(
                         prices=df,
-                        spy_prices=spy_df,
+                        spy_prices=spy_trimmed,
                         symbol=symbol,
                         initial_capital=10_000.0,
                         monthly_contribution=1_000.0,
@@ -276,38 +298,57 @@ async def strategy_nightly_job() -> str:
                             # Limit to recent 20 buys
                             best_trades = best_trades[-20:]
                         elif strategy_name == "buy_dips_hold":
-                            # Buy on dips - use the dip threshold from analysis
+                            # Buy on dips - simulates actual cash accumulation logic
+                            # $1k/month accumulates, ALL cash deployed on first dip day with cash
                             dip_threshold = engine.dip_threshold_pct / 100 if engine.dip_threshold_pct else -0.10
                             
-                            # Find dip days (simplified: days where price dropped from recent high)
+                            # Find dip days (days where price dropped from recent high)
                             rolling_high = close_prices.rolling(window=63).max()  # 3-month high
                             drawdown = (close_prices - rolling_high) / rolling_high
                             dip_mask = drawdown <= dip_threshold
                             
-                            # Get dip dates
-                            dip_dates = close_prices[dip_mask].index
+                            # Simulate the actual strategy cash flow
+                            monthly_contribution = 1000.0
+                            cash_waiting = 10000.0  # Initial capital
+                            last_month = None
                             
-                            # Sample ~20 dip buys
-                            step = max(1, len(dip_dates) // 20)
-                            for i in range(0, len(dip_dates), step):
-                                dip_date = dip_dates[i]
-                                dip_price = float(close_prices.loc[dip_date])
+                            for i, (date, price) in enumerate(close_prices.items()):
+                                is_dip = dip_mask.iloc[i] if i < len(dip_mask) else False
                                 
-                                best_trades.append({
-                                    "entry_date": dip_date.strftime("%Y-%m-%d"),
-                                    "exit_date": None,
-                                    "entry_price": dip_price,
-                                    "exit_price": None,
-                                    "pnl_pct": 0,
-                                    "exit_reason": f"dip_{abs(dip_threshold*100):.0f}pct",
-                                    "holding_days": None,
-                                })
+                                # Track month changes for contributions
+                                current_month = (date.year, date.month)
+                                if last_month is not None and current_month != last_month:
+                                    # New month - add contribution
+                                    cash_waiting += monthly_contribution
+                                last_month = current_month
+                                
+                                # Buy on dip IF we have cash
+                                if is_dip and cash_waiting > 0:
+                                    best_trades.append({
+                                        "entry_date": date.strftime("%Y-%m-%d"),
+                                        "exit_date": None,
+                                        "entry_price": float(price),
+                                        "exit_price": None,
+                                        "pnl_pct": 0,
+                                        "exit_reason": "dip_buy",
+                                        "holding_days": None,
+                                        "amount_invested": cash_waiting,  # Track how much was deployed
+                                    })
+                                    cash_waiting = 0  # All cash deployed
                             
+                            # Keep most recent 20 buys
                             best_trades = best_trades[-20:]
                     
                     # Calculate vs buy & hold
                     vs_buy_hold = best_result.total_return_pct - comparison.buy_hold.total_return_pct
-                    beats_buy_hold = vs_buy_hold > 0
+                    
+                    # beats_buy_hold should only be True if OUR strategies beat buy & hold
+                    # If the recommendation is to switch to SPY, that means our strategies LOSE
+                    is_spy_recommendation = rec.recommendation in (
+                        RecommendationType.SPY_DCA,
+                        RecommendationType.SWITCH_TO_SPY,
+                    )
+                    beats_buy_hold = vs_buy_hold > 0 and not is_spy_recommendation
                     
                     # Calculate vs SPY
                     vs_spy = best_result.total_return_pct - comparison.spy_dca.total_return_pct
@@ -355,6 +396,61 @@ async def strategy_nightly_job() -> str:
                         "dip_threshold": engine.dip_threshold_pct,
                     }
                     
+                    # Build full strategy comparison for UI display
+                    # This shows the user exactly what each strategy would have produced
+                    strategy_comparison = {
+                        "initial_capital": 10_000.0,
+                        "monthly_contribution": 1_000.0,
+                        "backtest_days": len(df),
+                        "strategies": {
+                            "dca": {
+                                "name": "DCA Monthly",
+                                "description": "Invest $1k every month regardless of price",
+                                "total_invested": comparison.dca.total_invested,
+                                "final_value": comparison.dca.final_value,
+                                "total_return_pct": comparison.dca.total_return_pct,
+                                "n_buys": comparison.dca.total_buys,
+                            },
+                            "buy_dips": {
+                                "name": "Buy Dips & Hold",
+                                "description": "Accumulate $1k/mo cash, deploy only on dips",
+                                "total_invested": comparison.buy_dips.total_invested,
+                                "final_value": comparison.buy_dips.final_value,
+                                "total_return_pct": comparison.buy_dips.total_return_pct,
+                                "n_buys": comparison.buy_dips.total_buys,
+                            },
+                            "buy_hold": {
+                                "name": "Buy & Hold",
+                                "description": "Invest $10k on day 1, hold forever",
+                                "total_invested": comparison.buy_hold.total_invested,
+                                "final_value": comparison.buy_hold.final_value,
+                                "total_return_pct": comparison.buy_hold.total_return_pct,
+                                "n_buys": 1,
+                            },
+                            "spy_dca": {
+                                "name": "SPY DCA",
+                                "description": "Same schedule but buying SPY instead",
+                                "total_invested": comparison.spy_dca.total_invested,
+                                "final_value": comparison.spy_dca.final_value,
+                                "total_return_pct": comparison.spy_dca.total_return_pct,
+                                "n_buys": comparison.spy_dca.total_buys,
+                            },
+                        },
+                        "ranked_by_return": comparison.ranked_by_return[:5],
+                        "winner": comparison.ranked_by_return[0] if comparison.ranked_by_return else "DCA Monthly",
+                    }
+                    
+                    # Add technical trading if available
+                    if comparison.technical_trading:
+                        strategy_comparison["strategies"]["technical"] = {
+                            "name": "Technical Trading",
+                            "description": "Optimized entry/exit signals",
+                            "total_invested": comparison.technical_trading.total_invested,
+                            "final_value": comparison.technical_trading.final_value,
+                            "total_return_pct": comparison.technical_trading.total_return_pct,
+                            "n_buys": comparison.technical_trading.total_buys,
+                        }
+                    
                     # Indicators used
                     indicators_used = ["price", "dip_detection"]
                     if comparison.technical_trading:
@@ -385,6 +481,7 @@ async def strategy_nightly_job() -> str:
                         fundamental_concerns=fundamental_concerns,
                         is_statistically_valid=best_result.total_buys >= 10,
                         recent_trades=best_trades,
+                        strategy_comparison=strategy_comparison,
                         indicators_used=indicators_used,
                         typical_recovery_days=typical_recovery_days,
                     ).on_conflict_do_update(
@@ -412,6 +509,7 @@ async def strategy_nightly_job() -> str:
                             "fundamental_concerns": fundamental_concerns,
                             "is_statistically_valid": best_result.total_buys >= 10,
                             "recent_trades": best_trades,
+                            "strategy_comparison": strategy_comparison,
                             "indicators_used": indicators_used,
                             "typical_recovery_days": typical_recovery_days,
                             "optimized_at": datetime.now(UTC),

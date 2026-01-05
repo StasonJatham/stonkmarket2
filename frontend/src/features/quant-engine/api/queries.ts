@@ -129,7 +129,12 @@ export function useLandingData(inflow: number = 1000, limit: number = 25) {
   
   // Filter to only show stocks where our strategy beats buy & hold
   // This showcases stocks where dip-buying is proven to outperform
-  const strategyBeaters = allRecommendations.filter(r => r.strategy_beats_bh === true);
+  // Also exclude stocks where the recommendation is "switch to SPY" - those underperform
+  const strategyBeaters = allRecommendations.filter(r => 
+    r.strategy_beats_bh === true && 
+    r.strategy_name !== 'switch_to_spy' &&
+    r.strategy_name !== 'spy_dca'
+  );
   
   // Use filtered list if we have any, otherwise fallback to SPY-only or first stock
   const recommendations = strategyBeaters.length > 0 
@@ -162,11 +167,13 @@ export function useLandingData(inflow: number = 1000, limit: number = 25) {
     benchmarks: {
       vs_buy_hold: heroRec.strategy_vs_bh_pct,
       beats_buy_hold: heroRec.strategy_beats_bh,
+      total_return: heroRec.strategy_total_return_pct,
     },
     metrics: {
       win_rate: heroRec.strategy_win_rate,
       n_trades: heroRec.strategy_recent_trades?.length ?? 0,
     },
+    comparison: heroRec.strategy_comparison,
   } : null;
   
   // Hero signals - use the full quant endpoint with benchmark metrics (fallback)

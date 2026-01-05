@@ -85,6 +85,17 @@ class TradeRecord(BaseModel):
     holding_days: int | None = None
 
 
+class StrategyComparison(BaseModel):
+    """Strategy comparison showing DCA vs Buy&Hold vs Buy Dips vs SPY."""
+    
+    initial_capital: float = Field(..., description="Starting investment")
+    monthly_contribution: float = Field(..., description="Monthly contribution")
+    backtest_days: int = Field(..., description="Number of days in backtest period")
+    strategies: dict = Field(..., description="Strategy results by name")
+    ranked_by_return: list[str] = Field(default_factory=list, description="Strategies ranked by return")
+    winner: str = Field(..., description="Winning strategy name")
+
+
 class StrategySignalResponse(BaseModel):
     """Full strategy signal response for a symbol."""
     
@@ -101,6 +112,8 @@ class StrategySignalResponse(BaseModel):
     is_statistically_valid: bool = Field(..., description="Passes statistical tests")
     indicators_used: list[str] = Field(default_factory=list, description="Technical indicators used")
     recent_trades: list[TradeRecord] = Field(default_factory=list, description="Last 5 trades")
+    
+    comparison: StrategyComparison | None = Field(None, description="Strategy comparison (DCA vs B&H vs Dips)")
     
     optimized_at: datetime | None = Field(None, description="When optimization was run")
     
@@ -320,6 +333,19 @@ async def get_strategy_chart_data(
 
 def _build_response(signal: StrategySignal) -> StrategySignalResponse:
     """Build response from database model."""
+    # Build comparison object if available
+    comparison = None
+    if signal.strategy_comparison:
+        sc = signal.strategy_comparison
+        comparison = StrategyComparison(
+            initial_capital=sc.get("initial_capital", 10000),
+            monthly_contribution=sc.get("monthly_contribution", 1000),
+            backtest_days=sc.get("backtest_days", 0),
+            strategies=sc.get("strategies", {}),
+            ranked_by_return=sc.get("ranked_by_return", []),
+            winner=sc.get("winner", "Unknown"),
+        )
+    
     return StrategySignalResponse(
         symbol=signal.symbol,
         strategy_name=signal.strategy_name,
@@ -356,5 +382,6 @@ def _build_response(signal: StrategySignal) -> StrategySignalResponse:
         recent_trades=[
             TradeRecord(**t) for t in (signal.recent_trades or [])
         ],
+        comparison=comparison,
         optimized_at=signal.optimized_at,
     )

@@ -808,17 +808,27 @@ export function Landing() {
   const strategyMetrics = (() => {
     // Use heroStrategy if available (has actual recent_trades from winning strategy)
     if (heroStrategy && heroStrategy.benchmarks?.beats_buy_hold) {
-      const trades = heroStrategy.recent_trades ?? [];
-      const completedTrades = trades.length;
-      const winningTrades = trades.filter(t => t.pnl_pct > 0).length;
-      const actualWinRate = completedTrades > 0 ? (winningTrades / completedTrades) * 100 : heroStrategy.metrics?.win_rate ?? null;
-      const totalReturn = trades.reduce((sum, t) => sum + t.pnl_pct, 0);
+      const allTrades = heroStrategy.recent_trades ?? [];
+      
+      // Filter trades to last 3 years for chart visibility
+      const threeYearsAgo = new Date();
+      threeYearsAgo.setFullYear(threeYearsAgo.getFullYear() - 3);
+      const recentTrades = allTrades.filter(t => new Date(t.entry_date) >= threeYearsAgo);
+      
+      const stratName = heroStrategy.strategy_name;
+      const isAccumulationStrategy = ['dollar_cost_average', 'buy_dips_hold', 'buy_and_hold', 'spy_dca'].includes(stratName ?? '');
+      
+      const completedTrades = recentTrades.length;
+      // For accumulation strategies, win rate doesn't apply (you buy and hold)
+      const winningTrades = isAccumulationStrategy ? 0 : recentTrades.filter(t => t.pnl_pct > 0).length;
+      const actualWinRate = isAccumulationStrategy ? null : (completedTrades > 0 ? (winningTrades / completedTrades) * 100 : heroStrategy.metrics?.win_rate ?? null);
+      const totalReturn = recentTrades.reduce((sum, t) => sum + t.pnl_pct, 0);
       const avgReturn = completedTrades > 0 ? totalReturn / completedTrades : null;
       
       return {
         source: 'strategy_signals' as const,
-        strategyName: heroStrategy.strategy_name,
-        strategyDescription: getStrategyDescription(heroStrategy.strategy_name),
+        strategyName: stratName,
+        strategyDescription: getStrategyDescription(stratName),
         completedTrades,
         winningTrades,
         actualWinRate,
@@ -826,7 +836,10 @@ export function Landing() {
         avgReturn,
         edgeVsBuyHold: heroStrategy.benchmarks?.vs_buy_hold ?? null,
         beatsBuyHold: heroStrategy.benchmarks?.beats_buy_hold ?? false,
-        recentTrades: trades,
+        recentTrades: recentTrades,
+        isAccumulationStrategy,
+        // For accumulation strategies, show the total strategy return
+        strategyTotalReturn: heroStrategy.benchmarks?.total_return ?? null,
       };
     }
     
@@ -861,7 +874,9 @@ export function Landing() {
       avgReturn,
       edgeVsBuyHold: heroSignalSummary?.edgeVsBuyHoldPct ?? null,
       beatsBuyHold: (heroSignalSummary?.edgeVsBuyHoldPct ?? 0) > 0,
-      recentTrades: [] as { entry_date: string; exit_date: string; entry_price: number; exit_price: number; pnl_pct: number }[],
+      recentTrades: [] as { entry_date: string; exit_date: string; entry_price: number; exit_price: number; pnl_pct: number; amount_invested?: number }[],
+      isAccumulationStrategy: false,
+      strategyTotalReturn: null as number | null,
     };
   })();
   
@@ -1046,10 +1061,23 @@ export function Landing() {
                         {/* Strategy Performance Metrics */}
                         <div className="grid grid-cols-3 gap-3 mt-3 p-3 bg-background/50 rounded-lg">
                           <div className="text-center">
-                            <p className={`text-2xl font-bold font-mono ${(strategyMetrics.actualWinRate ?? 0) >= 50 ? 'text-success' : 'text-danger'}`}>
-                              {strategyMetrics.actualWinRate != null ? `${strategyMetrics.actualWinRate.toFixed(0)}%` : '—'}
-                            </p>
-                            <p className="text-xs text-muted-foreground">Win Rate</p>
+                            {strategyMetrics.isAccumulationStrategy ? (
+                              // For accumulation strategies, show total return instead of win rate
+                              <>
+                                <p className={`text-2xl font-bold font-mono ${(strategyMetrics.strategyTotalReturn ?? 0) >= 0 ? 'text-success' : 'text-danger'}`}>
+                                  {strategyMetrics.strategyTotalReturn != null ? `${strategyMetrics.strategyTotalReturn >= 0 ? '+' : ''}${strategyMetrics.strategyTotalReturn.toFixed(0)}%` : '—'}
+                                </p>
+                                <p className="text-xs text-muted-foreground">Total Return</p>
+                              </>
+                            ) : (
+                              // For trading strategies, show win rate
+                              <>
+                                <p className={`text-2xl font-bold font-mono ${(strategyMetrics.actualWinRate ?? 0) >= 50 ? 'text-success' : 'text-danger'}`}>
+                                  {strategyMetrics.actualWinRate != null ? `${strategyMetrics.actualWinRate.toFixed(0)}%` : '—'}
+                                </p>
+                                <p className="text-xs text-muted-foreground">Win Rate</p>
+                              </>
+                            )}
                           </div>
                           <div className="text-center border-x border-border/50">
                             <p className={`text-2xl font-bold font-mono ${(strategyMetrics.edgeVsBuyHold ?? 0) >= 0 ? 'text-success' : 'text-danger'}`}>
@@ -1061,7 +1089,7 @@ export function Landing() {
                             <p className="text-2xl font-bold font-mono text-foreground">
                               {strategyMetrics.completedTrades}
                             </p>
-                            <p className="text-xs text-muted-foreground">Trades</p>
+                            <p className="text-xs text-muted-foreground">{strategyMetrics.isAccumulationStrategy ? 'Buys' : 'Trades'}</p>
                           </div>
                         </div>
                       </CardHeader>
@@ -1070,7 +1098,9 @@ export function Landing() {
                         {/* Historical Trades List */}
                         {(strategyMetrics.completedTrades > 0 || chartSignals.length > 0) && (
                           <div className="mb-3">
-                            <p className="text-xs font-medium text-muted-foreground mb-2">Historical Trades</p>
+                            <p className="text-xs font-medium text-muted-foreground mb-2">
+                              {strategyMetrics.isAccumulationStrategy ? 'Dip Buys (Last 3 Years)' : 'Historical Trades'}
+                            </p>
                             <div className="space-y-1.5 max-h-32 overflow-y-auto">
                               {strategyMetrics.source === 'strategy_signals' && strategyMetrics.recentTrades.length > 0 ? (
                                 // Use actual trade records from strategy_signals
@@ -1080,17 +1110,33 @@ export function Landing() {
                                       <span className="text-muted-foreground w-16">
                                         {new Date(trade.entry_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' })}
                                       </span>
-                                      <span className="font-mono">${trade.entry_price.toFixed(0)}</span>
-                                      {trade.exit_date && trade.exit_price != null && (
+                                      {strategyMetrics.isAccumulationStrategy && trade.amount_invested ? (
+                                        // For accumulation strategies, show amount invested and shares bought
+                                        <span className="font-mono text-success">
+                                          ${trade.amount_invested.toLocaleString()}
+                                          <span className="text-muted-foreground ml-1">
+                                            ({(trade.amount_invested / trade.entry_price).toFixed(0)} sh)
+                                          </span>
+                                        </span>
+                                      ) : (
+                                        // For trading strategies, show stock price
+                                        <span className="font-mono">${trade.entry_price.toFixed(0)}</span>
+                                      )}
+                                      {!strategyMetrics.isAccumulationStrategy && trade.exit_date && trade.exit_price != null && (
                                         <>
                                           <ChevronRight className="h-3 w-3 text-muted-foreground" />
                                           <span className="font-mono">${trade.exit_price.toFixed(0)}</span>
                                         </>
                                       )}
                                     </div>
-                                    <span className={`font-mono font-medium ${trade.pnl_pct >= 0 ? 'text-success' : 'text-danger'}`}>
-                                      {trade.pnl_pct >= 0 ? '+' : ''}{trade.pnl_pct.toFixed(1)}%
-                                    </span>
+                                    {strategyMetrics.isAccumulationStrategy ? (
+                                      // For accumulation strategies, show stock price at purchase
+                                      <span className="text-xs text-muted-foreground">@ ${trade.entry_price.toFixed(2)}</span>
+                                    ) : (
+                                      <span className={`font-mono font-medium ${trade.pnl_pct >= 0 ? 'text-success' : 'text-danger'}`}>
+                                        {trade.pnl_pct >= 0 ? '+' : ''}{trade.pnl_pct.toFixed(1)}%
+                                      </span>
+                                    )}
                                   </div>
                                 ))
                               ) : (
@@ -1158,6 +1204,44 @@ export function Landing() {
                             <ChevronRight className="h-3 w-3" />
                           </Button>
                         </div>
+                        
+                        {/* Strategy Comparison Table - shows dollar values */}
+                        {heroStrategy?.comparison && (
+                          <div className="mt-3 pt-3 border-t border-border/50">
+                            <p className="text-xs font-medium text-muted-foreground mb-2">
+                              Strategy Comparison (${heroStrategy.comparison.initial_capital.toLocaleString()} start + ${heroStrategy.comparison.monthly_contribution.toLocaleString()}/mo)
+                            </p>
+                            <div className="space-y-1.5">
+                              {['buy_dips', 'dca', 'buy_hold', 'spy_dca'].map(key => {
+                                const strat = heroStrategy.comparison?.strategies[key];
+                                if (!strat) return null;
+                                const isWinner = heroStrategy.comparison?.winner?.toLowerCase().replace(/ & /g, '_').replace(/ /g, '_') === key || 
+                                                 heroStrategy.comparison?.winner === strat.name;
+                                return (
+                                  <div key={key} className={`flex items-center justify-between text-xs p-2 rounded ${isWinner ? 'bg-success/10 border border-success/30' : 'bg-muted/30'}`}>
+                                    <div className="flex items-center gap-2">
+                                      {isWinner && <Trophy className="h-3 w-3 text-success" />}
+                                      <span className={isWinner ? 'font-medium text-foreground' : 'text-muted-foreground'}>
+                                        {strat.name}
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center gap-3">
+                                      <span className="text-muted-foreground text-xs">
+                                        ${strat.total_invested.toLocaleString()} → 
+                                      </span>
+                                      <span className={`font-mono font-medium ${isWinner ? 'text-success' : 'text-foreground'}`}>
+                                        ${strat.final_value.toLocaleString()}
+                                      </span>
+                                      <span className={`font-mono text-xs ${strat.total_return_pct >= 0 ? 'text-success' : 'text-danger'}`}>
+                                        ({strat.total_return_pct >= 0 ? '+' : ''}{strat.total_return_pct.toFixed(0)}%)
+                                      </span>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
                       </CardContent>
                     </Card>
                   )}
