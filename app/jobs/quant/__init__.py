@@ -88,26 +88,24 @@ async def quant_monthly_job() -> str:
 
 
 # =============================================================================
-# STRATEGY OPTIMIZATION - Nightly after prices
+# STRATEGY OPTIMIZATION - Nightly after prices (uses backtest_v2)
 # =============================================================================
 
 
 @register_job("strategy_nightly")
 async def strategy_nightly_job() -> str:
     """
-    Nightly strategy optimization for all tracked symbols.
+    Nightly strategy optimization using backtest_v2 BaselineEngine.
     
-    Runs AFTER prices_daily to:
-    1. Run full backtest optimization with recency weighting
-    2. Find best strategy for each symbol that works NOW (not just historically)
-    3. Check fundamentals for entry/exit signals
-    4. Store results in strategy_signals table for API access
+    Uses the comprehensive backtest_v2 system to compare:
+    1. DCA (Dollar Cost Average) - monthly buying
+    2. Buy & Hold - buy once, hold forever  
+    3. Buy Dips & Hold - only buy on dips
+    4. Technical Trading - optimized entry/exit signals
+    5. SPY benchmarks for comparison
     
-    Key features:
-    - Recency weighting: Recent trades (last 6mo) matter 3x more
-    - Current year validation: Strategy must be profitable in 2025
-    - Fundamental filters: Only signal entry when financials healthy
-    - Statistically sound: Walk-forward validation, min 30 trades
+    The recommendation tells which strategy ACTUALLY beats buy & hold.
+    Results include full trade history for chart display.
     
     Schedule: Mon-Fri at 11:30 PM UTC (30 min after prices_daily)
     """
@@ -119,13 +117,14 @@ async def strategy_nightly_job() -> str:
     from app.database.connection import get_session
     from app.database.orm import StrategySignal, StockFundamentals
     from app.repositories import symbols_orm as symbols_repo
-    from app.quant_engine.strategy_optimizer import (
-        StrategyOptimizer, TradingConfig, RecencyConfig, FundamentalFilter,
-        result_to_dict,
+    from app.quant_engine.backtest_v2.baseline_strategies import (
+        BaselineEngine,
+        BaselineStrategyType,
+        RecommendationType,
     )
     from app.quant_engine.dip_entry_optimizer import DipEntryOptimizer
     
-    logger.info("Starting strategy_nightly job")
+    logger.info("Starting strategy_nightly job (using backtest_v2)")
     job_start = time.monotonic()
     
     # Initialize dip entry optimizer for recovery time calculation
@@ -143,24 +142,13 @@ async def strategy_nightly_job() -> str:
         if not symbol_list:
             return "No symbols to process"
         
-        logger.info(f"[STRATEGY] Optimizing strategies for {len(symbol_list)} symbols")
+        logger.info(f"[STRATEGY] Optimizing strategies for {len(symbol_list)} symbols using backtest_v2")
         
-        # Get SPY for benchmark comparison
+        # Get SPY for benchmark comparison (use 10 years for proper backtest)
         from datetime import date, timedelta
         end_date = date.today()
-        start_date = end_date - timedelta(days=1260)  # 5 years
+        start_date = end_date - timedelta(days=3650)  # 10 years for thorough backtesting
         spy_df = await price_history_repo.get_prices_as_dataframe("SPY", start_date, end_date)
-        spy_prices = None
-        if spy_df is not None and len(spy_df) > 0:
-            spy_close_col = get_close_column(spy_df)
-            spy_prices = spy_df[spy_close_col]
-        
-        # Initialize optimizer
-        optimizer = StrategyOptimizer(
-            config=TradingConfig(),
-            recency_config=RecencyConfig(),
-            fundamental_filter=FundamentalFilter(),
-        )
         
         processed = 0
         failed = 0
@@ -178,102 +166,253 @@ async def strategy_nightly_job() -> str:
             
             for symbol in symbol_list:
                 try:
-                    # Get price history
+                    # Get price history (10 years for proper backtesting)
                     df = await price_history_repo.get_prices_as_dataframe(symbol, start_date, end_date)
                     
                     if df is None or len(df) < 200:
                         logger.warning(f"[STRATEGY] Insufficient data for {symbol}, skipping")
                         continue
                     
-                    # Convert fundamentals to dict
-                    fund_obj = fundamentals_map.get(symbol)
-                    fundamentals = None
-                    if fund_obj:
-                        fundamentals = {
-                            "pe_ratio": float(fund_obj.pe_ratio) if fund_obj.pe_ratio else None,
-                            "forward_pe": float(fund_obj.forward_pe) if fund_obj.forward_pe else None,
-                            "peg_ratio": float(fund_obj.peg_ratio) if fund_obj.peg_ratio else None,
-                            "profit_margin": float(fund_obj.profit_margin) if fund_obj.profit_margin else None,
-                            "free_cash_flow": fund_obj.free_cash_flow,
-                            "market_cap": None,  # Would need from symbol info
-                            "debt_to_equity": float(fund_obj.debt_to_equity) if fund_obj.debt_to_equity else None,
-                            "current_ratio": float(fund_obj.current_ratio) if fund_obj.current_ratio else None,
-                            "revenue_growth": float(fund_obj.revenue_growth) if fund_obj.revenue_growth else None,
-                            "recommendation_mean": float(fund_obj.recommendation_mean) if fund_obj.recommendation_mean else None,
-                            "target_mean_price": float(fund_obj.target_mean_price) if fund_obj.target_mean_price else None,
-                        }
-                    
-                    # Run optimization (use fewer trials for nightly batch)
-                    opt_result = optimizer.optimize_for_symbol(
-                        df=df,
+                    # Run BaselineEngine comparison (DCA vs B&H vs Dips vs Technical)
+                    engine = BaselineEngine(
+                        prices=df,
+                        spy_prices=spy_df,
                         symbol=symbol,
-                        fundamentals=fundamentals,
-                        spy_prices=spy_prices,
-                        n_trials=50,  # Reduced for batch processing
+                        initial_capital=10_000.0,
+                        monthly_contribution=1_000.0,
                     )
+                    comparison = engine.run_all()
+                    
+                    # Determine the winning strategy from recommendation
+                    rec = comparison.recommendation
+                    
+                    # Map recommendation type to strategy name for display
+                    strategy_name_map = {
+                        RecommendationType.DCA: "dollar_cost_average",
+                        RecommendationType.BUY_AND_HOLD: "buy_and_hold",
+                        RecommendationType.BUY_DIPS: "buy_dips_hold",
+                        RecommendationType.OPTIMIZED_STRATEGY: "optimized_technical",
+                        RecommendationType.SPY_DCA: "spy_dca",
+                        RecommendationType.SWITCH_TO_SPY: "switch_to_spy",
+                    }
+                    strategy_name = strategy_name_map.get(rec.recommendation, "dca")
+                    
+                    # Get the best performing strategy result
+                    best_result = None
+                    best_trades = []
+                    
+                    # Find the actual best result from comparison
+                    results_map = {
+                        "DCA Monthly": comparison.dca,
+                        "Buy & Hold": comparison.buy_hold,
+                        "Buy Dips & Hold": comparison.buy_dips,
+                        "Perfect Dip Trading": comparison.dip_trading,
+                        "Technical Trading": comparison.technical_trading,
+                        "Regime-Aware Technical": comparison.regime_aware_technical,
+                        "SPY DCA": comparison.spy_dca,
+                    }
+                    
+                    # Use the #1 ranked strategy
+                    if comparison.ranked_by_return:
+                        best_name = comparison.ranked_by_return[0]
+                        best_result = results_map.get(best_name)
+                    
+                    if best_result is None:
+                        best_result = comparison.dca  # Fallback to DCA
+                    
+                    # Extract trade details for chart display
+                    # For DCA-type strategies, generate synthetic buy trades from price data
+                    if best_result.trade_details:
+                        best_trades = [
+                            {
+                                "entry_date": t.entry_date,
+                                "exit_date": t.exit_date,
+                                "entry_price": t.entry_price,
+                                "exit_price": t.exit_price,
+                                "pnl_pct": t.return_pct * 100,  # Convert to %
+                                "exit_reason": t.exit_reason,
+                                "holding_days": t.holding_days,
+                            }
+                            for t in best_result.trade_details[:20]  # Last 20 trades
+                        ]
+                    elif strategy_name in ("dollar_cost_average", "buy_dips_hold", "buy_and_hold"):
+                        # Generate synthetic buy trades for accumulation strategies
+                        # These show green dots on the chart at buy points
+                        close_col = get_close_column(df)
+                        close_prices = df[close_col]
+                        
+                        if strategy_name == "buy_and_hold":
+                            # Single buy on first day
+                            first_date = close_prices.index[0]
+                            best_trades = [{
+                                "entry_date": first_date.strftime("%Y-%m-%d"),
+                                "exit_date": None,
+                                "entry_price": float(close_prices.iloc[0]),
+                                "exit_price": None,
+                                "pnl_pct": best_result.total_return_pct,
+                                "exit_reason": "holding",
+                                "holding_days": len(close_prices),
+                            }]
+                        elif strategy_name == "dollar_cost_average":
+                            # Monthly buys - sample ~20 buys evenly spaced
+                            total_months = int(len(close_prices) / 21)  # ~21 trading days/month
+                            step = max(1, total_months // 20)  # Get ~20 samples
+                            
+                            for month_idx in range(0, total_months, step):
+                                day_idx = min(month_idx * 21, len(close_prices) - 1)
+                                entry_date = close_prices.index[day_idx]
+                                entry_price = float(close_prices.iloc[day_idx])
+                                
+                                best_trades.append({
+                                    "entry_date": entry_date.strftime("%Y-%m-%d"),
+                                    "exit_date": None,
+                                    "entry_price": entry_price,
+                                    "exit_price": None,
+                                    "pnl_pct": 0,  # DCA doesn't have individual trade P&L
+                                    "exit_reason": "accumulating",
+                                    "holding_days": None,
+                                })
+                            
+                            # Limit to recent 20 buys
+                            best_trades = best_trades[-20:]
+                        elif strategy_name == "buy_dips_hold":
+                            # Buy on dips - use the dip threshold from analysis
+                            dip_threshold = engine.dip_threshold_pct / 100 if engine.dip_threshold_pct else -0.10
+                            
+                            # Find dip days (simplified: days where price dropped from recent high)
+                            rolling_high = close_prices.rolling(window=63).max()  # 3-month high
+                            drawdown = (close_prices - rolling_high) / rolling_high
+                            dip_mask = drawdown <= dip_threshold
+                            
+                            # Get dip dates
+                            dip_dates = close_prices[dip_mask].index
+                            
+                            # Sample ~20 dip buys
+                            step = max(1, len(dip_dates) // 20)
+                            for i in range(0, len(dip_dates), step):
+                                dip_date = dip_dates[i]
+                                dip_price = float(close_prices.loc[dip_date])
+                                
+                                best_trades.append({
+                                    "entry_date": dip_date.strftime("%Y-%m-%d"),
+                                    "exit_date": None,
+                                    "entry_price": dip_price,
+                                    "exit_price": None,
+                                    "pnl_pct": 0,
+                                    "exit_reason": f"dip_{abs(dip_threshold*100):.0f}pct",
+                                    "holding_days": None,
+                                })
+                            
+                            best_trades = best_trades[-20:]
+                    
+                    # Calculate vs buy & hold
+                    vs_buy_hold = best_result.total_return_pct - comparison.buy_hold.total_return_pct
+                    beats_buy_hold = vs_buy_hold > 0
+                    
+                    # Calculate vs SPY
+                    vs_spy = best_result.total_return_pct - comparison.spy_dca.total_return_pct
+                    beats_spy = vs_spy > 0
+                    
+                    # Check fundamentals
+                    fund_obj = fundamentals_map.get(symbol)
+                    fundamentals_healthy = True
+                    fundamental_concerns = []
+                    if fund_obj:
+                        if fund_obj.pe_ratio and fund_obj.pe_ratio > 50:
+                            fundamental_concerns.append("high_pe")
+                        if fund_obj.debt_to_equity and fund_obj.debt_to_equity > 3:
+                            fundamental_concerns.append("high_debt")
+                        if fund_obj.profit_margin and fund_obj.profit_margin < 0:
+                            fundamental_concerns.append("unprofitable")
+                        fundamentals_healthy = len(fundamental_concerns) == 0
                     
                     # Calculate typical recovery days from dip entry optimizer
                     typical_recovery_days = None
                     try:
-                        dip_entry_result = dip_optimizer.analyze(df, symbol, fundamentals)
+                        dip_entry_result = dip_optimizer.analyze(df, symbol)
                         if dip_entry_result and dip_entry_result.typical_recovery_days > 0:
                             typical_recovery_days = int(dip_entry_result.typical_recovery_days)
                     except Exception as dip_err:
                         logger.debug(f"[STRATEGY] Dip entry analysis failed for {symbol}: {dip_err}")
                     
+                    # Determine current signal
+                    signal_type = "HOLD"
+                    signal_reason = rec.headline
+                    has_active_signal = False
+                    
+                    # If DCA or Buy Dips is recommended and fundamentals are healthy
+                    if rec.recommendation in (RecommendationType.DCA, RecommendationType.BUY_DIPS) and fundamentals_healthy:
+                        signal_type = "BUY"
+                        has_active_signal = True
+                        signal_reason = f"{rec.headline} - Fundamentals healthy"
+                    
+                    # Strategy params (for reference)
+                    strategy_params = {
+                        "recommendation": rec.recommendation.value,
+                        "best_strategy": comparison.ranked_by_return[0] if comparison.ranked_by_return else "DCA",
+                        "initial_capital": 10_000.0,
+                        "monthly_contribution": 1_000.0,
+                        "dip_threshold": engine.dip_threshold_pct,
+                    }
+                    
+                    # Indicators used
+                    indicators_used = ["price", "dip_detection"]
+                    if comparison.technical_trading:
+                        indicators_used.extend(["rsi", "macd", "sma"])
+                    
                     # Upsert to database
                     stmt = insert(StrategySignal).values(
                         symbol=symbol,
-                        strategy_name=opt_result.best_strategy_name,
-                        strategy_params=opt_result.best_params,
-                        signal_type=opt_result.signal_type,
-                        signal_reason=opt_result.signal_reason,
-                        has_active_signal=opt_result.has_active_signal,
-                        total_return_pct=Decimal(str(opt_result.total_return_pct)),
-                        sharpe_ratio=Decimal(str(opt_result.sharpe_ratio)),
-                        win_rate=Decimal(str(opt_result.win_rate)),
-                        max_drawdown_pct=Decimal(str(opt_result.max_drawdown_pct)),
-                        n_trades=opt_result.n_trades,
-                        recency_weighted_return=Decimal(str(opt_result.recency_weighted_return)),
-                        current_year_return_pct=Decimal(str(opt_result.current_year_return_pct)),
-                        current_year_win_rate=Decimal(str(opt_result.current_year_win_rate)),
-                        current_year_trades=opt_result.current_year_trades,
-                        vs_buy_hold_pct=Decimal(str(opt_result.vs_buy_hold)),
-                        vs_spy_pct=Decimal(str(opt_result.vs_spy)) if opt_result.vs_spy else None,
-                        beats_buy_hold=opt_result.beats_buy_hold,
-                        beats_spy=opt_result.beats_spy,
-                        fundamentals_healthy=opt_result.fundamentals_healthy,
-                        fundamental_concerns=opt_result.fundamental_concerns,
-                        is_statistically_valid=opt_result.is_statistically_valid,
-                        recent_trades=opt_result.recent_trades,
-                        indicators_used=opt_result.indicators_used,
+                        strategy_name=strategy_name,
+                        strategy_params=strategy_params,
+                        signal_type=signal_type,
+                        signal_reason=signal_reason,
+                        has_active_signal=has_active_signal,
+                        total_return_pct=Decimal(str(best_result.total_return_pct)),
+                        sharpe_ratio=Decimal(str(best_result.sharpe_ratio)),
+                        win_rate=Decimal(str(best_result.win_rate_pct)),
+                        max_drawdown_pct=Decimal(str(best_result.max_drawdown_pct)),
+                        n_trades=best_result.total_buys,
+                        recency_weighted_return=Decimal(str(best_result.annualized_return_pct)),
+                        current_year_return_pct=Decimal(str(best_result.total_return_pct)),  # TODO: Calculate current year
+                        current_year_win_rate=Decimal(str(best_result.win_rate_pct)),
+                        current_year_trades=0,  # TODO: Calculate current year trades
+                        vs_buy_hold_pct=Decimal(str(vs_buy_hold)),
+                        vs_spy_pct=Decimal(str(vs_spy)),
+                        beats_buy_hold=beats_buy_hold,
+                        beats_spy=beats_spy,
+                        fundamentals_healthy=fundamentals_healthy,
+                        fundamental_concerns=fundamental_concerns,
+                        is_statistically_valid=best_result.total_buys >= 10,
+                        recent_trades=best_trades,
+                        indicators_used=indicators_used,
                         typical_recovery_days=typical_recovery_days,
                     ).on_conflict_do_update(
                         index_elements=["symbol"],
                         set_={
-                            "strategy_name": opt_result.best_strategy_name,
-                            "strategy_params": opt_result.best_params,
-                            "signal_type": opt_result.signal_type,
-                            "signal_reason": opt_result.signal_reason,
-                            "has_active_signal": opt_result.has_active_signal,
-                            "total_return_pct": Decimal(str(opt_result.total_return_pct)),
-                            "sharpe_ratio": Decimal(str(opt_result.sharpe_ratio)),
-                            "win_rate": Decimal(str(opt_result.win_rate)),
-                            "max_drawdown_pct": Decimal(str(opt_result.max_drawdown_pct)),
-                            "n_trades": opt_result.n_trades,
-                            "recency_weighted_return": Decimal(str(opt_result.recency_weighted_return)),
-                            "current_year_return_pct": Decimal(str(opt_result.current_year_return_pct)),
-                            "current_year_win_rate": Decimal(str(opt_result.current_year_win_rate)),
-                            "current_year_trades": opt_result.current_year_trades,
-                            "vs_buy_hold_pct": Decimal(str(opt_result.vs_buy_hold)),
-                            "vs_spy_pct": Decimal(str(opt_result.vs_spy)) if opt_result.vs_spy else None,
-                            "beats_buy_hold": opt_result.beats_buy_hold,
-                            "beats_spy": opt_result.beats_spy,
-                            "fundamentals_healthy": opt_result.fundamentals_healthy,
-                            "fundamental_concerns": opt_result.fundamental_concerns,
-                            "is_statistically_valid": opt_result.is_statistically_valid,
-                            "recent_trades": opt_result.recent_trades,
-                            "indicators_used": opt_result.indicators_used,
+                            "strategy_name": strategy_name,
+                            "strategy_params": strategy_params,
+                            "signal_type": signal_type,
+                            "signal_reason": signal_reason,
+                            "has_active_signal": has_active_signal,
+                            "total_return_pct": Decimal(str(best_result.total_return_pct)),
+                            "sharpe_ratio": Decimal(str(best_result.sharpe_ratio)),
+                            "win_rate": Decimal(str(best_result.win_rate_pct)),
+                            "max_drawdown_pct": Decimal(str(best_result.max_drawdown_pct)),
+                            "n_trades": best_result.total_buys,
+                            "recency_weighted_return": Decimal(str(best_result.annualized_return_pct)),
+                            "current_year_return_pct": Decimal(str(best_result.total_return_pct)),
+                            "current_year_win_rate": Decimal(str(best_result.win_rate_pct)),
+                            "current_year_trades": 0,
+                            "vs_buy_hold_pct": Decimal(str(vs_buy_hold)),
+                            "vs_spy_pct": Decimal(str(vs_spy)),
+                            "beats_buy_hold": beats_buy_hold,
+                            "beats_spy": beats_spy,
+                            "fundamentals_healthy": fundamentals_healthy,
+                            "fundamental_concerns": fundamental_concerns,
+                            "is_statistically_valid": best_result.total_buys >= 10,
+                            "recent_trades": best_trades,
+                            "indicators_used": indicators_used,
                             "typical_recovery_days": typical_recovery_days,
                             "optimized_at": datetime.now(UTC),
                         }

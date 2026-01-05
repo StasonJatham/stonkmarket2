@@ -716,6 +716,8 @@ async def get_recommendations(
         strategy_vs_bh_pct = None
         expected_recovery_days = None
         win_rate = None
+        strategy_name = None
+        strategy_recent_trades = None
         
         strategy_n_trades = None
         if strategy:
@@ -729,6 +731,8 @@ async def get_recommendations(
                 win_rate = float(strategy.win_rate) / 100 if strategy.win_rate else None  # Convert from pct
                 strategy_n_trades = strategy.n_trades if strategy.n_trades else 0
                 expected_recovery_days = getattr(strategy, 'typical_recovery_days', None)
+                strategy_name = getattr(strategy, 'strategy_name', None)
+                strategy_recent_trades = getattr(strategy, 'recent_trades', None)
             except Exception:
                 pass
         
@@ -917,6 +921,8 @@ async def get_recommendations(
             strategy_signal=strategy_signal_type,
             strategy_win_rate=strategy_win_rate_val,
             strategy_vs_bh_pct=strategy_vs_bh_pct,
+            strategy_name=strategy_name,
+            strategy_recent_trades=strategy_recent_trades,
             best_chance_score=best_chance_score,
             best_chance_reason=" • ".join(best_chance_reasons[:3]) if best_chance_reasons else None,
             # APUS + DOUS Dual-Mode Scoring

@@ -1316,6 +1316,16 @@ export interface QuantRecommendation {
   strategy_signal: string | null;
   strategy_win_rate: number | null;
   strategy_vs_bh_pct: number | null;
+  strategy_name: string | null;
+  strategy_recent_trades: Array<{
+    entry_date: string;
+    exit_date: string | null;
+    entry_price: number;
+    exit_price: number | null;
+    pnl_pct: number;
+    exit_reason: string;
+    holding_days: number | null;
+  }> | null;
   // Dip Entry Optimizer
   dip_entry_optimal_pct: number | null;
   dip_entry_price: number | null;

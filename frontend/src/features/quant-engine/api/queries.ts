@@ -83,10 +83,10 @@ import {
 } from '@/features/market-data/api/queries';
 import { getSignalTriggers, getDipEntry } from '@/services/api';
 
-const LANDING_SIGNAL_BOARD_COUNT = 8;
+const LANDING_SIGNAL_BOARD_COUNT = 10; // Show top 10 on signal board
 const LANDING_MINI_CHART_DAYS = 45;
-const LANDING_HERO_CHART_DAYS = 365;
-const LANDING_SIGNAL_LOOKBACK_DAYS = 365;
+const LANDING_HERO_CHART_DAYS = 1095; // 3 years for hero chart
+const LANDING_SIGNAL_LOOKBACK_DAYS = 730; // Max allowed by API
 
 /**
  * Hook for signal triggers with full summary data.
@@ -154,7 +154,22 @@ export function useLandingData(inflow: number = 1000, limit: number = 25) {
   // Hero chart (larger timeframe for featured stock)
   const heroChartQuery = useStockChart(heroSymbol || undefined, LANDING_HERO_CHART_DAYS);
   
-  // Hero signals - use the full quant endpoint with benchmark metrics
+  // Hero strategy - derive from recommendation data (no separate API call needed)
+  // The recommendation now includes strategy_name and strategy_recent_trades
+  const heroStrategyFromRec = heroRec && heroRec.strategy_beats_bh ? {
+    strategy_name: heroRec.strategy_name,
+    recent_trades: heroRec.strategy_recent_trades ?? [],
+    benchmarks: {
+      vs_buy_hold: heroRec.strategy_vs_bh_pct,
+      beats_buy_hold: heroRec.strategy_beats_bh,
+    },
+    metrics: {
+      win_rate: heroRec.strategy_win_rate,
+      n_trades: heroRec.strategy_recent_trades?.length ?? 0,
+    },
+  } : null;
+  
+  // Hero signals - use the full quant endpoint with benchmark metrics (fallback)
   const heroSignalsQuery = useHeroSignalTriggers(heroSymbol || undefined, LANDING_SIGNAL_LOOKBACK_DAYS);
   
   // Hero agent analysis
@@ -196,6 +211,8 @@ export function useLandingData(inflow: number = 1000, limit: number = 25) {
       beatsBuyHold: heroSignalsQuery.data.beats_buy_hold,
       signalName: heroSignalsQuery.data.signal_name,
     } : null,
+    // Hero strategy (derived from recommendation data - no auth required)
+    heroStrategy: heroStrategyFromRec,
     heroDipEntry: heroDipEntryQuery.data ?? null,
     
     // Loading states

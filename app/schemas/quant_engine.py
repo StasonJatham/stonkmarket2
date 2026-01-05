@@ -315,6 +315,8 @@ class QuantRecommendation(BaseModel):
     strategy_signal: str | None = Field(None, description="Strategy signal: BUY, SELL, HOLD, WAIT")
     strategy_win_rate: float | None = Field(None, description="Strategy historical win rate 0-100")
     strategy_vs_bh_pct: float | None = Field(None, description="Excess return vs buy-and-hold")
+    strategy_name: str | None = Field(None, description="Name of the best strategy (e.g., dollar_cost_average, buy_dips_hold)")
+    strategy_recent_trades: list[dict] | None = Field(None, description="Recent trade records from strategy")
     
     # Dip Entry Optimizer
     dip_entry_optimal_pct: float | None = Field(None, description="Optimal dip threshold to buy")

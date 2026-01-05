@@ -1115,16 +1115,20 @@ export function StockDetailsPanel({
               </div>
             )}
 
-            {/* Domain-Specific Metrics (Banks, REITs, Insurance) */}
+            {/* Domain-Specific Metrics (Banks, REITs, Insurance) - Collapsed by default */}
             {fundamentals && fundamentals.domain && fundamentals.domain !== 'stock' && (
-              <div className="p-3 rounded-lg bg-gradient-to-br from-primary/5 to-primary/10 border border-primary/20 mb-4">
-                <div className="flex items-center gap-2 mb-3">
-                  {fundamentals.domain === 'bank' && <Landmark className="h-4 w-4 text-primary" />}
-                  {fundamentals.domain === 'reit' && <Building className="h-4 w-4 text-primary" />}
-                  {fundamentals.domain === 'insurer' && <Shield className="h-4 w-4 text-primary" />}
-                  {fundamentals.domain === 'utility' && <Zap className="h-4 w-4 text-primary" />}
-                  <span className="text-sm font-semibold">{fundamentals.domain.charAt(0).toUpperCase() + fundamentals.domain.slice(1)} Metrics</span>
-                </div>
+              <details className="group mb-4">
+                <summary className="flex items-center justify-between cursor-pointer py-2">
+                  <div className="flex items-center gap-2">
+                    {fundamentals.domain === 'bank' && <Landmark className="h-4 w-4 text-primary" />}
+                    {fundamentals.domain === 'reit' && <Building className="h-4 w-4 text-primary" />}
+                    {fundamentals.domain === 'insurer' && <Shield className="h-4 w-4 text-primary" />}
+                    {fundamentals.domain === 'utility' && <Zap className="h-4 w-4 text-primary" />}
+                    <span className="text-sm font-semibold">{fundamentals.domain.charAt(0).toUpperCase() + fundamentals.domain.slice(1)} Metrics</span>
+                  </div>
+                  <ChevronDown className="h-4 w-4 text-muted-foreground group-open:rotate-180 transition-transform" />
+                </summary>
+                <div className="p-3 rounded-lg bg-gradient-to-br from-primary/5 to-primary/10 border border-primary/20 mt-2">
                 
                 {/* Bank Metrics */}
                 {fundamentals.domain === 'bank' && (
@@ -1238,7 +1242,8 @@ export function StockDetailsPanel({
                     </div>
                   </div>
                 )}
-              </div>
+                </div>
+              </details>
             )}
 
             {/* AI Persona Verdicts */}
@@ -1423,9 +1428,31 @@ export function StockDetailsPanel({
               </div>
             )}
 
+            {/* Strategy Analysis - Collapsible with summary line */}
+            {(strategySignal || dipEntry?.backtest) && (
+              <details className="group mb-4" open={strategySignal?.benchmarks.beats_buy_hold || dipEntry?.is_buy_now}>
+                <summary className="flex items-center justify-between cursor-pointer py-2">
+                  <div className="flex items-center gap-2">
+                    <Zap className="h-4 w-4 text-primary" />
+                    <span className="text-sm font-semibold">Strategy Analysis</span>
+                    {strategySignal?.benchmarks.beats_buy_hold && (
+                      <Badge variant="outline" className="text-[10px] border-success/50 text-success bg-success/5">
+                        ✓ Beats B&H
+                      </Badge>
+                    )}
+                    {dipEntry?.is_buy_now && !strategySignal?.benchmarks.beats_buy_hold && (
+                      <Badge variant="outline" className="text-[10px] border-success/50 text-success bg-success/5">
+                        Buy Signal
+                      </Badge>
+                    )}
+                  </div>
+                  <ChevronDown className="h-4 w-4 text-muted-foreground group-open:rotate-180 transition-transform" />
+                </summary>
+                <div className="pt-2 space-y-4">
+
             {/* Quant Strategy Signal - Only show if beats B&H */}
             {strategySignal && strategySignal.benchmarks.beats_buy_hold && (
-              <div className="mb-4">
+              <div>
                 <div className="flex items-center gap-2 mb-2">
                   <Zap className="h-4 w-4 text-primary" />
                   <span className="text-sm font-semibold">Optimized Strategy</span>
@@ -1653,6 +1680,10 @@ export function StockDetailsPanel({
                   <span>Avg {((dipEntry.backtest.avg_return_per_trade ?? 0) * 100).toFixed(1)}% per trade</span>
                 </div>
               </div>
+            )}
+
+                </div>
+              </details>
             )}
 
             <Separator className="my-3" />

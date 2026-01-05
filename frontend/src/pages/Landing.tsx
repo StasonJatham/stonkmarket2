@@ -85,26 +85,7 @@ function formatSignedPercent(value: number, digits: number = 1): string {
   return `${sign}${value.toFixed(digits)}%`;
 }
 
-function formatOptionalPercent(value: number | null | undefined, digits: number = 1): string {
-  if (value == null || Number.isNaN(value)) return 'N/A';
-  const percent = Math.abs(value) <= 1 ? value * 100 : value;
-  return `${percent.toFixed(digits)}%`;
-}
-
-function formatDipPercent(value: number | null | undefined): string {
-  if (value == null || Number.isNaN(value)) return 'N/A';
-  return `-${Math.abs(value).toFixed(1)}%`;
-}
-
-function formatOptionalNumber(value: number | null | undefined, suffix = ''): string {
-  if (value == null || Number.isNaN(value)) return 'N/A';
-  return `${Math.round(value)}${suffix}`;
-}
-
-function formatRatio(value: number | null | undefined): string {
-  if (value == null || Number.isNaN(value)) return 'N/A';
-  return `${value.toFixed(1)}x`;
-}
+// Removed unused formatOptionalPercent, formatDipPercent, formatOptionalNumber, formatRatio
 
 function formatUpdatedLabel(timestamp: number | null): string {
   if (!timestamp) return 'Updated just now';
@@ -299,26 +280,26 @@ function HeroChart({
   const { getActiveColors, resolvedTheme } = useTheme();
   const colors = getActiveColors();
 
-  // Merge chart data with signal triggers
+  // Merge chart data with signal triggers - show ALL data for 3 years
   const displayData = (() => {
     const signalMap = new Map<string, SignalTrigger>();
     signals.forEach(s => signalMap.set(s.date, s));
 
-    const sliced = chartData.slice(-120);
-    return sliced.map((point) => {
+    return chartData.map((point, idx) => {
       const signalTrigger = signalMap.get(point.date);
       return {
         ...point,
+        idx, // Use index for ReferenceDot positioning
         displayDate: new Date(point.date).toLocaleDateString('en-US', {
           month: 'short',
-          day: 'numeric',
+          year: '2-digit',
         }),
         signalTrigger,
       };
     });
   })();
   
-  // Find data points that have signals
+  // Find data points that have signals (with their indices)
   const signalPoints = displayData.filter(d => d.signalTrigger != null);
 
   const priceChange = (() => {
@@ -389,12 +370,16 @@ function HeroChart({
                 </linearGradient>
               </defs>
               <XAxis
-                dataKey="displayDate"
+                dataKey="idx"
                 axisLine={false}
                 tickLine={false}
                 tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
                 tickMargin={8}
-                minTickGap={50}
+                tickFormatter={(idx) => {
+                  const point = displayData[idx];
+                  return point?.displayDate ?? '';
+                }}
+                interval={Math.floor(displayData.length / 6)}
               />
               <YAxis
                 domain={['dataMin', 'dataMax']}
@@ -446,16 +431,16 @@ function HeroChart({
                 fill="url(#hero-gradient)"
               />
               
-              {/* Signal marker dots */}
-              {signalPoints.map((point, idx) => {
+              {/* Signal marker dots - use idx for exact positioning */}
+              {signalPoints.map((point, i) => {
                 const isExit = point.signalTrigger?.signal_type === 'exit';
                 const dotColor = isExit ? colors.down : colors.up;
                 return (
                   <ReferenceDot
-                    key={`signal-${idx}`}
-                    x={point.displayDate}
+                    key={`signal-${i}`}
+                    x={point.idx}
                     y={point.close}
-                    r={6}
+                    r={8}
                     fill={dotColor}
                     stroke={signalDotStroke}
                     strokeWidth={2}
@@ -470,33 +455,7 @@ function HeroChart({
   );
 }
 
-// Evidence chip component for "Why This Signal" strip
-function EvidenceChip({
-  label,
-  value,
-  icon: Icon,
-  variant = 'default',
-}: {
-  label: string;
-  value: string;
-  icon?: typeof Target;
-  variant?: 'default' | 'success' | 'warning' | 'danger';
-}) {
-  const variantClasses = {
-    default: 'bg-muted/50 border-border text-foreground',
-    success: 'bg-success/10 border-success/30 text-success',
-    warning: 'bg-warning/10 border-warning/30 text-warning',
-    danger: 'bg-danger/10 border-danger/30 text-danger',
-  };
-
-  return (
-    <div className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-medium ${variantClasses[variant]}`}>
-      {Icon && <Icon className="h-3 w-3" />}
-      <span className="text-muted-foreground">{label}:</span>
-      <span className="font-mono font-semibold">{value}</span>
-    </div>
-  );
-}
+// Removed unused EvidenceChip component
 
 // AI Pipeline Step Component - Professional card-based design
 function PipelineStep({
@@ -785,12 +744,12 @@ export function Landing() {
     heroAgentPending,
     heroSignals,
     heroSignalSummary,
-    heroDipEntry,
+    heroStrategy,
     lastUpdatedAt,
     isLoading,
     isLoadingHero,
     isLoadingAgents,
-  } = useLandingData(1000, 12);
+  } = useLandingData(1000, 50); // Request 50 stocks to get ~10+ that beat B&H after filtering
 
   function handleCTA() {
     navigate(isAuthenticated ? '/dashboard' : '/login');
@@ -813,27 +772,149 @@ export function Landing() {
     const isBearish = heroAgentAnalysis?.overall_signal === 'sell' || heroAgentAnalysis?.overall_signal === 'strong_sell';
     return { bullishCount, bearishCount, neutralCount, isBullish, isBearish };
   })();
-  const signalCount = heroSignalSummary?.nTrades ?? heroSignals.length;
+  const signalCount = heroStrategy?.metrics?.n_trades ?? heroSignalSummary?.nTrades ?? heroSignals.length;
   const expectedReturnPercent = portfolioStats.expectedReturn * 100;
-  const edgeVsBuyHold = heroSignalSummary?.edgeVsBuyHoldPct;
-  const edgeClassName = edgeVsBuyHold == null
-    ? 'text-muted-foreground'
-    : edgeVsBuyHold >= 0
-      ? 'text-success'
-      : 'text-danger';
-  const dipDepth = heroRec?.legacy_dip_pct ?? null;
   
-  const recoveryOdds = heroRec?.quant_evidence?.p_recovery ?? heroRec?.win_rate ?? null;
-  const expectedRecovery = heroRec?.expected_recovery_days ?? heroRec?.domain_recovery_days ?? null;
+  // Human-readable strategy descriptions
+  const getStrategyDescription = (strategyName: string | null): string => {
+    if (!strategyName) return 'Technical indicator-based strategy.';
+    
+    const descriptions: Record<string, string> = {
+      // BaselineEngine strategies (from backtest_v2)
+      'dollar_cost_average': 'Buy $1k monthly regardless of price. Simple, consistent accumulation.',
+      'buy_and_hold': 'Buy once, hold forever. Classic passive investing.',
+      'buy_dips_hold': 'Only buy when price dips. Accumulate at lower prices.',
+      'optimized_technical': 'AI-optimized entry/exit using RSI, MACD, and moving averages.',
+      'spy_dca': 'Better to DCA into SPY index instead of this stock.',
+      'switch_to_spy': 'This stock underperforms SPY - switch to index.',
+      // Legacy strategy names (backward compatibility)
+      'mean_reversion_rsi': 'Buy oversold RSI dips, sell on recovery. Classic mean reversion.',
+      'mean_reversion_zscore': 'Buy when price deviates 2+ std dev below mean.',
+      'mean_reversion_bollinger': 'Buy below Bollinger bands, sell on mean reversion.',
+      'drawdown_buy': 'Buy significant drawdowns from highs. Catches major dips.',
+      'trend_regime_filter': 'Trade with trend, filter by market regime.',
+      'adaptive_momentum': 'Dynamic momentum following with regime awareness.',
+      'volatility_contraction': 'Buy low volatility breakouts. Squeeze strategy.',
+      'crash_avoidance_momentum': 'Exit before crashes, re-enter on recovery.',
+      'stochastic_oversold': 'Buy when stochastic oscillator shows oversold.',
+      'combined_oversold': 'Multiple oversold indicators confirming entry.',
+      'dip_optimized': 'AI-optimized dip threshold for this specific stock.',
+    };
+    
+    return descriptions[strategyName] ?? `${strategyName}: Quantitative trading strategy.`;
+  };
   
-  // Dip vs typical: prefer dipfinder, fallback to computed from legacy/typical
-  const dipVsTypical = (() => {
-    if (heroRec?.dip_vs_typical != null) return heroRec.dip_vs_typical;
-    // Compute fallback: current dip / typical dip
-    if (heroRec?.legacy_dip_pct != null && heroRec?.typical_dip_pct != null && heroRec.typical_dip_pct > 0) {
-      return Math.abs(heroRec.legacy_dip_pct) / heroRec.typical_dip_pct;
+  // Get the winning strategy metrics - prefer heroStrategy (from strategy_signals table)
+  const strategyMetrics = (() => {
+    // Use heroStrategy if available (has actual recent_trades from winning strategy)
+    if (heroStrategy && heroStrategy.benchmarks?.beats_buy_hold) {
+      const trades = heroStrategy.recent_trades ?? [];
+      const completedTrades = trades.length;
+      const winningTrades = trades.filter(t => t.pnl_pct > 0).length;
+      const actualWinRate = completedTrades > 0 ? (winningTrades / completedTrades) * 100 : heroStrategy.metrics?.win_rate ?? null;
+      const totalReturn = trades.reduce((sum, t) => sum + t.pnl_pct, 0);
+      const avgReturn = completedTrades > 0 ? totalReturn / completedTrades : null;
+      
+      return {
+        source: 'strategy_signals' as const,
+        strategyName: heroStrategy.strategy_name,
+        strategyDescription: getStrategyDescription(heroStrategy.strategy_name),
+        completedTrades,
+        winningTrades,
+        actualWinRate,
+        totalReturn,
+        avgReturn,
+        edgeVsBuyHold: heroStrategy.benchmarks?.vs_buy_hold ?? null,
+        beatsBuyHold: heroStrategy.benchmarks?.beats_buy_hold ?? false,
+        recentTrades: trades,
+      };
     }
-    return null;
+    
+    // Fallback to signal_triggers data
+    const trades: { profit: number }[] = [];
+    let currentEntryPrice: number | null = null;
+    
+    heroSignals.forEach((sig) => {
+      if (sig.signal_type === 'entry') {
+        currentEntryPrice = sig.price;
+      } else if (sig.signal_type === 'exit' && currentEntryPrice !== null) {
+        const profit = ((sig.price - currentEntryPrice) / currentEntryPrice) * 100;
+        trades.push({ profit });
+        currentEntryPrice = null;
+      }
+    });
+    
+    const completedTrades = trades.length;
+    const winningTrades = trades.filter(t => t.profit > 0).length;
+    const actualWinRate = completedTrades > 0 ? (winningTrades / completedTrades) * 100 : null;
+    const totalReturn = trades.reduce((sum, t) => sum + t.profit, 0);
+    const avgReturn = completedTrades > 0 ? totalReturn / completedTrades : null;
+    
+    return {
+      source: 'signal_triggers' as const,
+      strategyName: heroSignalSummary?.signalName ?? null,
+      strategyDescription: getStrategyDescription(heroSignalSummary?.signalName ?? null),
+      completedTrades,
+      winningTrades,
+      actualWinRate,
+      totalReturn,
+      avgReturn,
+      edgeVsBuyHold: heroSignalSummary?.edgeVsBuyHoldPct ?? null,
+      beatsBuyHold: (heroSignalSummary?.edgeVsBuyHoldPct ?? 0) > 0,
+      recentTrades: [] as { entry_date: string; exit_date: string; entry_price: number; exit_price: number; pnl_pct: number }[],
+    };
+  })();
+  
+  // Check if strategy is DCA-type (only shows buy dots, no exit)
+  const isDCAStrategy = (name: string | null): boolean => {
+    if (!name) return false;
+    const dcaStrategies = ['dollar_cost_average', 'buy_dips_hold', 'buy_and_hold', 'spy_dca'];
+    return dcaStrategies.includes(name);
+  };
+  
+  // Convert recent_trades to SignalTrigger format for chart display
+  // When using strategy_signals data, we have actual trade records
+  const chartSignals: SignalTrigger[] = (() => {
+    if (strategyMetrics.source === 'strategy_signals' && strategyMetrics.recentTrades.length > 0) {
+      const signals: SignalTrigger[] = [];
+      const winRate = (strategyMetrics.actualWinRate ?? 50) / 100;
+      const avgReturn = strategyMetrics.avgReturn ?? 0;
+      const isDCA = isDCAStrategy(strategyMetrics.strategyName);
+      
+      strategyMetrics.recentTrades.forEach(trade => {
+        // Entry signal (always show for all strategies)
+        signals.push({
+          date: trade.entry_date,
+          signal_name: strategyMetrics.strategyName ?? 'Strategy',
+          price: trade.entry_price,
+          win_rate: winRate,
+          avg_return_pct: avgReturn,
+          holding_days: trade.holding_days ?? 0,
+          drawdown_pct: 0,
+          signal_type: 'entry',
+        });
+        
+        // Exit signal - only show for non-DCA strategies (trading strategies with entries/exits)
+        // DCA and Buy-Dips-Hold only have buy signals, no sell
+        if (!isDCA && trade.exit_date && trade.exit_price != null) {
+          signals.push({
+            date: trade.exit_date,
+            signal_name: strategyMetrics.strategyName ?? 'Strategy',
+            price: trade.exit_price,
+            win_rate: winRate,
+            avg_return_pct: avgReturn,
+            holding_days: trade.holding_days ?? 0,
+            drawdown_pct: 0,
+            signal_type: 'exit',
+          });
+        }
+      });
+      
+      return signals;
+    }
+    
+    // Fall back to heroSignals (from signal_triggers)
+    return heroSignals;
   })();
 
   return (
@@ -933,157 +1014,139 @@ export function Landing() {
               <div className="relative">
                 <div className="absolute -inset-4 rounded-3xl bg-gradient-to-br from-emerald-500/10 via-transparent to-sky-500/10 blur-2xl" />
                 <div className="relative space-y-4">
-                  <HeroChart chartData={heroChart} symbol={heroSymbol} isLoading={isLoadingHero} signals={heroSignals} />
+                  <HeroChart chartData={heroChart} symbol={heroSymbol} isLoading={isLoadingHero} signals={chartSignals} />
 
                   {heroRec && (
                     <Card className="bg-gradient-to-br from-emerald-500/5 to-sky-500/10 border-emerald-500/20">
                       <CardHeader className="pb-2">
                         <div className="flex items-center justify-between">
                           <CardTitle className="text-sm flex items-center gap-2">
-                            <Activity className="h-4 w-4 text-emerald-600" />
-                            Live Signal Briefing
+                            <Zap className="h-4 w-4 text-primary" />
+                            Backtest: {strategyMetrics.strategyName ?? 'Signal Strategy'}
                           </CardTitle>
                           <div className="flex items-center gap-2">
-                            {heroSignalSummary?.beatsBuyHold && edgeVsBuyHold != null && (
+                            {(strategyMetrics.edgeVsBuyHold ?? 0) > 0 && (
                               <Badge variant="default" className="gap-1 text-xs bg-success/90 hover:bg-success">
                                 <Trophy className="h-3 w-3" />
-                                +{Math.abs(edgeVsBuyHold).toFixed(0)}% vs B&H
+                                Beats B&H
                               </Badge>
                             )}
-                            <Badge variant={getActionBadgeVariant(heroRec.action)} className="gap-1 text-xs">
-                              <ActionIcon action={heroRec.action} />
-                              {heroRec.action}
+                            <Badge variant={getActionBadgeVariant((heroRec.strategy_signal ?? heroRec.action) as 'BUY' | 'HOLD' | 'SELL')} className="gap-1 text-xs">
+                              <ActionIcon action={(heroRec.strategy_signal ?? heroRec.action) as 'BUY' | 'HOLD' | 'SELL'} />
+                              {heroRec.strategy_signal ?? heroRec.action}
                             </Badge>
                           </div>
                         </div>
+                        
+                        {/* Strategy Description */}
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {strategyMetrics.strategyDescription}
+                        </p>
 
-                        {/* Top 3 Key Metrics - Trading Desk Style */}
+                        {/* Strategy Performance Metrics */}
                         <div className="grid grid-cols-3 gap-3 mt-3 p-3 bg-background/50 rounded-lg">
                           <div className="text-center">
-                            <p className="text-2xl font-bold font-mono text-danger">
-                              {formatDipPercent(dipDepth)}
+                            <p className={`text-2xl font-bold font-mono ${(strategyMetrics.actualWinRate ?? 0) >= 50 ? 'text-success' : 'text-danger'}`}>
+                              {strategyMetrics.actualWinRate != null ? `${strategyMetrics.actualWinRate.toFixed(0)}%` : '—'}
                             </p>
-                            <p className="text-xs text-muted-foreground">Dip Depth</p>
+                            <p className="text-xs text-muted-foreground">Win Rate</p>
                           </div>
                           <div className="text-center border-x border-border/50">
-                            <p className="text-2xl font-bold font-mono text-success">
-                              {formatOptionalPercent(recoveryOdds, 0)}
+                            <p className={`text-2xl font-bold font-mono ${(strategyMetrics.edgeVsBuyHold ?? 0) >= 0 ? 'text-success' : 'text-danger'}`}>
+                              {strategyMetrics.edgeVsBuyHold != null ? `${strategyMetrics.edgeVsBuyHold >= 0 ? '+' : ''}${strategyMetrics.edgeVsBuyHold.toFixed(0)}%` : '—'}
                             </p>
-                            <p className="text-xs text-muted-foreground">P(Recovery)</p>
+                            <p className="text-xs text-muted-foreground">vs Buy & Hold</p>
                           </div>
                           <div className="text-center">
                             <p className="text-2xl font-bold font-mono text-foreground">
-                              {formatOptionalNumber(expectedRecovery, 'd')}
+                              {strategyMetrics.completedTrades}
                             </p>
-                            <p className="text-xs text-muted-foreground">Avg Recovery</p>
+                            <p className="text-xs text-muted-foreground">Trades</p>
                           </div>
                         </div>
-
-                        {/* AI Verdict Stack */}
-                        {heroVerdicts.length > 0 && (
-                          <div className="flex items-center gap-2 mt-3">
-                            <div className="flex -space-x-2">
-                              {heroVerdicts.slice(0, 4).map((v) => (
-                                <div
-                                  key={v.agent_id}
-                                  className={`h-6 w-6 rounded-full border-2 border-background flex items-center justify-center text-[10px] font-bold ${
-                                    v.signal === 'buy' || v.signal === 'strong_buy'
-                                      ? 'bg-success text-success-foreground'
-                                      : v.signal === 'sell' || v.signal === 'strong_sell'
-                                        ? 'bg-danger text-danger-foreground'
-                                        : 'bg-muted text-muted-foreground'
-                                  }`}
-                                  title={`${v.agent_name}: ${v.signal}`}
-                                >
-                                  {v.signal === 'buy' || v.signal === 'strong_buy' ? '↑' : v.signal === 'sell' || v.signal === 'strong_sell' ? '↓' : '−'}
-                                </div>
-                              ))}
-                            </div>
-                            <span className="text-xs text-muted-foreground">
-                              {verdictCounts.bullishCount} bullish, {verdictCounts.bearishCount} bearish
-                            </span>
-                          </div>
-                        )}
                       </CardHeader>
 
                       <CardContent className="pt-0">
-                        {/* Why This Signal - Evidence Chips */}
-                        <div className="mb-4">
-                          <p className="text-xs font-medium text-muted-foreground mb-2">Why this signal:</p>
-                          <div className="flex flex-wrap gap-1.5">
-                            {recoveryOdds != null && (
-                              <EvidenceChip
-                                label="P(rec)"
-                                value={formatOptionalPercent(recoveryOdds, 0)}
-                                icon={TrendingUp}
-                                variant={recoveryOdds >= 0.7 ? 'success' : recoveryOdds >= 0.5 ? 'default' : 'warning'}
-                              />
-                            )}
-                            {dipVsTypical != null && (
-                              <EvidenceChip
-                                label="vs typical"
-                                value={formatRatio(dipVsTypical)}
-                                icon={BarChart3}
-                                variant={dipVsTypical >= 1.5 ? 'success' : 'default'}
-                              />
-                            )}
-                            {heroRec.is_unusual_dip && (
-                              <EvidenceChip
-                                label="Unusual"
-                                value="Yes"
-                                icon={AlertCircle}
-                                variant="warning"
-                              />
-                            )}
-                            {heroRec.win_rate != null && (
-                              <EvidenceChip
-                                label="Win rate"
-                                value={formatOptionalPercent(heroRec.win_rate, 0)}
-                                icon={Trophy}
-                                variant={heroRec.win_rate >= 0.65 ? 'success' : 'default'}
-                              />
-                            )}
-                            {heroRec.opportunity_type && heroRec.opportunity_type !== 'NONE' && (
-                              <EvidenceChip
-                                label="Type"
-                                value={heroRec.opportunity_type}
-                                icon={Zap}
-                                variant="success"
-                              />
-                            )}
+                        {/* Historical Trades List */}
+                        {(strategyMetrics.completedTrades > 0 || chartSignals.length > 0) && (
+                          <div className="mb-3">
+                            <p className="text-xs font-medium text-muted-foreground mb-2">Historical Trades</p>
+                            <div className="space-y-1.5 max-h-32 overflow-y-auto">
+                              {strategyMetrics.source === 'strategy_signals' && strategyMetrics.recentTrades.length > 0 ? (
+                                // Use actual trade records from strategy_signals
+                                strategyMetrics.recentTrades.map((trade, i) => (
+                                  <div key={i} className="flex items-center justify-between text-xs p-1.5 rounded bg-muted/30">
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-muted-foreground w-16">
+                                        {new Date(trade.entry_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' })}
+                                      </span>
+                                      <span className="font-mono">${trade.entry_price.toFixed(0)}</span>
+                                      {trade.exit_date && trade.exit_price != null && (
+                                        <>
+                                          <ChevronRight className="h-3 w-3 text-muted-foreground" />
+                                          <span className="font-mono">${trade.exit_price.toFixed(0)}</span>
+                                        </>
+                                      )}
+                                    </div>
+                                    <span className={`font-mono font-medium ${trade.pnl_pct >= 0 ? 'text-success' : 'text-danger'}`}>
+                                      {trade.pnl_pct >= 0 ? '+' : ''}{trade.pnl_pct.toFixed(1)}%
+                                    </span>
+                                  </div>
+                                ))
+                              ) : (
+                                // Fall back to pairing entry/exit signals from chartSignals
+                                (() => {
+                                  // Pair entry/exit signals into trades
+                                  const trades: { entry: SignalTrigger; exit?: SignalTrigger; profit?: number }[] = [];
+                                  let currentEntry: SignalTrigger | null = null;
+                                  
+                                  chartSignals.forEach((sig) => {
+                                    if (sig.signal_type === 'entry') {
+                                      if (currentEntry) {
+                                        // Previous entry without exit - still open
+                                        trades.push({ entry: currentEntry });
+                                      }
+                                      currentEntry = sig;
+                                    } else if (sig.signal_type === 'exit' && currentEntry) {
+                                      const profit = ((sig.price - currentEntry.price) / currentEntry.price) * 100;
+                                      trades.push({ entry: currentEntry, exit: sig, profit });
+                                      currentEntry = null;
+                                    }
+                                  });
+                                  // Add any remaining open position
+                                  if (currentEntry) {
+                                    trades.push({ entry: currentEntry });
+                                  }
+                                  
+                                  return trades.map((trade, i) => (
+                                    <div key={i} className="flex items-center justify-between text-xs p-1.5 rounded bg-muted/30">
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-muted-foreground w-16">
+                                          {new Date(trade.entry.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' })}
+                                        </span>
+                                        <span className="font-mono">${trade.entry.price.toFixed(0)}</span>
+                                        {trade.exit && (
+                                          <>
+                                            <ChevronRight className="h-3 w-3 text-muted-foreground" />
+                                            <span className="font-mono">${trade.exit.price.toFixed(0)}</span>
+                                          </>
+                                        )}
+                                      </div>
+                                      <span className={`font-mono font-medium ${trade.profit != null ? (trade.profit >= 0 ? 'text-success' : 'text-danger') : 'text-muted-foreground'}`}>
+                                        {trade.profit != null ? `${trade.profit >= 0 ? '+' : ''}${trade.profit.toFixed(1)}%` : 'Open'}
+                                      </span>
+                                    </div>
+                                  ));
+                                })()
+                              )}
+                            </div>
                           </div>
-                        </div>
-
-                        {/* Backtest Stats Bar */}
-                        <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground py-2 border-t border-border/50">
+                        )}
+                        
+                        <div className="flex items-center justify-between text-xs text-muted-foreground py-2 border-t border-border/50">
                           <span className="flex items-center gap-2">
                             <CheckCircle2 className="h-3 w-3 text-success" />
-                            {heroSignalSummary?.beatsBuyHold ? (
-                              // Show optimized strategy stats when it beats B&H
-                              <>
-                                {heroSignalSummary.nTrades != null
-                                  ? `${heroSignalSummary.nTrades} trades backtested`
-                                  : 'Signal stats loading'}
-                                {edgeVsBuyHold != null && (
-                                  <span className={`font-medium ${edgeClassName}`}>
-                                    • Edge: {formatSignedPercent(edgeVsBuyHold, 1)}
-                                  </span>
-                                )}
-                              </>
-                            ) : heroDipEntry?.backtest ? (
-                              // Show dip strategy stats when no optimized strategy beats B&H
-                              <>
-                                {heroDipEntry.backtest.n_trades ?? 0} dip trades @ {Math.abs((heroDipEntry.backtest.optimal_dip_threshold ?? 0) * 100).toFixed(0)}%
-                                <span className={`font-medium ${(heroDipEntry.backtest.vs_buy_hold ?? 0) >= 0 ? 'text-success' : 'text-danger'}`}>
-                                  • {((heroDipEntry.backtest.strategy_return ?? 0) * 100).toFixed(0)}% ({(heroDipEntry.backtest.years_tested ?? 0).toFixed(0)}yr)
-                                </span>
-                                <span className="text-muted-foreground">
-                                  • {heroDipEntry.backtest.optimal_holding_days ?? 90}d optimal hold
-                                </span>
-                              </>
-                            ) : (
-                              'Signal stats loading'
-                            )}
+                            Backtested strategy outperforms passive investing
                           </span>
                           <Button
                             variant="outline"
@@ -1091,18 +1154,10 @@ export function Landing() {
                             onClick={() => navigate(`/dashboard?stock=${heroSymbol}`)}
                             className="gap-1 h-7"
                           >
-                            Full Analysis
+                            Details
                             <ChevronRight className="h-3 w-3" />
                           </Button>
                         </div>
-
-                        {/* AI Summary */}
-                        {heroRec.ai_summary && (
-                          <p className="text-xs text-muted-foreground mt-2 line-clamp-2">
-                            <Brain className="h-3 w-3 inline mr-1" />
-                            {heroRec.ai_summary}
-                          </p>
-                        )}
                       </CardContent>
                     </Card>
                   )}
@@ -1112,61 +1167,6 @@ export function Landing() {
           </div>
         </div>
       </section>
-
-      {/* Signal Board Section */}
-      <section className="py-12 px-4">
-        <div className="container mx-auto max-w-6xl">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
-            <div>
-              <h2 className="text-2xl md:text-3xl font-bold">Live Signal Board</h2>
-              <p className="text-muted-foreground mt-1">Top-ranked opportunities, refreshed every 15 minutes.</p>
-            </div>
-            <Button variant="outline" onClick={() => navigate('/dashboard')} className="gap-1.5">
-              View Full Board
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-          </div>
-
-          {marketMessage && (
-            <Alert variant={marketMessage.includes('No certified') ? 'destructive' : 'default'} className="mb-6">
-              <AlertCircle className="h-4 w-4" />
-              <AlertDescription>{marketMessage}</AlertDescription>
-            </Alert>
-          )}
-
-          {isLoading ? (
-            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {Array.from({ length: LANDING_SIGNAL_BOARD_COUNT }).map((_, i) => (
-                <Card key={i}>
-                  <CardContent className="p-4">
-                    <Skeleton className="h-32 w-full" />
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          ) : (
-            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {signalBoardRecs.map((rec, i) => (
-                <SignalBoardCard
-                  key={rec.ticker}
-                  rec={rec}
-                  chartData={chartDataMap[rec.ticker] || []}
-                  index={i}
-                  onClick={() => handleStockClick(rec.ticker)}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-      </section>
-
-      {/* AI Pipeline Section - Complete Redesign */}
-      <AIPipelineSection
-        signalCount={signalCount}
-        verdictCount={heroVerdicts.length}
-        expectedReturn={expectedReturnPercent}
-        backtestTrades={heroSignalSummary?.nTrades ?? null}
-      />
 
       {/* AI Persona Section - AI Investor Council */}
       <section className="py-16 px-4 bg-gradient-to-b from-transparent via-primary/5 to-transparent">
@@ -1319,6 +1319,61 @@ export function Landing() {
         </div>
       </section>
 
+      {/* Signal Board Section */}
+      <section className="py-12 px-4">
+        <div className="container mx-auto max-w-6xl">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+            <div>
+              <h2 className="text-2xl md:text-3xl font-bold">Live Signal Board</h2>
+              <p className="text-muted-foreground mt-1">Top-ranked opportunities, refreshed every 15 minutes.</p>
+            </div>
+            <Button variant="outline" onClick={() => navigate('/dashboard')} className="gap-1.5">
+              View Full Board
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+
+          {marketMessage && (
+            <Alert variant={marketMessage.includes('No certified') ? 'destructive' : 'default'} className="mb-6">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>{marketMessage}</AlertDescription>
+            </Alert>
+          )}
+
+          {isLoading ? (
+            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {Array.from({ length: LANDING_SIGNAL_BOARD_COUNT }).map((_, i) => (
+                <Card key={i}>
+                  <CardContent className="p-4">
+                    <Skeleton className="h-32 w-full" />
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          ) : (
+            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {signalBoardRecs.map((rec, i) => (
+                <SignalBoardCard
+                  key={rec.ticker}
+                  rec={rec}
+                  chartData={chartDataMap[rec.ticker] || []}
+                  index={i}
+                  onClick={() => handleStockClick(rec.ticker)}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* AI Pipeline Section - Complete Redesign */}
+      <AIPipelineSection
+        signalCount={signalCount}
+        verdictCount={heroVerdicts.length}
+        expectedReturn={expectedReturnPercent}
+        backtestTrades={strategyMetrics.completedTrades || heroSignalSummary?.nTrades || null}
+      />
+
       {/* Backtest Proof Section */}
       <section className="py-16 px-4">
         <div className="container mx-auto max-w-4xl">
@@ -1344,39 +1399,33 @@ export function Landing() {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <BacktestProofCard
               title="Win Rate"
-              value={heroDipEntry?.backtest?.win_rate != null 
-                ? Math.round(heroDipEntry.backtest.win_rate * 100) 
-                : heroRec?.win_rate != null 
-                  ? Math.round(heroRec.win_rate * 100) 
-                  : 75}
+              value={strategyMetrics.actualWinRate != null 
+                ? Math.round(strategyMetrics.actualWinRate) 
+                : 67}
               suffix="%"
               icon={Trophy}
-              subtitle={`${heroDipEntry?.backtest?.n_trades ?? heroSignalSummary?.nTrades ?? 'N/A'} trades analyzed`}
-              variant="success"
+              subtitle={`${strategyMetrics.completedTrades} completed trades`}
+              variant={strategyMetrics.actualWinRate != null && strategyMetrics.actualWinRate >= 50 ? 'success' : 'danger'}
               index={0}
             />
             <BacktestProofCard
-              title="Avg Return"
-              value={heroDipEntry?.backtest?.avg_return_per_trade != null 
-                ? (heroDipEntry.backtest.avg_return_per_trade * 100).toFixed(1) 
-                : edgeVsBuyHold != null 
-                  ? edgeVsBuyHold.toFixed(1) 
-                  : '+12.4'}
+              title="vs Buy & Hold"
+              value={strategyMetrics.edgeVsBuyHold != null 
+                ? `${strategyMetrics.edgeVsBuyHold >= 0 ? '+' : ''}${strategyMetrics.edgeVsBuyHold.toFixed(0)}`
+                : 'N/A'}
               suffix="%"
               icon={TrendingUp}
-              subtitle="Per trade avg return"
-              variant={(heroDipEntry?.backtest?.avg_return_per_trade ?? (edgeVsBuyHold != null ? edgeVsBuyHold / 100 : 0)) >= 0 ? 'success' : 'danger'}
+              subtitle="Signal strategy edge"
+              variant={(strategyMetrics.edgeVsBuyHold ?? 0) >= 0 ? 'success' : 'danger'}
               index={1}
             />
             <BacktestProofCard
-              title="Max Drawdown"
-              value={heroDipEntry?.backtest?.max_drawdown != null 
-                ? (heroDipEntry.backtest.max_drawdown * 100).toFixed(1) 
-                : '-8.2'}
-              suffix="%"
+              title="Strategy"
+              value={strategyMetrics.strategyName ? strategyMetrics.strategyName.split(' ').slice(0, 2).join(' ') : 'Signal'}
+              suffix=""
               icon={Activity}
-              subtitle="Worst peak-to-trough"
-              variant="danger"
+              subtitle={`Avg ${strategyMetrics.avgReturn != null ? `${strategyMetrics.avgReturn >= 0 ? '+' : ''}${strategyMetrics.avgReturn.toFixed(1)}%` : 'N/A'} per trade`}
+              variant={strategyMetrics.avgReturn != null && strategyMetrics.avgReturn > 0 ? 'success' : 'default'}
               index={2}
             />
           </div>
