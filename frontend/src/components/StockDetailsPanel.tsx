@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import {
   Area,
@@ -211,8 +211,8 @@ export function StockDetailsPanel({
   const [signalsResponse, setSignalsResponse] = useState<SignalTriggersResponse | null>(null);
   const [showSignals, setShowSignals] = useState(true);
   
-  // Extract triggers from response for backward compatibility - memoize for stable reference
-  const signalTriggers = useMemo(() => signalsResponse?.triggers ?? [], [signalsResponse?.triggers]);
+  // Extract triggers from response for backward compatibility
+  const signalTriggers = signalsResponse?.triggers ?? [];
   
   // Quant analysis state
   const [_dipAnalysis, setDipAnalysis] = useState<DipAnalysis | null>(null);
@@ -330,7 +330,8 @@ export function StockDetailsPanel({
     return () => clearTimeout(timer);
   }, [chartPeriod, chartData]);
 
-  const formattedChartData = useMemo(() => {
+  // Normalize and format chart data - React Compiler handles memoization
+  const formattedChartData = (() => {
     // Normalize all periods to same number of points for consistent animations
     // This ensures smooth morphing when switching between periods
     const normalizedData = normalizeChartData(chartData, NORMALIZED_CHART_POINTS);
@@ -342,42 +343,36 @@ export function StockDetailsPanel({
         day: 'numeric',
       }),
     }));
-  }, [chartData]);
+  })();
 
   // Find ref high point index for marker
-  const refHighIndex = useMemo(() => {
+  const refHighIndex = (() => {
     if (chartData.length === 0) return -1;
     const refDate = chartData[0]?.ref_high_date;
     if (!refDate) return -1;
     return formattedChartData.findIndex(p => p.date === refDate);
-  }, [chartData, formattedChartData]);
+  })();
 
   // Get the display date for ref high point (for ReferenceDot x value)
-  const refHighDisplayDate = useMemo(() => {
-    if (refHighIndex < 0 || !formattedChartData[refHighIndex]) return null;
-    return formattedChartData[refHighIndex].displayDate;
-  }, [refHighIndex, formattedChartData]);
+  const refHighDisplayDate = refHighIndex >= 0 && formattedChartData[refHighIndex]
+    ? formattedChartData[refHighIndex].displayDate
+    : null;
 
   // Get the display date for current price (last point)
-  const currentDisplayDate = useMemo(() => {
-    if (formattedChartData.length === 0) return null;
-    return formattedChartData[formattedChartData.length - 1].displayDate;
-  }, [formattedChartData]);
+  const currentDisplayDate = formattedChartData.length > 0
+    ? formattedChartData[formattedChartData.length - 1].displayDate
+    : null;
 
   // Get the current price for the reference line
-  const currentPrice = useMemo(() => {
-    if (formattedChartData.length === 0) return null;
-    return formattedChartData[formattedChartData.length - 1]?.close;
-  }, [formattedChartData]);
+  const currentPrice = formattedChartData.length > 0
+    ? formattedChartData[formattedChartData.length - 1]?.close
+    : null;
 
   // Get the ref high price
-  const refHighPrice = useMemo(() => {
-    if (chartData.length === 0) return null;
-    return chartData[0]?.ref_high ?? null;
-  }, [chartData]);
+  const refHighPrice = chartData.length > 0 ? chartData[0]?.ref_high ?? null : null;
 
   // Create chart data with trendline, reference lines, and animated dot positions
-  const chartDataWithTrendline = useMemo(() => {
+  const chartDataWithTrendline = (() => {
     if (formattedChartData.length === 0) return [];
     
     return formattedChartData.map((point, index) => {
@@ -400,7 +395,7 @@ export function StockDetailsPanel({
         currentDot: index === formattedChartData.length - 1 ? point.close : null,
       };
     });
-  }, [formattedChartData, refHighIndex, currentPrice, refHighPrice]);
+  })();
 
   // Check if the stock has a valid optimized strategy (not just "dip" fallback)
   const hasValidStrategy = strategySignal && strategySignal.strategy_name !== 'dip';
@@ -409,7 +404,7 @@ export function StockDetailsPanel({
   const signalsBeatBuyHold = signalsResponse?.beats_buy_hold ?? false;
 
   // Find signal trigger points that match chart dates
-  const signalPoints = useMemo(() => {
+  const signalPoints = (() => {
     // Don't show signals if:
     // 1. User toggled them off
     // 2. Strategy is "dip" (no real backtested signals)
@@ -427,14 +422,15 @@ export function StockDetailsPanel({
         ...point,
         signal: signalMap.get(point.date)!,
       }));
-  }, [showSignals, hasValidStrategy, signalsBeatBuyHold, signalTriggers, formattedChartData]);
+  })();
 
-  const priceChange = useMemo(() => {
+  // Calculate price change for chart color
+  const priceChange = (() => {
     if (chartData.length < 2) return 0;
     const first = chartData[0].close;
     const last = chartData[chartData.length - 1].close;
     return ((last - first) / first) * 100;
-  }, [chartData]);
+  })();
 
   const isPositive = priceChange >= 0;
   const chartColor = isPositive ? 'var(--success)' : 'var(--danger)';

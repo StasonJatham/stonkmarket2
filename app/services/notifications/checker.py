@@ -26,6 +26,7 @@ from app.services.notifications.cooldown import check_cooldown, set_cooldown
 from app.services.notifications.data_fetcher import (
     batch_fetch_symbol_data,
     batch_fetch_portfolio_data,
+    batch_fetch_watchlist_data,
 )
 from app.services.notifications.message_builder import build_notification_message
 from app.services.notifications.safety import (
@@ -71,16 +72,17 @@ async def check_all_rules() -> dict[str, Any]:
             return stats
         
         # Group rules by data type for batch fetching
-        symbol_rules, portfolio_rules, symbols, portfolio_ids = _group_rules(rules)
+        symbol_rules, portfolio_rules, watchlist_rules, symbols, portfolio_ids, watchlist_ids = _group_rules(rules)
         
         # Batch fetch all needed data
         symbol_data = await batch_fetch_symbol_data(symbols) if symbols else {}
         portfolio_data = await batch_fetch_portfolio_data(portfolio_ids) if portfolio_ids else {}
+        watchlist_data = await batch_fetch_watchlist_data(watchlist_ids) if watchlist_ids else {}
         
         # Process each rule
         for rule in rules:
             try:
-                result = await _process_rule(rule, symbol_data, portfolio_data, stats)
+                result = await _process_rule(rule, symbol_data, portfolio_data, watchlist_data, stats)
                 if result.get("triggered"):
                     stats["rules_triggered"] += 1
             except Exception as e:
@@ -110,16 +112,18 @@ async def check_all_rules() -> dict[str, Any]:
 
 def _group_rules(
     rules: list[dict[str, Any]],
-) -> tuple[list[dict], list[dict], list[str], list[int]]:
+) -> tuple[list[dict], list[dict], list[dict], list[str], list[int], list[int]]:
     """Group rules by what data they need.
     
     Returns:
-        Tuple of (symbol_rules, portfolio_rules, unique_symbols, unique_portfolio_ids)
+        Tuple of (symbol_rules, portfolio_rules, watchlist_rules, unique_symbols, unique_portfolio_ids, unique_watchlist_ids)
     """
     symbol_rules = []
     portfolio_rules = []
+    watchlist_rules = []
     symbols = set()
     portfolio_ids = set()
+    watchlist_ids = set()
     
     for rule in rules:
         if rule.get("target_symbol"):
@@ -128,14 +132,18 @@ def _group_rules(
         elif rule.get("target_portfolio_id"):
             portfolio_rules.append(rule)
             portfolio_ids.add(rule["target_portfolio_id"])
+        elif rule.get("target_watchlist_id"):
+            watchlist_rules.append(rule)
+            watchlist_ids.add(rule["target_watchlist_id"])
     
-    return symbol_rules, portfolio_rules, list(symbols), list(portfolio_ids)
+    return symbol_rules, portfolio_rules, watchlist_rules, list(symbols), list(portfolio_ids), list(watchlist_ids)
 
 
 async def _process_rule(
     rule: dict[str, Any],
     symbol_data: dict[str, dict[str, Any]],
     portfolio_data: dict[int, dict[str, Any]],
+    watchlist_data: dict[int, dict[str, Any]],
     stats: dict[str, Any],
 ) -> dict[str, Any]:
     """Process a single rule and send notification if triggered.
@@ -144,6 +152,7 @@ async def _process_rule(
         rule: The rule to process
         symbol_data: Pre-fetched symbol data
         portfolio_data: Pre-fetched portfolio data
+        watchlist_data: Pre-fetched watchlist data
         stats: Stats dict to update
         
     Returns:
@@ -184,6 +193,8 @@ async def _process_rule(
         data = symbol_data.get(rule["target_symbol"], {})
     elif rule.get("target_portfolio_id"):
         data = portfolio_data.get(rule["target_portfolio_id"], {})
+    elif rule.get("target_watchlist_id"):
+        data = watchlist_data.get(rule["target_watchlist_id"], {})
     else:
         data = {}
     
@@ -197,7 +208,8 @@ async def _process_rule(
         data.get("dip_updated_at") or
         data.get("fundamentals_updated_at") or
         data.get("quant_updated_at") or
-        data.get("portfolio_updated_at")
+        data.get("portfolio_updated_at") or
+        data.get("watchlist_updated_at")
     )
     is_stale, age_hours = check_staleness(updated_at)
     if is_stale:

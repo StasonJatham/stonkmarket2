@@ -297,6 +297,7 @@ async def list_rules(
             target_value=r.get("target_value"),
             target_symbol=r.get("target_symbol"),
             target_portfolio_id=r.get("target_portfolio_id"),
+            target_watchlist_id=r.get("target_watchlist_id"),
             smart_payload=r.get("smart_payload"),
             cooldown_minutes=r["cooldown_minutes"],
             last_triggered_at=r.get("last_triggered_at"),
@@ -360,6 +361,7 @@ async def create_rule(
         target_value=Decimal(str(payload.target_value)) if payload.target_value is not None else None,
         target_symbol=payload.target_symbol,
         target_portfolio_id=payload.target_portfolio_id,
+        target_watchlist_id=payload.target_watchlist_id,
         smart_payload=payload.smart_payload,
         cooldown_minutes=payload.cooldown_minutes,
         priority=payload.priority,
@@ -375,6 +377,7 @@ async def create_rule(
         target_value=rule.get("target_value"),
         target_symbol=rule.get("target_symbol"),
         target_portfolio_id=rule.get("target_portfolio_id"),
+        target_watchlist_id=rule.get("target_watchlist_id"),
         smart_payload=rule.get("smart_payload"),
         cooldown_minutes=rule["cooldown_minutes"],
         last_triggered_at=rule.get("last_triggered_at"),
@@ -412,6 +415,7 @@ async def get_rule(
         target_value=rule.get("target_value"),
         target_symbol=rule.get("target_symbol"),
         target_portfolio_id=rule.get("target_portfolio_id"),
+        target_watchlist_id=rule.get("target_watchlist_id"),
         smart_payload=rule.get("smart_payload"),
         cooldown_minutes=rule["cooldown_minutes"],
         last_triggered_at=rule.get("last_triggered_at"),
@@ -475,6 +479,8 @@ async def update_rule(
         update_kwargs["target_symbol"] = payload.target_symbol
     if payload.target_portfolio_id is not None:
         update_kwargs["target_portfolio_id"] = payload.target_portfolio_id
+    if payload.target_watchlist_id is not None:
+        update_kwargs["target_watchlist_id"] = payload.target_watchlist_id
     if payload.smart_payload is not None:
         update_kwargs["smart_payload"] = payload.smart_payload
     if payload.cooldown_minutes is not None:
@@ -502,6 +508,7 @@ async def update_rule(
         target_value=rule.get("target_value"),
         target_symbol=rule.get("target_symbol"),
         target_portfolio_id=rule.get("target_portfolio_id"),
+        target_watchlist_id=rule.get("target_watchlist_id"),
         smart_payload=rule.get("smart_payload"),
         cooldown_minutes=rule["cooldown_minutes"],
         last_triggered_at=rule.get("last_triggered_at"),

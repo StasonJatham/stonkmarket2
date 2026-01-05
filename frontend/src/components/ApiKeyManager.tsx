@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
@@ -55,17 +55,15 @@ export function ApiKeyManager({ onSuccess }: ApiKeyManagerProps) {
   const revealMutation = useRevealApiKey();
   const deleteMutation = useDeleteApiKey();
   
-  // Derived state from queries
-  const keys = useMemo(() => keysQuery.data ?? [], [keysQuery.data]);
+  // Derived state from queries - plain derivation, React Compiler optimizes this
+  const keys = keysQuery.data ?? [];
   const isLoading = keysQuery.isLoading || mfaStatusQuery.isLoading || systemStatusQuery.isLoading;
   const mfaEnabled = mfaStatusQuery.data?.enabled ?? false;
   const hasMfaSession = mfaSessionQuery.data?.has_session ?? false;
   
   // Check if Logo.dev is configured via env (configured but not in database)
-  const logoDevEnvConfigured = useMemo(() => {
-    const logoDevDbKey = keys.find(k => k.key_name === 'logo_dev_public_key');
-    return (systemStatusQuery.data?.logo_dev_configured ?? false) && !logoDevDbKey;
-  }, [keys, systemStatusQuery.data]);
+  const logoDevDbKey = keys.find(k => k.key_name === 'logo_dev_public_key');
+  const logoDevEnvConfigured = (systemStatusQuery.data?.logo_dev_configured ?? false) && !logoDevDbKey;
   
   // Add dialog
   const [addDialogOpen, setAddDialogOpen] = useState(false);

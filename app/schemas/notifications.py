@@ -488,6 +488,9 @@ class RuleCreate(BaseModel):
     target_portfolio_id: int | None = Field(
         None, description="Portfolio ID (required for portfolio triggers)",
     )
+    target_watchlist_id: int | None = Field(
+        None, description="Watchlist ID (required for watchlist triggers)",
+    )
     comparison_operator: ComparisonOperator = Field(
         ComparisonOperator.GT, description="Comparison operator",
     )
@@ -550,6 +553,7 @@ class RuleResponse(BaseModel):
     trigger_type: TriggerType
     target_symbol: str | None
     target_portfolio_id: int | None
+    target_watchlist_id: int | None
     comparison_operator: ComparisonOperator
     target_value: float | None
     smart_payload: dict[str, Any]

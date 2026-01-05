@@ -24,7 +24,7 @@ interface DipCardsResponse {
 }
 
 async function fetchDipCards(excludeVoted: boolean = true): Promise<DipCardsResponse> {
-  return apiGet<DipCardsResponse>(buildUrl('/dips/cards', { 
+  return apiGet<DipCardsResponse>(buildUrl('/swipe/cards', { 
     exclude_voted: excludeVoted,
     include_chart: true,
   }));

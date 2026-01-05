@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
@@ -85,9 +85,9 @@ export function Dashboard() {
   const quantQuery = useQuantRecommendations(inflow, 40);
   
   // Extract data from query - the select transform gives us 'stocks' already
-  // Using useMemo for stable references to prevent unnecessary re-renders
-  const recommendations = useMemo(() => quantQuery.data?.recommendations ?? [], [quantQuery.data?.recommendations]);
-  const quantStocks = useMemo(() => quantQuery.data?.stocks ?? [], [quantQuery.data?.stocks]);
+  // Plain derivation - React Compiler optimizes this automatically
+  const recommendations = quantQuery.data?.recommendations ?? [];
+  const quantStocks = quantQuery.data?.stocks ?? [];
   const asOfDate = quantQuery.data?.as_of_date ?? null;
   const marketMessage = quantQuery.data?.market_message ?? null;
   const portfolioStats = quantQuery.data ? {
@@ -106,13 +106,14 @@ export function Dashboard() {
   const error = quantError;
   
   // Convert recommendations to StockCardData for enhanced card display
-  const stockCardDataMap = useMemo(() => {
+  // Plain derivation - React Compiler optimizes this automatically
+  const stockCardDataMap = (() => {
     const map = new Map<string, StockCardData>();
     recommendations.forEach(rec => {
       map.set(rec.ticker, quantToStockCardData(rec));
     });
     return map;
-  }, [recommendations]);
+  })();
   
   const [searchParams, setSearchParams] = useSearchParams();
   const [selectedStock, setSelectedStock] = useState<DipStock | null>(null);
@@ -128,15 +129,12 @@ export function Dashboard() {
   
   // Benchmark data via TanStack Query - map to BenchmarkConfig type
   const benchmarksQuery = useBenchmarks();
-  const availableBenchmarks = useMemo(() => 
-    (benchmarksQuery.data ?? []).map(b => ({
-      id: b.id ?? b.symbol, // Use symbol as fallback for id
-      symbol: b.symbol,
-      name: b.name,
-      description: b.description,
-    })),
-    [benchmarksQuery.data]
-  );
+  const availableBenchmarks = (benchmarksQuery.data ?? []).map(b => ({
+    id: b.id ?? b.symbol, // Use symbol as fallback for id
+    symbol: b.symbol,
+    name: b.name,
+    description: b.description,
+  }));
   
   // Benchmark state
   const [benchmark, setBenchmark] = useState<BenchmarkType>(null);
@@ -201,7 +199,7 @@ export function Dashboard() {
   }, [searchParams, setShowAllStocks]);
 
   // Update URL when filters change (debounced to avoid too many updates)
-  const updateUrlParams = useCallback((updates: Record<string, string | null>) => {
+  function updateUrlParams(updates: Record<string, string | null>) {
     const newParams = new URLSearchParams(searchParams);
     
     Object.entries(updates).forEach(([key, value]) => {
@@ -218,7 +216,7 @@ export function Dashboard() {
     if (currentStr !== newStr) {
       setSearchParams(newParams, { replace: true });
     }
-  }, [searchParams, setSearchParams]);
+  }
 
   // Sync state changes to URL
   useEffect(() => {
@@ -228,7 +226,8 @@ export function Dashboard() {
       view: viewMode !== 'grid' ? viewMode : null,
       showAll: showAllStocks ? 'true' : null,
     });
-  }, [searchQuery, sortBy, viewMode, showAllStocks, updateUrlParams]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchQuery, sortBy, viewMode, showAllStocks]);
 
   // Handle URL query param for stock selection (from ticker click)
   useEffect(() => {
@@ -250,10 +249,11 @@ export function Dashboard() {
         updateUrlParams({ stock: stock.symbol });
       }
     }
-  }, [searchParams, stocks, showAllStocks, setShowAllStocks, updateUrlParams]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, stocks, showAllStocks, setShowAllStocks]);
 
-  // Memoized filtered and sorted stocks
-  const filteredStocks = useMemo(() => {
+  // Filtered and sorted stocks - React Compiler handles memoization
+  const filteredStocks = (() => {
     let result = [...stocks];
 
     // Filter by search
@@ -300,20 +300,18 @@ export function Dashboard() {
     }
 
     return result;
-  }, [stocks, searchQuery, sortBy, searchParams]);
+  })();
 
   // Reset visible count when search/filter changes
   useEffect(() => {
     setVisibleCount(20);
   }, [searchQuery, sortBy, showAllStocks]);
 
-  // Visible stocks for pagination
-  const visibleStocks = useMemo(() => {
-    return filteredStocks.slice(0, visibleCount);
-  }, [filteredStocks, visibleCount]);
+  // Visible stocks for pagination - plain derivation
+  const visibleStocks = filteredStocks.slice(0, visibleCount);
 
   // Fetch mini charts for visible cards via TanStack Query
-  const symbolsForCards = useMemo(() => visibleStocks.map(s => s.symbol), [visibleStocks]);
+  const symbolsForCards = visibleStocks.map(s => s.symbol);
   const cardChartsQuery = useBatchCharts(symbolsForCards, 90);
   const cardCharts = cardChartsQuery.data ?? {};
 
@@ -336,7 +334,7 @@ export function Dashboard() {
   }, [visibleCount, filteredStocks.length]);
 
   // Calculate optimal chart period to show high and dip
-  const calculateOptimalPeriod = useCallback((stock: DipStock): number => {
+  function calculateOptimalPeriod(stock: DipStock): number {
     const daysSinceDip = stock.days_since_dip || 90;
     // Add buffer to show context before the dip (at least 20% more time)
     const requiredDays = Math.ceil(daysSinceDip * 1.3);
@@ -349,10 +347,10 @@ export function Dashboard() {
       }
     }
     return 365; // Default to 1 year if nothing fits
-  }, []);
+  }
 
   // Helper functions for loading stock data - defined before useEffect that uses them
-  const loadStockInfo = useCallback(async (symbol: string) => {
+  async function loadStockInfo(symbol: string) {
     setIsLoadingInfo(true);
     try {
       const info = await getStockInfo(symbol);
@@ -363,9 +361,9 @@ export function Dashboard() {
     } finally {
       setIsLoadingInfo(false);
     }
-  }, []);
+  }
 
-  const loadAiData = useCallback(async (symbol: string) => {
+  async function loadAiData(symbol: string) {
     setIsLoadingAi(true);
     try {
       // First check if we have domain analysis from the recommendations
@@ -395,7 +393,7 @@ export function Dashboard() {
     } finally {
       setIsLoadingAi(false);
     }
-  }, [stockCardDataMap]);
+  }
 
   // Load chart and info when stock selected
   useEffect(() => {
@@ -409,7 +407,8 @@ export function Dashboard() {
     } else {
       setAiData(null);
     }
-  }, [selectedStock, calculateOptimalPeriod, loadStockInfo, loadAiData]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedStock]);
 
   // Consolidated chart loading - load both stock and benchmark chart together
   useEffect(() => {
@@ -467,7 +466,7 @@ export function Dashboard() {
     loadAllChartData();
   }, [selectedStock, chartPeriod, benchmark]);
 
-  const calculateAggregatedPerformance = useCallback(async () => {
+  async function calculateAggregatedPerformance() {
     if (!benchmark || stocks.length === 0) return;
     try {
       // Load chart data for all stocks in parallel (limit to first 20)
@@ -494,7 +493,7 @@ export function Dashboard() {
     } catch (err) {
       console.error('Failed to calculate aggregated performance:', err);
     }
-  }, [benchmark, stocks, chartPeriod, benchmarkData]);
+  }
 
   // Calculate aggregated portfolio performance when stocks or benchmark changes
   useEffect(() => {
@@ -503,15 +502,16 @@ export function Dashboard() {
     } else {
       setAggregatedData([]);
     }
-  }, [stocks, benchmarkData, benchmark, calculateAggregatedPerformance]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stocks.length, benchmarkData.length, benchmark, chartPeriod]);
 
-  const handleStockSelect = useCallback((stock: DipStock) => {
+  function handleStockSelect(stock: DipStock) {
     setSelectedStock(stock);
     // Only open mobile drawer on small screens
     if (window.innerWidth < 1024) {
       setIsMobileDetailOpen(true);
     }
-  }, []);
+  }
 
   return (
     <div className="space-y-8">

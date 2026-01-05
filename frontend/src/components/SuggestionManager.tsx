@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   getAllSuggestions,
@@ -177,7 +177,7 @@ export function SuggestionManager() {
 
   const pageSize = 15;
 
-  const loadSuggestions = useCallback(async () => {
+  async function loadSuggestions() {
     if (initialLoad.current) {
       setIsLoading(true);
     } else {
@@ -199,7 +199,7 @@ export function SuggestionManager() {
       }
       setIsRefreshing(false);
     }
-  }, [statusFilter, page]);
+  }
 
   // Load runtime settings on mount
   useEffect(() => {
@@ -244,7 +244,8 @@ export function SuggestionManager() {
 
   useEffect(() => {
     loadSuggestions();
-  }, [loadSuggestions]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter, page]);
 
   useEffect(() => {
     getCronJobs()
@@ -268,19 +269,17 @@ export function SuggestionManager() {
     }, 2000); // Poll every 2 seconds
 
     return () => clearInterval(pollInterval);
-  }, [suggestions, loadSuggestions]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [suggestions]);
 
-  const activeTaskIds = useMemo(
-    () =>
-      suggestions
-        .filter(
-          (suggestion) =>
-            suggestion.task_id &&
-            (suggestion.fetch_status === 'pending' || suggestion.fetch_status === 'fetching')
-        )
-        .map((suggestion) => suggestion.task_id as string),
-    [suggestions]
-  );
+  // Derive active task IDs - React Compiler handles optimization
+  const activeTaskIds = suggestions
+    .filter(
+      (suggestion) =>
+        suggestion.task_id &&
+        (suggestion.fetch_status === 'pending' || suggestion.fetch_status === 'fetching')
+    )
+    .map((suggestion) => suggestion.task_id as string);
 
   useEffect(() => {
     if (activeTaskIds.length === 0) return;
@@ -319,7 +318,8 @@ export function SuggestionManager() {
       cancelled = true;
       clearInterval(pollInterval);
     };
-  }, [activeTaskIds, loadSuggestions]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTaskIds.join(',')]);
 
   // Reset page when filter changes
   useEffect(() => {

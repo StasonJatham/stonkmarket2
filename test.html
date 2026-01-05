@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>OTRS Tinted Preview</title>
+</head>
+<body style="background-color: #f0f2f5; padding: 40px; font-family: sans-serif;">
+
+<style>
+    /* Container */
+    .pdns-report-container {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        border: 1px solid #ccc;
+        background-color: #fcfcfc;
+        border-radius: 4px;
+        padding: 15px;
+        max-width: 700px;
+        color: #333;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    
+    /* Header */
+    .pdns-header {
+        border-bottom: 2px solid #e0e0e0;
+        padding-bottom: 10px;
+        margin-bottom: 15px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .pdns-title {
+        font-size: 15px;
+        font-weight: 700;
+        color: #2c3e50;
+        margin: 0;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    .pdns-source {
+        font-size: 10px;
+        color: #555;
+        background-color: #e2e6ea;
+        padding: 4px 8px;
+        border-radius: 3px;
+        font-weight: bold;
+        border: 1px solid #d6d8db;
+    }
+    
+    /* Grid */
+    .pdns-grid {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 20px;
+    }
+    .pdns-card {
+        flex: 1;
+        border-radius: 4px;
+        padding: 12px 8px;
+        text-align: center;
+        border-top-width: 4px; 
+        border-top-style: solid;
+    }
+    
+    /* Labels & Values */
+    .pdns-label {
+        font-size: 10px;
+        text-transform: uppercase;
+        color: #666;
+        margin-bottom: 6px;
+        display: block;
+        font-weight: 600;
+    }
+    .pdns-value {
+        font-size: 14px;
+        font-weight: 800;
+        display: block;
+        color: #222;
+        margin-bottom: 6px;
+    }
+
+    /* --- FARBEN --- */
+    /* Rot / Danger */
+    .status-danger { 
+        border-top-color: #c0392b; 
+        background-color: #fff5f5; /* Leichter Rot-Stich */
+        border-left: 1px solid #f5c6cb;
+        border-right: 1px solid #f5c6cb;
+        border-bottom: 1px solid #f5c6cb;
+    }
+    /* Grün / Safe (Hier simuliert für Card 1) */
+    .status-safe { 
+        border-top-color: #27ae60; 
+        background-color: #f0fcf4; /* Leichter Grün-Stich */
+        border-left: 1px solid #c3e6cb;
+        border-right: 1px solid #c3e6cb;
+        border-bottom: 1px solid #c3e6cb;
+    }
+
+    /* Text Alerts */
+    .alert-box {
+        font-size: 9px;
+        font-weight: bold;
+        text-transform: uppercase;
+    }
+    .text-danger { color: #a94442; }
+    .badge-alert {
+        background-color: #c0392b;
+        color: white;
+        padding: 2px 4px;
+        border-radius: 2px;
+        margin-right: 3px;
+    }
+
+    /* List */
+    .pdns-list-box {
+        background: #fff;
+        border: 1px solid #ced4da;
+        border-left: 4px solid #495057;
+        border-radius: 4px;
+        padding: 12px;
+    }
+    .pdns-list-header {
+        font-size: 12px;
+        font-weight: bold;
+        margin-bottom: 10px;
+        color: #343a40;
+        border-bottom: 1px solid #eee;
+        padding-bottom: 5px;
+        text-transform: uppercase;
+    }
+    .pdns-list {
+        margin: 0;
+        padding-left: 18px;
+        font-size: 12px;
+        color: #333;
+    }
+    .pdns-list li {
+        margin-bottom: 4px;
+        font-family: 'Consolas', 'Monaco', monospace;
+    }
+</style>
+
+<div class="pdns-report-container">
+    
+    <div class="pdns-header">
+        <h3 class="pdns-title">CIRCL pDNS Analysis: evil-update-server.com</h3>
+        <span class="pdns-source">SOURCE: CIRCL</span>
+    </div>
+
+    <div class="pdns-grid">
+        <div class="pdns-card status-safe">
+            <span class="pdns-label">First Seen</span>
+            <span class="pdns-value">2020-05-21</span>
+            </div>
+
+        <div class="pdns-card status-danger">
+            <span class="pdns-label">IP History (30d)</span>
+            <span class="pdns-value">14 Unique IPs</span>
+            <div class="alert-box text-danger"><span class="badge-alert">ALERT</span> FAST FLUX</div>
+        </div>
+
+        <div class="pdns-card status-danger">
+            <span class="pdns-label">Infrastructure</span>
+            <span class="pdns-value">Dedicated</span>
+            <div class="alert-box text-danger"><span class="badge-alert">RISK</span> MALICIOUS NET</div>
+        </div>
+    </div>
+
+    <div class="pdns-list-box">
+        <div class="pdns-list-header">
+            Pivoting: Domains on same IP
+        </div>
+        <ul class="pdns-list">
+            <li>payload-delivery.net</li>
+            <li>bank-login-secure.com</li>
+            <li>update-win32.org</li>
+        </ul>
+    </div>
+
+</div>
+</body>
+</html>

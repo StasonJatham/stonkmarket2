@@ -120,6 +120,7 @@ class AuthUser(Base):
     portfolio_analytics_jobs: Mapped[list[PortfolioAnalyticsJob]] = relationship(back_populates="user")
     notification_channels: Mapped[list[NotificationChannel]] = relationship(back_populates="user", cascade="all, delete-orphan")
     notification_rules: Mapped[list[NotificationRule]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    watchlists: Mapped[list[Watchlist]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
     __table_args__ = (
         Index("idx_auth_user_username", "username"),
@@ -1841,6 +1842,7 @@ class NotificationRule(Base):
     # Target (what to watch)
     target_symbol: Mapped[str | None] = mapped_column(String(20))
     target_portfolio_id: Mapped[int | None] = mapped_column(ForeignKey("portfolios.id", ondelete="CASCADE"))
+    target_watchlist_id: Mapped[int | None] = mapped_column(ForeignKey("watchlists.id", ondelete="CASCADE"))
     
     # Condition
     comparison_operator: Mapped[str] = mapped_column(String(10), default="GT")  # ComparisonOperator enum
@@ -1864,6 +1866,7 @@ class NotificationRule(Base):
     user: Mapped[AuthUser] = relationship(back_populates="notification_rules")
     channel: Mapped[NotificationChannel] = relationship(back_populates="rules")
     portfolio: Mapped[Portfolio | None] = relationship(back_populates="notification_rules")
+    watchlist: Mapped[Watchlist | None] = relationship(back_populates="notification_rules")
     logs: Mapped[list[NotificationLog]] = relationship(back_populates="rule", cascade="all, delete-orphan")
 
     __table_args__ = (
@@ -1871,6 +1874,7 @@ class NotificationRule(Base):
         Index("idx_notification_rules_active", "is_active", postgresql_where=text("is_active = TRUE")),
         Index("idx_notification_rules_symbol", "target_symbol", postgresql_where=text("target_symbol IS NOT NULL")),
         Index("idx_notification_rules_portfolio", "target_portfolio_id", postgresql_where=text("target_portfolio_id IS NOT NULL")),
+        Index("idx_notification_rules_watchlist", "target_watchlist_id", postgresql_where=text("target_watchlist_id IS NOT NULL")),
         Index("idx_notification_rules_trigger", "trigger_type"),
     )
 
@@ -1918,4 +1922,67 @@ class NotificationLog(Base):
         Index("idx_notification_logs_status", "status"),
         Index("idx_notification_logs_triggered", "triggered_at"),
         Index("idx_notification_logs_hash", "content_hash"),
+    )
+
+
+# =============================================================================
+# WATCHLIST
+# =============================================================================
+
+
+class Watchlist(Base):
+    """User watchlist for tracking stocks of interest.
+    
+    Users can create multiple named watchlists to organize stocks
+    they want to monitor. Integrates with notification triggers.
+    """
+    __tablename__ = "watchlists"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("auth_user.id", ondelete="CASCADE"), nullable=False)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    # Relationships
+    user: Mapped[AuthUser] = relationship(back_populates="watchlists")
+    items: Mapped[list[WatchlistItem]] = relationship(
+        back_populates="watchlist",
+        cascade="all, delete-orphan",
+        order_by="WatchlistItem.created_at.desc()"
+    )
+    notification_rules: Mapped[list[NotificationRule]] = relationship(back_populates="watchlist")
+
+    __table_args__ = (
+        Index("idx_watchlists_user", "user_id"),
+        Index("idx_watchlists_default", "user_id", "is_default", postgresql_where=text("is_default = TRUE")),
+    )
+
+
+class WatchlistItem(Base):
+    """Individual stock in a watchlist.
+    
+    Stores the symbol and optional user notes.
+    Price alerts can be configured via notification rules.
+    """
+    __tablename__ = "watchlist_items"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    watchlist_id: Mapped[int] = mapped_column(ForeignKey("watchlists.id", ondelete="CASCADE"), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(20), nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text)
+    target_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 4))  # User's target buy price
+    alert_on_dip: Mapped[bool] = mapped_column(Boolean, default=True)  # Alert when stock dips
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    # Relationships
+    watchlist: Mapped[Watchlist] = relationship(back_populates="items")
+
+    __table_args__ = (
+        UniqueConstraint("watchlist_id", "symbol", name="uq_watchlist_items_symbol"),
+        Index("idx_watchlist_items_watchlist", "watchlist_id"),
+        Index("idx_watchlist_items_symbol", "symbol"),
     )

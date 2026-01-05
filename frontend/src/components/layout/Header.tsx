@@ -8,7 +8,7 @@ import { useTheme } from '@/context/ThemeContext';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { SuggestStockDialog } from '@/components/SuggestStockDialog';
 import { ColorPickerInline } from '@/components/ui/color-picker';
-import { TrendingUp, Settings, LogOut, Heart, Eye, EyeOff, PieChart, Bell } from 'lucide-react';
+import { TrendingUp, Settings, LogOut, Heart, Eye, EyeOff, PieChart, Bell, User } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 const navLinks = [
@@ -16,11 +16,16 @@ const navLinks = [
   { href: '/swipe', label: 'DipSwipe', icon: Heart },
   { href: '/learn', label: 'Methodology' },
   { href: '/portfolio', label: 'Portfolio', icon: PieChart, requiresAuth: true },
+  { href: '/watchlist', label: 'Watchlist', icon: Eye, requiresAuth: true },
   { href: '/notifications', label: 'Alerts', icon: Bell, requiresAuth: true },
 ];
 
+const userLinks = [
+  { href: '/settings', label: 'Settings', icon: User },
+];
+
 const adminLinks = [
-  { href: '/admin', label: 'Settings', icon: Settings },
+  { href: '/admin', label: 'Admin', icon: Settings },
 ];
 
 export function Header() {
@@ -86,12 +91,24 @@ export function Header() {
                 </Link>
               );
             })}
-            {user && adminLinks.map((link) => (
+            {user?.is_admin && adminLinks.map((link) => (
               <Link
                 key={link.href}
                 to={link.href}
                 className={`text-sm font-medium transition-colors hover:text-foreground flex items-center gap-1.5 ${
                   isActive(link.href) ? 'text-foreground' : 'text-muted-foreground'
+                }`}
+              >
+                <link.icon className="h-4 w-4" />
+                {link.label}
+              </Link>
+            ))}
+            {user && userLinks.map((link) => (
+              <Link
+                key={link.href}
+                to={link.href}
+                className={`text-sm font-medium transition-colors hover:text-foreground flex items-center gap-1.5 ${
+                  isActive(link.href) || location.pathname.startsWith('/settings') ? 'text-foreground' : 'text-muted-foreground'
                 }`}
               >
                 <link.icon className="h-4 w-4" />
@@ -199,7 +216,7 @@ export function Header() {
                 </motion.div>
               ))}
               
-              {user && adminLinks.map((link, i) => (
+              {user?.is_admin && adminLinks.map((link, i) => (
                 <motion.div
                   key={link.href}
                   initial={{ opacity: 0, y: 20 }}
@@ -211,6 +228,26 @@ export function Header() {
                     onClick={closeMenu}
                     className={`text-3xl font-medium transition-colors flex items-center gap-3 ${
                       isActive(link.href) ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    <link.icon className="h-6 w-6" />
+                    {link.label}
+                  </Link>
+                </motion.div>
+              ))}
+
+              {user && userLinks.map((link, i) => (
+                <motion.div
+                  key={link.href}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.2 + i * 0.05 }}
+                >
+                  <Link
+                    to={link.href}
+                    onClick={closeMenu}
+                    className={`text-3xl font-medium transition-colors flex items-center gap-3 ${
+                      isActive(link.href) || location.pathname.startsWith('/settings') ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'
                     }`}
                   >
                     <link.icon className="h-6 w-6" />

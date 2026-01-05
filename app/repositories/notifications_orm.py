@@ -309,6 +309,7 @@ async def create_rule(
     target_value: Decimal | None = None,
     target_symbol: str | None = None,
     target_portfolio_id: int | None = None,
+    target_watchlist_id: int | None = None,
     smart_payload: dict[str, Any] | None = None,
     cooldown_minutes: int = 60,
     priority: str = "normal",
@@ -325,6 +326,7 @@ async def create_rule(
         target_value: Threshold value for the condition
         target_symbol: Symbol to monitor (for symbol-specific triggers)
         target_portfolio_id: Portfolio to monitor (for portfolio triggers)
+        target_watchlist_id: Watchlist to monitor (for watchlist triggers)
         smart_payload: Additional trigger-specific configuration
         cooldown_minutes: Minutes between repeated triggers
         priority: Alert priority (low, normal, high, critical)
@@ -343,6 +345,7 @@ async def create_rule(
             target_value=target_value,
             target_symbol=target_symbol.upper() if target_symbol else None,
             target_portfolio_id=target_portfolio_id,
+            target_watchlist_id=target_watchlist_id,
             smart_payload=smart_payload or {},
             cooldown_minutes=cooldown_minutes,
             priority=priority,
@@ -459,6 +462,7 @@ async def update_rule(
     target_value: Decimal | None = ...,  # Use ... as sentinel for "not provided"
     target_symbol: str | None = ...,
     target_portfolio_id: int | None = ...,
+    target_watchlist_id: int | None = ...,
     smart_payload: dict[str, Any] | None = ...,
     cooldown_minutes: int | None = None,
     priority: str | None = None,
@@ -500,6 +504,8 @@ async def update_rule(
             rule.target_symbol = target_symbol.upper() if target_symbol else None
         if target_portfolio_id is not ...:
             rule.target_portfolio_id = target_portfolio_id
+        if target_watchlist_id is not ...:
+            rule.target_watchlist_id = target_watchlist_id
         if smart_payload is not ...:
             rule.smart_payload = smart_payload or {}
         if cooldown_minutes is not None:
@@ -574,6 +580,7 @@ def _rule_to_dict(rule: NotificationRule) -> dict[str, Any]:
         "target_value": float(rule.target_value) if rule.target_value else None,
         "target_symbol": rule.target_symbol,
         "target_portfolio_id": rule.target_portfolio_id,
+        "target_watchlist_id": rule.target_watchlist_id,
         "smart_payload": rule.smart_payload,
         "cooldown_minutes": rule.cooldown_minutes,
         "last_triggered_at": rule.last_triggered_at,

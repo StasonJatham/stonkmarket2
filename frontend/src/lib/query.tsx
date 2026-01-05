@@ -136,6 +136,17 @@ export const queryKeys = {
     triggerTypes: () => ['notifications', 'triggerTypes'] as const,
   },
   
+  // Watchlists
+  watchlists: {
+    all: ['watchlists'] as const,
+    list: () => ['watchlists', 'list'] as const,
+    detail: (id: number) => ['watchlists', 'detail', id] as const,
+    items: (id: number) => ['watchlists', 'items', id] as const,
+    default: () => ['watchlists', 'default'] as const,
+    dipping: (minDipPct?: number) => ['watchlists', 'dipping', { minDipPct }] as const,
+    opportunities: () => ['watchlists', 'opportunities'] as const,
+  },
+  
   // Benchmarks
   benchmarks: {
     all: ['benchmarks'] as const,

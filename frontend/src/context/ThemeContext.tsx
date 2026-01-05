@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useCallback, useMemo, type ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
 
 type Theme = 'light' | 'dark' | 'system';
 
@@ -68,10 +68,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     return DEFAULT_COLORS;
   });
 
-  const resolvedTheme = useMemo(() => 
-    theme === 'system' ? getSystemTheme() : theme,
-    [theme]
-  );
+  const resolvedTheme = theme === 'system' ? getSystemTheme() : theme;
 
   useEffect(() => {
     const root = document.documentElement;
@@ -134,32 +131,32 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     return () => mediaQuery.removeEventListener('change', handleChange);
   }, [theme]);
 
-  const setTheme = useCallback((newTheme: Theme) => {
+  function setTheme(newTheme: Theme) {
     setThemeState(newTheme);
-  }, []);
+  }
 
-  const setColorblindMode = useCallback((enabled: boolean) => {
+  function setColorblindMode(enabled: boolean) {
     setColorblindModeState(enabled);
-  }, []);
+  }
 
-  const setCustomColors = useCallback((colors: CustomColors) => {
+  function setCustomColors(colors: CustomColors) {
     setCustomColorsState(colors);
     localStorage.setItem('custom-colors', JSON.stringify(colors));
     // Apply immediately if not in colorblind mode
     const root = document.documentElement;
     root.style.setProperty('--color-success-custom', colors.up);
     root.style.setProperty('--color-danger-custom', colors.down);
-  }, []);
+  }
 
-  const resetColors = useCallback(() => {
+  function resetColors() {
     setCustomColors(DEFAULT_COLORS);
-  }, [setCustomColors]);
+  }
 
-  const getActiveColors = useCallback(() => {
+  function getActiveColors() {
     return colorblindMode ? COLORBLIND_COLORS : customColors;
-  }, [colorblindMode, customColors]);
+  }
 
-  const value = useMemo(() => ({
+  const value = {
     theme,
     setTheme,
     resolvedTheme,
@@ -169,7 +166,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     setCustomColors,
     resetColors,
     getActiveColors,
-  }), [theme, setTheme, resolvedTheme, colorblindMode, setColorblindMode, customColors, setCustomColors, resetColors, getActiveColors]);
+  };
 
   return (
     <ThemeContext.Provider value={value}>

@@ -32,6 +32,8 @@ from app.database.orm import (
     PortfolioAnalytics,
     CalendarEarnings,
     CalendarSplit,
+    Watchlist,
+    WatchlistItem,
 )
 
 
@@ -119,17 +121,27 @@ async def _fetch_dip_state_data(
     result: dict[str, dict[str, Any]],
 ) -> None:
     """Fetch DipState data for symbols."""
+    from datetime import date as date_type
+    
     stmt = select(DipState).where(DipState.symbol.in_(symbols))
     rows = await session.execute(stmt)
+    
+    today = date_type.today()
     
     for dip in rows.scalars():
         data = result[dip.symbol]
         data["current_price"] = float(dip.current_price) if dip.current_price else None
-        data["dip_percent"] = float(dip.dip_percent) if dip.dip_percent else None
-        data["recovery_percent"] = float(dip.recovery_percent) if dip.recovery_percent else None
-        data["dip_from_52w_high"] = float(dip.week52_low_distance) if dip.week52_low_distance else None
-        data["price_change_percent"] = float(dip.change_percent) if dip.change_percent else None
+        data["dip_percent"] = float(dip.dip_percentage) if dip.dip_percentage else None
+        data["recovery_percent"] = float(dip.recovery_percent) if hasattr(dip, 'recovery_percent') and dip.recovery_percent else None
+        data["dip_from_52w_high"] = float(dip.week52_low_distance) if hasattr(dip, 'week52_low_distance') and dip.week52_low_distance else None
+        data["price_change_percent"] = float(dip.change_percent) if hasattr(dip, 'change_percent') and dip.change_percent else None
         data["dip_updated_at"] = dip.updated_at
+        # New fields for triggers
+        data["is_tail_event"] = dip.is_tail_event
+        data["dip_duration_days"] = dip.days_below
+        # Calculate if at ATH (no dip)
+        dip_pct = float(dip.dip_percentage) if dip.dip_percentage else 0
+        data["is_ath"] = dip_pct <= 0.1  # Within 0.1% of ATH
 
 
 async def _fetch_fundamentals_data(
@@ -144,9 +156,15 @@ async def _fetch_fundamentals_data(
     for fund in rows.scalars():
         data = result[fund.symbol]
         data["pe_ratio"] = float(fund.pe_ratio) if fund.pe_ratio else None
-        data["dividend_yield"] = float(fund.dividend_yield) if fund.dividend_yield else None
-        data["market_cap"] = float(fund.market_cap) if fund.market_cap else None
-        data["fundamentals_updated_at"] = fund.updated_at
+        data["dividend_yield"] = float(fund.dividend_yield) if hasattr(fund, "dividend_yield") and fund.dividend_yield else None
+        data["market_cap"] = float(fund.market_cap) if hasattr(fund, "market_cap") and fund.market_cap else None
+        data["fundamentals_updated_at"] = fund.updated_at if hasattr(fund, "updated_at") else None
+        # Analyst price target for PRICE_BELOW_TARGET trigger
+        data["analyst_price_target"] = float(fund.target_mean_price) if fund.target_mean_price else None
+        # Analyst rating change for ANALYST_UPGRADE/DOWNGRADE
+        # recommendation_mean: 1.0=strong buy, 2.0=buy, 3.0=hold, 4.0=sell, 5.0=strong sell
+        # Lower is more bullish, so we store the raw value for comparison
+        data["recommendation_mean"] = float(fund.recommendation_mean) if fund.recommendation_mean else None
 
 
 async def _fetch_quant_data(
@@ -254,11 +272,22 @@ async def _fetch_ai_analysis(
     
     for analysis in rows.scalars():
         data = result[analysis.symbol]
-        data["ai_rating"] = analysis.rating
-        data["ai_opportunity"] = analysis.opportunity_type is not None
-        data["ai_opportunity_type"] = analysis.opportunity_type
-        data["ai_risk_alert"] = analysis.risk_level in ("high", "critical")
-        data["ai_risk_type"] = analysis.risk_level
+        # Map to trigger expected fields
+        data["ai_rating"] = analysis.overall_signal  # strong_buy, buy, hold, sell, strong_sell
+        data["ai_confidence"] = analysis.overall_confidence / 10.0  # Scale 0-100 to 0-10
+        
+        # Count buy consensus from verdicts
+        buy_count = 0
+        if analysis.verdicts:
+            for verdict in analysis.verdicts:
+                signal = verdict.get("signal", "").lower()
+                if signal in ("strong_buy", "buy"):
+                    buy_count += 1
+        data["ai_consensus_buy_count"] = buy_count
+        
+        # Check if rating indicates opportunity
+        data["ai_opportunity"] = analysis.overall_signal in ("strong_buy", "buy")
+        data["ai_opportunity_type"] = "buy" if data["ai_opportunity"] else None
 
 
 async def _fetch_calendar_data(
@@ -359,15 +388,121 @@ async def batch_fetch_portfolio_data(
         stmt = select(PortfolioHolding).where(PortfolioHolding.portfolio_id.in_(portfolio_ids))
         rows = await session.execute(stmt)
         
+        # Group holdings by portfolio
+        holdings_by_portfolio: dict[int, list[PortfolioHolding]] = {}
         for holding in rows.scalars():
-            data = result[holding.portfolio_id]
-            if "holdings" not in data:
-                data["holdings"] = []
+            if holding.portfolio_id not in holdings_by_portfolio:
+                holdings_by_portfolio[holding.portfolio_id] = []
+            holdings_by_portfolio[holding.portfolio_id].append(holding)
+        
+        # Collect all symbols to fetch current prices
+        all_symbols = set()
+        for holdings in holdings_by_portfolio.values():
+            for h in holdings:
+                all_symbols.add(h.symbol)
+        
+        # Fetch current prices for all symbols
+        symbol_prices: dict[str, float] = {}
+        if all_symbols:
+            stmt = select(DipState).where(DipState.symbol.in_(list(all_symbols)))
+            price_rows = await session.execute(stmt)
+            for dip in price_rows.scalars():
+                if dip.current_price:
+                    symbol_prices[dip.symbol] = float(dip.current_price)
+        
+        # Calculate position weights for each portfolio
+        for portfolio_id, holdings in holdings_by_portfolio.items():
+            data = result[portfolio_id]
+            data["holdings"] = []
             
-            data["holdings"].append({
-                "symbol": holding.symbol,
-                "quantity": float(holding.quantity),
-                "avg_cost": float(holding.avg_cost) if holding.avg_cost else None,
-            })
+            # Calculate total value
+            total_value = 0.0
+            position_values: list[tuple[str, float]] = []
+            
+            for holding in holdings:
+                qty = float(holding.quantity)
+                price = symbol_prices.get(holding.symbol, 0.0)
+                value = qty * price
+                total_value += value
+                position_values.append((holding.symbol, value))
+                
+                data["holdings"].append({
+                    "symbol": holding.symbol,
+                    "quantity": qty,
+                    "avg_cost": float(holding.avg_cost) if holding.avg_cost else None,
+                })
+            
+            # Find max position weight
+            if total_value > 0 and position_values:
+                max_symbol = ""
+                max_weight = 0.0
+                for symbol, value in position_values:
+                    weight = (value / total_value) * 100
+                    if weight > max_weight:
+                        max_weight = weight
+                        max_symbol = symbol
+                
+                data["max_position_weight_percent"] = max_weight
+                data["max_position_symbol"] = max_symbol
+    
+    return result
+
+
+async def batch_fetch_watchlist_data(
+    watchlist_ids: list[int],
+) -> dict[int, dict[str, Any]]:
+    """Fetch data for watchlist notification triggers.
+    
+    Aggregates watchlist item data to provide:
+    - watchlist_dipping_count: Number of items currently in a dip
+    - watchlist_has_opportunity: Whether any item hit target price
+    
+    Args:
+        watchlist_ids: List of watchlist IDs
+        
+    Returns:
+        Dict mapping watchlist_id -> data dict
+    """
+    if not watchlist_ids:
+        return {}
+    
+    result: dict[int, dict[str, Any]] = {wid: {} for wid in watchlist_ids}
+    
+    async with get_session() as session:
+        # Fetch all watchlist items with their dip data
+        stmt = (
+            select(WatchlistItem, DipState)
+            .outerjoin(DipState, WatchlistItem.symbol == DipState.symbol)
+            .where(WatchlistItem.watchlist_id.in_(watchlist_ids))
+        )
+        rows = await session.execute(stmt)
+        
+        # Group items by watchlist
+        for item, dip in rows.all():
+            wid = item.watchlist_id
+            if "items" not in result[wid]:
+                result[wid]["items"] = []
+                result[wid]["watchlist_dipping_count"] = 0
+                result[wid]["watchlist_has_opportunity"] = False
+                result[wid]["watchlist_updated_at"] = None
+            
+            # Track dipping stocks
+            if dip and dip.dip_percentage and dip.dip_percentage >= 10:
+                result[wid]["watchlist_dipping_count"] += 1
+            
+            # Track opportunities (price hit target)
+            if (
+                item.target_price is not None 
+                and dip 
+                and dip.current_price 
+                and dip.current_price <= item.target_price
+            ):
+                result[wid]["watchlist_has_opportunity"] = True
+            
+            # Track the latest update time
+            if dip and dip.updated_at:
+                current_updated = result[wid].get("watchlist_updated_at")
+                if not current_updated or dip.updated_at > current_updated:
+                    result[wid]["watchlist_updated_at"] = dip.updated_at
     
     return result

@@ -41,6 +41,7 @@ from .routes import (
     symbols,
     user_api_keys,
     users,
+    watchlists,
 )
 
 
@@ -217,7 +218,7 @@ def create_api_app() -> FastAPI:
     app.include_router(seo.router, tags=["SEO"])  # No prefix - serves at root for crawlers
     app.include_router(portfolios.router, tags=["Portfolios"])
     app.include_router(quant_engine.router, tags=["Quant Engine"])
-    app.include_router(quant_engine.global_router, tags=["Quant Engine"])
+    app.include_router(quant_engine.global_router, prefix="/quant", tags=["Quant Engine"])
     app.include_router(strategy.router, prefix="/signals/strategy", tags=["Strategy Signals"])
     app.include_router(dip_entry.router, prefix="/signals/dip-entry", tags=["Dip Entry"])
     app.include_router(celery.router, tags=["Celery"])
@@ -225,5 +226,6 @@ def create_api_app() -> FastAPI:
     app.include_router(market.router, tags=["Market Data"])
     app.include_router(calendar.router, tags=["Calendar"])
     app.include_router(notifications.router, prefix="/notifications", tags=["Notifications"])
+    app.include_router(watchlists.router, tags=["Watchlists"])
 
     return app

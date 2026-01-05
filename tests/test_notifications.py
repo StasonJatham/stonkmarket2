@@ -66,7 +66,7 @@ class TestCreateChannelValidation:
                 "channel_type": "discord",
                 "apprise_url": "discord://webhook_id/token",
             })
-            assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+            assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
         finally:
             client.app.dependency_overrides.clear()
 
@@ -79,7 +79,7 @@ class TestCreateChannelValidation:
                 "channel_type": "invalid_type",
                 "apprise_url": "some://url-that-is-long-enough",
             })
-            assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+            assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
         finally:
             client.app.dependency_overrides.clear()
 
@@ -92,7 +92,7 @@ class TestCreateChannelValidation:
                 "channel_type": "discord",
                 "apprise_url": "short",  # Too short (min 10 chars)
             })
-            assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+            assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
         finally:
             client.app.dependency_overrides.clear()
 
@@ -137,7 +137,7 @@ class TestCreateRuleValidation:
                 "channel_id": 1,
                 "trigger_type": "INVALID_TRIGGER",
             })
-            assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+            assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
         finally:
             client.app.dependency_overrides.clear()
 
@@ -152,7 +152,7 @@ class TestCreateRuleValidation:
                 "trigger_type": "DIP_EXCEEDS_PERCENT",
                 "cooldown_minutes": 1,
             })
-            assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+            assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
         finally:
             client.app.dependency_overrides.clear()
 

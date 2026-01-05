@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, useMemo, type ReactNode } from 'react';
+import { createContext, useContext, useState, type ReactNode } from 'react';
 import { 
   login as authLogin, 
   logout as authLogout,
@@ -24,7 +24,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(() => getCurrentUser());
   const [isLoading, setIsLoading] = useState(false);
 
-  const login = useCallback(async (username: string, password: string, mfaCode?: string) => {
+  async function login(username: string, password: string, mfaCode?: string) {
     setIsLoading(true);
     try {
       await authLogin(username, password, mfaCode);
@@ -33,9 +33,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }
 
-  const logout = useCallback(async () => {
+  async function logout() {
     setIsLoading(true);
     try {
       await authLogout();
@@ -43,9 +43,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(null);
       setIsLoading(false);
     }
-  }, []);
+  }
 
-  const logoutAll = useCallback(async () => {
+  async function logoutAll() {
     setIsLoading(true);
     try {
       await authLogoutAll();
@@ -53,9 +53,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(null);
       setIsLoading(false);
     }
-  }, []);
+  }
 
-  const value = useMemo(() => ({
+  const value = {
     user,
     isAuthenticated: !!user,
     isAdmin: user?.is_admin ?? false,
@@ -63,7 +63,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     login,
     logout,
     logoutAll,
-  }), [user, isLoading, login, logout, logoutAll]);
+  };
 
   return (
     <AuthContext.Provider value={value}>

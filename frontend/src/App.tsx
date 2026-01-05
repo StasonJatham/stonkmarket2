@@ -26,7 +26,20 @@ const AboutPage = lazy(() => import('@/pages/About').then(m => ({ default: m.Abo
 const StockDetailPage = lazy(() => import('@/pages/StockDetail').then(m => ({ default: m.StockDetailPage })));
 const LearnPage = lazy(() => import('@/pages/Learn').then(m => ({ default: m.LearnPage })));
 const PortfolioPage = lazy(() => import('@/pages/Portfolio').then(m => ({ default: m.PortfolioPage })));
+const WatchlistPage = lazy(() => import('@/pages/Watchlist').then(m => ({ default: m.WatchlistPage })));
 const NotificationsPage = lazy(() => import('@/pages/Notifications').then(m => ({ default: m.NotificationsPage })));
+const SettingsLayout = lazy(() => import('@/pages/Settings').then(m => ({ default: m.SettingsLayout })));
+const PublicProfilePage = lazy(() => import('@/pages/PublicProfile').then(m => ({ default: m.PublicProfilePage })));
+const UserHomePage = lazy(() => import('@/pages/UserHome').then(m => ({ default: m.UserHomePage })));
+
+// Settings sub-pages
+const ProfileSettings = lazy(() => import('@/pages/settings/ProfileSettings').then(m => ({ default: m.ProfileSettings })));
+const SecuritySettings = lazy(() => import('@/pages/settings/SecuritySettings').then(m => ({ default: m.SecuritySettings })));
+const AppearanceSettings = lazy(() => import('@/pages/settings/AppearanceSettings').then(m => ({ default: m.AppearanceSettings })));
+const NotificationsSettings = lazy(() => import('@/pages/settings/NotificationsSettings').then(m => ({ default: m.NotificationsSettings })));
+const ApiKeySettings = lazy(() => import('@/pages/settings/ApiKeySettings').then(m => ({ default: m.ApiKeySettings })));
+const ConnectionSettings = lazy(() => import('@/pages/settings/ConnectionSettings').then(m => ({ default: m.ConnectionSettings })));
+const PrivacySettings = lazy(() => import('@/pages/settings/PrivacySettings').then(m => ({ default: m.PrivacySettings })));
 
 // Loading fallback component - minimal to avoid layout shift
 const PageLoader = memo(function PageLoader() {
@@ -68,6 +81,14 @@ function App() {
                     )}
                     <Route path="/contact" element={<ContactPage />} />
                     <Route
+                      path="/home"
+                      element={
+                        <ProtectedRoute>
+                          <UserHomePage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
                       path="/admin"
                       element={
                         <ProtectedRoute>
@@ -84,6 +105,14 @@ function App() {
                       }
                     />
                     <Route
+                      path="/watchlist"
+                      element={
+                        <ProtectedRoute>
+                          <WatchlistPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
                       path="/notifications"
                       element={
                         <ProtectedRoute>
@@ -91,6 +120,23 @@ function App() {
                         </ProtectedRoute>
                       }
                     />
+                    <Route
+                      path="/settings"
+                      element={
+                        <ProtectedRoute>
+                          <SettingsLayout />
+                        </ProtectedRoute>
+                      }
+                    >
+                      <Route path="profile" element={<ProfileSettings />} />
+                      <Route path="security" element={<SecuritySettings />} />
+                      <Route path="appearance" element={<AppearanceSettings />} />
+                      <Route path="notifications" element={<NotificationsSettings />} />
+                      <Route path="api-keys" element={<ApiKeySettings />} />
+                      <Route path="connections" element={<ConnectionSettings />} />
+                      <Route path="privacy" element={<PrivacySettings />} />
+                    </Route>
+                    <Route path="/u/:username" element={<PublicProfilePage />} />
                   </Route>
                 </Routes>
               </Suspense>
