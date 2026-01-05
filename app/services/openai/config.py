@@ -95,7 +95,7 @@ TASK_CONFIGS: dict[TaskType, TaskConfig] = {
         max_chars=0,
         reasoning_overhead=300,
         reasoning_max_chars=500,
-        default_max_tokens=500,
+        default_max_tokens=800,  # Increased from 500 - agents need more tokens for detailed analysis
     ),
     TaskType.PORTFOLIO: TaskConfig(
         min_chars=500,

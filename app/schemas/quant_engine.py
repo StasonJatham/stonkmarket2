@@ -10,6 +10,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.quant_engine.config import QUANT_LIMITS
+
 
 # ============================================================================
 # Evidence Block for APUS + DOUS Scoring
@@ -130,8 +132,8 @@ class SignalScanResponse(BaseModel):
     
     scanned_at: datetime = Field(..., description="Scan timestamp")
     holding_days_tested: list[int] = Field(
-        default_factory=lambda: [5, 10, 20, 40, 60],
-        description="Holding periods tested during optimization"
+        default_factory=lambda: list(QUANT_LIMITS.holding_days_range()),
+        description="Holding periods tested (1 to max_holding_days from central config)"
     )
     stocks: list[StockSignalResponse] = Field(
         ..., description="Stocks ranked by buy opportunity"

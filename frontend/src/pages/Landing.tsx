@@ -765,83 +765,6 @@ function BacktestProofCard({
   );
 }
 
-// Signal gallery mini card
-function SignalGalleryCard({
-  rec,
-  onClick,
-  index,
-}: {
-  rec: QuantRecommendation;
-  onClick: () => void;
-  index: number;
-}) {
-  const dipPct = rec.legacy_dip_pct ?? 0;
-  const recoveryOdds = rec.quant_evidence?.p_recovery ?? rec.win_rate ?? null;
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 16 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true }}
-      transition={{ duration: 0.35, delay: index * 0.08 }}
-    >
-      <Card
-        className="cursor-pointer transition-all hover:shadow-lg hover:border-primary/40 group overflow-hidden"
-        onClick={onClick}
-      >
-        <CardContent className="p-4">
-          <div className="flex items-center gap-3 mb-3">
-            <StockLogo symbol={rec.ticker} size="sm" />
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <span className="font-bold text-lg">{rec.ticker}</span>
-                <Badge variant={getActionBadgeVariant(rec.action)} className="text-xs h-5">
-                  {rec.action}
-                </Badge>
-              </div>
-              <p className="text-xs text-muted-foreground truncate">{rec.name}</p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2 text-xs mb-3">
-            <div className="bg-muted/50 rounded-md p-2">
-              <p className="text-muted-foreground">Dip</p>
-              <p className="font-mono font-bold text-danger">
-                {formatDipPercent(dipPct)}
-              </p>
-            </div>
-            <div className="bg-muted/50 rounded-md p-2">
-              <p className="text-muted-foreground">P(rec)</p>
-              <p className="font-mono font-bold text-success">
-                {formatOptionalPercent(recoveryOdds, 0)}
-              </p>
-            </div>
-          </div>
-
-          {rec.ai_summary && (
-            <p className="text-xs text-muted-foreground line-clamp-2">
-              <span className="font-medium text-foreground">AI: </span>
-              {rec.ai_summary}
-            </p>
-          )}
-
-          <div className="mt-3 flex items-center justify-between">
-            {rec.opportunity_type && rec.opportunity_type !== 'NONE' && (
-              <Badge variant="outline" className="text-xs">
-                {rec.opportunity_type}
-              </Badge>
-            )}
-            <Button variant="ghost" size="sm" className="ml-auto gap-1 text-xs h-7 opacity-0 group-hover:opacity-100 transition-opacity">
-              Analyze
-              <ChevronRight className="h-3 w-3" />
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-    </motion.div>
-  );
-}
-
 // Constants for signal board display
 const LANDING_SIGNAL_BOARD_COUNT = 4;
 
@@ -1020,10 +943,18 @@ export function Landing() {
                             <Activity className="h-4 w-4 text-emerald-600" />
                             Live Signal Briefing
                           </CardTitle>
-                          <Badge variant={getActionBadgeVariant(heroRec.action)} className="gap-1 text-xs">
-                            <ActionIcon action={heroRec.action} />
-                            {heroRec.action}
-                          </Badge>
+                          <div className="flex items-center gap-2">
+                            {heroSignalSummary?.beatsBuyHold && edgeVsBuyHold != null && (
+                              <Badge variant="default" className="gap-1 text-xs bg-success/90 hover:bg-success">
+                                <Trophy className="h-3 w-3" />
+                                +{Math.abs(edgeVsBuyHold).toFixed(0)}% vs B&H
+                              </Badge>
+                            )}
+                            <Badge variant={getActionBadgeVariant(heroRec.action)} className="gap-1 text-xs">
+                              <ActionIcon action={heroRec.action} />
+                              {heroRec.action}
+                            </Badge>
+                          </div>
                         </div>
 
                         {/* Top 3 Key Metrics - Trading Desk Style */}
@@ -1293,56 +1224,6 @@ export function Landing() {
             <Clock className="h-3 w-3 inline mr-1" />
             Data as of {new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} • Past performance does not guarantee future results
           </p>
-        </div>
-      </section>
-
-      {/* Signal Gallery Section */}
-      <section className="py-16 px-4 bg-muted/30">
-        <div className="container mx-auto max-w-5xl">
-          <motion.div
-            className="flex flex-col items-center text-center mb-10"
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            transition={{ duration: 0.5 }}
-          >
-            <h2 className="text-2xl md:text-3xl font-bold mb-3">
-              Today's signal gallery
-            </h2>
-            <p className="text-muted-foreground max-w-xl">
-              Real tickers with real dips and real AI analysis. This is what you're getting.
-            </p>
-          </motion.div>
-
-          {isLoading ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {Array.from({ length: 6 }).map((_, i) => (
-                <Card key={i}>
-                  <CardContent className="p-4">
-                    <Skeleton className="h-40 w-full" />
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {recommendations.slice(0, 6).map((rec, i) => (
-                <SignalGalleryCard
-                  key={rec.ticker}
-                  rec={rec}
-                  onClick={() => handleStockClick(rec.ticker)}
-                  index={i}
-                />
-              ))}
-            </div>
-          )}
-
-          <div className="flex justify-center mt-10">
-            <Button onClick={() => navigate('/dashboard')} className="gap-2">
-              Explore All Signals
-              <ArrowRight className="h-4 w-4" />
-            </Button>
-          </div>
         </div>
       </section>
 

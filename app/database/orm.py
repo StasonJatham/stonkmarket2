@@ -1406,8 +1406,9 @@ class QuantPrecomputed(Base):
     dip_entry_signal_reason: Mapped[str | None] = mapped_column(Text)
     dip_entry_recovery_days: Mapped[int | None] = mapped_column(Integer)
     dip_entry_threshold_analysis: Mapped[dict | None] = mapped_column(JSONB)
+    dip_entry_signal_triggers: Mapped[dict | None] = mapped_column(JSONB)  # Historical dip trades for chart
     
-    # Signal Triggers (for chart overlays)
+    # Signal Triggers (for chart overlays - technical strategy)
     signal_triggers: Mapped[dict | None] = mapped_column(JSONB)
     
     # Metadata

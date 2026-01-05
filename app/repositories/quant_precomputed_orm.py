@@ -294,6 +294,7 @@ async def upsert_all_quant_data(
             "dip_entry_signal_reason": dip_entry.get("signal_reason"),
             "dip_entry_recovery_days": dip_entry.get("recovery_days"),
             "dip_entry_threshold_analysis": dip_entry.get("threshold_analysis"),
+            "dip_entry_signal_triggers": dip_entry.get("signal_triggers"),
         })
     
     if signal_triggers is not None:
@@ -323,6 +324,7 @@ async def update_dip_entry(
     max_profit_threshold: float | None = None,
     max_profit_price: float | None = None,
     max_profit_total_return: float | None = None,
+    signal_triggers: dict[str, Any] | None = None,
 ) -> None:
     """Update dip entry data for a single symbol."""
     async with get_session() as session:
@@ -338,6 +340,7 @@ async def update_dip_entry(
             "dip_entry_signal_reason": signal_reason,
             "dip_entry_recovery_days": int(recovery_days),
             "dip_entry_threshold_analysis": threshold_analysis,
+            "dip_entry_signal_triggers": signal_triggers,
             "computed_at": datetime.now(),
         }
         

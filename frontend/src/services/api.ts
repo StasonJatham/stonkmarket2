@@ -3221,6 +3221,16 @@ export interface DipEntryBacktest {
   years_tested: number;
 }
 
+// Signal trigger for dip trade chart markers
+export interface DipSignalTrigger {
+  date: string;
+  signal_type: 'entry' | 'exit';
+  price: number;
+  threshold_pct: number;       // Decimal (e.g., -0.15 for 15% dip)
+  return_pct: number;          // Decimal (for exit signals)
+  holding_days: number;        // Days held (for exit signals)
+}
+
 export interface DipEntryResponse {
   symbol: string;
   current_price: number;
@@ -3250,6 +3260,8 @@ export interface DipEntryResponse {
   confidence: 'low' | 'medium' | 'high';
   outlier_events: number;
   threshold_analysis: DipThresholdStats[];
+  // Historical dip trade signals for chart overlay
+  signal_triggers: DipSignalTrigger[];
   analyzed_at: string;
 }
 

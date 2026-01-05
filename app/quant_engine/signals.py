@@ -23,6 +23,7 @@ import numpy as np
 import pandas as pd
 
 # Import shared indicator functions from centralized module
+from app.quant_engine.config import QUANT_LIMITS
 from app.quant_engine.indicators import (
     compute_sma,
     compute_ema,
@@ -690,7 +691,7 @@ def optimize_signal_params_walkforward(
     signal: pd.Series,
     direction: str,
     threshold_range: list[float],
-    holding_days_options: list[int] = [10, 20, 40, 60, 90, 120],
+    holding_days_options: list[int] | None = None,
     min_signals: int = 3,
     n_folds: int = 4,
     train_ratio: float = 0.7,
@@ -704,6 +705,9 @@ def optimize_signal_params_walkforward(
     
     Returns: (optimal_threshold, optimal_holding_days, oos_results, stability_info)
     """
+    if holding_days_options is None:
+        holding_days_options = list(QUANT_LIMITS.holding_days_range())
+    
     n = len(prices)
     if n < 252:  # Need at least 1 year
         return threshold_range[0], 20, {}, {"is_stable": False}
@@ -826,7 +830,7 @@ def optimize_signal_params(
     signal: pd.Series,
     direction: str,
     threshold_range: list[float],
-    holding_days_options: list[int] = [10, 20, 40, 60, 90, 120],
+    holding_days_options: list[int] | None = None,
     min_signals: int = 5,
     use_walkforward: bool = True,
 ) -> tuple[float, int, dict]:
@@ -838,6 +842,9 @@ def optimize_signal_params(
     
     Returns: (optimal_threshold, optimal_holding_days, backtest_results)
     """
+    if holding_days_options is None:
+        holding_days_options = list(QUANT_LIMITS.holding_days_range())
+    
     if use_walkforward and len(prices) >= 252:
         # Use walk-forward validation (recommended)
         opt_thresh, opt_hold, oos_results, stability = optimize_signal_params_walkforward(
@@ -857,9 +864,12 @@ def optimize_signal_params(
 def evaluate_signal_for_stock(
     price_data: dict[str, pd.Series],
     signal_config: dict,
-    holding_days_options: list[int] = [10, 20, 40, 60, 90, 120],
+    holding_days_options: list[int] | None = None,
 ) -> OptimizedSignal | None:
     """Evaluate and optimize a single signal for a stock."""
+    if holding_days_options is None:
+        holding_days_options = list(QUANT_LIMITS.holding_days_range())
+    
     try:
         # Compute signal values
         signal_values = signal_config["compute"](price_data)
@@ -1049,13 +1059,16 @@ def analyze_stock(
     symbol: str,
     name: str,
     price_data: dict[str, pd.Series],
-    holding_days_options: list[int] = [10, 20, 40, 60, 90, 120],
+    holding_days_options: list[int] | None = None,
 ) -> StockOpportunity:
     """
     Complete analysis for a single stock.
     
     Evaluates all signals, optimizes parameters, and generates recommendations.
     """
+    if holding_days_options is None:
+        holding_days_options = list(QUANT_LIMITS.holding_days_range())
+    
     prices = price_data["close"]
     
     if len(prices) < 252:
@@ -1185,7 +1198,7 @@ def analyze_stock(
 def scan_all_stocks(
     price_data: dict[str, pd.Series],
     stock_names: dict[str, str],
-    holding_days_options: list[int] = [10, 20, 40, 60, 90, 120],
+    holding_days_options: list[int] | None = None,
 ) -> list[StockOpportunity]:
     """
     Scan all stocks and rank by opportunity.
@@ -1204,6 +1217,9 @@ def scan_all_stocks(
     list[StockOpportunity]
         Stocks ranked by buy_score (highest first).
     """
+    if holding_days_options is None:
+        holding_days_options = list(QUANT_LIMITS.holding_days_range())
+    
     results = []
     
     for symbol, prices in price_data.items():
@@ -1283,7 +1299,7 @@ def get_historical_triggers(
                 signal_values,
                 direction,
                 config["threshold_range"],
-                holding_days_options=[10, 20, 40, 60, 90, 120],
+                holding_days_options=list(QUANT_LIMITS.holding_days_range()),
             )
             
             if opt_results.get("n_signals", 0) < min_signals:

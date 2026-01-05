@@ -30,31 +30,32 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Literal
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
+
+from app.quant_engine.config import QUANT_LIMITS
 
 logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# Configuration - Hyperparameters for future optimization
+# Configuration
 # =============================================================================
 
 
 @dataclass
 class DipOptimizerConfig:
     """
-    Configurable parameters for the dip entry optimizer.
+    Configuration for the dip entry optimizer.
     
-    All values have sensible defaults but can be tuned via hyperparameter
-    optimization in the future.
+    All holding period limits come from QUANT_LIMITS (central config).
+    Other parameters control scoring and filtering behavior.
+    
+    Holding periods are tested from 1 to max_holding_days (every single day).
+    The optimal period is DISCOVERED per symbol via Sharpe optimization.
     """
-    # Holding periods for return calculations
-    holding_periods: tuple[int, ...] = (30, 60, 90)
-    primary_holding_period: int = 90  # Used for Sharpe/Sortino
-    secondary_holding_period: int = 60  # For backward compatibility
     
     # Risk metrics
     cvar_percentile: float = 0.95  # 95% CVaR (worst 5% of returns)
@@ -78,18 +79,45 @@ class DipOptimizerConfig:
     weight_frequency: float = 0.15
     weight_recovery: float = 0.10
     
-    # Lookback and recovery
-    lookback_years: int = 5
-    max_recovery_days: int = 90  # Max days we're willing to wait for recovery
+    # Recovery threshold
     recovery_win_threshold: float = 80.0  # 80% = recovered 80% of the drop counts as "win"
-    min_dips_for_stats: int = 2
-    
-    # Confidence thresholds
-    min_years_high_confidence: int = 3  # Flag as "low confidence" if less
     
     # Optimal threshold selection
     min_optimal_threshold: float = -5.0  # Don't consider dips shallower than this as "optimal"
     min_occurrences_for_optimal: int = 3  # Need at least this many occurrences
+    
+    # =========================================================================
+    # All limits come from central config - NO hardcoded values here
+    # =========================================================================
+    
+    @property
+    def max_holding_days(self) -> int:
+        """Maximum holding period from central config."""
+        return QUANT_LIMITS.max_holding_days
+    
+    @property
+    def holding_periods(self) -> tuple[int, ...]:
+        """Full range of holding periods to test: 1, 2, 3, ..., max.
+        
+        Tests EVERY day from 1 to max_holding_days.
+        The optimal period is DISCOVERED per symbol by Sharpe optimization.
+        """
+        return tuple(QUANT_LIMITS.holding_days_range())
+    
+    @property
+    def lookback_years(self) -> int:
+        """Lookback period from central config."""
+        return QUANT_LIMITS.lookback_years
+    
+    @property
+    def min_dips_for_stats(self) -> int:
+        """Minimum samples from central config."""
+        return QUANT_LIMITS.min_samples_for_stats
+    
+    @property
+    def min_years_high_confidence(self) -> int:
+        """Minimum years for confidence from central config."""
+        return QUANT_LIMITS.min_years_for_confidence
 
 
 # =============================================================================
@@ -137,31 +165,6 @@ class DipEvent:
     
     # Outlier flag
     is_outlier: bool = False
-    
-    # Legacy compatibility properties
-    @property
-    def dip_date(self) -> datetime:
-        return self.entry_date
-    
-    @property
-    def dip_price(self) -> float:
-        return self.entry_price
-    
-    @property
-    def drawdown_pct(self) -> float:
-        return self.threshold_crossed
-    
-    @property
-    def return_30d(self) -> float | None:
-        return self.returns.get(30)
-    
-    @property
-    def return_60d(self) -> float | None:
-        return self.returns.get(60)
-    
-    @property
-    def return_90d(self) -> float | None:
-        return self.returns.get(90)
 
 
 @dataclass
@@ -200,52 +203,14 @@ class DipThresholdStats:
     avg_days_to_threshold: float = 0.0  # Avg days to hit recovery threshold
     avg_recovery_velocity: float = 0.0  # Avg recovery_pct / days (higher = faster)
     
-    # Legacy compatibility
-    @property
-    def avg_return_30d(self) -> float:
-        return self.avg_returns.get(30, 0.0)
-    
-    @property
-    def avg_return_60d(self) -> float:
-        return self.avg_returns.get(60, 0.0)
-    
-    @property
-    def avg_return_90d(self) -> float:
-        return self.avg_returns.get(90, 0.0)
-    
-    @property
-    def win_rate_30d(self) -> float:
-        return self.win_rates.get(30, 0.0)
-    
-    @property
-    def win_rate_60d(self) -> float:
-        return self.win_rates.get(60, 0.0)
-    
-    @property
-    def win_rate_90d(self) -> float:
-        return self.win_rates.get(90, 0.0)
-    
     # Risk metrics - Maximum Adverse Excursion
     max_further_drawdown: float = 0.0  # Worst MAE across all events
     avg_further_drawdown: float = 0.0  # Average MAE
     
     # Risk-adjusted metrics (keyed by holding period)
-    sharpe_ratios: dict[int, float] = field(default_factory=dict)  # {60: 0.8, 90: 1.2}
-    sortino_ratios: dict[int, float] = field(default_factory=dict)  # {60: 1.0, 90: 1.5}
-    cvar: dict[int, float] = field(default_factory=dict)  # {60: -5.2, 90: -3.1}
-    
-    # Legacy compatibility
-    @property
-    def sharpe_ratio(self) -> float:
-        return self.sharpe_ratios.get(90, 0.0)
-    
-    @property
-    def sortino_ratio(self) -> float:
-        return self.sortino_ratios.get(90, 0.0)
-    
-    @property
-    def cvar_95(self) -> float:
-        return self.cvar.get(90, 0.0)
+    sharpe_ratios: dict[int, float] = field(default_factory=dict)
+    sortino_ratios: dict[int, float] = field(default_factory=dict)
+    cvar: dict[int, float] = field(default_factory=dict)
     
     # Continuation probability
     prob_further_drop: float = 0.0  # P(drops another X% after entry)
@@ -267,18 +232,18 @@ class DipThresholdStats:
     
     @property
     def optimal_holding_days(self) -> int:
-        """Find the optimal holding period (30, 60, or 90 days) based on Sharpe ratio.
+        """Find the optimal holding period based on Sharpe ratio.
         
-        The optimal period balances:
+        The optimal period is DISCOVERED by testing a full range (5, 10, 15, ... max)
+        and selecting the period with the best risk-adjusted returns.
+        
+        This balances:
         - Higher returns (longer holds)
         - Risk-adjusted performance (Sharpe ratio)
         - Capital efficiency (shorter holds = more trades possible)
-        
-        We use Sharpe ratio as the primary metric because it captures
-        risk-adjusted returns per unit of time.
         """
         if not self.sharpe_ratios:
-            return 90  # Default fallback
+            return 60  # Default fallback
         
         # Find period with best Sharpe ratio
         best_period = 90
@@ -387,7 +352,7 @@ class DipEntryOptimizer:
     - Outlier filtering for black swan events
     
     Usage:
-        config = DipOptimizerConfig(primary_holding_period=90)
+        config = DipOptimizerConfig(max_holding_days=60)
         optimizer = DipEntryOptimizer(config=config)
         result = optimizer.analyze(df, "NVDA", fundamentals)
         
@@ -395,38 +360,17 @@ class DipEntryOptimizer:
         print(f"Set limit order at: ${result.optimal_entry_price}")
     """
     
-    # Dynamic thresholds: test every percentage from 1% to 50%
-    DIP_THRESHOLDS = list(range(-1, -51, -1))  # [-1, -2, -3, ..., -50]
+    # Dynamic thresholds from central config: test every % from 1 to max
+    DIP_THRESHOLDS = list(QUANT_LIMITS.dip_thresholds_range())  # [-1, -2, -3, ..., -50]
     
-    def __init__(
-        self,
-        config: DipOptimizerConfig | None = None,
-        # Legacy parameters for backward compatibility
-        lookback_years: int | None = None,
-        max_recovery_days: int | None = None,
-        min_dips_for_stats: int | None = None,
-    ):
+    def __init__(self, config: DipOptimizerConfig | None = None):
         """
+        Initialize the dip entry optimizer.
+        
         Args:
-            config: Configuration object with all parameters
-            lookback_years: (Legacy) Years of history to analyze
-            max_recovery_days: (Legacy) Max days to wait for recovery
-            min_dips_for_stats: (Legacy) Minimum dip occurrences for valid stats
+            config: Configuration object (uses defaults from QUANT_LIMITS if None)
         """
         self.config = config or DipOptimizerConfig()
-        
-        # Apply legacy overrides if provided
-        if lookback_years is not None:
-            self.config.lookback_years = lookback_years
-        if max_recovery_days is not None:
-            self.config.max_recovery_days = max_recovery_days
-        if min_dips_for_stats is not None:
-            self.config.min_dips_for_stats = min_dips_for_stats
-        
-        # Shortcuts for frequently used config values
-        self.lookback_years = self.config.lookback_years
-        self.max_recovery_days = self.config.max_recovery_days
-        self.min_dips_for_stats = self.config.min_dips_for_stats
     
     def analyze(
         self,
@@ -473,7 +417,7 @@ class DipEntryOptimizer:
         threshold_stats = []
         for threshold in self.DIP_THRESHOLDS:
             stats = self._calculate_threshold_stats(all_dip_events, threshold, df)
-            if stats.n_occurrences >= self.min_dips_for_stats:
+            if stats.n_occurrences >= self.config.min_dips_for_stats:
                 threshold_stats.append(stats)
         
         # Find RISK-ADJUSTED optimal threshold (less pain, better timing)
@@ -1668,4 +1612,112 @@ def get_dip_summary(result: OptimalDipEntry) -> dict:
             }
             for s in result.threshold_stats
         ],
+    }
+
+
+def get_dip_signal_triggers(result: OptimalDipEntry) -> dict[str, Any]:
+    """Convert OptimalDipEntry to signal triggers for chart overlay.
+    
+    Returns a dict matching the format expected by the API:
+    {
+        "threshold_pct": -0.15,
+        "n_trades": 8,
+        "win_rate": 0.75,
+        "total_return_pct": 0.45,
+        "triggers": [
+            {"date": "2024-01-15", "signal_type": "entry", "price": 145.50, ...},
+            {"date": "2024-02-20", "signal_type": "exit", "price": 158.30, ...},
+        ]
+    }
+    """
+    triggers = []
+    
+    # Use max profit threshold for determining which dips to show
+    # (this is the threshold that the backtest is based on)
+    target_threshold = result.max_profit_threshold
+    if not target_threshold:
+        target_threshold = result.optimal_dip_threshold
+    if not target_threshold:
+        return {"threshold_pct": 0.0, "n_trades": 0, "triggers": []}
+    
+    # Get events that match the target threshold
+    # recent_dips are DipEvent objects from historical analysis
+    matching_events = [
+        e for e in result.recent_dips
+        if abs(e.threshold_crossed - target_threshold) < 2.0  # Within 2% of target
+    ]
+    
+    # Also include events at exactly the threshold from all threshold stats
+    for event in result.recent_dips:
+        if event not in matching_events:
+            # Include if close to target threshold
+            if abs(event.threshold_crossed - target_threshold) < 5.0:
+                matching_events.append(event)
+    
+    # Sort by entry date
+    matching_events.sort(key=lambda e: e.entry_date)
+    
+    # Compute metrics for these specific events
+    n_trades = len(matching_events)
+    wins = 0
+    total_return = 0.0
+    
+    for event in matching_events:
+        # Get optimal holding period return
+        optimal_holding = getattr(result, "typical_recovery_days", 60) or 60
+        optimal_holding = min(60, max(1, int(optimal_holding)))
+        
+        # Try to get return at optimal holding, fallback to best available
+        trade_return = event.returns.get(optimal_holding)
+        if trade_return is None:
+            # Try nearby periods
+            for period in [60, 40, 30, 20]:
+                trade_return = event.returns.get(period)
+                if trade_return is not None:
+                    optimal_holding = period
+                    break
+        
+        if trade_return is None:
+            trade_return = event.max_return or 0.0
+        
+        is_win = trade_return > 0
+        if is_win:
+            wins += 1
+        total_return += trade_return
+        
+        # Add entry trigger
+        entry_date_str = event.entry_date.strftime("%Y-%m-%d") if hasattr(event.entry_date, "strftime") else str(event.entry_date)[:10]
+        triggers.append({
+            "date": entry_date_str,
+            "signal_type": "entry",
+            "price": event.entry_price,
+            "threshold_pct": event.threshold_crossed / 100.0,  # Convert to decimal
+            "return_pct": 0.0,
+            "holding_days": 0,
+        })
+        
+        # Add exit trigger (entry_date + optimal holding days)
+        exit_date = event.entry_date + timedelta(days=optimal_holding) if hasattr(event.entry_date, "__add__") else None
+        if exit_date:
+            exit_date_str = exit_date.strftime("%Y-%m-%d") if hasattr(exit_date, "strftime") else str(exit_date)[:10]
+            # Estimate exit price from return
+            exit_price = event.entry_price * (1 + trade_return / 100.0) if trade_return else event.entry_price
+            triggers.append({
+                "date": exit_date_str,
+                "signal_type": "exit",
+                "price": round(exit_price, 2),
+                "threshold_pct": event.threshold_crossed / 100.0,
+                "return_pct": trade_return / 100.0 if trade_return else 0.0,  # Convert to decimal
+                "holding_days": optimal_holding,
+            })
+    
+    win_rate = wins / n_trades if n_trades > 0 else 0.0
+    avg_return = total_return / n_trades if n_trades > 0 else 0.0
+    
+    return {
+        "threshold_pct": target_threshold / 100.0,  # Convert to decimal
+        "n_trades": n_trades,
+        "win_rate": win_rate,
+        "total_return_pct": total_return / 100.0,  # Convert to decimal
+        "triggers": triggers,
     }

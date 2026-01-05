@@ -218,7 +218,7 @@ export const AgentVerdictSchema = z.object({
   confidence: z.number(),
   reasoning: z.string(),
   key_factors: z.array(z.string()),
-  avatar_url: z.string().optional(),
+  avatar_url: z.string().nullable().optional(),
 });
 
 export type AgentVerdict = z.infer<typeof AgentVerdictSchema>;

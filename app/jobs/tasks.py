@@ -509,7 +509,7 @@ def precompute_dip_entry_task(symbol: str) -> str:
     from datetime import date, timedelta
     
     from app.core.logging import get_logger
-    from app.quant_engine.dip_entry_optimizer import DipEntryOptimizer, get_dip_summary
+    from app.quant_engine.dip_entry_optimizer import DipEntryOptimizer, get_dip_summary, get_dip_signal_triggers
     from app.repositories import price_history_orm as price_history_repo
     from app.repositories import quant_precomputed_orm as quant_repo
     from app.repositories import symbols_orm
@@ -541,6 +541,7 @@ def precompute_dip_entry_task(symbol: str) -> str:
         optimizer = DipEntryOptimizer()
         result = optimizer.analyze(df, symbol_upper, None, min_dip_threshold=min_dip_threshold)
         summary = get_dip_summary(result)
+        signal_triggers = get_dip_signal_triggers(result)
         
         # Update quant_precomputed table
         await quant_repo.update_dip_entry(
@@ -555,6 +556,7 @@ def precompute_dip_entry_task(symbol: str) -> str:
             signal_reason=summary["signal_reason"],
             recovery_days=summary["typical_recovery_days"],
             threshold_analysis=summary["threshold_analysis"],
+            signal_triggers=signal_triggers,
         )
         
         return f"Precomputed dip entry for {symbol_upper}"

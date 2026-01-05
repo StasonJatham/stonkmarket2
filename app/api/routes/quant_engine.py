@@ -1595,7 +1595,6 @@ async def scan_signals() -> SignalScanResponse:
     from app.cache.cache import Cache
     
     cache = Cache(prefix="signals", default_ttl=86400)
-    holding_days_options = [5, 10, 20, 40, 60]
     
     # Try to get cached results
     cached = await cache.get("daily_scan")

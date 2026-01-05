@@ -31,6 +31,7 @@ import pandas as pd
 from scipy import stats
 
 # Import shared indicator functions
+from app.quant_engine.config import QUANT_LIMITS
 from app.quant_engine.indicators import (
     prepare_price_dataframe,
     compute_indicators,
@@ -75,7 +76,7 @@ class TradingConfig:
     # Risk management
     stop_loss_pct: float = 0.15        # 15% stop loss
     take_profit_pct: float = 0.30      # 30% take profit (optional)
-    max_holding_days: int = 120        # Max holding period
+    max_holding_days: int = QUANT_LIMITS.max_holding_days  # From central config
     
     # Optimization
     min_trades_for_significance: int = 30  # Min trades for statistical validity
@@ -100,7 +101,7 @@ class TradingConfig:
             slippage_bps=settings.get("trading_slippage_bps", 5.0),
             stop_loss_pct=settings.get("trading_stop_loss_pct", 15.0) / 100,
             take_profit_pct=settings.get("trading_take_profit_pct", 30.0) / 100,
-            max_holding_days=settings.get("trading_max_holding_days", 120),
+            max_holding_days=settings.get("trading_max_holding_days", 60),
             min_trades_for_significance=settings.get("trading_min_trades_required", 30),
             train_ratio=settings.get("trading_train_ratio", 0.70),
             n_folds=settings.get("trading_walk_forward_folds", 5),
@@ -649,86 +650,122 @@ def strategy_pullback_in_uptrend(df: pd.DataFrame, params: dict) -> pd.Series:
     return entry.astype(int)
 
 
-# Strategy registry
-STRATEGIES: dict[str, tuple[StrategyFunc, dict, dict]] = {
-    # (function, default_params, param_search_space)
-    "mean_reversion_rsi": (
-        strategy_mean_reversion_rsi,
-        {"rsi_period": 14, "oversold_threshold": 30},
-        {"oversold_threshold": (20, 40), "rsi_period": [7, 14, 21]},
-    ),
-    "mean_reversion_bollinger": (
-        strategy_mean_reversion_bollinger,
-        {"bb_threshold": 0.05},
-        {"bb_threshold": (0.0, 0.15)},
-    ),
-    "mean_reversion_zscore": (
-        strategy_mean_reversion_zscore,
-        {"zscore_window": 20, "zscore_threshold": -2.0},
-        {"zscore_threshold": (-3.0, -1.0), "zscore_window": [10, 20, 50]},
-    ),
-    "momentum_macd": (
-        strategy_momentum_macd,
-        {},
-        {},
-    ),
-    "momentum_breakout": (
-        strategy_momentum_breakout,
-        {"breakout_window": 20},
-        {"breakout_window": (10, 60)},
-    ),
-    "trend_following_ma": (
-        strategy_trend_following_ma_cross,
-        {"fast_ma": 20, "slow_ma": 50},
-        {"fast_ma": [5, 10, 20], "slow_ma": [20, 50, 100]},
-    ),
-    "drawdown_buy": (
-        strategy_drawdown_buy,
-        {"drawdown_threshold": -0.15},
-        {"drawdown_threshold": (-0.30, -0.10)},
-    ),
-    "stochastic_oversold": (
-        strategy_stochastic_oversold,
-        {"stoch_oversold": 20},
-        {"stoch_oversold": (10, 30)},
-    ),
-    "combined_oversold": (
-        strategy_combined_oversold,
-        {"rsi_threshold": 35, "bb_threshold": 0.2, "zscore_threshold": -1.5},
-        {"rsi_threshold": (25, 40), "bb_threshold": (0.1, 0.3), "zscore_threshold": (-2.5, -1.0)},
-    ),
-    "volatility_contraction": (
-        strategy_volatility_contraction,
-        {"atr_lookback": 20},
-        {"atr_lookback": (10, 40)},
-    ),
-    # NEW: Crash protection & regime-aware strategies (designed to beat B&H)
-    "trend_regime_filter": (
-        strategy_trend_regime_filter,
-        {"regime_ma": 200, "momentum_days": 20},
-        {"regime_ma": [100, 150, 200], "momentum_days": (10, 40)},
-    ),
-    "crash_avoidance_momentum": (
-        strategy_crash_avoidance_momentum,
-        {"ma_period": 50, "momentum_days": 10, "vol_threshold": 2.0},
-        {"ma_period": [20, 50, 100], "momentum_days": (5, 20), "vol_threshold": (1.5, 3.0)},
-    ),
-    "golden_cross_confirmed": (
-        strategy_golden_cross_confirmed,
-        {},
-        {},
-    ),
-    "adaptive_momentum": (
-        strategy_adaptive_momentum,
-        {"lookback": 20, "threshold": 0.05},
-        {"lookback": [10, 20, 40], "threshold": (0.02, 0.10)},
-    ),
-    "pullback_in_uptrend": (
-        strategy_pullback_in_uptrend,
-        {"trend_ma": 100, "rsi_threshold": 40},
-        {"trend_ma": [50, 100, 150], "rsi_threshold": (30, 50)},
-    ),
-}
+# Strategy registry - NO HARDCODED DEFAULTS
+# All parameter ranges come from QUANT_LIMITS for hyperparameter optimization
+# Format: (function, default_params, param_search_space)
+# NOTE: default_params are ONLY used as fallback if optimization fails
+# The optimizer tests ALL values in param_search_space and finds the best
+def _build_strategy_registry() -> dict[str, tuple[StrategyFunc, dict, dict]]:
+    """Build strategy registry with ranges from QUANT_LIMITS."""
+    L = QUANT_LIMITS  # Shorthand
+    
+    return {
+        "mean_reversion_rsi": (
+            strategy_mean_reversion_rsi,
+            {},  # No defaults - must optimize
+            {
+                "oversold_threshold": L.rsi_oversold_range,
+                "rsi_period": [7, 14, 21, 28],
+            },
+        ),
+        "mean_reversion_bollinger": (
+            strategy_mean_reversion_bollinger,
+            {},
+            {"bb_threshold": L.bb_lower_threshold_range},
+        ),
+        "mean_reversion_zscore": (
+            strategy_mean_reversion_zscore,
+            {},
+            {
+                "zscore_threshold": L.zscore_threshold_range,
+                "zscore_window": [10, 20, 30, 50],
+            },
+        ),
+        "momentum_macd": (
+            strategy_momentum_macd,
+            {},
+            {},
+        ),
+        "momentum_breakout": (
+            strategy_momentum_breakout,
+            {},
+            {"breakout_window": L.breakout_window_range},
+        ),
+        "trend_following_ma": (
+            strategy_trend_following_ma_cross,
+            {},
+            {
+                "fast_ma": list(L.ma_periods_fast),
+                "slow_ma": list(L.ma_periods_slow),
+            },
+        ),
+        "drawdown_buy": (
+            strategy_drawdown_buy,
+            {},
+            {"drawdown_threshold": (L.drawdown_threshold_range[1] / -100.0, L.drawdown_threshold_range[0] / -100.0)},
+        ),
+        "stochastic_oversold": (
+            strategy_stochastic_oversold,
+            {},
+            {"stoch_oversold": L.stochastic_oversold_range},
+        ),
+        "combined_oversold": (
+            strategy_combined_oversold,
+            {},
+            {
+                "rsi_threshold": L.rsi_oversold_range,
+                "bb_threshold": L.bb_lower_threshold_range,
+                "zscore_threshold": L.zscore_threshold_range,
+            },
+        ),
+        "volatility_contraction": (
+            strategy_volatility_contraction,
+            {},
+            {"atr_lookback": L.atr_lookback_range},
+        ),
+        # Crash protection & regime-aware strategies
+        "trend_regime_filter": (
+            strategy_trend_regime_filter,
+            {},
+            {
+                "regime_ma": list(L.ma_periods_slow),
+                "momentum_days": L.momentum_days_range,
+            },
+        ),
+        "crash_avoidance_momentum": (
+            strategy_crash_avoidance_momentum,
+            {},
+            {
+                "ma_period": list(L.ma_periods_slow)[:5],  # First 5 slow MA values
+                "momentum_days": L.momentum_days_range,
+                "vol_threshold": L.volatility_threshold_range,
+            },
+        ),
+        "golden_cross_confirmed": (
+            strategy_golden_cross_confirmed,
+            {},
+            {},
+        ),
+        "adaptive_momentum": (
+            strategy_adaptive_momentum,
+            {},
+            {
+                "lookback": [10, 20, 30, 40, 50],
+                "threshold": (0.02, 0.12),
+            },
+        ),
+        "pullback_in_uptrend": (
+            strategy_pullback_in_uptrend,
+            {},
+            {
+                "trend_ma": list(L.ma_periods_slow)[:5],
+                "rsi_threshold": L.rsi_oversold_range,
+            },
+        ),
+    }
+
+
+STRATEGIES = _build_strategy_registry()
 
 
 # =============================================================================
@@ -1126,8 +1163,8 @@ class BacktestEngine:
                     # Categorical
                     params[param_name] = trial.suggest_categorical(param_name, space)
             
-            # Also optimize holding days
-            holding_days = trial.suggest_int("holding_days", 5, 120)
+            # Also optimize holding days (capped at 60 for capital efficiency)
+            holding_days = trial.suggest_int("holding_days", 5, 60)
             
             result = self.backtest_strategy(df, strategy_name, params, holding_days)
             

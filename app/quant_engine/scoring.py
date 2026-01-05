@@ -29,6 +29,8 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
+from app.quant_engine.config import QUANT_LIMITS
+
 logger = logging.getLogger(__name__)
 
 # =============================================================================
@@ -232,7 +234,7 @@ def generate_historical_weights(
                 train_signal,
                 config["direction"],
                 config["threshold_range"],
-                holding_days_options=[10, 20, 40, 60],
+                holding_days_options=list(QUANT_LIMITS.holding_days_range()),
             )
             
             if opt_results.get("n_signals", 0) < 3:

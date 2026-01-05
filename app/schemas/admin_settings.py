@@ -123,7 +123,7 @@ class RuntimeSettingsResponse(BaseModel):
         default=30.0, ge=5, le=100, description="Take profit percentage"
     )
     trading_max_holding_days: int = Field(
-        default=120, ge=5, le=365, description="Maximum holding period in days"
+        default=60, ge=5, le=365, description="Maximum holding period in days (60d optimal for capital efficiency)"
     )
     trading_min_trades_required: int = Field(
         default=30, ge=10, le=200, description="Minimum trades for statistical significance"

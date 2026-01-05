@@ -26,6 +26,7 @@ from app.dipfinder.signal import (
     AlertLevel,
 )
 from app.dipfinder.config import DipFinderConfig
+from app.quant_engine.config import QUANT_LIMITS
 
 logger = get_logger("dipfinder.backtest")
 
@@ -152,7 +153,7 @@ class BacktestConfig:
     # Trade parameters
     stop_loss_pct: float = 0.10  # 10% stop loss
     take_profit_pct: float = 0.20  # 20% take profit
-    max_holding_days: int = 60  # Max holding period
+    max_holding_days: int = QUANT_LIMITS.max_holding_days  # From central config
     
     # Walk-forward settings
     n_folds: int = 5

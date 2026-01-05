@@ -403,7 +403,7 @@ export function StockDetailsPanel({
   // Only show signals if they beat buy-and-hold (have positive edge)
   const signalsBeatBuyHold = signalsResponse?.beats_buy_hold ?? false;
 
-  // Find signal trigger points that match chart dates
+  // Find signal trigger points that match chart dates (for technical strategy)
   const signalPoints = (() => {
     // Don't show signals if:
     // 1. User toggled them off
@@ -421,6 +421,31 @@ export function StockDetailsPanel({
       .map(point => ({
         ...point,
         signal: signalMap.get(point.date)!,
+      }));
+  })();
+
+  // Find dip signal trigger points that match chart dates (for dip strategy)
+  // Only show when no valid technical strategy is available
+  const dipSignalPoints = (() => {
+    // Show dip signals when:
+    // 1. User has signals toggled on
+    // 2. No valid technical strategy OR strategy doesn't beat B&H
+    // 3. Dip entry data with signal triggers is available
+    const showDipSignals = showSignals && (!hasValidStrategy || !signalsBeatBuyHold);
+    const dipTriggers = dipEntry?.signal_triggers ?? [];
+    
+    if (!showDipSignals || dipTriggers.length === 0 || formattedChartData.length === 0) return [];
+    
+    // Create a map of date -> signal for quick lookup
+    const dipSignalMap = new Map<string, typeof dipTriggers[0]>();
+    dipTriggers.forEach(s => dipSignalMap.set(s.date, s));
+    
+    // Find chart points that have matching signals
+    return formattedChartData
+      .filter(point => dipSignalMap.has(point.date))
+      .map(point => ({
+        ...point,
+        signal: dipSignalMap.get(point.date)!,
       }));
   })();
 
@@ -802,6 +827,64 @@ export function StockDetailsPanel({
                           }}
                         >
                           {`${expectedValue >= 0 ? '+' : ''}${expectedValue.toFixed(0)}% EV`}
+                        </RechartsLabel>
+                        )}
+                      </ReferenceDot>
+                    );})}
+                    {/* Dip strategy buy/sell signal dots (shown when no valid technical strategy) */}
+                    {dotsVisible && showSignals && dipSignalPoints.map((point, idx) => {
+                      const isEntry = point.signal.signal_type === 'entry';
+                      const dotColor = isEntry ? 'var(--success)' : 'var(--danger)';
+                      const signalIcon = isEntry ? '▲' : '▼';
+                      const typeLabel = isEntry ? 'BUY DIP' : 'SELL';
+                      const thresholdPct = Math.abs(point.signal.threshold_pct * 100).toFixed(0);
+                      
+                      return (
+                      <ReferenceDot
+                        key={`dip-signal-${idx}`}
+                        x={point.displayDate}
+                        y={point.close}
+                        r={isEntry ? 8 : 6}
+                        fill={dotColor}
+                        stroke="var(--background)"
+                        strokeWidth={2}
+                        shape={(props: { cx?: number; cy?: number }) => {
+                          const { cx = 0, cy = 0 } = props;
+                          const signal = point.signal;
+                          const tooltipText = isEntry 
+                            ? `${signalIcon} ${typeLabel}\n` +
+                              `Dip Threshold: -${thresholdPct}%\n` +
+                              `Entry Price: $${signal.price.toFixed(2)}`
+                            : `${signalIcon} ${typeLabel}\n` +
+                              `Return: ${(signal.return_pct * 100) >= 0 ? '+' : ''}${(signal.return_pct * 100).toFixed(1)}%\n` +
+                              `Held: ${signal.holding_days} days\n` +
+                              `Exit Price: $${signal.price.toFixed(2)}`;
+                          return (
+                            <g style={{ cursor: 'pointer' }}>
+                              <title>{tooltipText}</title>
+                              <circle
+                                cx={cx}
+                                cy={cy}
+                                r={isEntry ? 8 : 6}
+                                fill={dotColor}
+                                stroke="var(--background)"
+                                strokeWidth={2}
+                              />
+                            </g>
+                          );
+                        }}
+                      >
+                        {isEntry && (
+                        <RechartsLabel
+                          position="top"
+                          offset={10}
+                          style={{
+                            fontSize: 9,
+                            fill: 'var(--foreground)',
+                            fontWeight: 600,
+                          }}
+                        >
+                          {`-${thresholdPct}% dip`}
                         </RechartsLabel>
                         )}
                       </ReferenceDot>

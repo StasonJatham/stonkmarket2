@@ -1103,9 +1103,13 @@ def _simulate_trades_with_exit(
     df: pd.DataFrame,
     entry_trigger: pd.Series,
     exit_name: str,
-    max_hold: int = 100,
+    max_hold: int | None = None,
 ) -> list[TradeCycle]:
     """Simulate trades with a specific exit strategy."""
+    from app.quant_engine.config import QUANT_LIMITS
+    if max_hold is None:
+        max_hold = QUANT_LIMITS.max_holding_days
+    
     exit_cfg = EXIT_SIGNALS.get(exit_name, {})
     if not exit_cfg:
         return []

@@ -90,9 +90,8 @@ async def signals_daily_job() -> str:
             logger.warning("No price data available")
             return "No price data"
 
-        # Run signal scanner
-        holding_days_options = [5, 10, 20, 40, 60]
-        opportunities = scan_all_stocks(price_dfs, symbol_names, holding_days_options)
+        # Run signal scanner - uses dynamic holding period range internally
+        opportunities = scan_all_stocks(price_dfs, symbol_names)
 
         # Cache results
         cache_data = {

@@ -31,39 +31,43 @@ def _compute_optimal_period(raw: dict) -> tuple[int, float, float, float, float]
     """Compute optimal holding period from multi-period metrics.
     
     Returns (optimal_days, avg_return, win_rate, total_profit, sharpe).
-    Selects the period with best Sharpe ratio.
+    Selects the period with best capital efficiency (return per day).
+    
+    Note: Analysis shows 60 days is optimal for capital efficiency.
+    Beyond 60-90 days, alpha vs buy-and-hold goes negative.
     """
-    periods = [30, 60, 90]
+    # Holding periods are now DYNAMICALLY DISCOVERED per symbol
+    # The optimizer tests range(5, max+1, 5) and picks best by Sharpe
     
-    # Get Sharpe ratios for each period (if available in raw data)
-    # The raw data uses sharpe_ratio for 90d, but may not have 30d/60d
-    # We'll use what we have available
-    sharpe_90 = raw.get("sharpe_ratio", 0)
-    sortino_90 = raw.get("sortino_ratio", 0)
+    # Get metrics for primary period (60d)
+    sharpe_60 = raw.get("sharpe_ratio", 0)  # Primary is now 60d
+    sortino_60 = raw.get("sortino_ratio", 0)
     
-    # For legacy data that only has 90d metrics, just return 90d
-    avg_return_90 = raw.get("avg_return", 0)
-    win_rate_90 = raw.get("win_rate", 0)
-    total_profit_90 = raw.get("total_profit_compounded", 0)
+    avg_return_60 = raw.get("avg_return", 0)
+    win_rate_60 = raw.get("win_rate", 0)
+    total_profit_60 = raw.get("total_profit_compounded", 0)
     
-    # Check if 60d data exists
-    avg_return_60 = raw.get("avg_return_60d", 0)
-    win_rate_60 = raw.get("win_rate_60d", 0)
+    # Check if 40d data exists (secondary period)
+    avg_return_40 = raw.get("avg_return_40d", raw.get("avg_return_60d", 0))
+    win_rate_40 = raw.get("win_rate_40d", raw.get("win_rate_60d", 0))
     
-    # If we only have 90d data, return 90d
-    if not avg_return_60:
-        return 90, avg_return_90, win_rate_90, total_profit_90, sharpe_90
+    # Legacy: check for old 90d data
+    avg_return_90 = raw.get("avg_return_90d", 0)
     
-    # Simple heuristic: compare 60d vs 90d based on return efficiency
-    # Efficiency = return / time (annualized-ish comparison)
-    efficiency_90 = avg_return_90 / 90 if avg_return_90 > 0 else 0
+    # If we only have 60d data, return 60d
+    if not avg_return_40:
+        return 60, avg_return_60, win_rate_60, total_profit_60, sharpe_60
+    
+    # Compare based on capital efficiency (return / days)
     efficiency_60 = avg_return_60 / 60 if avg_return_60 > 0 else 0
+    efficiency_40 = avg_return_40 / 40 if avg_return_40 > 0 else 0
     
-    # Pick the period with better efficiency (Sharpe proxy)
-    if efficiency_60 > efficiency_90 * 1.1:  # 60d needs 10% better to overcome time preference
-        return 60, avg_return_60, win_rate_60, avg_return_60 * raw.get("occurrences", 1), sharpe_90 * 0.9
+    # Pick the period with better efficiency
+    # 40d needs 10% better efficiency to overcome time preference (give dips more time)
+    if efficiency_40 > efficiency_60 * 1.1:
+        return 40, avg_return_40, win_rate_40, avg_return_40 * raw.get("occurrences", 1), sharpe_60 * 0.95
     else:
-        return 90, avg_return_90, win_rate_90, total_profit_90, sharpe_90
+        return 60, avg_return_60, win_rate_60, total_profit_60, sharpe_60
 
 
 def _convert_threshold_stats_to_decimal(raw: dict) -> dict:
@@ -78,7 +82,7 @@ def _convert_threshold_stats_to_decimal(raw: dict) -> dict:
         opt_days, opt_return, opt_win, opt_profit, opt_sharpe = _compute_optimal_period(raw)
     else:
         # Use precomputed optimal values
-        opt_days = raw.get("optimal_holding_days", 90)
+        opt_days = raw.get("optimal_holding_days", 60)
         opt_return = raw.get("optimal_avg_return", 0)
         opt_win = raw.get("optimal_win_rate", 0)
         opt_profit = raw.get("optimal_total_profit", 0)
@@ -131,6 +135,32 @@ def _convert_threshold_stats_to_decimal(raw: dict) -> dict:
 # =============================================================================
 
 
+class DipSignalTrigger(BaseModel):
+    """A historical dip trade signal for chart display."""
+    
+    date: str = Field(..., description="Date of the signal (YYYY-MM-DD)")
+    signal_type: Literal["entry", "exit"] = Field(..., description="Whether entry or exit signal")
+    price: float = Field(..., description="Price at which signal triggered")
+    threshold_pct: float = Field(..., description="Dip threshold that triggered (decimal, e.g. -0.15)")
+    return_pct: float = Field(default=0.0, description="Trade return (for exit signals)")
+    holding_days: int = Field(default=0, description="Days held (for exit signals)")
+    
+    model_config = {"populate_by_name": True}
+
+
+class DipSignalTriggersResponse(BaseModel):
+    """Response containing historical dip trade signals for chart overlay."""
+    
+    symbol: str
+    threshold_pct: float = Field(..., description="Optimal dip threshold used (decimal)")
+    triggers: list[DipSignalTrigger] = Field(default_factory=list)
+    n_trades: int = 0
+    win_rate: float = 0.0  # Decimal
+    total_return_pct: float = 0.0  # Decimal
+    
+    model_config = {"populate_by_name": True}
+
+
 class DipFrequency(BaseModel):
     """Annual dip frequency at different thresholds."""
     
@@ -151,14 +181,14 @@ class ThresholdStats(BaseModel):
     occurrences: int = Field(..., description="Number of times this dip occurred")
     per_year: float = Field(..., description="Average occurrences per year")
     # OPTIMAL HOLDING PERIOD - dynamically computed for best risk-adjusted returns
-    optimal_holding_days: int = Field(default=90, description="Statistically optimal holding period (30, 60, or 90 days)")
+    optimal_holding_days: int = Field(default=60, description="Statistically optimal holding period (20, 40, or 60 days)")
     optimal_avg_return: float = Field(default=0.0, description="Avg return at optimal holding period (decimal)")
     optimal_win_rate: float = Field(default=0.0, description="Win rate at optimal holding period (decimal)")
     optimal_total_profit: float = Field(default=0.0, description="Total compounded profit at optimal period (decimal)")
     optimal_sharpe: float = Field(default=0.0, description="Sharpe ratio at optimal period")
-    # V2: Multi-period metrics (primary = 90 days)
-    win_rate: float = Field(default=0.0, description="Win rate after 90 days (decimal)")
-    avg_return: float = Field(default=0.0, description="Average return after 90 days (decimal)")
+    # V2: Multi-period metrics (primary = 60 days)
+    win_rate: float = Field(default=0.0, description="Win rate after 60 days (decimal)")
+    avg_return: float = Field(default=0.0, description="Average return after 60 days (decimal)")
     total_profit: float = Field(default=0.0, description="Total expected profit (decimal)")
     total_profit_compounded: float = Field(default=0.0, description="Compounded total profit (decimal)")
     sharpe_ratio: float = Field(default=0.0, description="Risk-adjusted return")
@@ -195,7 +225,7 @@ class DipEntryBacktest(BaseModel):
     """
     
     optimal_dip_threshold: float = Field(default=0.0, description="Optimal dip depth (e.g., -0.16 for 16% dip)")
-    optimal_holding_days: int = Field(default=90, description="Statistically optimal holding period (30, 60, or 90 days)")
+    optimal_holding_days: int = Field(default=60, description="Statistically optimal holding period (20, 40, or 60 days)")
     strategy_return: float = Field(default=0.0, description="Total compounded return from optimized strategy (decimal)")
     buy_hold_return: float = Field(default=0.0, description="Buy-and-hold return over same period (decimal)")
     vs_buy_hold: float = Field(default=0.0, description="Edge vs buy-and-hold (strategy - B&H, decimal)")
@@ -279,6 +309,11 @@ class DipEntryResponse(BaseModel):
     # Detailed threshold analysis
     threshold_analysis: list[ThresholdStats] = Field(
         default_factory=list, description="Analysis for each threshold level"
+    )
+    
+    # Historical dip trade signals for chart overlay
+    signal_triggers: list[DipSignalTrigger] = Field(
+        default_factory=list, description="Historical dip entry/exit points for chart markers"
     )
     
     analyzed_at: datetime = Field(default_factory=datetime.now, description="Analysis timestamp")
@@ -369,7 +404,7 @@ async def get_dip_entry(
                 buy_hold_return = buy_hold_return_pct / 100  # 989% -> 9.89
                 
                 # Use OPTIMIZED holding period metrics (dynamically computed per threshold)
-                # optimal_holding_days is 30, 60, or 90 based on best Sharpe ratio
+                # optimal_holding_days is 20, 40, or 60 based on best Sharpe ratio
                 optimal_days = max_profit_stats.optimal_holding_days
                 strategy_return = max_profit_stats.optimal_total_profit
                 avg_return = max_profit_stats.optimal_avg_return
@@ -378,7 +413,7 @@ async def get_dip_entry(
                 
                 backtest_data = DipEntryBacktest(
                     optimal_dip_threshold=max_profit_threshold_decimal,  # Already in decimal
-                    optimal_holding_days=optimal_days,  # Statistically optimal period (30, 60, or 90)
+                    optimal_holding_days=optimal_days,  # Statistically optimal period (20, 40, or 60)
                     strategy_return=strategy_return,  # Return at optimal holding period
                     buy_hold_return=buy_hold_return,  # Converted to decimal
                     vs_buy_hold=strategy_return - buy_hold_return,
@@ -389,6 +424,20 @@ async def get_dip_entry(
                     max_drawdown=max_profit_stats.max_further_drawdown,  # Already in decimal
                     years_tested=years_tested,
                 )
+        
+        # Parse signal triggers for chart overlay
+        raw_triggers = precomputed.dip_entry_signal_triggers or {}
+        signal_triggers = [
+            DipSignalTrigger(
+                date=t.get("date", ""),
+                signal_type=t.get("signal_type", "entry"),
+                price=t.get("price", 0.0),
+                threshold_pct=t.get("threshold_pct", 0.0),
+                return_pct=t.get("return_pct", 0.0),
+                holding_days=t.get("holding_days", 0),
+            )
+            for t in raw_triggers.get("triggers", [])
+        ]
         
         return DipEntryResponse(
             symbol=symbol,
@@ -411,6 +460,7 @@ async def get_dip_entry(
             fundamental_notes=[],
             data_years=years_tested,
             threshold_analysis=threshold_analysis,
+            signal_triggers=signal_triggers,
             analyzed_at=precomputed.computed_at or datetime.now(),
         )
     
