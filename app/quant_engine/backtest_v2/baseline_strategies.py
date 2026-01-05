@@ -26,6 +26,12 @@ import numpy as np
 import pandas as pd
 from pydantic import BaseModel, Field, field_validator
 
+from app.quant_engine.backtest_v2.regime_filter import (
+    RegimeDetector,
+    MarketRegime,
+    StrategyMode,
+)
+
 
 logger = logging.getLogger(__name__)
 
@@ -42,8 +48,37 @@ class BaselineStrategyType(str, Enum):
     BUY_DIPS_HOLD = "BUY_DIPS_HOLD"
     DIP_TRADING = "DIP_TRADING"  # Perfect dip trading with compounding
     TECHNICAL_TRADING = "TECHNICAL_TRADING"  # AlphaFactory optimized strategy
+    REGIME_AWARE_TECHNICAL = "REGIME_AWARE_TECHNICAL"  # Regime-aware technical trading
     SPY_BUY_HOLD = "SPY_BUY_HOLD"
     SPY_DCA = "SPY_DCA"
+
+
+# =============================================================================
+# Trade Detail Model
+# =============================================================================
+
+class TradeDetail(BaseModel):
+    """Detailed record of a single trade for API responses."""
+    
+    trade_num: int = Field(description="Trade number (1-indexed)")
+    
+    # Entry
+    entry_date: str = Field(description="Entry date (YYYY-MM-DD)")
+    entry_price: float = Field(description="Entry price")
+    entry_reason: str = Field(default="", description="Why we entered")
+    entry_regime: str = Field(default="UNKNOWN", description="Market regime at entry")
+    
+    # Exit (None if still open)
+    exit_date: str | None = Field(None, description="Exit date (YYYY-MM-DD)")
+    exit_price: float | None = Field(None, description="Exit price")
+    exit_reason: str = Field(default="", description="Why we exited")
+    
+    # Results
+    shares: float = Field(default=1.0, description="Shares traded")
+    return_pct: float = Field(default=0.0, description="Return % on this trade")
+    pnl: float = Field(default=0.0, description="Profit/loss in $")
+    holding_days: int = Field(default=0, description="Days held")
+    is_winner: bool = Field(default=False, description="Was this a winning trade?")
 
 
 class RecommendationType(str, Enum):
@@ -90,6 +125,16 @@ class BaselineResult(BaseModel):
     # For DIP strategies
     dips_detected: int = Field(default=0, description="Number of dips detected")
     avg_dip_depth_pct: float = Field(default=0.0, description="Avg dip depth %")
+    
+    # Trade details (for API responses)
+    trade_details: list[TradeDetail] = Field(
+        default_factory=list, 
+        description="Detailed trade history (only for active trading strategies)"
+    )
+    win_rate_pct: float = Field(default=0.0, description="Win rate percentage")
+    avg_win_pct: float = Field(default=0.0, description="Average winning trade %")
+    avg_loss_pct: float = Field(default=0.0, description="Average losing trade %")
+    profit_factor: float = Field(default=0.0, description="Total wins / total losses")
     
     @field_validator("*", mode="before")
     @classmethod
@@ -140,6 +185,7 @@ class BaselineComparison(BaseModel):
     buy_dips: BaselineResult = Field(description="Buy on Dips & Hold")
     dip_trading: BaselineResult | None = Field(None, description="Perfect Dip Trading (compound)")
     technical_trading: BaselineResult | None = Field(None, description="AlphaFactory optimized strategy")
+    regime_aware_technical: BaselineResult | None = Field(None, description="Regime-aware technical trading")
     
     # Reference strategies (different capital, for context)
     buy_hold: BaselineResult = Field(description="Buy & Hold (initial capital only)")
@@ -300,6 +346,11 @@ class BaselineEngine:
                 self.close, self.symbol, genome, indicator_matrix
             )
         
+        # Run regime-aware technical trading (always, uses simple SMA strategy)
+        regime_aware_technical = self.run_regime_aware_technical(
+            self.close, self.symbol
+        )
+        
         # Run lump sum with same capital as DCA (informational only)
         lump_sum = self.run_lump_sum(self.close, self.symbol, dca.total_invested)
         
@@ -329,6 +380,8 @@ class BaselineEngine:
             all_results["Perfect Dip Trading"] = dip_trading
         if technical_trading:
             all_results["Technical Trading"] = technical_trading
+        if regime_aware_technical:
+            all_results["Regime-Aware Technical"] = regime_aware_technical
         
         # Add reference strategies (different capital, for context only)
         reference_results = {
@@ -375,6 +428,7 @@ class BaselineEngine:
             buy_dips=buy_dips,
             dip_trading=dip_trading,
             technical_trading=technical_trading,
+            regime_aware_technical=regime_aware_technical,
             buy_hold=buy_hold,
             lump_sum=lump_sum,
             spy_buy_hold=spy_buy_hold,
@@ -953,6 +1007,317 @@ class BaselineEngine:
             total_invested=total_contributions,
             avg_cost_basis=total_contributions / max(total_trades, 1),
             years=years,
+        )
+    
+    def run_regime_aware_technical(
+        self,
+        close: pd.Series,
+        symbol: str,
+        genome: Any = None,
+        indicator_matrix: Any = None,
+    ) -> BaselineResult | None:
+        """
+        Regime-Aware Technical Trading with Compounding.
+        
+        Adapts trading behavior based on market regime:
+        
+        BULL: Standard technical trading (SMA50 crossover), 10% stop loss
+        BEAR: More patient entries, wider 20% stops, hold through volatility
+        CRASH: Aggressive accumulation, no stop loss, wait for major recovery
+        RECOVERY: Standard entries with trailing stop to protect gains
+        
+        Uses SPY prices for regime detection.
+        
+        Args:
+            close: Price series for the stock
+            symbol: Stock symbol
+            genome: Optional - AlphaFactory genome for entry signals
+            indicator_matrix: Optional - pre-computed indicators
+            
+        Returns:
+            BaselineResult with performance metrics and trade details
+        """
+        if self.spy_close is None or len(self.spy_close) < 200:
+            logger.warning(f"Insufficient SPY data for regime detection")
+            return None
+        
+        # Initialize regime detector with SPY prices
+        regime_detector = RegimeDetector(self.spy_close)
+        
+        # Calculate technical indicators for the stock
+        sma50 = close.rolling(50).mean()
+        sma200 = close.rolling(200).mean()
+        rolling_high = close.rolling(252).max()
+        
+        # Use genome signals if available, otherwise use SMA crossover
+        use_genome = genome is not None and indicator_matrix is not None
+        if use_genome:
+            try:
+                entry_signals = genome.generate_entry_signals(indicator_matrix)
+                exit_signals = genome.generate_exit_signals(indicator_matrix)
+            except Exception as e:
+                logger.warning(f"Could not generate genome signals: {e}")
+                use_genome = False
+        
+        cash = self.initial_capital
+        shares = 0.0
+        position = False
+        entry_price = 0.0
+        entry_bar = 0
+        entry_regime = None
+        highest_price_in_trade = 0.0  # For trailing stop
+        
+        total_trades = 0
+        winning_trades = 0
+        losing_trades = 0
+        total_wins = 0.0
+        total_losses = 0.0
+        total_contributions = self.initial_capital
+        
+        trade_details: list[TradeDetail] = []
+        current_trade_entry_date = None
+        current_trade_entry_reason = ""
+        
+        equity = [cash]
+        
+        # Track months for monthly contributions
+        last_month = None
+        dates = close.index if hasattr(close.index, '__iter__') else range(len(close))
+        prices = close.values
+        
+        for i, (date, price) in enumerate(zip(dates, prices)):
+            # Add monthly contribution
+            if hasattr(date, 'month'):
+                current_month = (date.year, date.month)
+                if last_month is not None and current_month != last_month:
+                    if position:
+                        shares += self.monthly_contribution / price
+                    else:
+                        cash += self.monthly_contribution
+                    total_contributions += self.monthly_contribution
+                last_month = current_month
+            
+            if i < 200:  # Need enough data for regime detection
+                equity.append(cash + shares * price)
+                continue
+            
+            # Detect current market regime
+            try:
+                regime_state = regime_detector.detect_at_date(date)
+                regime = regime_state.regime
+            except Exception:
+                regime = MarketRegime.BULL  # Default to BULL if detection fails
+            
+            # Calculate P&L if in position
+            pnl_pct = 0
+            if position and entry_price > 0:
+                pnl_pct = (price - entry_price) / entry_price
+                highest_price_in_trade = max(highest_price_in_trade, price)
+            
+            if not position:
+                should_enter = False
+                entry_reason = ""
+                
+                # Entry logic - adapt based on regime
+                if regime == MarketRegime.BULL:
+                    # Standard: Use genome signals or SMA50 crossover
+                    if use_genome and entry_signals[i]:
+                        should_enter = True
+                        entry_reason = "Genome entry signal (BULL)"
+                    elif not use_genome and price > sma50.iloc[i]:
+                        should_enter = True
+                        entry_reason = "Price > SMA50 (BULL momentum)"
+                
+                elif regime == MarketRegime.BEAR:
+                    # Bear: Wait for reversal signals - price crossing above SMA50
+                    if i > 0 and price > sma50.iloc[i] and prices[i-1] < sma50.iloc[i-1]:
+                        should_enter = True
+                        entry_reason = "SMA50 crossover (BEAR reversal)"
+                
+                elif regime == MarketRegime.CRASH:
+                    # Crash: Buy on significant dips (15%+ from high)
+                    dd_from_high = (price - rolling_high.iloc[i]) / rolling_high.iloc[i]
+                    if dd_from_high <= -0.15:
+                        should_enter = True
+                        entry_reason = f"Crash accumulation ({dd_from_high:.1%} from high)"
+                
+                elif regime == MarketRegime.RECOVERY:
+                    # Recovery: Standard momentum entry
+                    if use_genome and entry_signals[i]:
+                        should_enter = True
+                        entry_reason = "Genome entry signal (RECOVERY)"
+                    elif not use_genome and price > sma50.iloc[i]:
+                        should_enter = True
+                        entry_reason = "Price > SMA50 (RECOVERY momentum)"
+                
+                if should_enter and cash > 0:
+                    shares = cash / price  # Always full position
+                    entry_price = price
+                    entry_bar = i
+                    entry_regime = regime
+                    highest_price_in_trade = price
+                    current_trade_entry_date = date
+                    current_trade_entry_reason = entry_reason
+                    cash = 0
+                    position = True
+                    total_trades += 1
+            
+            else:
+                # In position - exit logic varies by regime
+                should_exit = False
+                exit_reason = ""
+                holding_bars = i - entry_bar
+                
+                if regime == MarketRegime.BULL:
+                    # Bull: Standard 10% stop, exit on SMA50 breakdown
+                    if pnl_pct <= -0.10:
+                        should_exit = True
+                        exit_reason = "Stop loss 10% (BULL)"
+                    elif price < sma50.iloc[i] * 0.98:
+                        should_exit = True
+                        exit_reason = "SMA50 breakdown (BULL)"
+                    elif use_genome and exit_signals[i]:
+                        should_exit = True
+                        exit_reason = "Genome exit signal (BULL)"
+                
+                elif regime == MarketRegime.BEAR:
+                    # Bear: Wider 20% stop, hold through volatility
+                    if pnl_pct <= -0.20:
+                        should_exit = True
+                        exit_reason = "Stop loss 20% (BEAR)"
+                    # Take profit on bounce to SMA200 with profit
+                    elif price > sma200.iloc[i] and pnl_pct > 0.15:
+                        should_exit = True
+                        exit_reason = "Profit target at SMA200 (BEAR recovery)"
+                
+                elif regime == MarketRegime.CRASH:
+                    # Crash: NO stop loss - hold for major recovery
+                    if price > sma200.iloc[i] and pnl_pct > 0.20:
+                        should_exit = True
+                        exit_reason = "Major recovery +20% at SMA200 (CRASH)"
+                
+                elif regime == MarketRegime.RECOVERY:
+                    # Recovery: Trailing stop to protect gains
+                    trailing_stop_price = highest_price_in_trade * 0.92  # 8% trailing
+                    if price < trailing_stop_price:
+                        should_exit = True
+                        exit_reason = "Trailing stop 8% (RECOVERY)"
+                    elif pnl_pct <= -0.12:
+                        should_exit = True
+                        exit_reason = "Stop loss 12% (RECOVERY)"
+                
+                if should_exit:
+                    cash = shares * price
+                    trade_pnl = (price - entry_price) * shares
+                    is_winner = price > entry_price
+                    
+                    if is_winner:
+                        winning_trades += 1
+                        total_wins += trade_pnl
+                    else:
+                        losing_trades += 1
+                        total_losses += abs(trade_pnl)
+                    
+                    # Record trade detail
+                    trade_details.append(TradeDetail(
+                        trade_num=total_trades,
+                        entry_date=str(current_trade_entry_date)[:10] if current_trade_entry_date else "",
+                        entry_price=round(entry_price, 2),
+                        entry_reason=current_trade_entry_reason,
+                        entry_regime=entry_regime.value if entry_regime else "UNKNOWN",
+                        exit_date=str(date)[:10] if hasattr(date, 'strftime') else str(date),
+                        exit_price=round(price, 2),
+                        exit_reason=exit_reason,
+                        shares=round(shares, 4),
+                        return_pct=round(pnl_pct * 100, 2),
+                        pnl=round(trade_pnl, 2),
+                        holding_days=holding_bars,
+                        is_winner=is_winner,
+                    ))
+                    
+                    shares = 0
+                    position = False
+                    highest_price_in_trade = 0
+                    entry_regime = None
+            
+            equity.append(cash + shares * price)
+        
+        # Close any open position at end
+        if position:
+            final_price = close.iloc[-1]
+            cash = shares * final_price
+            trade_pnl = (final_price - entry_price) * shares
+            is_winner = final_price > entry_price
+            
+            if is_winner:
+                winning_trades += 1
+                total_wins += trade_pnl
+            else:
+                losing_trades += 1
+                total_losses += abs(trade_pnl)
+            
+            trade_details.append(TradeDetail(
+                trade_num=total_trades,
+                entry_date=str(current_trade_entry_date)[:10] if current_trade_entry_date else "",
+                entry_price=round(entry_price, 2),
+                entry_reason=current_trade_entry_reason,
+                entry_regime=entry_regime.value if entry_regime else "UNKNOWN",
+                exit_date=str(close.index[-1])[:10],
+                exit_price=round(final_price, 2),
+                exit_reason="End of period (position closed)",
+                shares=round(shares, 4),
+                return_pct=round((final_price - entry_price) / entry_price * 100, 2),
+                pnl=round(trade_pnl, 2),
+                holding_days=len(close) - entry_bar,
+                is_winner=is_winner,
+            ))
+            shares = 0
+        
+        final_value = cash
+        profit = final_value - total_contributions
+        total_return_pct = (final_value / total_contributions - 1) * 100
+        
+        years = len(close) / 252
+        annualized = ((final_value / total_contributions) ** (1 / max(years, 0.5)) - 1) * 100
+        
+        port_returns = pd.Series(equity).pct_change().dropna()
+        sharpe = self._calculate_sharpe(port_returns)
+        volatility = port_returns.std() * np.sqrt(252) * 100 if len(port_returns) > 0 else 0.0
+        max_dd = self._calculate_max_drawdown(pd.Series(equity))
+        
+        # Calculate trade stats
+        win_rate = winning_trades / total_trades * 100 if total_trades > 0 else 0
+        avg_win = total_wins / winning_trades if winning_trades > 0 else 0
+        avg_loss = total_losses / losing_trades if losing_trades > 0 else 0
+        profit_factor = total_wins / total_losses if total_losses > 0 else 999.99
+        
+        # Calculate avg % returns
+        winning_returns = [t.return_pct for t in trade_details if t.is_winner]
+        losing_returns = [t.return_pct for t in trade_details if not t.is_winner]
+        avg_win_pct = sum(winning_returns) / len(winning_returns) if winning_returns else 0
+        avg_loss_pct = sum(losing_returns) / len(losing_returns) if losing_returns else 0
+        
+        return BaselineResult(
+            strategy_type=BaselineStrategyType.REGIME_AWARE_TECHNICAL,
+            name=f"{symbol} Regime-Aware Technical",
+            description=f"Adapts to BULL/BEAR/CRASH/RECOVERY regimes. {total_trades} trades, {win_rate:.0f}% win rate. Profit factor: {profit_factor:.2f}",
+            initial_capital=self.initial_capital,
+            final_value=final_value,
+            total_return_pct=total_return_pct,
+            annualized_return_pct=annualized,
+            profit=profit,
+            max_drawdown_pct=max_dd,
+            sharpe_ratio=sharpe,
+            volatility_pct=volatility,
+            total_buys=total_trades,
+            total_invested=total_contributions,
+            avg_cost_basis=total_contributions / max(total_trades, 1),
+            years=years,
+            trade_details=trade_details,
+            win_rate_pct=win_rate,
+            avg_win_pct=avg_win_pct,
+            avg_loss_pct=avg_loss_pct,
+            profit_factor=min(profit_factor, 999.99),
         )
 
     def _detect_dips(self, close: pd.Series) -> dict:

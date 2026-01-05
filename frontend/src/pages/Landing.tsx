@@ -766,7 +766,7 @@ function BacktestProofCard({
 }
 
 // Constants for signal board display
-const LANDING_SIGNAL_BOARD_COUNT = 4;
+const LANDING_SIGNAL_BOARD_COUNT = 10;
 
 export function Landing() {
   const navigate = useNavigate();
@@ -1168,67 +1168,8 @@ export function Landing() {
         backtestTrades={heroSignalSummary?.nTrades ?? null}
       />
 
-      {/* Backtest Proof Section */}
-      <section className="py-16 px-4">
-        <div className="container mx-auto max-w-4xl">
-          <motion.div
-            className="flex flex-col items-center text-center mb-10"
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            transition={{ duration: 0.5 }}
-          >
-            <Badge variant="secondary" className="mb-3 gap-1.5">
-              <ShieldCheck className="h-3 w-3" />
-              Verified Performance
-            </Badge>
-            <h2 className="text-2xl md:text-3xl font-bold mb-3">
-              Real backtest results
-            </h2>
-            <p className="text-muted-foreground max-w-xl">
-              Historical performance of our signals, not simulated scenarios.
-            </p>
-          </motion.div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <BacktestProofCard
-              title="Win Rate"
-              value={heroRec?.win_rate != null ? Math.round(heroRec.win_rate * 100) : 75}
-              suffix="%"
-              icon={Trophy}
-              subtitle={`${heroSignalSummary?.nTrades ?? 'N/A'} trades analyzed`}
-              variant="success"
-              index={0}
-            />
-            <BacktestProofCard
-              title="Avg Return"
-              value={edgeVsBuyHold != null ? edgeVsBuyHold.toFixed(1) : '+12.4'}
-              suffix="%"
-              icon={TrendingUp}
-              subtitle="Edge vs buy-and-hold"
-              variant={edgeVsBuyHold != null && edgeVsBuyHold >= 0 ? 'success' : 'danger'}
-              index={1}
-            />
-            <BacktestProofCard
-              title="Max Drawdown"
-              value="-8.2"
-              suffix="%"
-              icon={Activity}
-              subtitle="Worst peak-to-trough"
-              variant="danger"
-              index={2}
-            />
-          </div>
-
-          <p className="text-center text-xs text-muted-foreground mt-8">
-            <Clock className="h-3 w-3 inline mr-1" />
-            Data as of {new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} • Past performance does not guarantee future results
-          </p>
-        </div>
-      </section>
-
-      {/* AI Persona Section */}
-      <section className="py-16 px-4">
+      {/* AI Persona Section - AI Investor Council */}
+      <section className="py-16 px-4 bg-gradient-to-b from-transparent via-primary/5 to-transparent">
         <div className="container mx-auto max-w-6xl">
           <motion.div
             className="text-center mb-12"
@@ -1237,6 +1178,10 @@ export function Landing() {
             viewport={{ once: true }}
             transition={{ duration: 0.5 }}
           >
+            <Badge variant="secondary" className="mb-3 gap-1.5">
+              <Brain className="h-3 w-3" />
+              AI Analysis
+            </Badge>
             <h2 className="text-2xl md:text-3xl font-bold mb-3">
               AI investor council for {heroSymbol || "today's top signal"}
             </h2>
@@ -1311,7 +1256,7 @@ export function Landing() {
                         <div className="flex items-start gap-3 mb-2">
                           <Avatar className="h-10 w-10 border">
                             <AvatarImage
-                              src={verdict.avatar_url}
+                              src={verdict.avatar_url ?? undefined}
                               alt={verdict.agent_name}
                             />
                             <AvatarFallback className="bg-primary/10 text-primary text-xs">
@@ -1371,6 +1316,75 @@ export function Landing() {
               </CardContent>
             </Card>
           )}
+        </div>
+      </section>
+
+      {/* Backtest Proof Section */}
+      <section className="py-16 px-4">
+        <div className="container mx-auto max-w-4xl">
+          <motion.div
+            className="flex flex-col items-center text-center mb-10"
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.5 }}
+          >
+            <Badge variant="secondary" className="mb-3 gap-1.5">
+              <ShieldCheck className="h-3 w-3" />
+              Verified Performance
+            </Badge>
+            <h2 className="text-2xl md:text-3xl font-bold mb-3">
+              Real backtest results
+            </h2>
+            <p className="text-muted-foreground max-w-xl">
+              Historical performance of our signals, not simulated scenarios.
+            </p>
+          </motion.div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <BacktestProofCard
+              title="Win Rate"
+              value={heroDipEntry?.backtest?.win_rate != null 
+                ? Math.round(heroDipEntry.backtest.win_rate * 100) 
+                : heroRec?.win_rate != null 
+                  ? Math.round(heroRec.win_rate * 100) 
+                  : 75}
+              suffix="%"
+              icon={Trophy}
+              subtitle={`${heroDipEntry?.backtest?.n_trades ?? heroSignalSummary?.nTrades ?? 'N/A'} trades analyzed`}
+              variant="success"
+              index={0}
+            />
+            <BacktestProofCard
+              title="Avg Return"
+              value={heroDipEntry?.backtest?.avg_return_per_trade != null 
+                ? (heroDipEntry.backtest.avg_return_per_trade * 100).toFixed(1) 
+                : edgeVsBuyHold != null 
+                  ? edgeVsBuyHold.toFixed(1) 
+                  : '+12.4'}
+              suffix="%"
+              icon={TrendingUp}
+              subtitle="Per trade avg return"
+              variant={(heroDipEntry?.backtest?.avg_return_per_trade ?? (edgeVsBuyHold != null ? edgeVsBuyHold / 100 : 0)) >= 0 ? 'success' : 'danger'}
+              index={1}
+            />
+            <BacktestProofCard
+              title="Max Drawdown"
+              value={heroDipEntry?.backtest?.max_drawdown != null 
+                ? (heroDipEntry.backtest.max_drawdown * 100).toFixed(1) 
+                : '-8.2'}
+              suffix="%"
+              icon={Activity}
+              subtitle="Worst peak-to-trough"
+              variant="danger"
+              index={2}
+            />
+          </div>
+
+          <p className="text-center text-xs text-muted-foreground mt-8">
+            <Clock className="h-3 w-3 inline mr-1" />
+            Data as of {new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} • Past performance does not guarantee future results
+          </p>
         </div>
       </section>
 

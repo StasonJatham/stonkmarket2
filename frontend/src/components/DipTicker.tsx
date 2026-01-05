@@ -1,10 +1,15 @@
 import { useState, useRef, useEffect } from 'react';
 import type { DipStock } from '@/services/api';
-import { TrendingDown, TrendingUp } from 'lucide-react';
+import { TrendingDown, TrendingUp, CircleDot } from 'lucide-react';
 import { useTheme } from '@/context/ThemeContext';
 
+// Extended stock type with optional action field
+export interface TickerStock extends DipStock {
+  action?: 'BUY' | 'SELL' | 'HOLD';
+}
+
 interface DipTickerProps {
-  stocks: DipStock[];
+  stocks: TickerStock[];
   onSelectStock: (symbol: string) => void;
   isLoading?: boolean;
 }
@@ -101,6 +106,12 @@ export function DipTicker({ stocks, onSelectStock, isLoading }: DipTickerProps) 
         {duplicatedStocks.map((stock, i) => {
           const changePercent = stock.change_percent ?? 0;
           const isPositiveChange = changePercent >= 0;
+          const action = stock.action;
+          
+          // Action colors
+          const actionColor = action === 'BUY' ? upColor 
+            : action === 'SELL' ? downColor 
+            : 'hsl(var(--muted-foreground))';
           
           return (
             <button
@@ -108,15 +119,27 @@ export function DipTicker({ stocks, onSelectStock, isLoading }: DipTickerProps) 
               onClick={() => onSelectStock(stock.symbol)}
               className="inline-flex items-center gap-2 text-xs hover:bg-muted/50 px-2 py-0.5 rounded transition-colors cursor-pointer shrink-0"
             >
+              {/* Action indicator */}
+              {action && (
+                <span 
+                  className="inline-flex items-center gap-0.5 font-semibold text-[10px] px-1 py-0.5 rounded"
+                  style={{ 
+                    color: actionColor,
+                    backgroundColor: action === 'BUY' ? `${upColor}15` 
+                      : action === 'SELL' ? `${downColor}15`
+                      : 'hsl(var(--muted)/0.3)'
+                  }}
+                >
+                  <CircleDot className="h-2.5 w-2.5" />
+                  {action}
+                </span>
+              )}
               <span className="font-semibold text-foreground">{stock.symbol}</span>
               <span className="text-muted-foreground">${stock.last_price.toFixed(2)}</span>
-              <span className="inline-flex items-center gap-0.5" style={{ color: downColor }}>
-                <TrendingDown className="h-3 w-3" />
-                <span className="font-mono">-{(Math.abs(stock.depth) * 100).toFixed(1)}%</span>
-              </span>
+              {/* Daily change percent - primary metric */}
               {stock.change_percent !== null && (
                 <span 
-                  className="inline-flex items-center gap-0.5"
+                  className="inline-flex items-center gap-0.5 font-mono"
                   style={{ color: isPositiveChange ? upColor : downColor }}
                 >
                   {isPositiveChange ? (
@@ -124,9 +147,7 @@ export function DipTicker({ stocks, onSelectStock, isLoading }: DipTickerProps) 
                   ) : (
                     <TrendingDown className="h-3 w-3" />
                   )}
-                  <span className="font-mono">
-                    {isPositiveChange ? '+' : ''}{changePercent.toFixed(1)}%
-                  </span>
+                  {isPositiveChange ? '+' : ''}{changePercent.toFixed(1)}%
                 </span>
               )}
             </button>

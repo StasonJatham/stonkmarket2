@@ -1875,6 +1875,77 @@ export async function getAgentsInfo(): Promise<AgentInfoResponse> {
 }
 
 // =============================================================================
+// DEEP VALUE ANALYSIS
+// =============================================================================
+
+export interface IntrinsicValueEstimate {
+  method: 'analyst' | 'peg' | 'graham' | 'dcf' | 'composite';
+  value: number;
+  confidence: number;
+  reasoning: string;
+}
+
+export interface QualityFactor {
+  value: number | null;
+  signal: string;
+}
+
+export type ValueStatus = 
+  | 'deeply_undervalued' 
+  | 'undervalued' 
+  | 'fair_value' 
+  | 'overvalued' 
+  | 'extremely_overvalued';
+
+export type QualityTier = 
+  | 'exceptional' 
+  | 'high' 
+  | 'moderate' 
+  | 'low' 
+  | 'poor';
+
+export type AlertPriority = 
+  | 'critical' 
+  | 'high' 
+  | 'medium' 
+  | 'low' 
+  | 'none';
+
+export interface DeepValueAnalysis {
+  symbol: string;
+  current_price: number;
+  
+  // Intrinsic value
+  intrinsic_value: number;
+  intrinsic_value_method: string;
+  upside_pct: number;
+  value_status: ValueStatus;
+  all_estimates: IntrinsicValueEstimate[];
+  
+  // Quality assessment
+  quality_score: number;
+  quality_tier: QualityTier;
+  quality_factors: Record<string, QualityFactor>;
+  
+  // Market context
+  market_regime: string;
+  regime_context: string;
+  
+  // Alert info
+  priority: AlertPriority;
+  alert_reason: string;
+  action_recommendation: string;
+}
+
+/**
+ * Get deep value analysis for a symbol.
+ * Combines intrinsic value calculation with quality assessment.
+ */
+export async function getDeepValueAnalysis(symbol: string): Promise<DeepValueAnalysis> {
+  return fetchAPI<DeepValueAnalysis>(`/portfolios/deep-value/${symbol}`, { requireAuth: true });
+}
+
+// =============================================================================
 // MFA TYPES & API
 // =============================================================================
 

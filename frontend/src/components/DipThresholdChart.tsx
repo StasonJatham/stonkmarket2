@@ -21,7 +21,6 @@ import {
   Legend,
   ResponsiveContainer,
   ReferenceLine,
-  AreaChart,
   Area,
 } from 'recharts';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -95,8 +94,8 @@ export function DipThresholdChart({
     );
   }
 
-  // Optimal thresholds for reference lines
-  const optimalLabel = `${Math.round(optimalThreshold * 100)}%`;
+  // Optimal thresholds for reference lines (used in ReferenceLine components)
+  void optimalThreshold; // Reserved for future optimal line display
   const maxProfitLabel = `${Math.round(maxProfitThreshold * 100)}%`;
   const currentLabel = currentDrawdown ? `${Math.round(currentDrawdown * 100)}%` : null;
 

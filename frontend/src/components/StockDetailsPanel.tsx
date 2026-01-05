@@ -998,14 +998,14 @@ export function StockDetailsPanel({
               </div>
             )}
 
-            {/* Quick Stats Row */}
-            <div className="grid grid-cols-2 gap-2 mb-4">
+            {/* Quick Stats - Compact Inline */}
+            <div className="flex items-center gap-4 mb-4 text-sm">
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <div className="p-3 rounded-lg bg-muted/50 text-center cursor-help">
-                    <p className="text-xs text-muted-foreground">Dip Depth</p>
-                    <p className="text-lg font-bold text-danger">-{(stock.depth * 100).toFixed(0)}%</p>
-                    <p className="text-[10px] text-muted-foreground">from 52w high</p>
+                  <div className="flex items-center gap-1.5 cursor-help">
+                    <TrendingDown className="h-3.5 w-3.5 text-danger" />
+                    <span className="font-bold text-danger">-{(stock.depth * 100).toFixed(0)}%</span>
+                    <span className="text-muted-foreground text-xs">from high</span>
                   </div>
                 </TooltipTrigger>
                 <TooltipContent>
@@ -1013,13 +1013,12 @@ export function StockDetailsPanel({
                 </TooltipContent>
               </Tooltip>
               
-              {/* Persist Days */}
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <div className="p-3 rounded-lg bg-muted/50 text-center cursor-help">
-                    <p className="text-xs text-muted-foreground">Days in Dip</p>
-                    <p className="text-lg font-bold">{stock.days_since_dip || 0}</p>
-                    <p className="text-[10px] text-muted-foreground">since dip started</p>
+                  <div className="flex items-center gap-1.5 cursor-help">
+                    <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
+                    <span className="font-bold">{stock.days_since_dip || 0}</span>
+                    <span className="text-muted-foreground text-xs">days in dip</span>
                   </div>
                 </TooltipTrigger>
                 <TooltipContent>

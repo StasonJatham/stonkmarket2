@@ -132,8 +132,8 @@ export function Dashboard() {
   const availableBenchmarks = (benchmarksQuery.data ?? []).map(b => ({
     id: b.id ?? b.symbol, // Use symbol as fallback for id
     symbol: b.symbol,
-    name: b.name,
-    description: b.description,
+    name: b.symbol, // Use symbol as name since API only returns id/symbol
+    description: `${b.symbol} benchmark`, // Generate description
   }));
   
   // Benchmark state

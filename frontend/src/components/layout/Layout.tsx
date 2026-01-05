@@ -1,7 +1,7 @@
 import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
 import { Header } from './Header';
-import { DipTicker } from '@/components/DipTicker';
-import { useRanking } from '@/features/market-data/api/queries';
+import { DipTicker, type TickerStock } from '@/components/DipTicker';
+import { useQuantRecommendations } from '@/features/quant-engine/api/queries';
 import { useTheme } from '@/context/ThemeContext';
 import { useObfuscatedContact } from '@/lib/obfuscate';
 import { ColorPickerInline } from '@/components/ui/color-picker';
@@ -12,10 +12,27 @@ const ENABLE_LEGAL_PAGES = import.meta.env.VITE_ENABLE_LEGAL_PAGES === 'true';
 
 export function Layout() {
   const { decoded, decode, getPayPalLink } = useObfuscatedContact();
-  // Use ranking query for ticker - always show top 40 stocks
-  const rankingQuery = useRanking(true); // showAll=true to get full ranking
-  const tickerStocks = rankingQuery.data?.ranking.slice(0, 40) ?? [];
-  const isLoadingTicker = rankingQuery.isLoading;
+  // Use quant recommendations for ticker - includes action (BUY/SELL/HOLD) and change_percent
+  const recsQuery = useQuantRecommendations(1000, 40);
+  
+  // Map quant recommendations to TickerStock format
+  const tickerStocks: TickerStock[] = (recsQuery.data?.recommendations ?? []).slice(0, 40).map(rec => ({
+    symbol: rec.ticker,
+    name: rec.name,
+    depth: rec.legacy_dip_pct ? Math.abs(rec.legacy_dip_pct) : 0,
+    last_price: rec.last_price ?? 0,
+    previous_close: null,
+    change_percent: rec.change_percent,
+    days_since_dip: rec.legacy_days_in_dip,
+    high_52w: null,
+    low_52w: null,
+    market_cap: rec.market_cap,
+    sector: rec.sector,
+    pe_ratio: null,
+    volume: null,
+    action: rec.action,
+  }));
+  const isLoadingTicker = recsQuery.isLoading;
   const { colorblindMode, setColorblindMode, customColors, setCustomColors, resetColors } = useTheme();
   const navigate = useNavigate();
   const location = useLocation();

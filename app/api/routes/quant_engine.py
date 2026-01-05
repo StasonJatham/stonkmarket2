@@ -2017,3 +2017,171 @@ async def get_backtest_v2(
         trade_markers=trade_markers,
         regime_days=regime_days,
     )
+
+
+# =============================================================================
+# Deep Value Analysis Endpoint
+# =============================================================================
+
+
+class IntrinsicValueEstimateResponse(BaseModel):
+    """Individual intrinsic value estimate."""
+    method: str
+    value: float
+    confidence: float
+    reasoning: str
+
+
+class QualityFactorResponse(BaseModel):
+    """Quality factor assessment."""
+    value: float | None
+    signal: str
+
+
+class DeepValueResponse(BaseModel):
+    """Deep value analysis response."""
+    symbol: str
+    current_price: float
+    
+    # Intrinsic value
+    intrinsic_value: float
+    intrinsic_value_method: str
+    upside_pct: float
+    value_status: str
+    all_estimates: list[IntrinsicValueEstimateResponse]
+    
+    # Quality assessment
+    quality_score: float
+    quality_tier: str
+    quality_factors: dict[str, QualityFactorResponse]
+    
+    # Market context
+    market_regime: str
+    regime_context: str
+    
+    # Alert info
+    priority: str
+    alert_reason: str
+    action_recommendation: str
+
+
+@router.get(
+    "/deep-value/{symbol}",
+    response_model=DeepValueResponse,
+    summary="Deep Value Analysis",
+    description="Analyze a stock for deep value opportunity - combines intrinsic value "
+                "calculation with quality assessment and market regime awareness.",
+)
+async def get_deep_value_analysis(
+    symbol: str,
+    user: "TokenData" = Depends(require_user),
+) -> DeepValueResponse:
+    """
+    Get deep value analysis for a symbol.
+    
+    Combines:
+    - Multiple intrinsic value methods (analyst, PEG, Graham, DCF)
+    - Quality score based on fundamentals
+    - Market regime detection
+    - Alert priority and action recommendation
+    """
+    from app.services.deep_value_service import DeepValueService
+    import yfinance as yf
+    
+    symbol = symbol.upper()
+    
+    try:
+        # Get stock data
+        ticker = yf.Ticker(symbol)
+        info = ticker.info
+        
+        if not info:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Symbol {symbol} not found"
+            )
+        
+        current_price = info.get('currentPrice') or info.get('regularMarketPrice')
+        if not current_price:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Could not get current price for {symbol}"
+            )
+        
+        # Build fundamentals dict
+        fundamentals = {
+            'pe_ratio': info.get('trailingPE'),
+            'forward_pe': info.get('forwardPE'),
+            'peg_ratio': info.get('pegRatio'),
+            'price_to_book': info.get('priceToBook'),
+            'profit_margin': info.get('profitMargins'),
+            'gross_margin': info.get('grossMargins'),
+            'return_on_equity': info.get('returnOnEquity'),
+            'debt_to_equity': info.get('debtToEquity'),
+            'current_ratio': info.get('currentRatio'),
+            'revenue_growth': info.get('revenueGrowth'),
+            'earnings_growth': info.get('earningsGrowth'),
+            'free_cash_flow': info.get('freeCashflow'),
+            'shares_outstanding': info.get('sharesOutstanding'),
+            'target_mean_price': info.get('targetMeanPrice'),
+            'num_analyst_opinions': info.get('numberOfAnalystOpinions'),
+        }
+        
+        # Get SPY data for regime detection
+        spy_ticker = yf.Ticker('SPY')
+        spy_hist = spy_ticker.history(period='1y')
+        spy_prices = spy_hist['Close'] if not spy_hist.empty else None
+        
+        # Generate analysis
+        service = DeepValueService()
+        alert = service.generate_alert(symbol, current_price, fundamentals, spy_prices)
+        
+        if not alert:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Could not calculate intrinsic value for {symbol}"
+            )
+        
+        # Convert quality factors
+        quality_factors = {
+            k: QualityFactorResponse(
+                value=v.get('value') if isinstance(v, dict) else None,
+                signal=v.get('signal', '') if isinstance(v, dict) else str(v)
+            )
+            for k, v in alert.quality_factors.items()
+        }
+        
+        return DeepValueResponse(
+            symbol=symbol,
+            current_price=current_price,
+            intrinsic_value=alert.intrinsic_value,
+            intrinsic_value_method=alert.intrinsic_value_method.value,
+            upside_pct=alert.upside_pct,
+            value_status=alert.value_status.value,
+            all_estimates=[
+                IntrinsicValueEstimateResponse(
+                    method=e.method.value,
+                    value=e.value,
+                    confidence=e.confidence,
+                    reasoning=e.reasoning
+                )
+                for e in alert.all_estimates
+            ],
+            quality_score=alert.quality_score,
+            quality_tier=alert.quality_tier.value,
+            quality_factors=quality_factors,
+            market_regime=alert.market_regime,
+            regime_context=alert.regime_context,
+            priority=alert.priority.value,
+            alert_reason=alert.alert_reason,
+            action_recommendation=alert.action_recommendation,
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Deep value analysis failed for {symbol}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Analysis failed: {str(e)}"
+        )
