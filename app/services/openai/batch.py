@@ -162,6 +162,14 @@ async def submit_batch(
             },
         )
         
+        # Record batch job in database for polling
+        from app.repositories.api_usage_orm import record_batch_job
+        await record_batch_job(
+            batch_id=batch.id,
+            job_type=task.value,
+            total_requests=len(jsonl_lines),
+        )
+        
         logger.info(f"Created batch {batch.id}: {len(jsonl_lines)} {task.value} items")
         return batch.id
     

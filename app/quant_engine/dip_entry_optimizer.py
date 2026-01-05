@@ -256,11 +256,60 @@ class DipThresholdStats:
     is_outlier_dominated: bool = False  # True if most events are outliers
     
     # Scores
-    entry_score: float = 0.0  # New risk-adjusted score
-    legacy_entry_score: float = 0.0  # Old score for comparison
+    entry_score: float = 0.0  # Risk-adjusted score
     
     # Confidence
     confidence: Literal["low", "medium", "high"] = "medium"
+    
+    # =========================================================================
+    # OPTIMAL HOLDING PERIOD - Dynamically computed
+    # =========================================================================
+    
+    @property
+    def optimal_holding_days(self) -> int:
+        """Find the optimal holding period (30, 60, or 90 days) based on Sharpe ratio.
+        
+        The optimal period balances:
+        - Higher returns (longer holds)
+        - Risk-adjusted performance (Sharpe ratio)
+        - Capital efficiency (shorter holds = more trades possible)
+        
+        We use Sharpe ratio as the primary metric because it captures
+        risk-adjusted returns per unit of time.
+        """
+        if not self.sharpe_ratios:
+            return 90  # Default fallback
+        
+        # Find period with best Sharpe ratio
+        best_period = 90
+        best_sharpe = self.sharpe_ratios.get(90, 0)
+        
+        for period, sharpe in self.sharpe_ratios.items():
+            if sharpe > best_sharpe:
+                best_sharpe = sharpe
+                best_period = period
+        
+        return best_period
+    
+    @property
+    def optimal_avg_return(self) -> float:
+        """Average return at the optimal holding period."""
+        return self.avg_returns.get(self.optimal_holding_days, 0.0)
+    
+    @property
+    def optimal_win_rate(self) -> float:
+        """Win rate at the optimal holding period."""
+        return self.win_rates.get(self.optimal_holding_days, 0.0)
+    
+    @property
+    def optimal_total_profit(self) -> float:
+        """Total compounded profit at the optimal holding period."""
+        return self.total_profit_compounded.get(self.optimal_holding_days, 0.0)
+    
+    @property
+    def optimal_sharpe(self) -> float:
+        """Sharpe ratio at the optimal holding period."""
+        return self.sharpe_ratios.get(self.optimal_holding_days, 0.0)
 
 
 @dataclass
@@ -1115,30 +1164,6 @@ class DipEntryOptimizer:
             continuation_penalty
         )
         
-        # LEGACY V1 score (for comparison)
-        raw_v1_score = (
-            return_score * 0.40 +
-            win_score * 0.30 +
-            frequency_score * 0.20 +
-            recovery_score * 0.10
-        )
-        
-        # V1 win rate gate
-        if primary_win_rate < 40:
-            win_rate_gate = 0.4
-        elif primary_win_rate < 50:
-            win_rate_gate = 0.6
-        elif primary_win_rate < 60:
-            win_rate_gate = 0.75
-        elif primary_win_rate < 70:
-            win_rate_gate = 0.85
-        elif primary_win_rate < 80:
-            win_rate_gate = 0.95
-        else:
-            win_rate_gate = 1.0
-        
-        legacy_entry_score = raw_v1_score * sample_confidence * threshold_penalty * recovery_gate * win_rate_gate
-        
         # Confidence level
         if n >= 8 and years >= self.config.min_years_high_confidence:
             confidence: Literal["low", "medium", "high"] = "high"
@@ -1177,7 +1202,6 @@ class DipEntryOptimizer:
             n_outliers=n_outliers,
             is_outlier_dominated=is_outlier_dominated,
             entry_score=entry_score,
-            legacy_entry_score=legacy_entry_score,
             confidence=confidence,
         )
     
@@ -1609,6 +1633,12 @@ def get_dip_summary(result: OptimalDipEntry) -> dict:
                 "threshold": s.threshold_pct,
                 "occurrences": s.n_occurrences,
                 "per_year": s.avg_per_year,
+                # OPTIMAL HOLDING PERIOD - dynamically computed per threshold
+                "optimal_holding_days": s.optimal_holding_days,
+                "optimal_avg_return": s.optimal_avg_return,
+                "optimal_win_rate": s.optimal_win_rate,
+                "optimal_total_profit": s.optimal_total_profit,
+                "optimal_sharpe": s.optimal_sharpe,
                 # V2: Use dict-based metrics with primary period fallback
                 "win_rate": s.win_rates.get(90, s.win_rates.get(60, 0.0)),
                 "avg_return": s.avg_returns.get(90, s.avg_returns.get(60, 0.0)),
@@ -1631,7 +1661,6 @@ def get_dip_summary(result: OptimalDipEntry) -> dict:
                 "prob_further_drop": s.prob_further_drop,
                 "continuation_risk": s.continuation_risk,
                 "entry_score": s.entry_score,
-                "legacy_entry_score": s.legacy_entry_score,
                 "confidence": s.confidence,
                 # Legacy aliases for backward compatibility
                 "win_rate_60d": s.win_rate_60d,

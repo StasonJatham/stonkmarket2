@@ -1142,12 +1142,12 @@ export function Landing() {
                             ) : heroDipEntry?.backtest ? (
                               // Show dip strategy stats when no optimized strategy beats B&H
                               <>
-                                {heroDipEntry.backtest.n_trades} dip trades
-                                <span className={`font-medium ${heroDipEntry.backtest.vs_buy_hold_pct >= 0 ? 'text-success' : 'text-danger'}`}>
-                                  • {formatSignedPercent(heroDipEntry.backtest.strategy_return_pct, 0)} return
+                                {heroDipEntry.backtest.n_trades ?? 0} dip trades @ {Math.abs((heroDipEntry.backtest.optimal_dip_threshold ?? 0) * 100).toFixed(0)}%
+                                <span className={`font-medium ${(heroDipEntry.backtest.vs_buy_hold ?? 0) >= 0 ? 'text-success' : 'text-danger'}`}>
+                                  • {((heroDipEntry.backtest.strategy_return ?? 0) * 100).toFixed(0)}% ({(heroDipEntry.backtest.years_tested ?? 0).toFixed(0)}yr)
                                 </span>
                                 <span className="text-muted-foreground">
-                                  • {heroDipEntry.backtest.years_tested.toFixed(1)}y
+                                  • {heroDipEntry.backtest.optimal_holding_days ?? 90}d optimal hold
                                 </span>
                               </>
                             ) : (

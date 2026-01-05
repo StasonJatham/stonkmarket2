@@ -3200,7 +3200,6 @@ export interface DipThresholdStats {
   continuation_risk: 'low' | 'medium' | 'high';
   // Scores
   entry_score: number;
-  legacy_entry_score: number;
   confidence: 'low' | 'medium' | 'high';
   // Legacy (backward compat)
   win_rate_60d: number;
@@ -3208,14 +3207,17 @@ export interface DipThresholdStats {
 }
 
 export interface DipEntryBacktest {
-  strategy_return_pct: number;
-  buy_hold_return_pct: number;
-  vs_buy_hold_pct: number;
+  /** All percentages in decimal format (0.10 = 10%) */
+  optimal_dip_threshold: number;  // e.g., -0.16 for 16% dip
+  optimal_holding_days: number;   // Days to hold for max profit
+  strategy_return: number;        // Total return (decimal)
+  buy_hold_return: number;        // B&H return (decimal)
+  vs_buy_hold: number;            // Edge vs B&H (decimal)
   n_trades: number;
-  win_rate: number;
-  avg_return_per_trade: number;
+  win_rate: number;               // 0.85 = 85%
+  avg_return_per_trade: number;   // Per-trade return (decimal)
   sharpe_ratio: number;
-  max_drawdown: number;
+  max_drawdown: number;           // Negative decimal
   years_tested: number;
 }
 

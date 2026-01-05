@@ -139,7 +139,7 @@ export function ComparisonChart({
         </div>
         {/* Chart */}
         <div className="flex-1 min-h-0">
-          <ResponsiveContainer width="100%" height="100%" minWidth={0} debounce={50}>
+          <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={100} debounce={50}>
             <LineChart data={data} margin={{ top: 5, right: 5, left: 0, bottom: 0 }}>
             <XAxis
               dataKey="displayDate"

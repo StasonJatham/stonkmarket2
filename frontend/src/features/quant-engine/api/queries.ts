@@ -116,18 +116,37 @@ function useHeroDipEntry(symbol: string | undefined) {
 /**
  * Combined hook for Landing page.
  * Replaces the massive useEffect chain with declarative data fetching.
+ * 
+ * IMPORTANT: Landing page only shows stocks where our dip strategy beats buy & hold.
+ * This showcases our edge to visitors. Falls back to SPY if no strategy beaters.
  */
 export function useLandingData(inflow: number = 1000, limit: number = 25) {
   // Primary data: quant recommendations
   const recsQuery = useQuantRecommendations(inflow, limit);
   
-  // Derive hero symbol (first BUY recommendation)
-  const recommendations = recsQuery.data?.recommendations ?? [];
-  const heroRec = recommendations.find(r => r.action === 'BUY') ?? recommendations[0] ?? null;
+  // Get all recommendations
+  const allRecommendations = recsQuery.data?.recommendations ?? [];
+  
+  // Filter to only show stocks where our strategy beats buy & hold
+  // This showcases stocks where dip-buying is proven to outperform
+  const strategyBeaters = allRecommendations.filter(r => r.strategy_beats_bh === true);
+  
+  // Use filtered list if we have any, otherwise fallback to SPY-only or first stock
+  const recommendations = strategyBeaters.length > 0 
+    ? strategyBeaters 
+    : allRecommendations.filter(r => r.ticker === 'SPY').slice(0, 1);
+  
+  // If no SPY either, just use first recommendation as fallback
+  const finalRecommendations = recommendations.length > 0 
+    ? recommendations 
+    : allRecommendations.slice(0, 1);
+  
+  // Derive hero symbol (first BUY recommendation that beats B&H)
+  const heroRec = finalRecommendations.find(r => r.action === 'BUY') ?? finalRecommendations[0] ?? null;
   const heroSymbol = heroRec?.ticker ?? '';
   
-  // Signal board symbols (top N recommendations)
-  const signalBoardSymbols = recommendations.slice(0, LANDING_SIGNAL_BOARD_COUNT).map(r => r.ticker);
+  // Signal board symbols (top N recommendations that beat B&H)
+  const signalBoardSymbols = finalRecommendations.slice(0, LANDING_SIGNAL_BOARD_COUNT).map(r => r.ticker);
   
   // Batch charts for signal board
   const batchChartsQuery = useBatchCharts(signalBoardSymbols, LANDING_MINI_CHART_DAYS);
@@ -149,8 +168,8 @@ export function useLandingData(inflow: number = 1000, limit: number = 25) {
   const lastUpdatedAt = asOfDate ? Date.parse(asOfDate) : null;
   
   return {
-    // Recommendations data
-    recommendations,
+    // Recommendations data (only strategy beaters, or fallback)
+    recommendations: finalRecommendations,
     marketMessage: recsQuery.data?.market_message ?? null,
     portfolioStats: recsQuery.data ? {
       expectedReturn: recsQuery.data.expected_portfolio_return,

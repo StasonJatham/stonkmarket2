@@ -1,0 +1,36 @@
+{
+  "test_id": "system_tests/smoke/test_stack_healthy.py::TestCriticalEndpoints::test_dips_list",
+  "test_name": "test_dips_list",
+  "test_start": "2026-01-05T12:14:28.957452+00:00",
+  "test_end": "2026-01-05T12:14:30.477120+00:00",
+  "duration_seconds": 1.519668,
+  "summary": "1 warning(s)",
+  "errors": [],
+  "tracebacks": [],
+  "warnings": [
+    "2026-01-05T12:14:29.537502130Z {\"timestamp\": \"2026-01-05T12:14:29.537303+00:00\", \"level\": \"WARNING\", \"logger\": \"stonkmarket.services.prices\", \"message\": \"Rejecting MSFT: Gap from existing $472.94 to new $203.66 (56.9%)\", \"request_id\": \"65ef79b0-7f48-4a66-a493-0d31080ccab0\", \"location\": {\"file\": \"prices.py\", \"line\": 427, \"function\": \"get_prices_batch\"}}"
+  ],
+  "container_logs": {
+    "api": [
+      "2026-01-05T12:14:29.034080963Z {\"timestamp\": \"2026-01-05T12:14:29.033958+00:00\", \"level\": \"DEBUG\", \"logger\": \"stonkmarket.cache\", \"message\": \"Cache miss: stonkmarket:v1:dipfinder:MSFT_SPY_30_2026-01-05\", \"request_id\": \"65ef79b0-7f48-4a66-a493-0d31080ccab0\", \"location\": {\"file\": \"cache.py\", \"line\": 71, \"function\": \"get\"}}",
+      "2026-01-05T12:14:29.088335297Z {\"timestamp\": \"2026-01-05T12:14:29.088190+00:00\", \"level\": \"DEBUG\", \"logger\": \"peewee\", \"message\": \"('SELECT \\\"t1\\\".\\\"key\\\", \\\"t1\\\".\\\"value\\\" FROM \\\"_tz_kv\\\" AS \\\"t1\\\" WHERE (\\\"t1\\\".\\\"key\\\" = ?) LIMIT ? OFFSET ?', ['MSFT', 1, 0])\", \"location\": {\"file\": \"peewee.py\", \"line\": 3319, \"function\": \"execute_sql\"}}",
+      "2026-01-05T12:14:29.088730963Z {\"timestamp\": \"2026-01-05T12:14:29.088645+00:00\", \"level\": \"DEBUG\", \"logger\": \"peewee\", \"message\": \"('SELECT \\\"t1\\\".\\\"key\\\", \\\"t1\\\".\\\"value\\\" FROM \\\"_tz_kv\\\" AS \\\"t1\\\" WHERE (\\\"t1\\\".\\\"key\\\" = ?) LIMIT ? OFFSET ?', ['SPY', 1, 0])\", \"location\": {\"file\": \"peewee.py\", \"line\": 3319, \"function\": \"execute_sql\"}}",
+      "2026-01-05T12:14:29.361689255Z {\"timestamp\": \"2026-01-05T12:14:29.361287+00:00\", \"level\": \"DEBUG\", \"logger\": \"peewee\", \"message\": \"('BEGIN', None)\", \"location\": {\"file\": \"peewee.py\", \"line\": 3319, \"function\": \"execute_sql\"}}",
+      "2026-01-05T12:14:29.362213630Z {\"timestamp\": \"2026-01-05T12:14:29.362072+00:00\", \"level\": \"DEBUG\", \"logger\": \"peewee\", \"message\": \"('INSERT INTO \\\"_tz_kv\\\" (\\\"key\\\", \\\"value\\\") VALUES (?, ?)', ['MSFT', 'America/New_York'])\", \"location\": {\"file\": \"peewee.py\", \"line\": 3319, \"function\": \"execute_sql\"}}",
+      "2026-01-05T12:14:29.537502130Z {\"timestamp\": \"2026-01-05T12:14:29.537303+00:00\", \"level\": \"WARNING\", \"logger\": \"stonkmarket.services.prices\", \"message\": \"Rejecting MSFT: Gap from existing $472.94 to new $203.66 (56.9%)\", \"request_id\": \"65ef79b0-7f48-4a66-a493-0d31080ccab0\", \"location\": {\"file\": \"prices.py\", \"line\": 427, \"function\": \"get_prices_batch\"}}",
+      "2026-01-05T12:14:30.107117714Z {\"timestamp\": \"2026-01-05T12:14:30.106983+00:00\", \"level\": \"DEBUG\", \"logger\": \"stonkmarket.repositories.price_history_orm\", \"message\": \"Saved 1254 price records for SPY\", \"request_id\": \"65ef79b0-7f48-4a66-a493-0d31080ccab0\", \"location\": {\"file\": \"price_history_orm.py\", \"line\": 306, \"function\": \"save_prices\"}}",
+      "2026-01-05T12:14:30.110225922Z {\"timestamp\": \"2026-01-05T12:14:30.110141+00:00\", \"level\": \"DEBUG\", \"logger\": \"stonkmarket.cache\", \"message\": \"Cache hit: stonkmarket:v1:yf_info:info_MSFT\", \"request_id\": \"65ef79b0-7f48-4a66-a493-0d31080ccab0\", \"location\": {\"file\": \"cache.py\", \"line\": 68, \"function\": \"get\"}}",
+      "2026-01-05T12:14:30.110283672Z {\"timestamp\": \"2026-01-05T12:14:30.110241+00:00\", \"level\": \"DEBUG\", \"logger\": \"stonkmarket.data_providers.yfinance\", \"message\": \"Cache hit L2 (valkey) for MSFT\", \"request_id\": \"65ef79b0-7f48-4a66-a493-0d31080ccab0\", \"location\": {\"file\": \"yfinance_service.py\", \"line\": 676, \"function\": \"get_ticker_info\"}}",
+      "2026-01-05T12:14:30.119112380Z {\"timestamp\": \"2026-01-05T12:14:30.118993+00:00\", \"level\": \"DEBUG\", \"logger\": \"stonkmarket.cache\", \"message\": \"Cache set: stonkmarket:v1:dipfinder:MSFT_SPY_30_2026-01-05, TTL: 1800s\", \"request_id\": \"65ef79b0-7f48-4a66-a493-0d31080ccab0\", \"location\": {\"file\": \"cache.py\", \"line\": 108, \"function\": \"set\"}}",
+      "2026-01-05T12:14:30.125945089Z {\"timestamp\": \"2026-01-05T12:14:30.125850+00:00\", \"level\": \"INFO\", \"logger\": \"stonkmarket.api\", \"message\": \"GET /api/dipfinder/signals -> 200 (1.094s)\", \"request_id\": \"65ef79b0-7f48-4a66-a493-0d31080ccab0\", \"location\": {\"file\": \"app.py\", \"line\": 144, \"function\": \"dispatch\"}}"
+    ],
+    "worker": [],
+    "worker-batch": [],
+    "postgres": [],
+    "valkey": []
+  },
+  "request": null,
+  "response": null,
+  "database": null,
+  "assertion_error": null
+}

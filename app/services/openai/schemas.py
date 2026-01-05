@@ -41,7 +41,7 @@ class RatingValue(str, Enum):
 class RatingOutput(BaseModel):
     """Dip-buy opportunity rating output."""
     rating: RatingValue = Field(
-        description="The dip-buy opportunity rating"
+        # No description - OpenAI structured outputs doesn't allow $ref with description
     )
     reasoning: str = Field(
         description="Brief explanation under 400 chars citing at least 2 concrete context facts"
@@ -70,7 +70,7 @@ class SummaryOutput(BaseModel):
 class AgentOutput(BaseModel):
     """Persona investor analysis output."""
     rating: RatingValue = Field(
-        description="Investment signal rating"
+        # No description - OpenAI structured outputs doesn't allow $ref with description
     )
     reasoning: str = Field(
         description="2-3 sentence explanation in the investor persona's voice"
@@ -97,7 +97,7 @@ class InsightType(str, Enum):
 
 class Insight(BaseModel):
     """Portfolio insight item."""
-    type: InsightType = Field(description="Insight category")
+    type: InsightType = Field()  # No description for $ref fields
     text: str = Field(description="Insight text (max 200 chars)")
 
 
@@ -119,7 +119,7 @@ class RiskSeverity(str, Enum):
 
 class RiskAlert(BaseModel):
     """Portfolio risk alert."""
-    severity: RiskSeverity = Field(description="Risk severity level")
+    severity: RiskSeverity = Field()  # No description for $ref fields
     alert: str = Field(description="Risk alert text (max 200 chars)")
 
 
@@ -133,9 +133,7 @@ class HealthRating(str, Enum):
 
 class PortfolioOutput(BaseModel):
     """Portfolio advisor analysis output."""
-    health: HealthRating = Field(
-        description="Overall portfolio health rating"
-    )
+    health: HealthRating = Field()  # No description for $ref fields
     headline: str = Field(
         description="One-sentence summary with key metric (max 120 chars)"
     )

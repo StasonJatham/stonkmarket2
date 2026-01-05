@@ -150,11 +150,8 @@ export type CurrentSignals = z.infer<typeof CurrentSignalsSchema>;
 // ============================================================================
 
 export const BenchmarkSchema = z.object({
-  id: z.string().optional(), // May not be present in all responses
+  id: z.string(),
   symbol: z.string(),
-  name: z.string(),
-  description: z.string().nullable(),
-  is_public: z.boolean().optional(),
 });
 
 export type Benchmark = z.infer<typeof BenchmarkSchema>;

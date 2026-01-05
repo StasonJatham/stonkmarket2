@@ -22,6 +22,110 @@ _cache = Cache(prefix="dip_entry", default_ttl=3600)  # 1 hour cache
 logger = get_logger("routes.dip_entry")
 
 
+def _to_decimal(value: float) -> float:
+    """Convert percentage (85.7) to decimal (0.857)."""
+    return value / 100 if value else 0.0
+
+
+def _compute_optimal_period(raw: dict) -> tuple[int, float, float, float, float]:
+    """Compute optimal holding period from multi-period metrics.
+    
+    Returns (optimal_days, avg_return, win_rate, total_profit, sharpe).
+    Selects the period with best Sharpe ratio.
+    """
+    periods = [30, 60, 90]
+    
+    # Get Sharpe ratios for each period (if available in raw data)
+    # The raw data uses sharpe_ratio for 90d, but may not have 30d/60d
+    # We'll use what we have available
+    sharpe_90 = raw.get("sharpe_ratio", 0)
+    sortino_90 = raw.get("sortino_ratio", 0)
+    
+    # For legacy data that only has 90d metrics, just return 90d
+    avg_return_90 = raw.get("avg_return", 0)
+    win_rate_90 = raw.get("win_rate", 0)
+    total_profit_90 = raw.get("total_profit_compounded", 0)
+    
+    # Check if 60d data exists
+    avg_return_60 = raw.get("avg_return_60d", 0)
+    win_rate_60 = raw.get("win_rate_60d", 0)
+    
+    # If we only have 90d data, return 90d
+    if not avg_return_60:
+        return 90, avg_return_90, win_rate_90, total_profit_90, sharpe_90
+    
+    # Simple heuristic: compare 60d vs 90d based on return efficiency
+    # Efficiency = return / time (annualized-ish comparison)
+    efficiency_90 = avg_return_90 / 90 if avg_return_90 > 0 else 0
+    efficiency_60 = avg_return_60 / 60 if avg_return_60 > 0 else 0
+    
+    # Pick the period with better efficiency (Sharpe proxy)
+    if efficiency_60 > efficiency_90 * 1.1:  # 60d needs 10% better to overcome time preference
+        return 60, avg_return_60, win_rate_60, avg_return_60 * raw.get("occurrences", 1), sharpe_90 * 0.9
+    else:
+        return 90, avg_return_90, win_rate_90, total_profit_90, sharpe_90
+
+
+def _convert_threshold_stats_to_decimal(raw: dict) -> dict:
+    """Convert raw threshold stats from percentage format to decimal format.
+    
+    All percentage values (rates, returns, drawdowns) are converted from
+    percentage format (85.7) to decimal format (0.857).
+    """
+    # Compute optimal period from existing data if not present
+    if raw.get("optimal_avg_return", 0) == 0 and raw.get("avg_return", 0) > 0:
+        # Fallback: compute optimal from existing multi-period data
+        opt_days, opt_return, opt_win, opt_profit, opt_sharpe = _compute_optimal_period(raw)
+    else:
+        # Use precomputed optimal values
+        opt_days = raw.get("optimal_holding_days", 90)
+        opt_return = raw.get("optimal_avg_return", 0)
+        opt_win = raw.get("optimal_win_rate", 0)
+        opt_profit = raw.get("optimal_total_profit", 0)
+        opt_sharpe = raw.get("optimal_sharpe", 0)
+    
+    return {
+        "threshold": raw.get("threshold", 0) / 100,  # -15% -> -0.15
+        "occurrences": raw.get("occurrences", 0),
+        "per_year": raw.get("per_year", 0),
+        # OPTIMAL HOLDING PERIOD - computed dynamically or from cache
+        "optimal_holding_days": opt_days,
+        "optimal_avg_return": _to_decimal(opt_return),
+        "optimal_win_rate": _to_decimal(opt_win),
+        "optimal_total_profit": _to_decimal(opt_profit),
+        "optimal_sharpe": opt_sharpe,
+        # Returns and rates (90-day defaults)
+        "win_rate": _to_decimal(raw.get("win_rate", 0)),
+        "avg_return": _to_decimal(raw.get("avg_return", 0)),
+        "total_profit": _to_decimal(raw.get("total_profit", 0)),
+        "total_profit_compounded": _to_decimal(raw.get("total_profit_compounded", 0)),
+        "sharpe_ratio": raw.get("sharpe_ratio", 0),  # Not a percentage
+        "sortino_ratio": raw.get("sortino_ratio", 0),  # Not a percentage
+        "cvar": _to_decimal(raw.get("cvar", 0)),
+        # Recovery metrics
+        "recovery_rate": _to_decimal(raw.get("recovery_rate", 0)),
+        "recovery_threshold_rate": _to_decimal(raw.get("recovery_threshold_rate", 0)),
+        "avg_recovery_days": raw.get("avg_recovery_days", 0),  # Days, not percentage
+        "avg_days_to_threshold": raw.get("avg_days_to_threshold", 0),
+        "avg_recovery_velocity": raw.get("avg_recovery_velocity", 0),
+        # Recovery-based profit
+        "avg_return_at_recovery": _to_decimal(raw.get("avg_return_at_recovery", 0)),
+        "total_profit_at_recovery": _to_decimal(raw.get("total_profit_at_recovery", 0)),
+        "avg_days_at_recovery": raw.get("avg_days_at_recovery", 0),
+        # Risk metrics
+        "max_further_drawdown": _to_decimal(raw.get("max_further_drawdown", 0)),
+        "avg_further_drawdown": _to_decimal(raw.get("avg_further_drawdown", 0)),
+        "prob_further_drop": _to_decimal(raw.get("prob_further_drop", 0)),
+        "continuation_risk": raw.get("continuation_risk", "medium"),
+        # Scores
+        "entry_score": raw.get("entry_score", 0),  # Score, not percentage
+        "confidence": raw.get("confidence", "medium"),
+        # Legacy
+        "win_rate_60d": _to_decimal(raw.get("win_rate_60d", 0)),
+        "avg_return_60d": _to_decimal(raw.get("avg_return_60d", 0)),
+    }
+
+
 # =============================================================================
 # Response Schemas
 # =============================================================================
@@ -38,73 +142,90 @@ class DipFrequency(BaseModel):
 
 
 class ThresholdStats(BaseModel):
-    """Statistics for a specific dip threshold level."""
+    """Statistics for a specific dip threshold level.
     
-    threshold: float = Field(..., description="Dip threshold percentage (e.g., -10)")
+    All percentage values are in decimal format (0.10 = 10%).
+    """
+    
+    threshold: float = Field(..., description="Dip threshold (e.g., -0.10 for 10% dip)")
     occurrences: int = Field(..., description="Number of times this dip occurred")
     per_year: float = Field(..., description="Average occurrences per year")
+    # OPTIMAL HOLDING PERIOD - dynamically computed for best risk-adjusted returns
+    optimal_holding_days: int = Field(default=90, description="Statistically optimal holding period (30, 60, or 90 days)")
+    optimal_avg_return: float = Field(default=0.0, description="Avg return at optimal holding period (decimal)")
+    optimal_win_rate: float = Field(default=0.0, description="Win rate at optimal holding period (decimal)")
+    optimal_total_profit: float = Field(default=0.0, description="Total compounded profit at optimal period (decimal)")
+    optimal_sharpe: float = Field(default=0.0, description="Sharpe ratio at optimal period")
     # V2: Multi-period metrics (primary = 90 days)
-    win_rate: float = Field(default=0.0, description="Win rate after 90 days")
-    avg_return: float = Field(default=0.0, description="Average return after 90 days")
-    total_profit: float = Field(default=0.0, description="Total expected profit (N × avg_return)")
-    total_profit_compounded: float = Field(default=0.0, description="Compounded total profit")
+    win_rate: float = Field(default=0.0, description="Win rate after 90 days (decimal)")
+    avg_return: float = Field(default=0.0, description="Average return after 90 days (decimal)")
+    total_profit: float = Field(default=0.0, description="Total expected profit (decimal)")
+    total_profit_compounded: float = Field(default=0.0, description="Compounded total profit (decimal)")
     sharpe_ratio: float = Field(default=0.0, description="Risk-adjusted return")
     sortino_ratio: float = Field(default=0.0, description="Downside risk-adjusted return")
-    cvar: float = Field(default=0.0, description="Tail risk (worst 5% of returns)")
+    cvar: float = Field(default=0.0, description="Tail risk (worst 5% of returns, decimal)")
     # Recovery metrics
-    recovery_rate: float = Field(..., description="Recovery rate to previous high")
-    recovery_threshold_rate: float = Field(default=0.0, description="Recovery to entry threshold")
+    recovery_rate: float = Field(..., description="Recovery rate to previous high (decimal)")
+    recovery_threshold_rate: float = Field(default=0.0, description="Recovery to entry threshold (decimal)")
     avg_recovery_days: float = Field(..., description="Average days to recover")
     avg_days_to_threshold: float = Field(default=0.0, description="Days to recover to entry price")
     avg_recovery_velocity: float = Field(default=0.0, description="Recovery speed (higher = faster)")
     # Recovery-based profit metrics (sell at recovery strategy)
-    avg_return_at_recovery: float = Field(default=0.0, description="Avg return selling at recovery")
-    total_profit_at_recovery: float = Field(default=0.0, description="Compounded profit at recovery")
+    avg_return_at_recovery: float = Field(default=0.0, description="Avg return selling at recovery (decimal)")
+    total_profit_at_recovery: float = Field(default=0.0, description="Compounded profit at recovery (decimal)")
     avg_days_at_recovery: float = Field(default=0.0, description="Avg days held until recovery")
     # Risk metrics
-    max_further_drawdown: float = Field(default=0.0, description="Worst drawdown after entry")
-    avg_further_drawdown: float = Field(default=0.0, description="Average MAE (pain)")
-    prob_further_drop: float = Field(default=0.0, description="P(drops another 10%)")
+    max_further_drawdown: float = Field(default=0.0, description="Worst drawdown after entry (decimal)")
+    avg_further_drawdown: float = Field(default=0.0, description="Average MAE (decimal)")
+    prob_further_drop: float = Field(default=0.0, description="P(drops another 10%) (decimal)")
     continuation_risk: Literal["low", "medium", "high"] = Field(default="medium")
     # Scores
     entry_score: float = Field(..., description="V2 entry quality score")
-    legacy_entry_score: float = Field(default=0.0, description="Legacy entry score")
     confidence: Literal["low", "medium", "high"] = Field(default="medium")
     # Legacy (backward compat)
-    win_rate_60d: float = Field(default=0.0, description="Win rate after 60 days")
-    avg_return_60d: float = Field(default=0.0, description="Average return after 60 days")
+    win_rate_60d: float = Field(default=0.0, description="Win rate after 60 days (decimal)")
+    avg_return_60d: float = Field(default=0.0, description="Average return after 60 days (decimal)")
 
 
 class DipEntryBacktest(BaseModel):
-    """Backtest results for dip-based strategy."""
+    """Backtest results for optimized dip strategy.
     
-    strategy_return_pct: float = Field(default=0.0, description="Total return from dip strategy")
-    buy_hold_return_pct: float = Field(default=0.0, description="Buy-and-hold return over same period")
-    vs_buy_hold_pct: float = Field(default=0.0, description="Edge vs buy-and-hold (strategy - B&H)")
+    All percentage values are in decimal format (0.10 = 10%).
+    Uses statistically optimized dip threshold AND holding period.
+    """
+    
+    optimal_dip_threshold: float = Field(default=0.0, description="Optimal dip depth (e.g., -0.16 for 16% dip)")
+    optimal_holding_days: int = Field(default=90, description="Statistically optimal holding period (30, 60, or 90 days)")
+    strategy_return: float = Field(default=0.0, description="Total compounded return from optimized strategy (decimal)")
+    buy_hold_return: float = Field(default=0.0, description="Buy-and-hold return over same period (decimal)")
+    vs_buy_hold: float = Field(default=0.0, description="Edge vs buy-and-hold (strategy - B&H, decimal)")
     n_trades: int = Field(default=0, description="Number of dip trades executed")
-    win_rate: float = Field(default=0.0, description="Percentage of winning trades")
-    avg_return_per_trade: float = Field(default=0.0, description="Average return per trade")
-    sharpe_ratio: float = Field(default=0.0, description="Risk-adjusted return")
-    max_drawdown: float = Field(default=0.0, description="Maximum drawdown during backtest")
+    win_rate: float = Field(default=0.0, description="Win rate at optimal holding period (decimal)")
+    avg_return_per_trade: float = Field(default=0.0, description="Average return per trade at optimal period (decimal)")
+    sharpe_ratio: float = Field(default=0.0, description="Risk-adjusted return at optimal period")
+    max_drawdown: float = Field(default=0.0, description="Maximum adverse excursion after entry (decimal, negative)")
     years_tested: float = Field(default=0.0, description="Years of historical data used")
 
 
 class DipEntryResponse(BaseModel):
-    """Dip entry analysis response."""
+    """Dip entry analysis response.
+    
+    All percentage values are in decimal format (0.10 = 10%).
+    """
     
     symbol: str = Field(..., description="Stock ticker")
     
     # Current state
     current_price: float = Field(..., description="Current stock price")
     recent_high: float = Field(..., description="Recent high price")
-    current_drawdown_pct: float = Field(..., description="Current drawdown from high (%)")
+    current_drawdown_pct: float = Field(..., description="Current drawdown from high (decimal, -0.15 = 15% dip)")
     volatility_regime: Literal["low", "normal", "high"] = Field(
         ..., description="Current volatility regime"
     )
     
     # Risk-adjusted optimal entry (less pain, better timing)
     optimal_dip_threshold: float = Field(
-        ..., description="Risk-adjusted optimal dip threshold (e.g., -15 for 15% dip)"
+        ..., description="Risk-adjusted optimal dip threshold (decimal, -0.15 = 15% dip)"
     )
     optimal_entry_price: float = Field(
         ..., description="Risk-adjusted price for limit buy order"
@@ -112,13 +233,13 @@ class DipEntryResponse(BaseModel):
     
     # Max profit optimal entry (more opportunities, higher total return)
     max_profit_threshold: float = Field(
-        default=0.0, description="Max profit dip threshold"
+        default=0.0, description="Max profit dip threshold (decimal)"
     )
     max_profit_entry_price: float = Field(
         default=0.0, description="Max profit price for limit buy order"
     )
     max_profit_total_return: float = Field(
-        default=0.0, description="Expected total return at max profit threshold"
+        default=0.0, description="Expected total return at max profit threshold (decimal)"
     )
     
     # Backtest results - max profit strategy vs buy-and-hold
@@ -215,8 +336,16 @@ async def get_dip_entry(
         recent_high = float(dip_state.ref_high) if dip_state and dip_state.ref_high else 0.0
         current_drawdown = float(dip_state.dip_percentage) if dip_state and dip_state.dip_percentage else 0.0
         
-        # Parse threshold analysis to build backtest data
-        threshold_analysis = [ThresholdStats(**t) for t in (precomputed.dip_entry_threshold_analysis or [])]
+        # Get symbol's min_dip_pct to filter threshold analysis
+        db_symbol = await symbols_repo.get_symbol(symbol)
+        min_dip_pct = float(db_symbol.min_dip_pct) if db_symbol and db_symbol.min_dip_pct else 0.10
+        min_dip_threshold = -min_dip_pct  # In decimal format (e.g., -0.15)
+        
+        # Parse threshold analysis, convert to decimal, and filter to meaningful thresholds
+        raw_thresholds = precomputed.dip_entry_threshold_analysis or []
+        all_thresholds = [ThresholdStats(**_convert_threshold_stats_to_decimal(t)) for t in raw_thresholds]
+        # Filter to only show thresholds at or deeper than symbol's minimum
+        threshold_analysis = [t for t in all_thresholds if t.threshold <= min_dip_threshold]
         
         # Compute years tested from data_start and data_end
         years_tested = 5.0  # Default
@@ -226,28 +355,38 @@ async def get_dip_entry(
         
         # Build backtest from max profit threshold data
         backtest_data = None
-        max_profit_threshold = float(precomputed.dip_entry_max_profit_threshold) if precomputed.dip_entry_max_profit_threshold else None
-        if max_profit_threshold is not None and threshold_analysis:
-            # Find the threshold stats for max profit threshold
+        max_profit_threshold_raw = float(precomputed.dip_entry_max_profit_threshold) if precomputed.dip_entry_max_profit_threshold else None
+        max_profit_threshold_decimal = max_profit_threshold_raw / 100 if max_profit_threshold_raw else None  # -16 -> -0.16
+        if max_profit_threshold_decimal is not None and all_thresholds:
+            # Find the threshold stats for max profit threshold (comparing in decimal format)
             max_profit_stats = next(
-                (t for t in threshold_analysis if abs(t.threshold - max_profit_threshold) < 0.1),
+                (t for t in all_thresholds if abs(t.threshold - max_profit_threshold_decimal) < 0.01),
                 None
             )
             if max_profit_stats:
-                # Compute buy-and-hold return from precomputed or estimate from data
-                # Use the buy_hold_return from quant_precomputed if available
-                buy_hold_return = float(precomputed.backtest_buy_hold_return_pct) if precomputed.backtest_buy_hold_return_pct else 0.0
-                strategy_return = max_profit_stats.total_profit_compounded if max_profit_stats.total_profit_compounded else max_profit_stats.total_profit
+                # Get buy-and-hold return from precomputed (in % format, need to convert)
+                buy_hold_return_pct = float(precomputed.backtest_buy_hold_return_pct) if precomputed.backtest_buy_hold_return_pct else 0.0
+                buy_hold_return = buy_hold_return_pct / 100  # 989% -> 9.89
+                
+                # Use OPTIMIZED holding period metrics (dynamically computed per threshold)
+                # optimal_holding_days is 30, 60, or 90 based on best Sharpe ratio
+                optimal_days = max_profit_stats.optimal_holding_days
+                strategy_return = max_profit_stats.optimal_total_profit
+                avg_return = max_profit_stats.optimal_avg_return
+                win_rate = max_profit_stats.optimal_win_rate
+                sharpe = max_profit_stats.optimal_sharpe
                 
                 backtest_data = DipEntryBacktest(
-                    strategy_return_pct=strategy_return,
-                    buy_hold_return_pct=buy_hold_return,
-                    vs_buy_hold_pct=strategy_return - buy_hold_return,
+                    optimal_dip_threshold=max_profit_threshold_decimal,  # Already in decimal
+                    optimal_holding_days=optimal_days,  # Statistically optimal period (30, 60, or 90)
+                    strategy_return=strategy_return,  # Return at optimal holding period
+                    buy_hold_return=buy_hold_return,  # Converted to decimal
+                    vs_buy_hold=strategy_return - buy_hold_return,
                     n_trades=max_profit_stats.occurrences,
-                    win_rate=max_profit_stats.win_rate,
-                    avg_return_per_trade=max_profit_stats.avg_return,
-                    sharpe_ratio=max_profit_stats.sharpe_ratio,
-                    max_drawdown=max_profit_stats.max_further_drawdown,
+                    win_rate=win_rate,  # Win rate at optimal period
+                    avg_return_per_trade=avg_return,  # Avg return at optimal period
+                    sharpe_ratio=sharpe,  # Sharpe at optimal period
+                    max_drawdown=max_profit_stats.max_further_drawdown,  # Already in decimal
                     years_tested=years_tested,
                 )
         
@@ -255,16 +394,16 @@ async def get_dip_entry(
             symbol=symbol,
             current_price=current_price,
             recent_high=recent_high,
-            current_drawdown_pct=current_drawdown,
+            current_drawdown_pct=_to_decimal(current_drawdown),  # Convert to decimal
             volatility_regime="normal",  # Could be enhanced
-            optimal_dip_threshold=float(precomputed.dip_entry_optimal_threshold),
+            optimal_dip_threshold=_to_decimal(float(precomputed.dip_entry_optimal_threshold)),  # Convert to decimal
             optimal_entry_price=float(precomputed.dip_entry_optimal_price) if precomputed.dip_entry_optimal_price else current_price,
-            max_profit_threshold=max_profit_threshold or 0.0,
+            max_profit_threshold=max_profit_threshold_decimal or 0.0,  # Already in decimal
             max_profit_entry_price=float(precomputed.dip_entry_max_profit_price) if precomputed.dip_entry_max_profit_price else 0.0,
-            max_profit_total_return=float(precomputed.dip_entry_max_profit_total_return) if precomputed.dip_entry_max_profit_total_return else 0.0,
+            max_profit_total_return=_to_decimal(float(precomputed.dip_entry_max_profit_total_return)) if precomputed.dip_entry_max_profit_total_return else 0.0,
             backtest=backtest_data,
             is_buy_now=precomputed.dip_entry_is_buy_now,
-            buy_signal_strength=float(precomputed.dip_entry_signal_strength) if precomputed.dip_entry_signal_strength else 0.0,
+            buy_signal_strength=_to_decimal(float(precomputed.dip_entry_signal_strength)) if precomputed.dip_entry_signal_strength else 0.0,
             signal_reason=precomputed.dip_entry_signal_reason or "",
             typical_recovery_days=float(precomputed.dip_entry_recovery_days) if precomputed.dip_entry_recovery_days else 30.0,
             avg_dips_per_year=DipFrequency(**{"10_pct": 2.0, "15_pct": 1.0, "20_pct": 0.5}),

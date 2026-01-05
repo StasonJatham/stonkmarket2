@@ -658,6 +658,9 @@ export function WatchlistPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Edit Watchlist</DialogTitle>
+            <DialogDescription>
+              Update your watchlist name and description.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
@@ -773,6 +776,9 @@ export function WatchlistPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Edit {editingItem?.symbol}</DialogTitle>
+            <DialogDescription>
+              Update target price and notes for this stock.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">

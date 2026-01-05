@@ -153,8 +153,16 @@ async def record_batch_job(
     job_type: str,
     total_requests: int,
 ) -> int:
-    """Record a new batch job."""
+    """Record a new batch job. Returns existing job.id if batch_id already exists."""
     async with get_session() as session:
+        # Check if batch already exists (avoid duplicate key errors)
+        existing = await session.execute(
+            select(BatchJob).where(BatchJob.batch_id == batch_id)
+        )
+        existing_job = existing.scalar_one_or_none()
+        if existing_job:
+            return existing_job.id
+
         job = BatchJob(
             batch_id=batch_id,
             job_type=job_type,

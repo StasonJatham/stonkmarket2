@@ -604,7 +604,7 @@ export function StockDetailsPanel({
                     <div className="h-5 w-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
                   </div>
                   {formattedChartData.length > 0 ? (
-                    <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+                    <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={100}>
                       {/* No key prop - keep chart mounted for smooth animation interpolation */}
                       <ComposedChart data={chartDataWithTrendline}>
                     <defs>
@@ -987,47 +987,33 @@ export function StockDetailsPanel({
                   </div>
                 )}
                 
-                {/* Dip Entry Card - Dual Optimization */}
-                {dipEntry && dipEntry.optimal_entry_price != null && (
+                {/* Dip Entry Card - Shows the optimal entry based on backtested dip strategy */}
+                {dipEntry && dipEntry.max_profit_entry_price != null && (
                   <div className={cn(
                     "p-3 rounded-lg border",
                     dipEntry.is_buy_now && "bg-success/10 border-success/30",
-                    !dipEntry.is_buy_now && dipEntry.current_drawdown_pct <= -10 && "bg-amber-500/10 border-amber-500/30",
-                    !dipEntry.is_buy_now && dipEntry.current_drawdown_pct > -10 && "bg-muted/30 border-border",
+                    !dipEntry.is_buy_now && dipEntry.current_drawdown_pct <= -0.10 && "bg-amber-500/10 border-amber-500/30",
+                    !dipEntry.is_buy_now && dipEntry.current_drawdown_pct > -0.10 && "bg-muted/30 border-border",
                   )}>
-                    {/* Risk-Adjusted Optimal */}
-                    <div className="mb-3">
+                    {/* Primary: Max Profit Entry (this is what the backtest is based on) */}
+                    <div>
                       <p className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
                         <Target className="h-3 w-3" />
-                        Risk-Adjusted Entry
+                        Optimal Dip Entry
                       </p>
-                      <p className="text-xl font-bold text-primary">${dipEntry.optimal_entry_price?.toFixed(2) ?? '—'}</p>
+                      <p className="text-xl font-bold text-primary">${dipEntry.max_profit_entry_price?.toFixed(2) ?? '—'}</p>
                       <p className="text-sm text-muted-foreground">
-                        {dipEntry.optimal_dip_threshold}% dip • Less pain
+                        Buy at {Math.abs((dipEntry.max_profit_threshold ?? 0) * 100).toFixed(0)}% dip
+                        {dipEntry.backtest && ` • ${dipEntry.backtest.n_trades ?? 0} trades backtested`}
                       </p>
                     </div>
-                    
-                    {/* Max Profit Optimal (show if different from risk-adjusted) */}
-                    {dipEntry.max_profit_threshold !== undefined && 
-                     dipEntry.max_profit_threshold !== dipEntry.optimal_dip_threshold && (
-                      <div className="pt-2 border-t border-border/50">
-                        <p className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
-                          <TrendingUp className="h-3 w-3" />
-                          Max Profit Entry
-                        </p>
-                        <p className="text-lg font-bold text-chart-2">${dipEntry.max_profit_entry_price?.toFixed(2) ?? '—'}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {dipEntry.max_profit_threshold}% dip • {dipEntry.max_profit_total_return?.toFixed(0) || '—'}% total
-                        </p>
-                      </div>
-                    )}
                     
                     {/* Buy Signal */}
                     <p className={cn(
                       "text-[10px] mt-2 pt-2 border-t border-border/50",
                       dipEntry.is_buy_now ? "text-success font-medium" : "text-muted-foreground"
                     )}>
-                      {dipEntry.is_buy_now ? "✓ Buy now" : `Wait for $${(displayPrice - dipEntry.optimal_entry_price).toFixed(2)} more drop`}
+                      {dipEntry.is_buy_now ? "✓ Buy now" : `Wait for $${(displayPrice - dipEntry.max_profit_entry_price).toFixed(2)} more drop`}
                     </p>
                   </div>
                 )}
@@ -1524,17 +1510,17 @@ export function StockDetailsPanel({
                           dipEntry.is_buy_now ? "border-success text-success" : "border-muted-foreground text-muted-foreground",
                         )}
                       >
-                        {dipEntry.is_buy_now ? '● ACTIVE' : 'WAIT'}
+                        {dipEntry.is_buy_now ? '● BUY' : '○ WAIT'}
                       </Badge>
                       <span className="text-xs text-muted-foreground">
-                        Buy at {dipEntry.max_profit_threshold}% dip
+                        Target: -{((dipEntry.max_profit_threshold ?? 0) * 100).toFixed(0)}% from 52w high
                       </span>
                     </div>
                   </div>
-                  <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
+                  <p className="text-xs text-muted-foreground leading-relaxed">
                     {dipEntry.is_buy_now 
-                      ? `Stock is below ${dipEntry.max_profit_threshold}% threshold - buy signal active`
-                      : `Wait for price to drop ${Math.abs(dipEntry.max_profit_threshold - dipEntry.current_drawdown_pct).toFixed(1)}% more to optimal entry`
+                      ? <>Currently -{((dipEntry.current_drawdown_pct ?? 0) * 100).toFixed(1)}% from peak. Buy signal active.</>
+                      : <>Currently -{((dipEntry.current_drawdown_pct ?? 0) * 100).toFixed(1)}% from peak. Need -{((dipEntry.max_profit_threshold ?? 0) * 100).toFixed(0)}% to trigger buy.</>
                     }
                   </p>
                 </div>
@@ -1545,48 +1531,44 @@ export function StockDetailsPanel({
                     <p className="text-xs text-muted-foreground">Win Rate</p>
                     <p className={cn(
                       "text-sm font-bold",
-                      dipEntry.backtest.win_rate >= 60 && "text-success",
-                      dipEntry.backtest.win_rate < 50 && "text-danger"
+                      (dipEntry.backtest.win_rate ?? 0) >= 0.60 && "text-success",
+                      (dipEntry.backtest.win_rate ?? 0) < 0.50 && "text-danger"
                     )}>
-                      {dipEntry.backtest.win_rate.toFixed(0)}%
+                      {((dipEntry.backtest.win_rate ?? 0) * 100).toFixed(0)}%
                     </p>
                   </div>
                   <div className="text-center">
-                    <p className="text-xs text-muted-foreground">Total Return</p>
+                    <p className="text-xs text-muted-foreground">{(dipEntry.backtest.years_tested ?? 0).toFixed(0)}yr Return</p>
                     <p className={cn(
                       "text-sm font-bold",
-                      dipEntry.backtest.strategy_return_pct >= 0 ? "text-success" : "text-danger"
+                      (dipEntry.backtest.strategy_return ?? 0) >= 0 ? "text-success" : "text-danger"
                     )}>
-                      {dipEntry.backtest.strategy_return_pct >= 0 ? '+' : ''}
-                      {dipEntry.backtest.strategy_return_pct.toFixed(0)}%
+                      {(dipEntry.backtest.strategy_return ?? 0) >= 0 ? '+' : ''}
+                      {((dipEntry.backtest.strategy_return ?? 0) * 100).toFixed(0)}%
                     </p>
                   </div>
                   <div className="text-center">
-                    <p className="text-xs text-muted-foreground">Sharpe</p>
-                    <p className={cn(
-                      "text-sm font-bold",
-                      dipEntry.backtest.sharpe_ratio >= 1.5 && "text-success",
-                      dipEntry.backtest.sharpe_ratio < 0.5 && "text-danger"
-                    )}>
-                      {dipEntry.backtest.sharpe_ratio.toFixed(2)}
+                    <p className="text-xs text-muted-foreground">Optimal Hold</p>
+                    <p className="text-sm font-bold">
+                      {dipEntry.backtest.optimal_holding_days ?? 90}d
                     </p>
                   </div>
                   <div className="text-center">
                     <p className="text-xs text-muted-foreground">vs B&H</p>
                     <p className={cn(
                       "text-sm font-bold",
-                      dipEntry.backtest.vs_buy_hold_pct >= 0 ? "text-success" : "text-danger"
+                      (dipEntry.backtest.vs_buy_hold ?? 0) >= 0 ? "text-success" : "text-danger"
                     )}>
-                      {dipEntry.backtest.vs_buy_hold_pct >= 0 ? '+' : ''}
-                      {dipEntry.backtest.vs_buy_hold_pct.toFixed(0)}%
+                      {(dipEntry.backtest.vs_buy_hold ?? 0) >= 0 ? '+' : ''}
+                      {((dipEntry.backtest.vs_buy_hold ?? 0) * 100).toFixed(0)}%
                     </p>
                   </div>
                 </div>
                 
                 {/* Stats footer */}
                 <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-                  <span>{dipEntry.backtest.n_trades} trades over {dipEntry.backtest.years_tested.toFixed(1)} years</span>
-                  <span>Avg {dipEntry.backtest.avg_return_per_trade.toFixed(1)}% per trade</span>
+                  <span>{dipEntry.backtest.n_trades ?? 0} trades over {(dipEntry.backtest.years_tested ?? 0).toFixed(1)} years</span>
+                  <span>Avg {((dipEntry.backtest.avg_return_per_trade ?? 0) * 100).toFixed(1)}% per trade</span>
                 </div>
               </div>
             )}

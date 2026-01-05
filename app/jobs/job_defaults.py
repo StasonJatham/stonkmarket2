@@ -65,6 +65,11 @@ DEFAULT_SCHEDULES: dict[str, tuple[str, str]] = {
         "OpenAI batch result collector - checks for completed AI jobs and stores results. "
         "Every 5 minutes."
     ),
+    "portfolio_ai_analysis": (
+        "0 * * * *",
+        "Portfolio AI analyzer - schedules AI analysis batches for portfolios that have changed. "
+        "Runs hourly. Results collected by ai_batch_poll."
+    ),
     "batch_watchdog": (
         "0 * * * *",
         "Batch job watchdog - expires jobs stuck for >24h and logs health warnings. "
@@ -226,6 +231,7 @@ JOB_PRIORITIES: dict[str, dict[str, int | str]] = {
     
     # Real-time processing
     "ai_batch_poll": {"queue": "high", "priority": 8},
+    "portfolio_ai_analysis": {"queue": "batch", "priority": 6},  # Schedules AI analysis batches
     "batch_watchdog": {"queue": "low", "priority": 3},
     "cache_warmup": {"queue": "high", "priority": 7},
     "symbol_ingest": {"queue": "default", "priority": 7},
@@ -280,6 +286,8 @@ JOB_TIME_LIMITS: dict[str, dict[str, int]] = {
     # ai_batch_poll collects results from potentially many completed batches
     # Each batch response can be large (AI analysis text). Give it 5 minutes.
     "ai_batch_poll": {"soft_limit": 300, "hard_limit": 600},
+    # portfolio_ai_analysis schedules AI batches for changed portfolios
+    "portfolio_ai_analysis": {"soft_limit": 300, "hard_limit": 600},
     "portfolio_worker": {"soft_limit": 300, "hard_limit": 600},
     "symbol_ingest": {"soft_limit": 300, "hard_limit": 600},
     "prices_daily": {"soft_limit": 300, "hard_limit": 600},

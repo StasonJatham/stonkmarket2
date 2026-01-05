@@ -597,25 +597,29 @@ function MiniSparkline({ data, color, id }: MiniSparklineProps) {
   if (data.length === 0) return null;
   
   return (
-    <div className="absolute bottom-0 left-0 right-0 h-1/2 opacity-60 pointer-events-none">
-      <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={data} margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
-          <defs>
-            <linearGradient id={`sparkline-${id}`} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={color} stopOpacity={0.4} />
-              <stop offset="100%" stopColor={color} stopOpacity={0.02} />
-            </linearGradient>
-          </defs>
-          <Area
-            type="monotone"
-            dataKey="y"
-            stroke={color}
-            strokeWidth={1.5}
-            fill={`url(#sparkline-${id})`}
-            {...CHART_MINI_ANIMATION}
-          />
-        </AreaChart>
-      </ResponsiveContainer>
+    <div className="absolute bottom-0 left-0 right-0 h-1/2 pointer-events-none">
+      {/* Milky glass overlay for better readability */}
+      <div className="absolute inset-0 bg-background/40 backdrop-blur-[2px]" />
+      <div className="relative h-full opacity-50">
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={data} margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
+            <defs>
+              <linearGradient id={`sparkline-${id}`} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={color} stopOpacity={0.35} />
+                <stop offset="100%" stopColor={color} stopOpacity={0.02} />
+              </linearGradient>
+            </defs>
+            <Area
+              type="monotone"
+              dataKey="y"
+              stroke={color}
+              strokeWidth={1.5}
+              fill={`url(#sparkline-${id})`}
+              {...CHART_MINI_ANIMATION}
+            />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
     </div>
   );
 }
@@ -669,6 +673,7 @@ export const StockCardV2 = memo(function StockCardV2({
       <Card
         className={cn(
           'relative overflow-hidden cursor-pointer transition-all duration-200 hover:shadow-lg h-full',
+          'bg-card/80 backdrop-blur-sm border-border/50', // Glassmorphism effect
           isSelected ? 'ring-2 ring-primary' : 'hover:border-primary/30'
         )}
         onClick={onClick}

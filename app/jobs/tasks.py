@@ -208,6 +208,11 @@ def ai_batch_poll_task() -> str:
     return _run_job("ai_batch_poll")
 
 
+@celery_app.task(name="jobs.portfolio_ai_analysis", **_task_opts("portfolio_ai_analysis"))
+def portfolio_ai_analysis_task() -> str:
+    return _run_job("portfolio_ai_analysis")
+
+
 @celery_app.task(name="jobs.fundamentals_daily", **_task_opts("fundamentals_daily"))
 def fundamentals_daily_task() -> str:
     return _run_job("fundamentals_daily")
