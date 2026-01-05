@@ -118,6 +118,16 @@ class DipOptimizerConfig:
     def min_years_high_confidence(self) -> int:
         """Minimum years for confidence from central config."""
         return QUANT_LIMITS.min_years_for_confidence
+    
+    @property
+    def max_recovery_days(self) -> int:
+        """Maximum days to track recovery from central config."""
+        return QUANT_LIMITS.max_recovery_days
+    
+    @property
+    def primary_holding_period(self) -> int:
+        """Primary holding period for scoring from central config."""
+        return QUANT_LIMITS.primary_holding_period
 
 
 # =============================================================================
@@ -310,7 +320,8 @@ class OptimalDipEntry:
     threshold_stats: list[DipThresholdStats] = field(default_factory=list)
     
     # Historical dip events
-    recent_dips: list[DipEvent] = field(default_factory=list)
+    recent_dips: list[DipEvent] = field(default_factory=list)  # Last 10 for display
+    all_dip_events: list[DipEvent] = field(default_factory=list)  # All events for trigger generation
     
     # Outlier events (black swans) - stored separately for UI
     outlier_events: list[DipEvent] = field(default_factory=list)
@@ -488,7 +499,8 @@ class DipEntryOptimizer:
             signal_reason=reason,
             continuation_risk=cont_risk,
             threshold_stats=threshold_stats,
-            recent_dips=regular_events[-10:],  # Last 10 dips
+            recent_dips=regular_events[-10:],  # Last 10 dips for display
+            all_dip_events=regular_events,  # All events for trigger generation
             outlier_events=outlier_events,
             avg_annual_dips_10pct=dips_10,
             avg_annual_dips_15pct=dips_15,
@@ -1640,15 +1652,17 @@ def get_dip_signal_triggers(result: OptimalDipEntry) -> dict[str, Any]:
     if not target_threshold:
         return {"threshold_pct": 0.0, "n_trades": 0, "triggers": []}
     
-    # Get events that match the target threshold
-    # recent_dips are DipEvent objects from historical analysis
+    # Get events that match the target threshold from ALL dip events
+    # Use all_dip_events which contains the full history, not just recent 10
+    all_events = result.all_dip_events if result.all_dip_events else result.recent_dips
+    
     matching_events = [
-        e for e in result.recent_dips
+        e for e in all_events
         if abs(e.threshold_crossed - target_threshold) < 2.0  # Within 2% of target
     ]
     
-    # Also include events at exactly the threshold from all threshold stats
-    for event in result.recent_dips:
+    # Also include events close to target threshold
+    for event in all_events:
         if event not in matching_events:
             # Include if close to target threshold
             if abs(event.threshold_crossed - target_threshold) < 5.0:

@@ -853,11 +853,14 @@ async def quant_analysis_nightly_job() -> str:
             # 6. Dip Entry Analysis
             dip_entry_data = None
             try:
-                from app.quant_engine.dip_entry_optimizer import DipEntryOptimizer, get_dip_summary
+                from app.quant_engine.dip_entry_optimizer import DipEntryOptimizer, get_dip_summary, get_dip_signal_triggers
                 
                 optimizer = DipEntryOptimizer()
                 result = optimizer.analyze(df, symbol, fundamentals=None)
                 summary = get_dip_summary(result)
+                
+                # Generate dip signal triggers for chart overlay
+                dip_triggers = get_dip_signal_triggers(result)
                 
                 dip_entry_data = {
                     "optimal_threshold": summary["optimal_dip_threshold"],
@@ -867,6 +870,7 @@ async def quant_analysis_nightly_job() -> str:
                     "signal_reason": summary["signal_reason"],
                     "recovery_days": int(summary["typical_recovery_days"]) if summary["typical_recovery_days"] else None,
                     "threshold_analysis": summary["threshold_analysis"],
+                    "signal_triggers": dip_triggers,  # Include dip signal triggers
                 }
             except Exception as e:
                 logger.debug(f"Dip entry failed for {symbol}: {e}")

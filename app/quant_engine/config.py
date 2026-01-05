@@ -38,6 +38,14 @@ class QuantLimits:
     # Minimum holding period (filter out noise)
     min_holding_days: int = 1
     
+    # Maximum days to track recovery after a dip entry
+    # Used to calculate if a dip trade "recovered" vs stayed down
+    max_recovery_days: int = 90
+    
+    # Primary holding period for scoring (used as default for threshold stats)
+    # Optimizer finds optimal per-symbol, but this is the baseline for comparison
+    primary_holding_period: int = 30
+    
     # =========================================================================
     # DIP THRESHOLD LIMITS
     # =========================================================================

@@ -68,7 +68,8 @@ async def _get_user_id(user: TokenData) -> int:
 
 async def _fetch_prices_for_symbols(
     symbols: list[str],
-    lookback_days: int = 1260,  # 5 years
+    lookback_days: int = 1260,  # 5 years default
+    use_max_history: bool = False,  # NEW: fetch ALL available data
 ) -> pd.DataFrame:
     """
     Fetch price history for multiple symbols in parallel.
@@ -76,16 +77,28 @@ async def _fetch_prices_for_symbols(
     Returns a DataFrame with dates as index and symbols as columns.
     Falls back to yfinance if data not in database.
     Uses short-lived cache to avoid re-fetching across related calls.
+    
+    Args:
+        symbols: List of stock tickers
+        lookback_days: Number of days to look back (default 5 years)
+        use_max_history: If True, fetch ALL available history (overrides lookback_days)
     """
     from app.services.data_providers.yfinance_service import get_yfinance_service
     import hashlib
+    import yfinance as yf
     
     end_date = date.today()
+    
+    # For max history, use 30 years as a reasonable maximum
+    if use_max_history:
+        lookback_days = 7500  # ~30 years
+    
     start_date = end_date - timedelta(days=lookback_days)
     
     # Check cache first - key based on symbols + date range
     symbols_sorted = sorted(symbols)
-    cache_key = f"{hashlib.md5(','.join(symbols_sorted).encode()).hexdigest()}:{lookback_days}:{end_date}"
+    cache_suffix = "max" if use_max_history else str(lookback_days)
+    cache_key = f"{hashlib.md5(','.join(symbols_sorted).encode()).hexdigest()}:{cache_suffix}:{end_date}"
     cached = await _price_cache.get(cache_key)
     if cached is not None:
         logger.debug(f"Price cache hit for {len(symbols)} symbols")
@@ -96,6 +109,39 @@ async def _fetch_prices_for_symbols(
             columns=cached["columns"],
         )
         return df
+
+    # For max history, use yfinance period="max" directly
+    if use_max_history:
+        logger.info(f"Fetching MAX history for {len(symbols)} symbols")
+        price_dfs = {}
+        
+        for symbol in symbols:
+            try:
+                ticker = yf.Ticker(symbol)
+                df = ticker.history(period="max")
+                if not df.empty and "Close" in df.columns:
+                    price_dfs[symbol] = df["Close"]
+                    logger.debug(f"Fetched {len(df)} days of history for {symbol}")
+            except Exception as e:
+                logger.warning(f"Failed to fetch max history for {symbol}: {e}")
+        
+        if not price_dfs:
+            return pd.DataFrame()
+        
+        # Combine into single DataFrame
+        prices = pd.DataFrame(price_dfs)
+        prices = prices.dropna(how="all")
+        prices = prices.ffill()
+        
+        # Cache for 5 minutes
+        cache_data = {
+            "index": [str(d) for d in prices.index.tolist()],
+            "columns": prices.columns.tolist(),
+            "data": prices.values.tolist(),
+        }
+        await _price_cache.set(cache_key, cache_data, ttl=300)
+        
+        return prices
 
     # Fetch all symbols from DB in parallel
     async def fetch_symbol(symbol: str) -> tuple[str, pd.Series | None]:
@@ -171,6 +217,36 @@ async def _get_symbol_prices(symbol: str, days: int = 365) -> pd.DataFrame | Non
         return df
     
     return None
+
+
+async def _get_symbol_max_history(symbol: str) -> pd.DataFrame | None:
+    """
+    Fetch ALL available price history for a single symbol.
+    
+    Uses yfinance period="max" to get maximum available history.
+    Useful for long-term backtesting and crash testing.
+    
+    Returns:
+        DataFrame with OHLCV data, or None if fetch failed
+    """
+    import yfinance as yf
+    
+    logger.info(f"Fetching max history for {symbol}")
+    
+    try:
+        ticker = yf.Ticker(symbol)
+        df = ticker.history(period="max")
+        
+        if df.empty:
+            logger.warning(f"No history found for {symbol}")
+            return None
+        
+        logger.info(f"Fetched {len(df)} days of history for {symbol}")
+        return df
+        
+    except Exception as e:
+        logger.error(f"Error fetching max history for {symbol}: {e}")
+        return None
 
 
 def _safe_float(value: float | None, default: float = 0.0) -> float:
@@ -1681,3 +1757,263 @@ async def get_market_analysis() -> dict[str, Any]:
         "status": "computing",
         "message": "Market analysis is computed hourly. Please try again later.",
     }
+
+
+# =============================================================================
+# Backtest V2 Endpoint (Regime-Adaptive Strategy System)
+# =============================================================================
+
+
+class BacktestV2RequestParams(BaseModel):
+    """Request parameters for V2 backtest."""
+    
+    initial_capital: float = 10_000.0
+    monthly_contribution: float = 1_000.0
+    use_max_history: bool = True
+    run_crash_testing: bool = True
+    run_alpha_gauntlet: bool = True
+    use_meta_rule: bool = True
+
+
+class RegimeInfoResponse(BaseModel):
+    """Current market regime information."""
+    
+    regime: str
+    strategy_mode: str
+    drawdown_pct: float
+    volatility_regime: str
+    description: str
+
+
+class TradeMarkerV2Response(BaseModel):
+    """Trade marker for V2 backtest."""
+    
+    timestamp: str
+    price: float
+    type: str
+    shares: float
+    value: float
+    reason: str
+    regime: str | None = None
+    pnl_pct: float | None = None
+
+
+class ScenarioResultV2Response(BaseModel):
+    """Result of a single scenario simulation."""
+    
+    scenario: str
+    final_value: float
+    total_invested: float
+    total_return_pct: float
+    annualized_return_pct: float
+    max_drawdown_pct: float
+    sharpe_ratio: float
+    calmar_ratio: float
+    n_trades: int
+    win_rate: float
+    avg_trade_return: float
+
+
+class CrashTestV2Response(BaseModel):
+    """Crash test result."""
+    
+    crash_name: str
+    peak_to_trough_pct: float
+    recovery_days: int | None = None
+    accumulation_shares: float = 0.0
+    avg_buy_price: float = 0.0
+
+
+class BacktestV2Response(BaseModel):
+    """Complete V2 backtest response."""
+    
+    symbol: str
+    period_start: str
+    period_end: str
+    period_years: float
+    
+    # Current regime
+    current_regime: RegimeInfoResponse
+    
+    # Best scenario
+    best_scenario: str | None = None
+    best_return_pct: float = 0.0
+    
+    # Comparisons
+    strategy_vs_bh: float = 0.0
+    dca_vs_lump_sum: float = 0.0
+    dip_vs_regular_dca: float = 0.0
+    
+    # Scenario results
+    scenarios: dict[str, ScenarioResultV2Response] = {}
+    
+    # Crash tests
+    crash_tests: list[CrashTestV2Response] = []
+    
+    # Gauntlet
+    gauntlet_verdict: str | None = None
+    gauntlet_message: str | None = None
+    gauntlet_score: float = 0.0
+    
+    # META Rule stats
+    meta_rule_stats: dict[str, Any] = {}
+    
+    # Trade markers (for charting)
+    trade_markers: list[TradeMarkerV2Response] = []
+    
+    # Regime breakdown
+    regime_days: dict[str, int] = {}
+
+
+@global_router.get(
+    "/{symbol}/backtest-v2",
+    response_model=BacktestV2Response,
+    summary="V2 Regime-Adaptive Backtest",
+    description="""
+    Run V2 backtest with regime-adaptive strategy system.
+    
+    This endpoint uses the new V2 engine which provides:
+    - Regime detection (Bull/Bear/Crash/Recovery)
+    - META Rule fundamental checks for bear market buys
+    - DCA and scale-in portfolio simulation
+    - Comparison against buy-and-hold and SPY
+    - Crash testing (2008, 2020, 2022)
+    
+    Uses MAXIMUM available price history for robust analysis.
+    """,
+)
+async def get_backtest_v2(
+    symbol: str,
+    initial_capital: float = Query(default=10_000.0, ge=1000, le=1_000_000),
+    monthly_contribution: float = Query(default=1_000.0, ge=0, le=100_000),
+    use_max_history: bool = Query(default=True, description="Use all available history"),
+) -> BacktestV2Response:
+    """Run V2 backtest with regime-adaptive strategies."""
+    from app.quant_engine.backtest_v2 import (
+        BacktestV2Service,
+        BacktestV2Config,
+    )
+    
+    symbol = symbol.strip().upper()
+    
+    # Fetch price history
+    if use_max_history:
+        prices = await _get_symbol_max_history(symbol)
+    else:
+        prices = await _get_symbol_prices(symbol, days=1260)
+    
+    if prices is None or prices.empty:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No price data available for {symbol}",
+        )
+    
+    # Configure V2 service
+    config = BacktestV2Config(
+        initial_capital=initial_capital,
+        monthly_contribution=monthly_contribution,
+        run_crash_testing=True,
+        run_alpha_gauntlet=True,
+        use_meta_rule=True,
+    )
+    
+    # Run backtest
+    service = BacktestV2Service(config)
+    
+    try:
+        result = await service.run_full_backtest(
+            symbol=symbol,
+            prices=prices,
+            dip_signals=None,  # Will be computed by service
+        )
+    except Exception as e:
+        logger.error(f"V2 backtest failed for {symbol}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Backtest failed: {str(e)}",
+        )
+    
+    # Convert to response
+    regime_info = RegimeInfoResponse(
+        regime=result.current_regime.regime.value,
+        strategy_mode=result.current_regime.strategy_mode.value,
+        drawdown_pct=result.current_regime.drawdown_pct,
+        volatility_regime=result.current_regime.volatility_regime,
+        description=result.current_regime.description,
+    )
+    
+    # Build scenario results
+    scenarios = {}
+    if result.simulation:
+        for scenario, scenario_result in result.simulation.scenarios.items():
+            scenarios[scenario.value] = ScenarioResultV2Response(
+                scenario=scenario.value,
+                final_value=scenario_result.final_value,
+                total_invested=scenario_result.total_invested,
+                total_return_pct=scenario_result.total_return_pct,
+                annualized_return_pct=scenario_result.annualized_return_pct,
+                max_drawdown_pct=scenario_result.max_drawdown_pct,
+                sharpe_ratio=scenario_result.sharpe_ratio,
+                calmar_ratio=scenario_result.calmar_ratio,
+                n_trades=scenario_result.n_trades,
+                win_rate=scenario_result.win_rate,
+                avg_trade_return=scenario_result.avg_trade_return,
+            )
+    
+    # Build crash test results
+    crash_tests = []
+    for ct in result.crash_tests:
+        crash_tests.append(CrashTestV2Response(
+            crash_name=ct.crash_name,
+            peak_to_trough_pct=ct.drawdown.peak_to_trough_pct if ct.drawdown else 0,
+            recovery_days=ct.recovery.days_to_recover if ct.recovery else None,
+            accumulation_shares=ct.accumulation.shares_accumulated if ct.accumulation else 0,
+            avg_buy_price=ct.accumulation.avg_buy_price if ct.accumulation else 0,
+        ))
+    
+    # Build trade markers
+    trade_markers = []
+    for marker in result.trade_markers:
+        trade_markers.append(TradeMarkerV2Response(
+            timestamp=str(marker.get("timestamp", "")),
+            price=float(marker.get("price", 0)),
+            type=str(marker.get("type", "")),
+            shares=float(marker.get("shares", 0)),
+            value=float(marker.get("value", 0)),
+            reason=str(marker.get("reason", "")),
+            regime=marker.get("regime"),
+            pnl_pct=marker.get("pnl_pct"),
+        ))
+    
+    # Gauntlet info
+    gauntlet_verdict = None
+    gauntlet_message = None
+    gauntlet_score = 0.0
+    if result.gauntlet:
+        gauntlet_verdict = result.gauntlet.verdict.value
+        gauntlet_message = result.gauntlet.message
+        gauntlet_score = result.gauntlet.overall_score
+    
+    # Regime days
+    regime_days = {r.value: count for r, count in result.regime_days.items()}
+    
+    return BacktestV2Response(
+        symbol=symbol,
+        period_start=str(result.period_start.date()),
+        period_end=str(result.period_end.date()),
+        period_years=result.period_years,
+        current_regime=regime_info,
+        best_scenario=result.best_scenario.value if result.best_scenario else None,
+        best_return_pct=result.best_return_pct,
+        strategy_vs_bh=result.strategy_vs_bh,
+        dca_vs_lump_sum=result.dca_vs_lump_sum,
+        dip_vs_regular_dca=result.dip_vs_regular_dca,
+        scenarios=scenarios,
+        crash_tests=crash_tests,
+        gauntlet_verdict=gauntlet_verdict,
+        gauntlet_message=gauntlet_message,
+        gauntlet_score=gauntlet_score,
+        meta_rule_stats=result.meta_rule_stats,
+        trade_markers=trade_markers,
+        regime_days=regime_days,
+    )

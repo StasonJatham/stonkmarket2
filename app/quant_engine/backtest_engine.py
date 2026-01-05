@@ -897,12 +897,27 @@ def get_all_strategies(
 
 
 # =============================================================================
-# Backtesting Engine
+# Backtesting Engine (LEGACY - use backtest_v2.BacktestV2Service for new code)
 # =============================================================================
 
 class BacktestEngine:
     """
     Professional backtesting engine with walk-forward validation.
+    
+    .. deprecated::
+        This class is LEGACY. For new code, use:
+        
+            from app.quant_engine.backtest_v2 import BacktestV2Service
+            service = BacktestV2Service()
+            result = await service.run_full_backtest(symbol, prices)
+        
+        The V2 engine provides:
+        - Regime-adaptive strategies (Bull/Bear/Crash/Recovery)
+        - META Rule fundamental checks for bear market accumulation
+        - Portfolio simulation with DCA and scale-in logic
+        - Alpha Gauntlet validation (vs B&H, SPY, risk-adjusted)
+        - Crash testing (2008, 2020, 2022)
+        - Maximum history support (30+ years)
     """
     
     def __init__(self, config: TradingConfig | None = None):
