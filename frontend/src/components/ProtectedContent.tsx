@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { Shield, User, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
@@ -75,15 +75,15 @@ export function ProtectedContent({
     return () => clearTimeout(timer);
   }, []);
 
-  const handleVerify = useCallback(() => {
+  function handleVerify() {
     setVerified();
     setVerifiedState(true);
     setShowChallenge(false);
-  }, []);
+  }
 
-  const handleShowChallenge = useCallback(() => {
+  function handleShowChallenge() {
     setShowChallenge(true);
-  }, []);
+  }
 
   // Don't render anything until mounted (prevents SSR/static scraping)
   if (!mounted) {

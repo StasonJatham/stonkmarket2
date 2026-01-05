@@ -7,7 +7,7 @@
 
 import { useQuery, useQueries } from '@tanstack/react-query';
 import { queryKeys } from '@/lib/query';
-import { apiGet, buildUrl } from '@/lib/api-client';
+import { apiGet, apiPost, buildUrl } from '@/lib/api-client';
 import {
   StockInfoSchema,
   ChartDataSchema,
@@ -323,20 +323,34 @@ import { queryClient } from '@/lib/query';
 // Batch Charts (for Landing page signal board)
 // ============================================================================
 
+// Mini chart point from backend (simplified format)
+type MiniChartPoint = { date: string; close: number };
+type MiniChartData = { symbol: string; points: MiniChartPoint[] };
+type BatchChartApiResponse = { charts: MiniChartData[] };
+
 async function fetchBatchCharts(symbols: string[], days: number): Promise<Record<string, ChartDataPoint[]>> {
   if (symbols.length === 0) return {};
-  const data = await apiGet<Record<string, unknown>>(buildUrl('/stocks/batch-charts', { 
-    symbols: symbols.join(','),
+  // Backend endpoint is POST /dips/batch/charts
+  // Returns { charts: [ { symbol, points: [{date, close}] }, ... ] }
+  const data = await apiPost<BatchChartApiResponse>('/dips/batch/charts', { 
+    symbols,
     days,
-  }));
-  // Parse each chart individually
+  });
+  
+  // Convert to Record<symbol, ChartDataPoint[]> format
   const result: Record<string, ChartDataPoint[]> = {};
-  for (const [symbol, chartData] of Object.entries(data)) {
-    try {
-      result[symbol] = safeParse(ChartDataSchema, chartData, `BatchChart:${symbol}`);
-    } catch {
-      result[symbol] = [];
-    }
+  for (const chart of data.charts ?? []) {
+    // Convert mini points to full ChartDataPoint format (fill missing fields with null)
+    result[chart.symbol] = (chart.points ?? []).map(p => ({
+      date: p.date,
+      close: p.close,
+      threshold: null,
+      ref_high: null,
+      drawdown: null,
+      since_dip: null,
+      ref_high_date: null,
+      dip_start_date: null,
+    }));
   }
   return result;
 }

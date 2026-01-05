@@ -1,4 +1,3 @@
-import { useMemo } from 'react';
 import {
   Area,
   AreaChart,
@@ -28,20 +27,18 @@ const COLORBLIND_COLORS = {
 function useChartColors() {
   const { colorblindMode, customColors } = useTheme();
 
-  return useMemo(() => {
-    // Use colorblind palette when enabled
-    if (colorblindMode) {
-      return { success: COLORBLIND_COLORS.up, danger: COLORBLIND_COLORS.down, muted: '#6b7280' };
-    }
-    
-    // Use custom colors if set
-    if (customColors && (customColors.up !== DEFAULT_COLORS.up || customColors.down !== DEFAULT_COLORS.down)) {
-      return { success: customColors.up, danger: customColors.down, muted: '#6b7280' };
-    }
-    
-    // Default green/red
-    return { success: DEFAULT_COLORS.up, danger: DEFAULT_COLORS.down, muted: '#6b7280' };
-  }, [colorblindMode, customColors]);
+  // Use colorblind palette when enabled
+  if (colorblindMode) {
+    return { success: COLORBLIND_COLORS.up, danger: COLORBLIND_COLORS.down, muted: '#6b7280' };
+  }
+  
+  // Use custom colors if set
+  if (customColors && (customColors.up !== DEFAULT_COLORS.up || customColors.down !== DEFAULT_COLORS.down)) {
+    return { success: customColors.up, danger: customColors.down, muted: '#6b7280' };
+  }
+  
+  // Default green/red
+  return { success: DEFAULT_COLORS.up, danger: DEFAULT_COLORS.down, muted: '#6b7280' };
 }
 
 interface HoldingSparklineProps {

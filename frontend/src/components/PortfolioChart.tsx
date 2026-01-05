@@ -1,4 +1,3 @@
-import { useMemo } from 'react';
 import {
   AreaChart,
   Area,
@@ -39,7 +38,7 @@ export function PortfolioChart({
   isLoading,
   height = 350,
 }: PortfolioChartProps) {
-  const chartConfig: ChartConfig = useMemo(() => ({
+  const chartConfig: ChartConfig = (() => ({
     portfolioAvg: {
       label: 'Dip Portfolio',
       color: 'hsl(var(--chart-1))',
@@ -56,9 +55,9 @@ export function PortfolioChart({
       label: getBenchmarkName(benchmark) || 'Benchmark',
       color: 'hsl(var(--chart-2))',
     },
-  }), [benchmark]);
+  }))();
 
-  const { portfolioPerformance, benchmarkPerformance, outperformance } = useMemo(() => {
+  const { portfolioPerformance, benchmarkPerformance, outperformance } = (() => {
     if (data.length < 2) return { portfolioPerformance: 0, benchmarkPerformance: 0, outperformance: 0 };
     
     const lastPoint = data[data.length - 1];
@@ -70,7 +69,7 @@ export function PortfolioChart({
       benchmarkPerformance: benchmarkPerf,
       outperformance: portfolioPerf - benchmarkPerf,
     };
-  }, [data]);
+  })();
 
   if (isLoading) {
     return (

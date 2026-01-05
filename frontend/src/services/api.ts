@@ -526,7 +526,7 @@ export async function getSignalTriggers(symbol: string, lookbackDays: number = 3
     cacheKey,
     async () => {
       const response = await fetchAPI<SignalTriggersResponse>(
-        `/recommendations/${symbol}/signal-triggers?lookback_days=${lookbackDays}`
+        `/quant/recommendations/${symbol}/signal-triggers?lookback_days=${lookbackDays}`
       );
       return response;  // Return full response with benchmark data
     },
@@ -628,7 +628,7 @@ export async function getFullTradeStrategy(symbol: string): Promise<FullTradeRes
   
   return apiCache.fetch(
     cacheKey,
-    () => fetchAPI<FullTradeResponse>(`/recommendations/${symbol}/full-trade`),
+    () => fetchAPI<FullTradeResponse>(`/quant/recommendations/${symbol}/full-trade`),
     { ttl: CACHE_TTL.RECOMMENDATIONS, staleWhileRevalidate: true }
   );
 }
@@ -639,7 +639,7 @@ export async function getSignalCombinations(symbol: string): Promise<CombinedSig
   
   return apiCache.fetch(
     cacheKey,
-    () => fetchAPI<CombinedSignalResult[]>(`/recommendations/${symbol}/signal-combinations`),
+    () => fetchAPI<CombinedSignalResult[]>(`/quant/recommendations/${symbol}/signal-combinations`),
     { ttl: CACHE_TTL.RECOMMENDATIONS, staleWhileRevalidate: true }
   );
 }
@@ -650,7 +650,7 @@ export async function getDipAnalysis(symbol: string): Promise<DipAnalysis> {
   
   return apiCache.fetch(
     cacheKey,
-    () => fetchAPI<DipAnalysis>(`/recommendations/${symbol}/dip-analysis`),
+    () => fetchAPI<DipAnalysis>(`/quant/recommendations/${symbol}/dip-analysis`),
     { ttl: CACHE_TTL.RECOMMENDATIONS, staleWhileRevalidate: true }
   );
 }
@@ -661,7 +661,7 @@ export async function getCurrentSignals(symbol: string): Promise<CurrentSignals>
   
   return apiCache.fetch(
     cacheKey,
-    () => fetchAPI<CurrentSignals>(`/recommendations/${symbol}/current-signals`),
+    () => fetchAPI<CurrentSignals>(`/quant/recommendations/${symbol}/current-signals`),
     { ttl: 60_000, staleWhileRevalidate: true }  // Short TTL for real-time signals
   );
 }

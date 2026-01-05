@@ -8,7 +8,7 @@
  * - Batch import with progress
  */
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Upload,
@@ -121,17 +121,17 @@ function DropZone({
   const [isDragging, setIsDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const handleDragOver = useCallback((e: React.DragEvent) => {
+  function handleDragOver(e: React.DragEvent) {
     e.preventDefault();
     setIsDragging(true);
-  }, []);
+  }
 
-  const handleDragLeave = useCallback((e: React.DragEvent) => {
+  function handleDragLeave(e: React.DragEvent) {
     e.preventDefault();
     setIsDragging(false);
-  }, []);
+  }
 
-  const handleDrop = useCallback((e: React.DragEvent) => {
+  function handleDrop(e: React.DragEvent) {
     e.preventDefault();
     setIsDragging(false);
     
@@ -139,14 +139,14 @@ function DropZone({
     if (file && (file.type.startsWith('image/') || file.name.toLowerCase().endsWith('.heic') || file.name.toLowerCase().endsWith('.heif'))) {
       onFileDrop(file);
     }
-  }, [onFileDrop]);
+  }
 
-  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+  function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (file) {
       onFileDrop(file);
     }
-  }, [onFileDrop]);
+  }
 
   return (
     <div
@@ -431,7 +431,7 @@ export function BulkImportModal({
   const [error, setError] = useState<string | null>(null);
 
   // Reset state when modal closes
-  const handleOpenChange = useCallback((newOpen: boolean) => {
+  function handleOpenChange(newOpen: boolean) {
     if (!newOpen) {
       // Reset after animation
       setTimeout(() => {
@@ -443,10 +443,10 @@ export function BulkImportModal({
       }, 200);
     }
     onOpenChange(newOpen);
-  }, [onOpenChange]);
+  }
 
   // Handle file upload
-  const handleFileDrop = useCallback(async (file: File) => {
+  async function handleFileDrop(file: File) {
     setError(null);
     setState('analyzing');
     
@@ -477,29 +477,29 @@ export function BulkImportModal({
       setError(err instanceof Error ? err.message : 'Upload failed');
       setState('idle');
     }
-  }, [portfolioId]);
+  }
 
   // Update a position
-  const handleUpdatePosition = useCallback((id: string, updates: Partial<EditablePosition>) => {
+  function handleUpdatePosition(id: string, updates: Partial<EditablePosition>) {
     setPositions(prev => prev.map(p => 
       p.id === id ? { ...p, ...updates } : p
     ));
-  }, []);
+  }
 
   // Remove a position
-  const handleRemovePosition = useCallback((id: string) => {
+  function handleRemovePosition(id: string) {
     setPositions(prev => prev.filter(p => p.id !== id));
-  }, []);
+  }
 
   // Toggle skip
-  const handleToggleSkip = useCallback((id: string) => {
+  function handleToggleSkip(id: string) {
     setPositions(prev => prev.map(p => 
       p.id === id ? { ...p, skip: !p.skip } : p
     ));
-  }, []);
+  }
 
   // Import positions
-  const handleImport = useCallback(async () => {
+  async function handleImport() {
     // Filter valid, non-skipped positions
     const toImport = positions.filter(p => 
       !p.skip && p.symbol && p.quantity && p.quantity > 0
@@ -535,7 +535,7 @@ export function BulkImportModal({
       setError(err instanceof Error ? err.message : 'Import failed');
       setState('results');
     }
-  }, [portfolioId, positions, onImportComplete]);
+  }
 
   // Count valid positions
   const validCount = positions.filter(p => 

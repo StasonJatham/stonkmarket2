@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   getBatchJobs,
@@ -158,23 +158,25 @@ export function BatchJobsPanel() {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [totalJobs, setTotalJobs] = useState(0);
+  const activeCountRef = useRef(0);
 
-  const loadJobs = useCallback(async () => {
+  async function loadJobs() {
     setIsLoading(true);
     setError(null);
     try {
       const response = await getBatchJobs(pageSize, (currentPage - 1) * pageSize, true);
       setJobs(response.jobs);
       setActiveCount(response.active_count);
+      activeCountRef.current = response.active_count;
       setTotalJobs(response.total);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load batch jobs');
     } finally {
       setIsLoading(false);
     }
-  }, [currentPage, pageSize]);
+  }
 
-  const handleCancel = useCallback(async (batchId: string) => {
+  async function handleCancel(batchId: string) {
     setActionLoading(batchId);
     setError(null);
     try {
@@ -185,9 +187,9 @@ export function BatchJobsPanel() {
     } finally {
       setActionLoading(null);
     }
-  }, [loadJobs]);
+  }
 
-  const handleDelete = useCallback(async (jobId: number, batchId: string) => {
+  async function handleDelete(jobId: number, batchId: string) {
     setActionLoading(batchId);
     setError(null);
     try {
@@ -198,20 +200,22 @@ export function BatchJobsPanel() {
     } finally {
       setActionLoading(null);
     }
-  }, [loadJobs]);
+  }
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: loadJobs defined in component scope
   useEffect(() => {
     loadJobs();
     
     // Poll for updates if there are active jobs
     const interval = setInterval(() => {
-      if (activeCount > 0) {
+      if (activeCountRef.current > 0) {
         loadJobs();
       }
     }, 10000); // Every 10 seconds
     
     return () => clearInterval(interval);
-  }, [loadJobs, activeCount]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPage, pageSize]);
 
   useEffect(() => {
     setCurrentPage(1);

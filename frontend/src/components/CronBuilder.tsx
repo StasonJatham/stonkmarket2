@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -106,8 +106,8 @@ export function CronBuilder({ value, onChange }: CronBuilderProps) {
   const [customValue, setCustomValue] = useState(value);
   const [editableValue, setEditableValue] = useState(value);
   
-  const validation = useMemo(() => validateCron(editableValue), [editableValue]);
-  const description = useMemo(() => describeCron(editableValue), [editableValue]);
+  const validation = (() => validateCron(editableValue))();
+  const description = (() => describeCron(editableValue))();
   
   const handlePresetChange = (preset: string) => {
     if (preset === 'custom') {

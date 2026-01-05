@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -93,7 +93,7 @@ export function UserApiKeyManager({ onError, onSuccess }: UserApiKeyManagerProps
   // Toggle loading
   const [togglingId, setTogglingId] = useState<number | null>(null);
 
-  const loadData = useCallback(async () => {
+  async function loadData() {
     setIsLoading(true);
     try {
       const [keysData, statsData] = await Promise.all([
@@ -107,11 +107,13 @@ export function UserApiKeyManager({ onError, onSuccess }: UserApiKeyManagerProps
     } finally {
       setIsLoading(false);
     }
-  }, [showInactive, onError]);
+  }
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: loadData defined in component scope
   useEffect(() => {
     loadData();
-  }, [loadData]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showInactive]);
 
   async function handleCreate() {
     if (!newKeyName.trim()) return;

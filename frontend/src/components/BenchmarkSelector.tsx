@@ -1,4 +1,3 @@
-import { useMemo } from 'react';
 import type { BenchmarkType, BenchmarkConfig } from '@/services/api';
 import { Button } from '@/components/ui/button';
 import {
@@ -34,7 +33,7 @@ export function BenchmarkSelector({
   className 
 }: BenchmarkSelectorProps) {
   // Use custom benchmarks from API if available, otherwise fall back to defaults
-  const benchmarks = useMemo(() => {
+  const benchmarks = (() => {
     if (customBenchmarks && customBenchmarks.length > 0) {
       // Use API benchmarks directly - they are the source of truth
       return customBenchmarks.map((b) => ({
@@ -45,7 +44,7 @@ export function BenchmarkSelector({
     }
     // Fallback to defaults if API didn't return any
     return DEFAULT_BENCHMARKS;
-  }, [customBenchmarks]);
+  })();
 
   const selectedBenchmark = benchmarks.find(b => b.value === value);
 

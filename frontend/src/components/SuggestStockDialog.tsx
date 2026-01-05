@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Dialog,
@@ -86,7 +86,7 @@ export function SuggestStockDialog({
   const colors = getActiveColors();
 
   // Search local database first (fast)
-  const handleLocalSearch = useCallback(async (query: string) => {
+  async function handleLocalSearch(query: string) {
     if (query.length < 1) {
       setStoredResults([]);
       setShowSearchMore(false);
@@ -106,10 +106,10 @@ export function SuggestStockDialog({
     } finally {
       setIsSearchingStored(false);
     }
-  }, []);
+  }
 
   // External search (triggered manually)
-  const handleExternalSearch = useCallback(async () => {
+  async function handleExternalSearch() {
     if (searchQuery.length < 2) return;
     
     setIsSearchingExternal(true);
@@ -123,7 +123,7 @@ export function SuggestStockDialog({
       setIsSearchingExternal(false);
       setHasSearchedExternal(true);
     }
-  }, [searchQuery]);
+  }
 
   // Debounce local search - fast response
   useEffect(() => {
@@ -150,7 +150,7 @@ export function SuggestStockDialog({
         clearTimeout(searchTimeoutRef.current);
       }
     };
-  }, [searchQuery, handleLocalSearch]);
+  }, [searchQuery]);
 
   const resetState = () => {
     setSearchQuery('');

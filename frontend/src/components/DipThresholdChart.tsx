@@ -12,7 +12,6 @@
  * - Deep dips: Higher returns but fewer opportunities
  */
 
-import { useMemo } from 'react';
 import {
   ComposedChart,
   Bar,
@@ -111,7 +110,7 @@ export function DipThresholdChart({
 }: DipThresholdChartProps) {
   // Transform data for the chart
   // Filter to reasonable thresholds (>= -50%) and with at least 2 occurrences
-  const chartData = useMemo(() => {
+  const chartData = (() => {
     return thresholdStats
       .filter(s => s.threshold >= -50 && s.occurrences >= 2)
       .map(s => ({
@@ -129,7 +128,7 @@ export function DipThresholdChart({
         mae: Math.abs(s.avg_further_drawdown),
       }))
       .sort((a, b) => b.threshold - a.threshold);  // -1% to -50% (left to right)
-  }, [thresholdStats]);
+  })();
 
   if (chartData.length === 0) {
     return (

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   getCelerySnapshot,
   type CeleryBrokerInfo,
@@ -139,7 +139,7 @@ export function CeleryMonitorPanel() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadStats = useCallback(async (showRefreshIndicator = false) => {
+  async function loadStats(showRefreshIndicator = false) {
     if (showRefreshIndicator) {
       setIsRefreshing(true);
     }
@@ -157,7 +157,7 @@ export function CeleryMonitorPanel() {
 
     setIsInitialLoad(false);
     setIsRefreshing(false);
-  }, []);
+  }
 
   useEffect(() => {
     const initialTimeout = setTimeout(() => loadStats(), 0);
@@ -166,11 +166,11 @@ export function CeleryMonitorPanel() {
       clearTimeout(initialTimeout);
       clearInterval(interval);
     };
-  }, [loadStats]);
+  }, []);
 
-  const handleManualRefresh = useCallback(() => {
+  function handleManualRefresh() {
     loadStats(true);
-  }, [loadStats]);
+  }
 
   const workerEntries = Object.entries(workers);
   const totalProcessed = workerEntries.reduce((sum, [, info]) => {

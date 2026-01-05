@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -413,27 +413,24 @@ export function PortfolioPage() {
     setSelectedId(firstPortfolioId);
   }
 
-  const loadToolAnalytics = useCallback(
-    async (portfolioId: number, tools: string[], forceRefresh = false) => {
-      setToolAnalyticsError(null);
-      try {
-        const data = await runAnalyticsMutation.mutateAsync({
-          portfolioId,
-          tools,
-          force_refresh: forceRefresh,
-        });
-        setToolAnalytics((previous) => mergeAnalyticsResults(previous, data));
-        if (data.job_id) {
-          setToolAnalyticsJobId(data.job_id);
-        } else {
-          setToolAnalyticsJobId(null);
-        }
-      } catch (err) {
-        setToolAnalyticsError(err instanceof Error ? err.message : 'Failed to run analytics tools');
+  async function loadToolAnalytics(portfolioId: number, tools: string[], forceRefresh = false) {
+    setToolAnalyticsError(null);
+    try {
+      const data = await runAnalyticsMutation.mutateAsync({
+        portfolioId,
+        tools,
+        force_refresh: forceRefresh,
+      });
+      setToolAnalytics((previous) => mergeAnalyticsResults(previous, data));
+      if (data.job_id) {
+        setToolAnalyticsJobId(data.job_id);
+      } else {
+        setToolAnalyticsJobId(null);
       }
-    },
-    [runAnalyticsMutation]
-  );
+    } catch (err) {
+      setToolAnalyticsError(err instanceof Error ? err.message : 'Failed to run analytics tools');
+    }
+  }
 
   // Handle job completion
   const jobData = analyticsJobQuery.data;
@@ -450,12 +447,11 @@ export function PortfolioPage() {
   const isToolAnalyticsLoading = runAnalyticsMutation.isPending;
   const isAllocationLoading = getAllocationMutation.isPending;
 
-  const selectedPortfolio = useMemo(
-    () => portfolios.find((p) => p.id === selectedId) || null,
-    [portfolios, selectedId]
-  );
+  const selectedPortfolio = (() =>
+    portfolios.find((p) => p.id === selectedId) || null
+  )();
 
-  const holdingSnapshots = useMemo(() => {
+  const holdingSnapshots = (() => {
     if (!detail?.holdings) return [];
     return detail.holdings.map((holding) => {
       const info = stockInfoMap[holding.symbol];
@@ -484,14 +480,14 @@ export function PortfolioPage() {
         unrealizedPct,
       };
     });
-  }, [detail, stockInfoMap]);
+  })();
 
-  const holdingSnapshotMap = useMemo(() => {
+  const holdingSnapshotMap = (() => {
     return new Map(holdingSnapshots.map((holding) => [holding.symbol, holding]));
-  }, [holdingSnapshots]);
+  })();
 
   // Calculate portfolio stats
-  const portfolioStats = useMemo(() => {
+  const portfolioStats = (() => {
     if (!detail?.holdings) {
       return {
         totalValue: 0,
@@ -515,14 +511,13 @@ export function PortfolioPage() {
       gainLossPercent,
       investedValue,
     };
-  }, [detail, holdingSnapshots]);
+  })();
 
-  const missingAvgCost = useMemo(
-    () => detail?.holdings.filter((holding) => !holding.avg_cost) ?? [],
-    [detail]
-  );
+  const missingAvgCost = (() =>
+    detail?.holdings.filter((holding) => !holding.avg_cost) ?? []
+  )();
 
-  const sectorAllocation = useMemo(() => {
+  const sectorAllocation = (() => {
     if (!holdingSnapshots.length) return [];
     const totals = new Map<string, number>();
     let total = 0;
@@ -538,9 +533,9 @@ export function PortfolioPage() {
         percent: total > 0 ? (value / total) * 100 : 0,
       }))
       .sort((a, b) => b.value - a.value);
-  }, [holdingSnapshots]);
+  })();
 
-  const countryAllocation = useMemo(() => {
+  const countryAllocation = (() => {
     if (!holdingSnapshots.length) return [];
     const totals = new Map<string, number>();
     let total = 0;
@@ -556,27 +551,27 @@ export function PortfolioPage() {
         percent: total > 0 ? (value / total) * 100 : 0,
       }))
       .sort((a, b) => b.value - a.value);
-  }, [holdingSnapshots]);
+  })();
 
-  const topHoldings = useMemo(() => {
+  const topHoldings = (() => {
     return [...holdingSnapshots]
       .filter((holding) => holding.marketValue > 0)
       .sort((a, b) => b.marketValue - a.marketValue)
       .slice(0, 8);
-  }, [holdingSnapshots]);
+  })();
 
-  const riskContributionData = useMemo(() => {
+  const riskContributionData = (() => {
     const contributions = riskAnalytics?.raw.risk_contributions;
     if (!contributions) return [];
     return Object.entries(contributions)
       .map(([symbol, value]) => ({ symbol, value: value * 100 }))
       .sort((a, b) => b.value - a.value)
       .slice(0, 8);
-  }, [riskAnalytics]);
+  })();
 
   const riskHighlights = riskAnalytics?.risk_highlights ?? [];
 
-  const performanceMetrics = useMemo(() => {
+  const performanceMetrics = (() => {
     const quantstats = toolAnalytics?.results.find((result) => result.tool === 'quantstats');
     const pyfolio = toolAnalytics?.results.find((result) => result.tool === 'pyfolio');
     const data = (quantstats?.data ?? pyfolio?.data) as Record<string, number> | undefined;
@@ -588,9 +583,9 @@ export function PortfolioPage() {
       maxDrawdown: data?.max_drawdown ?? null,
       beta: data?.beta ?? null,
     };
-  }, [toolAnalytics]);
+  })();
 
-  const allocationWeightData = useMemo(() => {
+  const allocationWeightData = (() => {
     if (!allocationResult) return [];
     const entries = Object.entries(allocationResult.target_weights || {});
     return entries
@@ -601,7 +596,7 @@ export function PortfolioPage() {
       }))
       .sort((a, b) => b.target - a.target)
       .slice(0, 8);
-  }, [allocationResult]);
+  })();
 
   function openCreateDialog() {
     setEditingPortfolio(null);

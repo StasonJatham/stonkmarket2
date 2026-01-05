@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -76,7 +76,7 @@ export function SymbolManager({ onError }: SymbolManagerProps) {
   const [isDeleting, setIsDeleting] = useState(false);
   const initialLoad = useRef(true);
 
-  const loadSymbols = useCallback(async (skipCache = false) => {
+  async function loadSymbols(skipCache = false) {
     if (initialLoad.current) {
       setIsLoading(true);
     } else {
@@ -100,11 +100,13 @@ export function SymbolManager({ onError }: SymbolManagerProps) {
       }
       setIsRefreshing(false);
     }
-  }, [currentPage, debouncedSearch, onError, pageSize]);
+  }
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: loadSymbols defined in component scope
   useEffect(() => {
     loadSymbols();
-  }, [loadSymbols]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPage, debouncedSearch, pageSize]);
 
   useEffect(() => {
     const handle = setTimeout(() => {
@@ -123,6 +125,7 @@ export function SymbolManager({ onError }: SymbolManagerProps) {
   }, []);
 
   // Auto-poll when any symbol is in 'fetching' state
+  // biome-ignore lint/correctness/useExhaustiveDependencies: loadSymbols defined in component scope
   useEffect(() => {
     const hasFetching = symbols.some(
       (symbol) => symbol.fetch_status === 'fetching' || symbol.fetch_status === 'pending'
@@ -135,19 +138,18 @@ export function SymbolManager({ onError }: SymbolManagerProps) {
     }, 2000); // Poll every 2 seconds
 
     return () => clearInterval(pollInterval);
-  }, [symbols, loadSymbols]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [symbols]);
 
-  const activeTaskIds = useMemo(
-    () =>
-      symbols
-        .filter(
-          (symbol) =>
-            symbol.task_id &&
-            (symbol.fetch_status === 'pending' || symbol.fetch_status === 'fetching')
-        )
-        .map((symbol) => symbol.task_id as string),
-    [symbols]
-  );
+  const activeTaskIds = (() =>
+    symbols
+      .filter(
+        (symbol) =>
+          symbol.task_id &&
+          (symbol.fetch_status === 'pending' || symbol.fetch_status === 'fetching')
+      )
+      .map((symbol) => symbol.task_id as string)
+  )();
 
   useEffect(() => {
     if (activeTaskIds.length === 0) return;
@@ -186,7 +188,8 @@ export function SymbolManager({ onError }: SymbolManagerProps) {
       cancelled = true;
       clearInterval(pollInterval);
     };
-  }, [activeTaskIds, loadSymbols]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTaskIds]);
 
   async function handleValidateSymbol() {
     if (!formSymbol.trim()) return;

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   getDipCardsPaged,
@@ -55,7 +55,7 @@ export function AIManager() {
   const [selectedCard, setSelectedCard] = useState<DipCard | null>(null);
   const [detailDialogOpen, setDetailDialogOpen] = useState(false);
 
-  const loadCards = useCallback(async (skipCache = false) => {
+  async function loadCards(skipCache = false) {
     setIsLoading(true);
     setError(null);
     try {
@@ -73,11 +73,13 @@ export function AIManager() {
     } finally {
       setIsLoading(false);
     }
-  }, [currentPage, debouncedSearch, pageSize]);
+  }
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: loadCards defined in component scope
   useEffect(() => {
     loadCards();
-  }, [loadCards]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPage, debouncedSearch, pageSize]);
 
   useEffect(() => {
     const handle = setTimeout(() => {
@@ -86,7 +88,7 @@ export function AIManager() {
     return () => clearTimeout(handle);
   }, [searchValue]);
 
-  const pendingTasks = useMemo(() => {
+  const pendingTasks = (() => {
     const tasks: { symbol: string; taskId: string; type: 'summary' | 'swipe' }[] = [];
     dipCards.forEach((card) => {
       if (card.ai_pending && card.ai_task_id) {
@@ -99,7 +101,7 @@ export function AIManager() {
       }
     });
     return tasks;
-  }, [dipCards, summaryTasks]);
+  })();
 
   useEffect(() => {
     if (pendingTasks.length === 0) return;

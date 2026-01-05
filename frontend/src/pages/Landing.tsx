@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useCallback } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, useMotionValue, useTransform, animate } from 'framer-motion';
 import {
@@ -136,7 +136,7 @@ function SignalBoardCard({
     ? chartData[chartData.length - 1].close
     : (rec.last_price ?? 0);
 
-  const priceChange = useMemo(() => {
+  const priceChange = (() => {
     if (chartData.length >= 2) {
       const first = chartData[0].close;
       const last = chartData[chartData.length - 1].close;
@@ -146,7 +146,7 @@ function SignalBoardCard({
       return rec.change_percent;
     }
     return null;
-  }, [chartData, rec.change_percent]);
+  })();
 
   const isUp = (priceChange ?? 0) >= 0;
   const priceChangeClass = priceChange == null
@@ -155,18 +155,18 @@ function SignalBoardCard({
       ? 'text-success'
       : 'text-danger';
 
-  const miniChartData = useMemo(() => {
+  const miniChartData = (() => {
     const sliced = chartData.slice(-45);
     return sliced.map((p, i) => ({ x: i, y: p.close }));
-  }, [chartData]);
+  })();
 
-  const edgeScore = useMemo(() => {
+  const edgeScore = (() => {
     if (rec.quant_mode === 'CERTIFIED_BUY' && rec.quant_score_a != null) return rec.quant_score_a;
     if (rec.quant_score_b != null) return rec.quant_score_b;
     if (rec.best_chance_score != null) return rec.best_chance_score;
     if (rec.dip_score != null) return rec.dip_score * 100;
     return null;
-  }, [rec]);
+  })();
 
   return (
     <motion.div
@@ -300,7 +300,7 @@ function HeroChart({
   const colors = getActiveColors();
 
   // Merge chart data with signal triggers
-  const displayData = useMemo(() => {
+  const displayData = (() => {
     const signalMap = new Map<string, SignalTrigger>();
     signals.forEach(s => signalMap.set(s.date, s));
 
@@ -316,20 +316,17 @@ function HeroChart({
         signalTrigger,
       };
     });
-  }, [chartData, signals]);
+  })();
   
   // Find data points that have signals
-  const signalPoints = useMemo(() => 
-    displayData.filter(d => d.signalTrigger != null),
-    [displayData]
-  );
+  const signalPoints = displayData.filter(d => d.signalTrigger != null);
 
-  const priceChange = useMemo(() => {
+  const priceChange = (() => {
     if (chartData.length < 2) return 0;
     const first = chartData[0].close;
     const last = chartData[chartData.length - 1].close;
     return ((last - first) / first) * 100;
-  }, [chartData]);
+  })();
 
   const isPositive = priceChange >= 0;
   const chartColor = isPositive ? colors.up : colors.down;
@@ -501,48 +498,141 @@ function EvidenceChip({
   );
 }
 
-// Horizontal pipeline with animated checkpoints
+// Horizontal pipeline with animated checkpoints - professional design
 function HorizontalPipeline() {
   const steps = [
-    { icon: Search, title: 'Scan', description: 'Detect dips & momentum shifts' },
-    { icon: Users, title: 'Debate', description: 'AI personas challenge the signal' },
-    { icon: Target, title: 'Optimize Entry', description: 'Find optimal buy zone' },
-    { icon: BarChart3, title: 'Backtest', description: 'Validate with historical data' },
+    { 
+      icon: Search, 
+      title: 'Market Scan', 
+      description: 'Screen 8,000+ tickers for price anomalies',
+      stat: '8k+',
+      statLabel: 'symbols'
+    },
+    { 
+      icon: Users, 
+      title: 'AI Debate', 
+      description: 'Multiple AI personas analyze & challenge signals',
+      stat: '5',
+      statLabel: 'perspectives'
+    },
+    { 
+      icon: Target, 
+      title: 'Entry Optimization', 
+      description: 'Find statistically optimal buy zones',
+      stat: '95%',
+      statLabel: 'accuracy'
+    },
+    { 
+      icon: BarChart3, 
+      title: 'Backtest Validation', 
+      description: 'Verify edge with 5+ years of historical data',
+      stat: '5yr',
+      statLabel: 'history'
+    },
   ];
 
   return (
-    <div className="w-full overflow-x-auto">
-      <div className="grid grid-cols-4 gap-4 min-w-[600px]">
-        {steps.map((step, idx) => (
-          <div key={step.title} className="relative">
-            <motion.div
-              className="flex flex-col items-center text-center"
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
-              transition={{ duration: 0.4, delay: idx * 0.15 }}
-            >
+    <div className="w-full">
+      {/* Desktop: Horizontal timeline */}
+      <div className="hidden md:block">
+        <div className="relative">
+          {/* Background connector line */}
+          <div className="absolute top-10 left-[12.5%] right-[12.5%] h-0.5 bg-border" />
+          
+          {/* Animated progress line */}
+          <motion.div 
+            className="absolute top-10 left-[12.5%] h-0.5 bg-gradient-to-r from-primary via-primary to-primary/50"
+            initial={{ width: 0 }}
+            whileInView={{ width: '75%' }}
+            viewport={{ once: true }}
+            transition={{ duration: 1.5, ease: 'easeOut' }}
+          />
+          
+          <div className="grid grid-cols-4 gap-6">
+            {steps.map((step, idx) => (
               <motion.div
-                className="h-14 w-14 rounded-full bg-primary/10 border-2 border-primary flex items-center justify-center mb-3"
-                whileHover={{ scale: 1.1 }}
-                transition={{ type: 'spring', stiffness: 300 }}
-              >
-                <step.icon className="h-6 w-6 text-primary" />
-              </motion.div>
-              <h4 className="font-semibold text-sm mb-1">{step.title}</h4>
-              <p className="text-xs text-muted-foreground">{step.description}</p>
-            </motion.div>
-            {/* Connector line */}
-            {idx < steps.length - 1 && (
-              <motion.div
-                className="absolute top-7 left-[calc(50%+28px)] w-[calc(100%-28px)] h-0.5 bg-gradient-to-r from-primary/50 to-primary/20"
-                initial={{ scaleX: 0, originX: 0 }}
-                whileInView={{ scaleX: 1 }}
+                key={step.title}
+                className="flex flex-col items-center text-center relative"
+                initial={{ opacity: 0, y: 24 }}
+                whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
-                transition={{ duration: 0.5, delay: idx * 0.15 + 0.2 }}
-              />
-            )}
+                transition={{ duration: 0.5, delay: idx * 0.2 }}
+              >
+                {/* Step number badge */}
+                <div className="absolute -top-2 left-1/2 -translate-x-1/2 text-[10px] font-bold text-muted-foreground">
+                  {String(idx + 1).padStart(2, '0')}
+                </div>
+                
+                {/* Icon container with ring animation */}
+                <motion.div
+                  className="relative h-20 w-20 rounded-2xl bg-card border-2 border-primary/20 flex items-center justify-center mb-4 shadow-lg"
+                  whileHover={{ scale: 1.05, borderColor: 'hsl(var(--primary))' }}
+                  transition={{ type: 'spring', stiffness: 400, damping: 17 }}
+                >
+                  <div className="absolute inset-0 rounded-2xl bg-primary/5" />
+                  <step.icon className="h-8 w-8 text-primary relative z-10" />
+                  
+                  {/* Completion checkmark */}
+                  <motion.div
+                    className="absolute -bottom-1 -right-1 h-6 w-6 rounded-full bg-success flex items-center justify-center shadow-md"
+                    initial={{ scale: 0 }}
+                    whileInView={{ scale: 1 }}
+                    viewport={{ once: true }}
+                    transition={{ delay: idx * 0.2 + 0.5, type: 'spring' }}
+                  >
+                    <CheckCircle2 className="h-4 w-4 text-success-foreground" />
+                  </motion.div>
+                </motion.div>
+                
+                <h4 className="font-semibold text-base mb-1">{step.title}</h4>
+                <p className="text-xs text-muted-foreground leading-relaxed max-w-[160px]">
+                  {step.description}
+                </p>
+                
+                {/* Mini stat */}
+                <div className="mt-3 px-3 py-1.5 rounded-full bg-muted/50 border">
+                  <span className="font-mono font-bold text-sm text-primary">{step.stat}</span>
+                  <span className="text-[10px] text-muted-foreground ml-1">{step.statLabel}</span>
+                </div>
+              </motion.div>
+            ))}
           </div>
+        </div>
+      </div>
+      
+      {/* Mobile: Vertical timeline */}
+      <div className="md:hidden space-y-4">
+        {steps.map((step, idx) => (
+          <motion.div
+            key={step.title}
+            className="flex items-start gap-4"
+            initial={{ opacity: 0, x: -20 }}
+            whileInView={{ opacity: 1, x: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.4, delay: idx * 0.1 }}
+          >
+            <div className="relative flex-shrink-0">
+              <div className="h-12 w-12 rounded-xl bg-card border-2 border-primary/20 flex items-center justify-center shadow-md">
+                <step.icon className="h-5 w-5 text-primary" />
+              </div>
+              {idx < steps.length - 1 && (
+                <div className="absolute top-12 left-1/2 -translate-x-1/2 w-0.5 h-8 bg-border" />
+              )}
+            </div>
+            <div className="flex-1 pt-1">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-bold text-muted-foreground">
+                  {String(idx + 1).padStart(2, '0')}
+                </span>
+                <h4 className="font-semibold text-sm">{step.title}</h4>
+              </div>
+              <p className="text-xs text-muted-foreground mt-0.5">{step.description}</p>
+              <div className="mt-2 inline-flex px-2 py-1 rounded-full bg-muted/50 border">
+                <span className="font-mono font-bold text-xs text-primary">{step.stat}</span>
+                <span className="text-[10px] text-muted-foreground ml-1">{step.statLabel}</span>
+              </div>
+            </div>
+          </motion.div>
         ))}
       </div>
     </div>
@@ -704,30 +794,27 @@ export function Landing() {
     isLoadingHero,
   } = useLandingData(1000, 12);
 
-  const handleCTA = useCallback(() => {
+  function handleCTA() {
     navigate(isAuthenticated ? '/dashboard' : '/login');
-  }, [navigate, isAuthenticated]);
+  }
 
-  const handleStockClick = useCallback(
-    (symbol: string) => {
-      navigate(`/dashboard?stock=${symbol}`);
-    },
-    [navigate]
-  );
+  function handleStockClick(symbol: string) {
+    navigate(`/dashboard?stock=${symbol}`);
+  }
 
   const signalBoardRecs = recommendations.slice(0, LANDING_SIGNAL_BOARD_COUNT);
   const updatedLabel = lastUpdatedAt ? formatUpdatedLabel(lastUpdatedAt) : 'Updating...';
   const buyCount = recommendations.filter((rec) => rec.action === 'BUY').length;
   
-  const heroVerdicts = useMemo(() => heroAgentAnalysis?.verdicts ?? [], [heroAgentAnalysis?.verdicts]);
-  const verdictCounts = useMemo(() => {
+  const heroVerdicts = heroAgentAnalysis?.verdicts ?? [];
+  const verdictCounts = (() => {
     const bullishCount = heroVerdicts.filter((v) => v.signal === 'buy' || v.signal === 'strong_buy').length;
     const bearishCount = heroVerdicts.filter((v) => v.signal === 'sell' || v.signal === 'strong_sell').length;
     const neutralCount = heroVerdicts.filter((v) => v.signal === 'hold').length;
     const isBullish = heroAgentAnalysis?.overall_signal === 'buy' || heroAgentAnalysis?.overall_signal === 'strong_buy';
     const isBearish = heroAgentAnalysis?.overall_signal === 'sell' || heroAgentAnalysis?.overall_signal === 'strong_sell';
     return { bullishCount, bearishCount, neutralCount, isBullish, isBearish };
-  }, [heroVerdicts, heroAgentAnalysis?.overall_signal]);
+  })();
   const signalCount = heroSignalSummary?.nTrades ?? heroSignals.length;
   const expectedReturnPercent = portfolioStats.expectedReturn * 100;
   const edgeVsBuyHold = heroSignalSummary?.edgeVsBuyHoldPct;
@@ -742,14 +829,14 @@ export function Landing() {
   const expectedRecovery = heroRec?.expected_recovery_days ?? heroRec?.domain_recovery_days ?? null;
   
   // Dip vs typical: prefer dipfinder, fallback to computed from legacy/typical
-  const dipVsTypical = useMemo(() => {
+  const dipVsTypical = (() => {
     if (heroRec?.dip_vs_typical != null) return heroRec.dip_vs_typical;
     // Compute fallback: current dip / typical dip
     if (heroRec?.legacy_dip_pct != null && heroRec?.typical_dip_pct != null && heroRec.typical_dip_pct > 0) {
       return Math.abs(heroRec.legacy_dip_pct) / heroRec.typical_dip_pct;
     }
     return null;
-  }, [heroRec?.dip_vs_typical, heroRec?.legacy_dip_pct, heroRec?.typical_dip_pct]);
+  })();
 
   return (
     <div className="min-h-screen">
@@ -762,9 +849,9 @@ export function Landing() {
             {/* Left: Content */}
             <div>
               <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.5 }}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.2 }}
               >
                 <Badge variant="secondary" className="mb-4 gap-1.5">
                   <Sparkles className="h-3 w-3" />
@@ -774,9 +861,9 @@ export function Landing() {
 
               <motion.h1
                 className="text-4xl md:text-5xl lg:text-6xl font-bold tracking-tight mb-6"
-                initial={{ opacity: 0, y: 30 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.6, delay: 0.1 }}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.3 }}
               >
                 Catch real dips with
                 <br />
@@ -785,18 +872,18 @@ export function Landing() {
 
               <motion.p
                 className="text-lg md:text-xl text-muted-foreground mb-6 max-w-lg"
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.5, delay: 0.2 }}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.2, delay: 0.1 }}
               >
                 StonkMarket scans the market, flags high-probability reversals, and explains the signal in plain language.
               </motion.p>
 
               <motion.div
                 className="flex flex-wrap gap-2 mb-8"
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.5, delay: 0.25 }}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.2, delay: 0.15 }}
               >
                 <Badge variant="outline" className="gap-1.5">
                   <Zap className="h-3 w-3" />
@@ -814,9 +901,9 @@ export function Landing() {
 
               <motion.div
                 className="flex flex-col sm:flex-row gap-4"
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.5, delay: 0.3 }}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.2, delay: 0.2 }}
               >
                 <Button size="lg" onClick={handleCTA} className="gap-2">
                   {isAuthenticated ? 'Go to Dashboard' : 'Get Started Free'}
@@ -841,9 +928,9 @@ export function Landing() {
 
             {/* Right: Hero Chart + Analysis */}
             <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ duration: 0.8, delay: 0.2 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.3, delay: 0.1 }}
             >
               <div className="relative">
                 <div className="absolute -inset-4 rounded-3xl bg-gradient-to-br from-emerald-500/10 via-transparent to-sky-500/10 blur-2xl" />

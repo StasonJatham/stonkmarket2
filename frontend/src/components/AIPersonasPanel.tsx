@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   getAIPersonas,
   updateAIPersona,
@@ -49,7 +49,7 @@ export function AIPersonasPanel() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pendingUploadKey = useRef<string | null>(null);
 
-  const loadPersonas = useCallback(async () => {
+  async function loadPersonas() {
     setIsLoading(true);
     setError(null);
     try {
@@ -60,11 +60,12 @@ export function AIPersonasPanel() {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: loadPersonas defined in component scope
   useEffect(() => {
     loadPersonas();
-  }, [loadPersonas]);
+  }, []);
 
   const handleToggleActive = async (persona: AIPersona) => {
     try {

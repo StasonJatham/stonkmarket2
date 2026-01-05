@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence, useMotionValue, useTransform } from 'framer-motion';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { useTheme } from '@/context/ThemeContext';
@@ -249,10 +249,10 @@ function SwipeableCard({
   const sellPct = 100 - buyPct;
 
   // Prepare chart data for mini chart
-  const miniChartData = useMemo(() => {
+  const miniChartData = (() => {
     if (!chartData || chartData.length === 0) return [];
     return chartData.slice(-60).map((p, i) => ({ x: i, y: p.close }));
-  }, [chartData]);
+  })();
 
   // Days in dip (like "age")
   const daysInDip = card.days_below || 0;
@@ -700,15 +700,15 @@ export function DipSwipePage() {
 
   // Get current card for dynamic SEO
   const currentCard = mode === 'dips' ? cards[currentIndex] : null;
-  const nextCard = useMemo(() => cards[currentIndex + 1], [cards, currentIndex]);
-  const currentSuggestion = useMemo(() => suggestions[currentIndex], [suggestions, currentIndex]);
+  const nextCard = (() => cards[currentIndex + 1])();
+  const currentSuggestion = (() => suggestions[currentIndex])();
   const totalItems = mode === 'dips' ? cards.length : suggestions.length;
 
   // Prefetch charts for current + next cards
-  const symbolsForCharts = useMemo(() => {
+  const symbolsForCharts = (() => {
     if (mode !== 'dips') return [];
     return [currentCard?.symbol, nextCard?.symbol].filter((s): s is string => !!s);
-  }, [mode, currentCard?.symbol, nextCard?.symbol]);
+  })();
   const chartsQuery = useSwipeCharts(symbolsForCharts, 90);
   const chartDataMap = chartsQuery.data;
 
@@ -729,13 +729,13 @@ export function DipSwipePage() {
   });
 
   // Reset index when mode changes
-  const handleModeChange = useCallback((newMode: SwipeMode) => {
+  function handleModeChange(newMode: SwipeMode) {
     setMode(newMode);
     setCurrentIndex(0);
     setVotedCards(new Set());
-  }, []);
+  }
 
-  const handleVote = useCallback(async (vote: VoteType) => {
+  async function handleVote(vote: VoteType) {
     if (!currentCard || voteDipMutation.isPending) return;
     
     try {
@@ -755,9 +755,9 @@ export function DipSwipePage() {
         setCurrentIndex(prev => prev + 1);
       }
     }
-  }, [currentCard, voteDipMutation]);
+  }
 
-  const handleSuggestionVote = useCallback(async (approve: boolean) => {
+  async function handleSuggestionVote(approve: boolean) {
     if (!currentSuggestion || voteSuggestionMutation.isPending) return;
     
     try {
@@ -770,15 +770,15 @@ export function DipSwipePage() {
       console.error('Vote failed:', err);
       setCurrentIndex(prev => prev + 1);
     }
-  }, [currentSuggestion, voteSuggestionMutation]);
+  }
 
-  const handleSkip = useCallback(() => {
+  function handleSkip() {
     setCurrentIndex(prev => Math.min(prev + 1, totalItems));
-  }, [totalItems]);
+  }
 
-  const handlePrevious = useCallback(() => {
+  function handlePrevious() {
     setCurrentIndex(prev => Math.max(prev - 1, 0));
-  }, []);
+  }
 
   const isVoting = voteDipMutation.isPending || voteSuggestionMutation.isPending;
 

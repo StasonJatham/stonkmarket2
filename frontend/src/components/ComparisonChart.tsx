@@ -1,4 +1,3 @@
-import { useMemo } from 'react';
 import {
   LineChart,
   Line,
@@ -50,7 +49,7 @@ export function ComparisonChart({
   const stockColor = colorblindMode ? '#3b82f6' : customColors.up;
   const benchmarkColor = '#888888'; // Neutral gray for benchmark
 
-  const chartConfig: ChartConfig = useMemo(() => ({
+  const chartConfig: ChartConfig = (() => ({
     stockNormalized: {
       label: stockSymbol,
       color: stockColor,
@@ -59,9 +58,9 @@ export function ComparisonChart({
       label: getBenchmarkName(benchmark) || 'Benchmark',
       color: benchmarkColor,
     },
-  }), [stockSymbol, benchmark, stockColor, benchmarkColor]);
+  }))();
 
-  const { stockPerformance, benchmarkPerformance, outperformance } = useMemo(() => {
+  const { stockPerformance, benchmarkPerformance, outperformance } = (() => {
     if (data.length < 2) return { stockPerformance: 0, benchmarkPerformance: 0, outperformance: 0 };
     
     const lastPoint = data[data.length - 1];
@@ -73,7 +72,7 @@ export function ComparisonChart({
       benchmarkPerformance: benchmarkPerf,
       outperformance: stockPerf - benchmarkPerf,
     };
-  }, [data]);
+  })();
 
   if (isLoading) {
     if (compact) {

@@ -1,4 +1,3 @@
-import { useMemo } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -142,7 +141,7 @@ function SeverityIcon({ severity }: { severity: AIRiskAlert['severity'] }) {
 
 export function AIPortfolioAnalysis({ summary, className }: AIPortfolioAnalysisProps) {
   // Parse the JSON summary
-  const analysis = useMemo<AIPortfolioAnalysis | null>(() => {
+  const analysis = ((): AIPortfolioAnalysis | null => {
     if (!summary) return null;
 
     try {
@@ -159,7 +158,7 @@ export function AIPortfolioAnalysis({ summary, className }: AIPortfolioAnalysisP
       // Not valid JSON - might be legacy markdown format
     }
     return null;
-  }, [summary]);
+  })();
 
   // Pending state
   if (!summary) {

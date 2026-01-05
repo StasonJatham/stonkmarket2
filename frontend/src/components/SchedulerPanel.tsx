@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   getCronJobs,
@@ -308,10 +308,9 @@ function PipelineDisplay({
   const [isExpanded, setIsExpanded] = useState(true);
 
   // Sort steps by pipeline_step
-  const sortedSteps = useMemo(
-    () => [...steps].sort((a, b) => (a.pipeline_step || 0) - (b.pipeline_step || 0)),
-    [steps]
-  );
+  const sortedSteps = (() =>
+    [...steps].sort((a, b) => (a.pipeline_step || 0) - (b.pipeline_step || 0))
+  )();
 
   function formatDate(dateStr: string): string {
     return new Date(dateStr).toLocaleString();
@@ -548,7 +547,7 @@ export function SchedulerPanel() {
   const [isSaving, setIsSaving] = useState(false);
 
   // Separate jobs into pipeline and standalone
-  const { pipelineOrchestrator, pipelineSteps, standaloneJobs } = useMemo(() => {
+  const { pipelineOrchestrator, pipelineSteps, standaloneJobs } = (() => {
     const orchestrator = cronJobs.find((j) => j.name === 'market_close_pipeline');
     const steps = cronJobs.filter((j) => j.pipeline === 'market_close_pipeline');
     const standalone = cronJobs.filter(
@@ -559,10 +558,10 @@ export function SchedulerPanel() {
       pipelineSteps: steps,
       standaloneJobs: standalone,
     };
-  }, [cronJobs]);
+  })();
 
   // Unified logs: combine cron logs and batch jobs into single list
-  const unifiedLogs = useMemo((): UnifiedLogEntry[] => {
+  const unifiedLogs = ((): UnifiedLogEntry[] => {
     const logs: UnifiedLogEntry[] = [];
 
     // Add cron logs
@@ -630,9 +629,9 @@ export function SchedulerPanel() {
     });
 
     return logs;
-  }, [cronLogs, batchJobs, logType, logSearch, logStatus]);
+  })();
 
-  const loadCronJobs = useCallback(async () => {
+  async function loadCronJobs() {
     setIsLoadingJobs(true);
     try {
       const jobs = await getCronJobs();
@@ -642,9 +641,9 @@ export function SchedulerPanel() {
     } finally {
       setIsLoadingJobs(false);
     }
-  }, []);
+  }
 
-  const loadCronLogs = useCallback(async () => {
+  async function loadCronLogs() {
     setIsLoadingLogs(true);
     try {
       const [logsResponse, batchResponse] = await Promise.all([
@@ -664,15 +663,18 @@ export function SchedulerPanel() {
     } finally {
       setIsLoadingLogs(false);
     }
-  }, [logPage, logSearch, logStatus]);
+  }
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: loadCronJobs defined in component scope
   useEffect(() => {
     loadCronJobs();
-  }, [loadCronJobs]);
+  }, []);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: loadCronLogs defined in component scope
   useEffect(() => {
     loadCronLogs();
-  }, [loadCronLogs]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [logPage, logSearch, logStatus]);
 
   async function handleRunNow(name: string) {
     setRunningJob(name);
@@ -719,10 +721,10 @@ export function SchedulerPanel() {
     }
   }
 
-  const openCronEditor = useCallback((job: CronJob) => {
+  function openCronEditor(job: CronJob) {
     setEditingJob(job);
     setNewCronValue(job.cron);
-  }, []);
+  }
 
   function formatDate(dateStr: string): string {
     return new Date(dateStr).toLocaleString();

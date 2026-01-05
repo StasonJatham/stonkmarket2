@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -87,7 +87,7 @@ export function LoginPage() {
     }
   };
 
-  const handleMfaSubmit = useCallback(async (code: string) => {
+  async function handleMfaSubmit(code: string) {
     // Debounce to prevent rapid submissions
     const now = Date.now();
     if (now - lastMfaSubmitRef.current < MFA_DEBOUNCE_MS) {
@@ -107,7 +107,7 @@ export function LoginPage() {
     } finally {
       setMfaSubmitting(false);
     }
-  }, [username, password, login, navigate, from]);
+  }
 
   const handleMfaComplete = (value: string) => {
     setMfaCode(value);

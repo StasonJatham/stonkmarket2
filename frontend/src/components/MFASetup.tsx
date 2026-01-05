@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -63,7 +63,7 @@ export function MFASetup({ onError, onSuccess }: MFASetupProps) {
   const [copiedSecret, setCopiedSecret] = useState(false);
   const [copiedCodes, setCopiedCodes] = useState(false);
 
-  const loadStatus = useCallback(async () => {
+  async function loadStatus() {
     setIsLoading(true);
     try {
       const data = await getMFAStatus();
@@ -73,11 +73,13 @@ export function MFASetup({ onError, onSuccess }: MFASetupProps) {
     } finally {
       setIsLoading(false);
     }
-  }, [onError]);
+  }
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: loadStatus defined in component scope
   useEffect(() => {
     loadStatus();
-  }, [loadStatus]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function handleStartSetup() {
     setIsSettingUp(true);

@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components -- This module exports utility functions and hooks */
-import { useState, useCallback } from 'react';
+import { useState } from 'react';
 
 /**
  * Obfuscation utilities to protect personal data from scrapers
@@ -56,7 +56,7 @@ export function useObfuscatedContact() {
     country: string;
   } | null>(null);
 
-  const decode = useCallback(() => {
+  function decode() {
     if (!decoded) {
       setDecodedPayPal('@' + deobfuscate(OBFUSCATED_PAYPAL));
       setDecodedEmail(atob(OBFUSCATED_EMAIL)); // Email is just base64
@@ -68,7 +68,7 @@ export function useObfuscatedContact() {
       });
       setDecoded(true);
     }
-  }, [decoded]);
+  }
 
   return {
     decoded,

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -107,7 +107,7 @@ function GuestSuggestionsView() {
   const [votingSymbol, setVotingSymbol] = useState<string | null>(null);
   const [voteSuccess, setVoteSuccess] = useState<string | null>(null);
 
-  const loadSuggestions = useCallback(async () => {
+  async function loadSuggestions() {
     if (!hasLoaded) setIsLoading(true);
     try {
       const data = await getTopSuggestions(20);
@@ -118,11 +118,13 @@ function GuestSuggestionsView() {
     } finally {
       setIsLoading(false);
     }
-  }, [hasLoaded]);
+  }
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: loadSuggestions defined in component scope
   useEffect(() => {
     loadSuggestions();
-  }, [loadSuggestions]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function handleValidate() {
     if (!symbol.trim()) return;
@@ -372,7 +374,7 @@ function AdminSuggestionsView() {
   
   const [error, setError] = useState<string | null>(null);
 
-  const loadSuggestions = useCallback(async () => {
+  async function loadSuggestions() {
     setIsLoading(true);
     try {
       const data = await getAllSuggestions(activeTab, page, pageSize);
@@ -383,11 +385,13 @@ function AdminSuggestionsView() {
     } finally {
       setIsLoading(false);
     }
-  }, [activeTab, page]);
+  }
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: loadSuggestions defined in component scope
   useEffect(() => {
     loadSuggestions();
-  }, [loadSuggestions]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, page]);
 
   async function handleApprove(id: number) {
     setApprovingId(id);

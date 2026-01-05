@@ -4,7 +4,7 @@
  * Supports creating rules with various trigger types, thresholds, and cooldowns.
  */
 
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
 import { 
   Plus, 
   Trash2, 
@@ -139,7 +139,7 @@ export function RulesPanel() {
   const [testResult, setTestResult] = useState<{ ruleId: number; result: { would_trigger: boolean; message: string } } | null>(null);
 
   // Group trigger types by category
-  const triggerTypesByCategory = useMemo(() => {
+  const triggerTypesByCategory = (() => {
     const types = triggerTypesQuery.data ?? [];
     const grouped: Record<string, TriggerTypeInfo[]> = {};
     for (const t of types) {
@@ -147,12 +147,12 @@ export function RulesPanel() {
       grouped[t.category].push(t);
     }
     return grouped;
-  }, [triggerTypesQuery.data]);
+  })();
 
   // Get current trigger type info
-  const currentTriggerInfo = useMemo(() => {
+  const currentTriggerInfo = (() => {
     return triggerTypesQuery.data?.find((t) => t.type === formTriggerType);
-  }, [triggerTypesQuery.data, formTriggerType]);
+  })();
 
   const resetForm = () => {
     setFormName('');

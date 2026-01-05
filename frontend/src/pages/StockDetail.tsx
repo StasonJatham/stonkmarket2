@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
@@ -196,7 +196,7 @@ export function StockDetailPage() {
   });
 
   // Format chart data with display dates
-  const formattedChartData = useMemo(() => {
+  const formattedChartData = (() => {
     return displayChartData.map((point) => ({
       ...point,
       displayDate: new Date(point.date).toLocaleDateString('en-US', {
@@ -204,42 +204,42 @@ export function StockDetailPage() {
         day: 'numeric',
       }),
     }));
-  }, [displayChartData]);
+  })();
 
   // Find ref high point index for marker
-  const refHighIndex = useMemo(() => {
+  const refHighIndex = (() => {
     if (displayChartData.length === 0) return -1;
     const refDate = displayChartData[0]?.ref_high_date;
     if (!refDate) return -1;
     return formattedChartData.findIndex(p => p.date === refDate);
-  }, [displayChartData, formattedChartData]);
+  })();
 
   // Get the display date for ref high point (for ReferenceDot x value)
-  const refHighDisplayDate = useMemo(() => {
+  const refHighDisplayDate = (() => {
     if (refHighIndex < 0 || !formattedChartData[refHighIndex]) return null;
     return formattedChartData[refHighIndex].displayDate;
-  }, [refHighIndex, formattedChartData]);
+  })();
 
   // Get the display date for current price (last point)
-  const currentDisplayDate = useMemo(() => {
+  const currentDisplayDate = (() => {
     if (formattedChartData.length === 0) return null;
     return formattedChartData[formattedChartData.length - 1].displayDate;
-  }, [formattedChartData]);
+  })();
 
   // Get current price for reference line
-  const currentPrice = useMemo(() => {
+  const currentPrice = (() => {
     if (formattedChartData.length === 0) return null;
     return formattedChartData[formattedChartData.length - 1]?.close;
-  }, [formattedChartData]);
+  })();
 
   // Get the ref high price
-  const refHighPrice = useMemo(() => {
+  const refHighPrice = (() => {
     if (displayChartData.length === 0) return null;
     return displayChartData[0]?.ref_high ?? null;
-  }, [displayChartData]);
+  })();
 
   // Create chart data with trendline, reference lines, and animated dot positions
-  const chartDataWithTrendline = useMemo(() => {
+  const chartDataWithTrendline = (() => {
     if (formattedChartData.length === 0) return [];
     
     return formattedChartData.map((point, index) => {
@@ -261,15 +261,15 @@ export function StockDetailPage() {
         currentDot: index === formattedChartData.length - 1 ? point.close : null,
       };
     });
-  }, [formattedChartData, refHighIndex, currentPrice, refHighPrice]);
+  })();
 
   // Calculate price change for chart period
-  const priceChange = useMemo(() => {
+  const priceChange = (() => {
     if (displayChartData.length < 2) return 0;
     const first = displayChartData[0].close;
     const last = displayChartData[displayChartData.length - 1].close;
     return ((last - first) / first) * 100;
-  }, [displayChartData]);
+  })();
 
   const isPositive = priceChange >= 0;
   const chartColor = isPositive ? 'var(--success)' : 'var(--danger)';

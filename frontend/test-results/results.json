@@ -11,7 +11,7 @@
     "grepInvert": null,
     "maxFailures": 0,
     "metadata": {
-      "actualWorkers": 1
+      "actualWorkers": 5
     },
     "preserveOutput": "always",
     "reporter": [
@@ -44,7 +44,7 @@
         "repeatEach": 1,
         "retries": 0,
         "metadata": {
-          "actualWorkers": 1
+          "actualWorkers": 5
         },
         "id": "chromium",
         "name": "chromium",
@@ -71,20 +71,20 @@
   },
   "suites": [
     {
-      "title": "lighthouse.spec.ts",
-      "file": "lighthouse.spec.ts",
+      "title": "landing.spec.ts",
+      "file": "landing.spec.ts",
       "column": 0,
       "line": 0,
       "specs": [],
       "suites": [
         {
-          "title": "Lighthouse Audits",
-          "file": "lighthouse.spec.ts",
-          "line": 69,
+          "title": "Landing Page - Critical Data",
+          "file": "landing.spec.ts",
+          "line": 41,
           "column": 6,
           "specs": [
             {
-              "title": "home lighthouse scores",
+              "title": "loads with no API errors (no 4xx/5xx responses)",
               "ok": true,
               "tags": [],
               "tests": [
@@ -99,16 +99,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 14256,
+                      "duration": 9320,
                       "errors": [],
                       "stdout": [],
-                      "stderr": [
-                        {
-                          "buffer": ""
-                        }
-                      ],
+                      "stderr": [],
                       "retry": 0,
-                      "startTime": "2025-12-29T22:28:37.022Z",
+                      "startTime": "2026-01-05T09:42:41.401Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -116,13 +112,259 @@
                   "status": "expected"
                 }
               ],
-              "id": "cf859ece42b60ea1c522-5ba7546efbbf9ad6a13b",
-              "file": "lighthouse.spec.ts",
-              "line": 74,
-              "column": 5
+              "id": "4e5b49d369fd48ca0656-cb7b88edaac90cfb4b65",
+              "file": "landing.spec.ts",
+              "line": 42,
+              "column": 3
             },
             {
-              "title": "swipe lighthouse scores",
+              "title": "displays signal board with stock cards",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 1,
+                      "parallelIndex": 1,
+                      "status": "passed",
+                      "duration": 9259,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-01-05T09:42:41.401Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "4e5b49d369fd48ca0656-c6a8a0e1c33f71d031a3",
+              "file": "landing.spec.ts",
+              "line": 59,
+              "column": 3
+            },
+            {
+              "title": "displays hero section with featured stock",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 2,
+                      "parallelIndex": 2,
+                      "status": "passed",
+                      "duration": 9054,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-01-05T09:42:41.408Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "4e5b49d369fd48ca0656-ad20450ae09c2437c12e",
+              "file": "landing.spec.ts",
+              "line": 83,
+              "column": 3
+            },
+            {
+              "title": "AI pipeline section shows pipeline steps",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 3,
+                      "parallelIndex": 3,
+                      "status": "passed",
+                      "duration": 5861,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-01-05T09:42:41.386Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "4e5b49d369fd48ca0656-3bcaa3c99099dd62370b",
+              "file": "landing.spec.ts",
+              "line": 104,
+              "column": 3
+            },
+            {
+              "title": "displays portfolio stats with real numbers (not N/A)",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 4,
+                      "parallelIndex": 4,
+                      "status": "passed",
+                      "duration": 11711,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-01-05T09:42:41.396Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "4e5b49d369fd48ca0656-3fe6914606bdcb3a3560",
+              "file": "landing.spec.ts",
+              "line": 127,
+              "column": 3
+            },
+            {
+              "title": "charts render with actual data points",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 3,
+                      "parallelIndex": 3,
+                      "status": "passed",
+                      "duration": 8833,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-01-05T09:42:47.700Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "4e5b49d369fd48ca0656-146a6f174ac4658d057b",
+              "file": "landing.spec.ts",
+              "line": 146,
+              "column": 3
+            }
+          ]
+        },
+        {
+          "title": "Landing Page - Performance",
+          "file": "landing.spec.ts",
+          "line": 163,
+          "column": 6,
+          "specs": [
+            {
+              "title": "loads within acceptable time limits",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 2,
+                      "parallelIndex": 2,
+                      "status": "passed",
+                      "duration": 1706,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-01-05T09:42:50.910Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "4e5b49d369fd48ca0656-ed907fc9e404dc5445e4",
+              "file": "landing.spec.ts",
+              "line": 164,
+              "column": 3
+            },
+            {
+              "title": "First Contentful Paint is acceptable",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 1,
+                      "parallelIndex": 1,
+                      "status": "passed",
+                      "duration": 2425,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-01-05T09:42:51.106Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "4e5b49d369fd48ca0656-8a455890831e44caaae1",
+              "file": "landing.spec.ts",
+              "line": 180,
+              "column": 3
+            },
+            {
+              "title": "API calls complete within budget",
               "ok": true,
               "tags": [],
               "tests": [
@@ -137,16 +379,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 10022,
+                      "duration": 3108,
                       "errors": [],
                       "stdout": [],
-                      "stderr": [
-                        {
-                          "buffer": ""
-                        }
-                      ],
+                      "stderr": [],
                       "retry": 0,
-                      "startTime": "2025-12-29T22:28:51.284Z",
+                      "startTime": "2026-01-05T09:42:51.191Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -154,10 +392,196 @@
                   "status": "expected"
                 }
               ],
-              "id": "cf859ece42b60ea1c522-0c8b2e8b5b68e6d72308",
-              "file": "lighthouse.spec.ts",
-              "line": 74,
-              "column": 5
+              "id": "4e5b49d369fd48ca0656-c671a6ddb44e794c58e6",
+              "file": "landing.spec.ts",
+              "line": 213,
+              "column": 3
+            }
+          ]
+        },
+        {
+          "title": "Landing Page - API Integration",
+          "file": "landing.spec.ts",
+          "line": 230,
+          "column": 6,
+          "specs": [
+            {
+              "title": "quant recommendations endpoint returns valid data",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 2,
+                      "parallelIndex": 2,
+                      "status": "passed",
+                      "duration": 1068,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-01-05T09:42:52.631Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "4e5b49d369fd48ca0656-54b24795e786d2116c31",
+              "file": "landing.spec.ts",
+              "line": 231,
+              "column": 3
+            },
+            {
+              "title": "batch charts endpoint returns chart data",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 4,
+                      "parallelIndex": 4,
+                      "status": "passed",
+                      "duration": 2019,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-01-05T09:42:53.546Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "4e5b49d369fd48ca0656-67483ca4d6ba95b7e325",
+              "file": "landing.spec.ts",
+              "line": 249,
+              "column": 3
+            },
+            {
+              "title": "signal triggers endpoint returns trigger data",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 1,
+                      "parallelIndex": 1,
+                      "status": "passed",
+                      "duration": 1950,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-01-05T09:42:53.551Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "4e5b49d369fd48ca0656-fb010906bb94b327362b",
+              "file": "landing.spec.ts",
+              "line": 273,
+              "column": 3
+            }
+          ]
+        },
+        {
+          "title": "Landing Page - Error Handling",
+          "file": "landing.spec.ts",
+          "line": 288,
+          "column": 6,
+          "specs": [
+            {
+              "title": "shows error state gracefully when API fails",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 2,
+                      "parallelIndex": 2,
+                      "status": "passed",
+                      "duration": 2317,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-01-05T09:42:53.704Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "4e5b49d369fd48ca0656-65b76776eb41b0571dec",
+              "file": "landing.spec.ts",
+              "line": 289,
+              "column": 3
+            },
+            {
+              "title": "no JavaScript console errors on landing page",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 3983,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-01-05T09:42:54.317Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "4e5b49d369fd48ca0656-e18824c707565bb12210",
+              "file": "landing.spec.ts",
+              "line": 318,
+              "column": 3
             }
           ]
         }
@@ -166,9 +590,9 @@
   ],
   "errors": [],
   "stats": {
-    "startTime": "2025-12-29T22:28:36.737Z",
-    "duration": 24601.061999999998,
-    "expected": 2,
+    "startTime": "2026-01-05T09:42:40.852Z",
+    "duration": 17480.39,
+    "expected": 14,
     "skipped": 0,
     "unexpected": 0,
     "flaky": 0

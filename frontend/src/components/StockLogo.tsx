@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
 import { Building2 } from 'lucide-react';
 import { useTheme } from '@/context/ThemeContext';
 import { cn } from '@/lib/utils';
@@ -45,9 +45,9 @@ export function StockLogo({
   const config = sizeConfig[size];
   
   // Get logo URL from backend (backend handles all fallback logic)
-  const logoUrl = useMemo(() => {
+  const logoUrl = (() => {
     return getStockLogoUrl(symbol, resolvedTheme);
-  }, [symbol, resolvedTheme]);
+  })();
 
   return (
     <div 

@@ -12,7 +12,7 @@
  * - Domain analysis result
  */
 
-import { useMemo, memo, useCallback } from 'react';
+import { memo } from 'react';
 import { motion } from 'framer-motion';
 import { AreaChart, Area, ResponsiveContainer } from 'recharts';
 import { CHART_MINI_ANIMATION } from '@/lib/chartConfig';
@@ -43,34 +43,33 @@ import { useTheme } from '@/context/ThemeContext';
 function useChartColors() {
   const { colorblindMode, customColors } = useTheme();
 
-  return useMemo(() => {
-    if (typeof window === 'undefined') {
-      if (colorblindMode) {
-        return { success: '#3b82f6', danger: '#f97316' };
-      }
-      if (customColors) {
-        return { success: customColors.up, danger: customColors.down };
-      }
-      return { success: '#22c55e', danger: '#ef4444' };
-    }
-
-    // Read computed colors from CSS variables (respects theme and colorblind mode)
-    const root = document.documentElement;
-    const success = getComputedStyle(root).getPropertyValue('--success').trim();
-    const danger = getComputedStyle(root).getPropertyValue('--danger').trim();
-
-    if (success && danger) {
-      return { success, danger };
-    }
+  // Use colorblind palette when enabled
+  if (typeof window === 'undefined') {
     if (colorblindMode) {
       return { success: '#3b82f6', danger: '#f97316' };
     }
     if (customColors) {
       return { success: customColors.up, danger: customColors.down };
     }
-
     return { success: '#22c55e', danger: '#ef4444' };
-  }, [colorblindMode, customColors]);
+  }
+
+  // Read computed colors from CSS variables (respects theme and colorblind mode)
+  const root = document.documentElement;
+  const success = getComputedStyle(root).getPropertyValue('--success').trim();
+  const danger = getComputedStyle(root).getPropertyValue('--danger').trim();
+
+  if (success && danger) {
+    return { success, danger };
+  }
+  if (colorblindMode) {
+    return { success: '#3b82f6', danger: '#f97316' };
+  }
+  if (customColors) {
+    return { success: customColors.up, danger: customColors.down };
+  }
+
+  return { success: '#22c55e', danger: '#ef4444' };
 }
 
 // ============================================================================
@@ -644,16 +643,16 @@ export const StockCardV2 = memo(function StockCardV2({
   const opportunityRating = stock.opportunity_rating ?? getOpportunityRating(opportunityScore, stock.quant_mode);
   
   // Prepare chart data for sparkline
-  const sparklineData = useMemo(() => {
+  const sparklineData = (() => {
     if (!chartData || chartData.length === 0) return [];
     return chartData.slice(-60).map((p, i) => ({ x: i, y: p.close }));
-  }, [chartData]);
+  })();
   
   // Prefetch on hover
-  const handleMouseEnter = useCallback(() => {
+  function handleMouseEnter() {
     prefetchStockChart(stock.symbol, 90);
     prefetchStockInfo(stock.symbol);
-  }, [stock.symbol]);
+  }
   
   if (isLoading) {
     return <StockCardV2Skeleton compact={compact} />;
