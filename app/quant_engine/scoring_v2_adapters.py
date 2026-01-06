@@ -1,6 +1,9 @@
 """
 Data adapters for scoring_v2 integration.
 
+DEPRECATED: This module is deprecated along with scoring_v2.
+Use app.quant_engine.scoring.ScoringOrchestrator for all new code.
+
 These adapters transform existing data sources (quant_precomputed, strategy_signals, 
 stock_fundamentals) into the input formats required by scoring_v2.
 
@@ -16,12 +19,20 @@ from __future__ import annotations
 
 import json
 import logging
+import warnings
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+# Emit deprecation warning on import
+warnings.warn(
+    "scoring_v2_adapters is deprecated. Use app.quant_engine.scoring.ScoringOrchestrator instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 from app.database.orm import (
     DipState,

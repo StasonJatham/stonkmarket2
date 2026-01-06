@@ -27,13 +27,12 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from app.quant_engine.backtest_v2.regime_filter import (
+from app.quant_engine.core import (
     MarketRegime,
-    RegimeDetector,
+    RegimeService,
     RegimeState,
     StrategyMode,
     StrategyConfig,
-    identify_crash_periods,
 )
 from app.quant_engine.backtest_v2.fundamental_service import (
     FundamentalService,
@@ -62,6 +61,7 @@ from app.quant_engine.backtest_v2.crash_testing import (
     CrashTestResult,
     CRASH_PERIODS,
     get_crash_summary,
+    identify_crash_periods,
 )
 from app.quant_engine.backtest_v2.walk_forward import (
     WalkForwardOptimizer,
@@ -162,8 +162,8 @@ class BacktestV2Service:
     ):
         self.config = config or BacktestV2Config()
         
-        # Initialize components
-        self.regime_detector = RegimeDetector()
+        # Initialize components - use singleton RegimeService
+        self.regime_service = RegimeService.get_instance()
         self.fundamental_service = FundamentalService()
         self.bear_filter = BearMarketStrategyFilter(self.fundamental_service)
         self.portfolio_simulator = PortfolioSimulator(
@@ -171,7 +171,7 @@ class BacktestV2Service:
                 initial_capital=self.config.initial_capital,
                 monthly_contribution=self.config.monthly_contribution,
             ),
-            regime_detector=self.regime_detector,
+            regime_service=self.regime_service,
         )
         self.gauntlet = AlphaGauntlet()
         self.crash_tester = CrashTester()
@@ -209,14 +209,13 @@ class BacktestV2Service:
         
         close_prices.index = pd.to_datetime(close_prices.index)
         
-        # 1. Detect current regime (use the stock prices as proxy if SPY not provided)
-        self.regime_detector.set_spy_prices(close_prices)
-        current_regime = self.regime_detector.detect()
+        # 1. Detect current regime - wrap close prices in a DataFrame for RegimeService
+        price_df = pd.DataFrame({"close": close_prices})
+        current_regime = self.regime_service.get_current_regime(price_df)
         logger.info(f"Current regime for {symbol}: {current_regime.regime.value}")
         
-        # 2. Get historical regime states (returns DataFrame with regime column)
-        regime_history_df = self.regime_detector.get_regime_history()
-        regime_history = regime_history_df["regime"] if not regime_history_df.empty else pd.Series(dtype=str)
+        # 2. Get historical regime states as a Series for backtesting
+        regime_history = self.regime_service.get_regime_series(price_df)
         
         # 3. Apply META Rule to dip signals if in bear mode
         filtered_dip_signals = dip_signals
@@ -243,6 +242,7 @@ class BacktestV2Service:
             dip_signals=filtered_dip_signals,
             technical_signals=technical_signals,
             fundamentals_history=fundamentals_history,
+            regime_series=regime_history,
         )
         
         # 6. Run Alpha Gauntlet

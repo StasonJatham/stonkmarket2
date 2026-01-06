@@ -178,5 +178,3 @@ __all__ = [
     "normalize_sector",
     "Sector",
 ]
-    "Sector",
-]

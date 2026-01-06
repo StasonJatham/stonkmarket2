@@ -172,11 +172,11 @@ class PortfolioSimulator:
     def __init__(
         self,
         config: PortfolioConfig | None = None,
-        regime_detector: RegimeDetector | None = None,
+        regime_service: RegimeService | None = None,
         fundamental_guardrail: FundamentalGuardrail | None = None,
     ):
         self.config = config or PortfolioConfig()
-        self.regime_detector = regime_detector
+        self.regime_service = regime_service
         self.fundamental_guardrail = fundamental_guardrail
 
     def simulate_all_scenarios(
@@ -186,6 +186,7 @@ class PortfolioSimulator:
         dip_signals: pd.Series | None = None,
         technical_signals: pd.Series | None = None,
         fundamentals_history: pd.DataFrame | None = None,
+        regime_series: pd.Series | None = None,
     ) -> SimulationResult:
         """
         Run all simulation scenarios.
@@ -196,6 +197,7 @@ class PortfolioSimulator:
             dip_signals: Series with 1 for dip buy signals
             technical_signals: Series with 1 for technical buy, -1 for sell
             fundamentals_history: Historical fundamentals for bear mode checks
+            regime_series: Pre-computed regime for each date (from RegimeService)
 
         Returns:
             SimulationResult with all scenarios and comparison metrics
@@ -215,12 +217,14 @@ class PortfolioSimulator:
         # Scenario 3: Dip Strategy (timing entries, lump sum)
         if dip_signals is not None:
             results[SimulationScenario.DIP_STRATEGY] = self._simulate_dip_strategy(
-                prices, dip_signals, with_dca=False, fundamentals_history=fundamentals_history
+                prices, dip_signals, with_dca=False, 
+                fundamentals_history=fundamentals_history, regime_series=regime_series
             )
 
             # Scenario 4: Dip Strategy + DCA (timed DCA)
             results[SimulationScenario.DIP_STRATEGY_DCA] = self._simulate_dip_strategy(
-                prices, dip_signals, with_dca=True, fundamentals_history=fundamentals_history
+                prices, dip_signals, with_dca=True, 
+                fundamentals_history=fundamentals_history, regime_series=regime_series
             )
 
         # Scenario 5: Technical Strategy
@@ -355,6 +359,7 @@ class PortfolioSimulator:
         dip_signals: pd.Series,
         with_dca: bool,
         fundamentals_history: pd.DataFrame | None = None,
+        regime_series: pd.Series | None = None,
     ) -> ScenarioResult:
         """
         Simulate dip buying strategy with regime awareness.
@@ -387,10 +392,10 @@ class PortfolioSimulator:
                 last_contribution_month = month
                 months_without_deployment += 1
 
-            # Get regime at this date
-            regime_state = None
-            if self.regime_detector is not None:
-                regime_state = self.regime_detector.detect_at_date(date)
+            # Get regime at this date from pre-computed series
+            regime_value = None
+            if regime_series is not None and date in regime_series.index:
+                regime_value = regime_series.loc[date]
 
             # Check for dip signal
             is_dip = dip_signals.get(date, 0) == 1
@@ -402,18 +407,21 @@ class PortfolioSimulator:
                 buy_reason = "Dip signal"
                 position_pct = 100.0
 
-                if regime_state is not None:
-                    config = regime_state.strategy_config
-
-                    # In bear/crash mode, require fundamental check
-                    if config.use_fundamentals and self.fundamental_guardrail is not None:
-                        # This would need point-in-time fundamentals
-                        # For now, we assume fundamentals are passed externally
-                        should_buy = True  # Placeholder - integrate with PIT fundamentals
-                        buy_reason = f"Dip signal ({regime_state.regime.value} mode)"
-
-                    # Use regime-specific position sizing
-                    position_pct = config.position_size_pct
+                if regime_value is not None:
+                    # Get strategy config for this regime
+                    try:
+                        regime = MarketRegime(regime_value)
+                        from app.quant_engine.core import REGIME_STRATEGY_CONFIGS
+                        config = REGIME_STRATEGY_CONFIGS.get(regime)
+                        
+                        if config:
+                            # In bear/crash mode, could require fundamental check
+                            if config.use_fundamentals and self.fundamental_guardrail is not None:
+                                should_buy = True  # Placeholder - integrate with PIT fundamentals
+                            buy_reason = f"Dip signal ({regime.value} mode)"
+                            position_pct = config.position_size_pct
+                    except ValueError:
+                        pass  # Unknown regime value, use defaults
 
                 if should_buy:
                     cost = self.config.cost_per_trade
@@ -430,6 +438,14 @@ class PortfolioSimulator:
                         new_value = shares_to_buy * price
                         avg_cost_basis = (old_value + new_value) / (shares + shares_to_buy) if (shares + shares_to_buy) > 0 else price
 
+                        # Determine regime for trade record
+                        trade_regime = None
+                        if regime_value:
+                            try:
+                                trade_regime = MarketRegime(regime_value)
+                            except ValueError:
+                                pass
+
                         trades.append(Trade(
                             date=date,
                             type="buy",
@@ -438,7 +454,7 @@ class PortfolioSimulator:
                             value=shares_to_buy * price,
                             cost=cost,
                             reason=buy_reason,
-                            regime=regime_state.regime if regime_state else None,
+                            regime=trade_regime,
                         ))
 
                         shares += shares_to_buy
@@ -471,7 +487,7 @@ class PortfolioSimulator:
                         value=shares_to_buy * price,
                         cost=cost,
                         reason=f"Cash drag limit ({self.config.max_months_cash_drag} months)",
-                        regime=regime_state.regime if regime_state else None,
+                        regime=trade_regime,
                     ))
 
                     shares += shares_to_buy
@@ -523,11 +539,6 @@ class PortfolioSimulator:
             date = pd.Timestamp(date)
             signal = signals.get(date, 0)
 
-            # Get regime
-            regime_state = None
-            if self.regime_detector is not None:
-                regime_state = self.regime_detector.detect_at_date(date)
-
             # Buy signal
             if signal == 1 and shares == 0 and cash > price:
                 cost = self.config.cost_per_trade
@@ -543,43 +554,37 @@ class PortfolioSimulator:
                     value=shares_to_buy * price,
                     cost=cost,
                     reason="Technical buy signal",
-                    regime=regime_state.regime if regime_state else None,
+                    regime=None,
                 ))
 
                 shares = shares_to_buy
                 cash = 0
                 entry_price = price
 
-            # Sell signal (unless in bear mode with ignore_sell_signals)
+            # Sell signal
             elif signal == -1 and shares > 0:
-                should_sell = True
-                
-                if regime_state is not None and regime_state.strategy_config.ignore_sell_signals:
-                    should_sell = False  # Hold through volatility in bear mode
+                cost = self.config.cost_per_trade
+                slippage = price * (self.config.slippage_bps / 10000)
+                effective_price = price - slippage
+                sale_value = shares * effective_price - cost
 
-                if should_sell:
-                    cost = self.config.cost_per_trade
-                    slippage = price * (self.config.slippage_bps / 10000)
-                    effective_price = price - slippage
-                    sale_value = shares * effective_price - cost
+                pnl_pct = (price / entry_price - 1) * 100 if entry_price > 0 else 0
+                realized_pnl += sale_value - (shares * entry_price)
 
-                    pnl_pct = (price / entry_price - 1) * 100 if entry_price > 0 else 0
-                    realized_pnl += sale_value - (shares * entry_price)
+                trades.append(Trade(
+                    date=date,
+                    type="sell",
+                    shares=shares,
+                    price=price,
+                    value=shares * price,
+                    cost=cost,
+                    reason="Technical sell signal",
+                    regime=None,
+                    pnl_pct=pnl_pct,
+                ))
 
-                    trades.append(Trade(
-                        date=date,
-                        type="sell",
-                        shares=shares,
-                        price=price,
-                        value=shares * price,
-                        cost=cost,
-                        reason="Technical sell signal",
-                        regime=regime_state.regime if regime_state else None,
-                        pnl_pct=pnl_pct,
-                    ))
-
-                    cash = sale_value
-                    shares = 0
+                cash = sale_value
+                shares = 0
 
             # Record snapshot
             portfolio_value = cash + shares * price

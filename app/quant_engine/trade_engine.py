@@ -1,6 +1,11 @@
 """
 Advanced Trade Engine - Professional Indicators with TA Library.
 
+DEPRECATED: This module is deprecated in favor of app.quant_engine.scoring.ScoringOrchestrator
+and app.quant_engine.core.TechnicalService.
+It is kept temporarily for backward compatibility with existing jobs.
+Use the new unified services for all new code.
+
 This module uses the 'ta' library for professional technical indicators and answers:
 - "Is this dip an overreaction (BUY) or catching a falling knife (AVOID)?"
 - "What's the mathematically optimal entry AND exit strategy?"
@@ -24,9 +29,18 @@ of holding days) PROVES the exit is predictable.
 from __future__ import annotations
 
 import logging
+import warnings
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
+
+# Emit deprecation warning on import
+warnings.warn(
+    "trade_engine is deprecated. Use app.quant_engine.scoring.ScoringOrchestrator "
+    "and app.quant_engine.core.TechnicalService instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 import numpy as np
 import pandas as pd

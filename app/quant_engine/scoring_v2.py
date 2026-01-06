@@ -1,6 +1,10 @@
 """
 Scoring V2 - Integrated Scoring System Using All Data Sources.
 
+DEPRECATED: This module is deprecated in favor of app.quant_engine.scoring.ScoringOrchestrator.
+It is kept temporarily for backward compatibility with existing jobs.
+Use ScoringOrchestrator for all new code.
+
 This module replaces the old scoring.py with a statistically-driven approach
 that integrates:
 1. backtest_v2 metrics (Kelly, SQN, Sharpe, crash performance)
@@ -23,10 +27,18 @@ Version: 2.0.0
 from __future__ import annotations
 
 import logging
+import warnings
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Literal
+
+# Emit deprecation warning on import
+warnings.warn(
+    "scoring_v2 is deprecated. Use app.quant_engine.scoring.ScoringOrchestrator instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 import numpy as np
 import pandas as pd
