@@ -347,20 +347,21 @@ class TestRegimeDetectionReal:
         spy_df = run_async(fetch_all_history("SPY"))
         
         detector = RegimeDetector()
-        detector.set_spy_prices(spy_df)
+        # Extract Close column as Series (fetch_all_history returns DataFrame)
+        close_prices = spy_df["Close"] if isinstance(spy_df, pd.DataFrame) else spy_df
+        detector.set_spy_prices(close_prices)
         
         # Check regime in late 2008 (crash bottom)
-        from datetime import datetime
-        crash_date = datetime(2008, 11, 20)  # Near bottom
+        crash_date = pd.Timestamp(2008, 11, 20, tz="UTC")  # Near bottom
         
-        regime = detector.detect_regime(crash_date)
+        regime = detector.detect_at_date(crash_date)
         
         # Should detect bearish/crash regime
         assert regime.regime in [MarketRegime.BEAR, MarketRegime.CRASH], \
             f"Expected BEAR/CRASH in Nov 2008, got {regime.regime}"
         
         logger.info(f"2008 Crash Detection: {regime.regime.value}")
-        logger.info(f"  Confidence: {regime.confidence:.1%}")
+        logger.info(f"  Drawdown: {regime.drawdown_pct:.1f}%")
 
     def test_detect_covid_crash_and_recovery(self):
         """Detect COVID crash (Mar 2020) and recovery (Aug 2020)."""
@@ -370,17 +371,17 @@ class TestRegimeDetectionReal:
         spy_df = run_async(fetch_all_history("SPY"))
         
         detector = RegimeDetector()
-        detector.set_spy_prices(spy_df)
-        
-        from datetime import datetime
+        # Extract Close column as Series (fetch_all_history returns DataFrame)
+        close_prices = spy_df["Close"] if isinstance(spy_df, pd.DataFrame) else spy_df
+        detector.set_spy_prices(close_prices)
         
         # March 2020 = COVID crash
-        crash_date = datetime(2020, 3, 23)
-        crash_regime = detector.detect_regime(crash_date)
+        crash_date = pd.Timestamp(2020, 3, 23, tz="UTC")
+        crash_regime = detector.detect_at_date(crash_date)
         
         # August 2020 = Recovery/Bull
-        recovery_date = datetime(2020, 8, 15)
-        recovery_regime = detector.detect_regime(recovery_date)
+        recovery_date = pd.Timestamp(2020, 8, 15, tz="UTC")
+        recovery_regime = detector.detect_at_date(recovery_date)
         
         logger.info(f"COVID Crash (Mar 2020): {crash_regime.regime.value}")
         logger.info(f"Recovery (Aug 2020): {recovery_regime.regime.value}")

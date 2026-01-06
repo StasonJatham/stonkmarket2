@@ -1040,7 +1040,12 @@ export function Landing() {
                             Backtest: {strategyMetrics.strategyName ?? 'Signal Strategy'}
                           </CardTitle>
                           <div className="flex items-center gap-2">
-                            {(strategyMetrics.edgeVsBuyHold ?? 0) > 0 && (
+                            {/* Only show "Beats B&H" when our strategy actually has higher final value */}
+                            {heroStrategy?.comparison && (() => {
+                              const buyDips = heroStrategy.comparison.strategies['buy_dips'];
+                              const buyHold = heroStrategy.comparison.strategies['buy_hold'];
+                              return buyDips && buyHold && buyDips.final_value > buyHold.final_value;
+                            })() && (
                               <Badge variant="default" className="gap-1 text-xs bg-success/90 hover:bg-success">
                                 <Trophy className="h-3 w-3" />
                                 Beats B&H
@@ -1080,10 +1085,31 @@ export function Landing() {
                             )}
                           </div>
                           <div className="text-center border-x border-border/50">
-                            <p className={`text-2xl font-bold font-mono ${(strategyMetrics.edgeVsBuyHold ?? 0) >= 0 ? 'text-success' : 'text-danger'}`}>
-                              {strategyMetrics.edgeVsBuyHold != null ? `${strategyMetrics.edgeVsBuyHold >= 0 ? '+' : ''}${strategyMetrics.edgeVsBuyHold.toFixed(0)}%` : '—'}
-                            </p>
-                            <p className="text-xs text-muted-foreground">vs Buy & Hold</p>
+                            {/* Show edge in dollars vs percentage for clearer comparison */}
+                            {heroStrategy?.comparison ? (() => {
+                              const buyDips = heroStrategy.comparison.strategies['buy_dips'];
+                              const buyHold = heroStrategy.comparison.strategies['buy_hold'];
+                              if (buyDips && buyHold) {
+                                const edgeDollars = buyDips.final_value - buyHold.final_value;
+                                const isPositive = edgeDollars >= 0;
+                                return (
+                                  <>
+                                    <p className={`text-2xl font-bold font-mono ${isPositive ? 'text-success' : 'text-danger'}`}>
+                                      {isPositive ? '+' : '-'}${Math.abs(edgeDollars).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                                    </p>
+                                    <p className="text-xs text-muted-foreground">vs Buy & Hold</p>
+                                  </>
+                                );
+                              }
+                              return null;
+                            })() : (
+                              <>
+                                <p className={`text-2xl font-bold font-mono ${(strategyMetrics.edgeVsBuyHold ?? 0) >= 0 ? 'text-success' : 'text-danger'}`}>
+                                  {strategyMetrics.edgeVsBuyHold != null ? `${strategyMetrics.edgeVsBuyHold >= 0 ? '+' : ''}${strategyMetrics.edgeVsBuyHold.toFixed(0)}%` : '—'}
+                                </p>
+                                <p className="text-xs text-muted-foreground">vs Buy & Hold</p>
+                              </>
+                            )}
                           </div>
                           <div className="text-center">
                             <p className="text-2xl font-bold font-mono text-foreground">
@@ -1110,29 +1136,34 @@ export function Landing() {
                                       <span className="text-muted-foreground w-16">
                                         {new Date(trade.entry_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' })}
                                       </span>
-                                      {strategyMetrics.isAccumulationStrategy && trade.amount_invested ? (
-                                        // For accumulation strategies, show amount invested and shares bought
-                                        <span className="font-mono text-success">
-                                          ${trade.amount_invested.toLocaleString()}
-                                          <span className="text-muted-foreground ml-1">
-                                            ({(trade.amount_invested / trade.entry_price).toFixed(0)} sh)
+                                      {strategyMetrics.isAccumulationStrategy ? (
+                                        // For accumulation strategies, show shares bought and price
+                                        <span className="font-mono">
+                                          <span className="text-success">
+                                            {trade.amount_invested ? (
+                                              // If we have amount invested, calculate shares
+                                              <>{(trade.amount_invested / trade.entry_price).toFixed(1)} shares</>
+                                            ) : (
+                                              // Otherwise estimate 1 share bought
+                                              <>1 share</>
+                                            )}
                                           </span>
+                                          <span className="text-muted-foreground ml-1">@ ${trade.entry_price.toFixed(2)}</span>
                                         </span>
                                       ) : (
                                         // For trading strategies, show stock price
-                                        <span className="font-mono">${trade.entry_price.toFixed(0)}</span>
-                                      )}
-                                      {!strategyMetrics.isAccumulationStrategy && trade.exit_date && trade.exit_price != null && (
                                         <>
-                                          <ChevronRight className="h-3 w-3 text-muted-foreground" />
-                                          <span className="font-mono">${trade.exit_price.toFixed(0)}</span>
+                                          <span className="font-mono">${trade.entry_price.toFixed(0)}</span>
+                                          {trade.exit_date && trade.exit_price != null && (
+                                            <>
+                                              <ChevronRight className="h-3 w-3 text-muted-foreground" />
+                                              <span className="font-mono">${trade.exit_price.toFixed(0)}</span>
+                                            </>
+                                          )}
                                         </>
                                       )}
                                     </div>
-                                    {strategyMetrics.isAccumulationStrategy ? (
-                                      // For accumulation strategies, show stock price at purchase
-                                      <span className="text-xs text-muted-foreground">@ ${trade.entry_price.toFixed(2)}</span>
-                                    ) : (
+                                    {!strategyMetrics.isAccumulationStrategy && (
                                       <span className={`font-mono font-medium ${trade.pnl_pct >= 0 ? 'text-success' : 'text-danger'}`}>
                                         {trade.pnl_pct >= 0 ? '+' : ''}{trade.pnl_pct.toFixed(1)}%
                                       </span>
@@ -1215,8 +1246,10 @@ export function Landing() {
                               {['buy_dips', 'dca', 'buy_hold', 'spy_dca'].map(key => {
                                 const strat = heroStrategy.comparison?.strategies[key];
                                 if (!strat) return null;
-                                const isWinner = heroStrategy.comparison?.winner?.toLowerCase().replace(/ & /g, '_').replace(/ /g, '_') === key || 
-                                                 heroStrategy.comparison?.winner === strat.name;
+                                // Determine winner by highest final_value (total money), not percentage
+                                const allStrategies = Object.values(heroStrategy.comparison?.strategies ?? {});
+                                const maxFinalValue = Math.max(...allStrategies.map(s => s.final_value));
+                                const isWinner = strat.final_value === maxFinalValue;
                                 return (
                                   <div key={key} className={`flex items-center justify-between text-xs p-2 rounded ${isWinner ? 'bg-success/10 border border-success/30' : 'bg-muted/30'}`}>
                                     <div className="flex items-center gap-2">

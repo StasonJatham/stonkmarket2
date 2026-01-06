@@ -560,42 +560,34 @@ async def strategy_nightly_job() -> str:
 # =============================================================================
 
 
-def _to_z(value: float | None, mean: float, std: float, invert: bool = False) -> float:
-    """Convert value to z-score. If invert=True, lower is better."""
-    if value is None:
-        return 0.0
-    z = (float(value) - mean) / std if std != 0 else 0.0
-    return -z if invert else z
-
-
 # =============================================================================
-# QUANT SCORING - Dual-mode scoring pipeline (daily)
+# QUANT SCORING V2 - Integrated scoring pipeline (daily)
 # =============================================================================
 
 
 @register_job("quant_scoring_daily")
 async def quant_scoring_daily_job() -> str:
     """
-    Daily dual-mode scoring pipeline (APUS + DOUS).
+    Daily integrated scoring pipeline using scoring_v2.
     
-    Computes comprehensive scores for all tracked symbols using:
-    - Mode A (APUS): Certified Buy - statistically proven edge over benchmarks
-    - Mode B (DOUS): Dip Entry - fundamental + technical opportunity scoring
+    Uses all available data sources with NO hardcoded thresholds:
+    - backtest_v2 metrics (Kelly, SQN, Sharpe, crash performance, WFO)
+    - dip_entry_optimizer data (recovery velocity, optimal thresholds, MAE)
+    - Fundamentals (domain-specific ratios, financial health)
+    - Percentile ranking against universe (dynamic distribution-based scoring)
     
-    Key features:
-    - Stationary bootstrap (Politis & Romano) for P(edge > 0) and CI
-    - Deflated Sharpe ratio (Lopez de Prado) for multiple testing correction
-    - Walk-forward OOS with embargo
-    - Regime robustness (bull/bear/high-vol)
-    - Fundamental momentum z-scores
-    - BestScore 0-100 per symbol
+    Key improvements over v1:
+    - All thresholds discovered through statistics, not hardcoded
+    - Confidence-weighted scoring (higher confidence = higher weight)
+    - Uses precomputed data from quant_precomputed table
+    - Universe statistics for percentile ranking
     
     Schedule: Mon-Fri 11:45 PM UTC (15 min after strategy_nightly)
     """
     from datetime import date, timedelta
     from decimal import Decimal
     
-    import pandas as pd
+    import numpy as np
     from sqlalchemy import select
     from sqlalchemy.dialects.postgresql import insert
     
@@ -603,20 +595,22 @@ async def quant_scoring_daily_job() -> str:
     from app.database.connection import get_session
     from app.database.orm import (
         DipState,
+        QuantPrecomputed,
         QuantScore,
         StrategySignal,
         StockFundamentals,
         Symbol,
     )
     from app.repositories import symbols_orm as symbols_repo
-    from app.quant_engine.scoring import (
-        ScoringConfig,
-        compute_symbol_score,
-        generate_historical_weights,
+    from app.quant_engine.scoring_v2 import (
+        compute_score_v2,
         SCORING_VERSION,
     )
+    from app.quant_engine.scoring_v2_adapters import (
+        load_all_inputs_batch,
+    )
     
-    logger.info("Starting quant_scoring_daily job")
+    logger.info("Starting quant_scoring_daily job (v2 integrated scoring)")
     job_start = time.monotonic()
     
     try:
@@ -631,216 +625,132 @@ async def quant_scoring_daily_job() -> str:
         if not symbol_list:
             return "No symbols to process"
         
-        logger.info(f"[SCORING] Computing scores for {len(symbol_list)} symbols")
-        
-        # Scoring configuration
-        config = ScoringConfig()
-        
-        # Get SPY prices for benchmark
-        end_date = date.today()
-        start_date = end_date - timedelta(days=1260)  # 5 years
-        spy_df = await price_history_repo.get_prices_as_dataframe("SPY", start_date, end_date)
-        spy_prices = None
-        if spy_df is not None and len(spy_df) > 0:
-            spy_close_col = get_close_column(spy_df)
-            spy_prices = spy_df[spy_close_col]
-        
-        if spy_prices is None:
-            logger.error("[SCORING] No SPY data available")
-            return "No SPY data available"
-        
-        # Compute SPY drawdown from 52w high for market normalization
-        spy_52w_window = min(252, len(spy_prices))
-        spy_52w_high = spy_prices.rolling(spy_52w_window).max().iloc[-1]
-        spy_current = spy_prices.iloc[-1]
-        spy_dip_pct = ((spy_52w_high - spy_current) / spy_52w_high * 100) if spy_52w_high > 0 else 0
-        logger.info(f"[SCORING] Market (SPY) is {spy_dip_pct:.1f}% below 52w high")
+        logger.info(f"[SCORING V2] Computing scores for {len(symbol_list)} symbols")
         
         processed = 0
         failed = 0
-        mode_a_count = 0
-        mode_b_count = 0
+        mode_certified_count = 0
+        mode_dip_count = 0
         mode_hold_count = 0
+        mode_downtrend_count = 0
         
         async with get_session() as session:
-            # Load all strategy signals (for weights)
-            result = await session.execute(select(StrategySignal))
-            strategy_map = {s.symbol: s for s in result.scalars().all()}
+            # Load ALL data for ALL symbols in batch (efficient bulk queries)
+            logger.info("[SCORING V2] Loading precomputed data for all symbols...")
+            all_inputs = await load_all_inputs_batch(session, symbol_list)
             
-            # Load all fundamentals
-            result = await session.execute(
-                select(StockFundamentals).where(
-                    StockFundamentals.symbol.in_(symbol_list)
-                )
-            )
-            fundamentals_map = {f.symbol: f for f in result.scalars().all()}
+            # Build universe statistics for percentile ranking
+            # This is the KEY innovation - we rank against the universe, not hardcoded thresholds
+            logger.info("[SCORING V2] Building universe statistics for percentile ranking...")
+            universe_stats = _build_universe_stats_from_inputs(all_inputs)
             
-            # Load dip state for all symbols
+            # Load dip state for mode determination
             result = await session.execute(
                 select(DipState).where(DipState.symbol.in_(symbol_list))
             )
             dip_state_map = {d.symbol: d for d in result.scalars().all()}
             
-            # Load min_dip_pct thresholds from symbols
-            result = await session.execute(
-                select(Symbol).where(Symbol.symbol.in_(symbol_list))
-            )
-            symbol_thresholds = {s.symbol: float(s.min_dip_pct or 0.15) for s in result.scalars().all()}
-            
-            # Count strategies tested for deflated Sharpe
-            n_strategies_tested = len(strategy_map)
-            
+            # Score each symbol
             for symbol in symbol_list:
                 try:
-                    # Get price history
-                    df = await price_history_repo.get_prices_as_dataframe(
-                        symbol, start_date, end_date
-                    )
-                    
-                    if df is None or len(df) < 252:
-                        logger.warning(f"[SCORING] Insufficient data for {symbol}, skipping")
+                    if symbol not in all_inputs:
+                        logger.warning(f"[SCORING V2] No data for {symbol}, skipping")
+                        failed += 1
                         continue
                     
-                    # Get strategy signal for weights
-                    strategy = strategy_map.get(symbol)
+                    backtest, dip_entry, fundamentals = all_inputs[symbol]
                     
-                    # Build strategy weights from HISTORICAL signal triggers
-                    # This computes actual backtested positions, not just current signal
-                    if df is not None and len(df) > 0:
-                        df_close_col = get_close_column(df)
-                        prices_series = df[df_close_col]
-                        
-                        # Generate historical weights from best signal
-                        strategy_weights = generate_historical_weights(prices_series, holding_days=20)
-                    else:
-                        strategy_weights = pd.Series()
-                    
-                    # Convert fundamentals to z-scores (simplified)
-                    fund_obj = fundamentals_map.get(symbol)
-                    fundamentals_dict = None
-                    if fund_obj:
-                        fundamentals_dict = {
-                            "revenue_z": _to_z(fund_obj.revenue_growth, 0.10, 0.15),
-                            "earnings_z": _to_z(fund_obj.profit_margin, 0.10, 0.10),
-                            "margin_z": _to_z(fund_obj.profit_margin, 0.08, 0.10),
-                            "pe_z": _to_z(fund_obj.pe_ratio, 20, 15, invert=True) if fund_obj.pe_ratio else 0,
-                            "ev_ebitda_z": 0.0,
-                            "ps_z": 0.0,
-                        }
-                    
-                    # Get event dates
-                    earnings_date = None
-                    dividend_date = None
-                    if fund_obj:
-                        earnings_date = fund_obj.earnings_date if hasattr(fund_obj, 'earnings_date') else None
-                        dividend_date = fund_obj.dividend_date if hasattr(fund_obj, 'dividend_date') else None
-                    
-                    # Compute score
-                    result = compute_symbol_score(
+                    # Compute score using new V2 system
+                    result = compute_score_v2(
                         symbol=symbol,
-                        prices=df,
-                        spy_prices=spy_prices,
-                        strategy_weights=strategy_weights,
-                        fundamentals=fundamentals_dict,
-                        earnings_date=earnings_date,
-                        dividend_date=dividend_date,
-                        n_strategies_tested=max(1, n_strategies_tested),
-                        config=config,
+                        backtest=backtest,
+                        dip_entry=dip_entry,
+                        fundamentals=fundamentals,
+                        universe_stats=universe_stats,
                     )
                     
-                    # Check if stock is actually in a qualifying dip
-                    dip_state = dip_state_map.get(symbol)
-                    min_dip_pct = symbol_thresholds.get(symbol, 0.15) * 100
-                    dip_pct = float(dip_state.dip_percentage) if dip_state and dip_state.dip_percentage else 0
-                    
-                    # Normalize dip against market (SPY)
-                    normalized_dip_pct = max(0, dip_pct - spy_dip_pct)
-                    
-                    # Check how long the stock has been in this "dip"
-                    MAX_DIP_DAYS = 365
-                    days_in_dip = 0
-                    if dip_state and dip_state.dip_start_date:
-                        days_in_dip = (date.today() - dip_state.dip_start_date).days
-                    
-                    # Use normalized dip for entry decision
-                    is_in_dip = normalized_dip_pct >= min_dip_pct and days_in_dip <= MAX_DIP_DAYS
-                    is_downtrend = dip_pct >= min_dip_pct and days_in_dip > MAX_DIP_DAYS
-                    
-                    # Override mode if not in qualifying dip
-                    final_mode = result.mode
-                    if not result.gate_pass:
-                        if is_downtrend:
-                            final_mode = "DOWNTREND"
-                        elif not is_in_dip:
-                            final_mode = "HOLD"
-                    
                     # Track modes
-                    if result.gate_pass:
-                        mode_a_count += 1
-                    elif is_in_dip:
-                        mode_b_count += 1
-                    elif is_downtrend:
-                        mode_hold_count += 1
+                    if result.mode == "CERTIFIED_BUY":
+                        mode_certified_count += 1
+                    elif result.mode == "DIP_ENTRY":
+                        mode_dip_count += 1
+                    elif result.mode == "DOWNTREND":
+                        mode_downtrend_count += 1
                     else:
                         mode_hold_count += 1
                     
-                    # Upsert to database
-                    evidence_dict = result.evidence.to_dict() if result.evidence else None
+                    # Determine data range from dip_state or defaults
+                    dip_state = dip_state_map.get(symbol)
+                    data_start = date.today() - timedelta(days=int(dip_entry.data_years * 365) if dip_entry.data_years > 0 else 1260)
+                    data_end = date.today()
                     
+                    # Build evidence dict for storage
+                    evidence_dict = {
+                        "components": result.components.to_dict(),
+                        "key_metrics": result.key_metrics,
+                        "action": result.action,
+                        "action_reason": result.action_reason,
+                        "confidence": result.confidence,
+                        "confidence_reason": result.confidence_reason,
+                        # Legacy compatibility fields
+                        "p_outperf": result.components.backtest_confidence / 100,
+                        "fund_mom": result.components.fundamental_score / 100,
+                        "val_z": 0.0,  # Not computed in v2
+                        "p_recovery": result.components.recovery_score / 100,
+                        "expected_value": dip_entry.entry_score,
+                    }
+                    
+                    # Upsert to database
                     stmt = insert(QuantScore).values(
                         symbol=symbol,
-                        best_score=Decimal(str(round(result.best_score, 2))),
-                        mode=final_mode,
-                        score_a=Decimal(str(round(result.score_a, 2))),
-                        score_b=Decimal(str(round(result.score_b, 2))),
-                        gate_pass=result.gate_pass,
-                        p_outperf=Decimal(str(round(result.evidence.p_outperf, 4))),
-                        ci_low=Decimal(str(round(result.evidence.ci_low, 4))),
-                        ci_high=Decimal(str(round(result.evidence.ci_high, 4))),
-                        dsr=Decimal(str(round(result.evidence.dsr, 4))),
-                        median_edge=Decimal(str(round(result.evidence.median_edge, 4))),
-                        edge_vs_stock=Decimal(str(round(result.evidence.edge_vs_stock, 4))),
-                        edge_vs_spy=Decimal(str(round(result.evidence.edge_vs_spy, 4))),
-                        worst_regime_edge=Decimal(str(round(result.evidence.worst_regime_edge, 4))),
-                        cvar_5=Decimal(str(round(result.evidence.cvar_5, 4))),
-                        fund_mom=Decimal(str(round(result.evidence.fund_mom, 4))),
-                        val_z=Decimal(str(round(result.evidence.val_z, 4))),
-                        event_risk=result.evidence.event_risk,
-                        p_recovery=Decimal(str(round(result.evidence.p_recovery, 4))),
-                        expected_value=Decimal(str(round(result.evidence.expected_value, 4))),
-                        sector_relative=Decimal(str(round(result.evidence.sector_relative, 4))),
-                        config_hash=result.config_hash,
-                        scoring_version=result.scoring_version,
-                        data_start=result.data_start,
-                        data_end=result.data_end,
+                        best_score=Decimal(str(round(result.score, 2))),
+                        mode=result.mode,
+                        score_a=Decimal(str(round(result.components.backtest_quality, 2))),
+                        score_b=Decimal(str(round(result.components.entry_timing, 2))),
+                        gate_pass=result.mode == "CERTIFIED_BUY",
+                        # Statistical validation (from v2 components)
+                        p_outperf=Decimal(str(round(result.components.backtest_confidence / 100, 4))),
+                        ci_low=Decimal("0.0"),  # Not computed same way in v2
+                        ci_high=Decimal("0.0"),
+                        dsr=Decimal("0.0"),
+                        # Edge metrics (from v2 key_metrics)
+                        median_edge=Decimal(str(round(result.key_metrics.get("sharpe_ratio", 0), 4))),
+                        edge_vs_stock=Decimal("0.0"),
+                        edge_vs_spy=Decimal("0.0"),
+                        worst_regime_edge=Decimal("0.0"),
+                        cvar_5=Decimal("0.0"),
+                        # Fundamental metrics
+                        fund_mom=Decimal(str(round(result.components.fundamental_score / 100, 4))),
+                        val_z=Decimal("0.0"),
+                        event_risk=False,
+                        # Dip metrics (from v2 recovery and entry)
+                        p_recovery=Decimal(str(round(result.components.recovery_score / 100, 4))),
+                        expected_value=Decimal(str(round(dip_entry.entry_score, 4))),
+                        sector_relative=Decimal(str(round(result.components.momentum_score / 100, 4))),
+                        # Metadata
+                        config_hash="v2-" + SCORING_VERSION,
+                        scoring_version=SCORING_VERSION,
+                        data_start=data_start,
+                        data_end=data_end,
                         evidence=evidence_dict,
                     ).on_conflict_do_update(
                         index_elements=["symbol"],
                         set_={
-                            "best_score": Decimal(str(round(result.best_score, 2))),
-                            "mode": final_mode,
-                            "score_a": Decimal(str(round(result.score_a, 2))),
-                            "score_b": Decimal(str(round(result.score_b, 2))),
-                            "gate_pass": result.gate_pass,
-                            "p_outperf": Decimal(str(round(result.evidence.p_outperf, 4))),
-                            "ci_low": Decimal(str(round(result.evidence.ci_low, 4))),
-                            "ci_high": Decimal(str(round(result.evidence.ci_high, 4))),
-                            "dsr": Decimal(str(round(result.evidence.dsr, 4))),
-                            "median_edge": Decimal(str(round(result.evidence.median_edge, 4))),
-                            "edge_vs_stock": Decimal(str(round(result.evidence.edge_vs_stock, 4))),
-                            "edge_vs_spy": Decimal(str(round(result.evidence.edge_vs_spy, 4))),
-                            "worst_regime_edge": Decimal(str(round(result.evidence.worst_regime_edge, 4))),
-                            "cvar_5": Decimal(str(round(result.evidence.cvar_5, 4))),
-                            "fund_mom": Decimal(str(round(result.evidence.fund_mom, 4))),
-                            "val_z": Decimal(str(round(result.evidence.val_z, 4))),
-                            "event_risk": result.evidence.event_risk,
-                            "p_recovery": Decimal(str(round(result.evidence.p_recovery, 4))),
-                            "expected_value": Decimal(str(round(result.evidence.expected_value, 4))),
-                            "sector_relative": Decimal(str(round(result.evidence.sector_relative, 4))),
-                            "config_hash": result.config_hash,
-                            "scoring_version": result.scoring_version,
-                            "data_start": result.data_start,
-                            "data_end": result.data_end,
+                            "best_score": Decimal(str(round(result.score, 2))),
+                            "mode": result.mode,
+                            "score_a": Decimal(str(round(result.components.backtest_quality, 2))),
+                            "score_b": Decimal(str(round(result.components.entry_timing, 2))),
+                            "gate_pass": result.mode == "CERTIFIED_BUY",
+                            "p_outperf": Decimal(str(round(result.components.backtest_confidence / 100, 4))),
+                            "median_edge": Decimal(str(round(result.key_metrics.get("sharpe_ratio", 0), 4))),
+                            "fund_mom": Decimal(str(round(result.components.fundamental_score / 100, 4))),
+                            "p_recovery": Decimal(str(round(result.components.recovery_score / 100, 4))),
+                            "expected_value": Decimal(str(round(dip_entry.entry_score, 4))),
+                            "sector_relative": Decimal(str(round(result.components.momentum_score / 100, 4))),
+                            "config_hash": "v2-" + SCORING_VERSION,
+                            "scoring_version": SCORING_VERSION,
+                            "data_start": data_start,
+                            "data_end": data_end,
                             "computed_at": datetime.now(UTC),
                             "evidence": evidence_dict,
                         }
@@ -850,11 +760,11 @@ async def quant_scoring_daily_job() -> str:
                     processed += 1
                     
                     if processed % 10 == 0:
-                        logger.info(f"[SCORING] Processed {processed}/{len(symbol_list)} symbols")
+                        logger.info(f"[SCORING V2] Processed {processed}/{len(symbol_list)} symbols")
                         await session.commit()
                     
                 except Exception as e:
-                    logger.exception(f"[SCORING] Failed to score {symbol}: {e}")
+                    logger.exception(f"[SCORING V2] Failed to score {symbol}: {e}")
                     failed += 1
                     continue
             
@@ -870,8 +780,9 @@ async def quant_scoring_daily_job() -> str:
         
         duration_ms = int((time.monotonic() - job_start) * 1000)
         message = (
-            f"Scored {processed} symbols ({failed} failed), "
-            f"Mode A: {mode_a_count}, Dip Entry: {mode_b_count}, Hold: {mode_hold_count}"
+            f"Scored {processed} symbols ({failed} failed) using V2, "
+            f"Certified: {mode_certified_count}, Dip Entry: {mode_dip_count}, "
+            f"Hold: {mode_hold_count}, Downtrend: {mode_downtrend_count}"
         )
         
         # Structured success log
@@ -880,17 +791,80 @@ async def quant_scoring_daily_job() -> str:
             message,
             symbols_scored=processed,
             symbols_failed=failed,
-            mode_a_count=mode_a_count,
-            mode_b_count=mode_b_count,
-            mode_hold_count=mode_hold_count,
+            mode_certified=mode_certified_count,
+            mode_dip_entry=mode_dip_count,
+            mode_hold=mode_hold_count,
+            mode_downtrend=mode_downtrend_count,
             symbols_total=len(symbol_list),
             duration_ms=duration_ms,
+            scoring_version=SCORING_VERSION,
         )
         return message
         
     except Exception as e:
         logger.exception(f"quant_scoring_daily failed: {e}")
         raise
+
+
+def _build_universe_stats_from_inputs(
+    all_inputs: dict[str, tuple],
+) -> dict[str, "np.ndarray"]:
+    """
+    Build universe statistics arrays from all symbol inputs.
+    
+    This enables percentile ranking - each metric is ranked against the
+    universe of all symbols, not against hardcoded thresholds.
+    """
+    import numpy as np
+    from app.quant_engine.scoring_v2 import BacktestV2Input, DipEntryInput, FundamentalsInput
+    
+    stats: dict[str, list[float]] = {}
+    
+    def _add(key: str, val: float | None) -> None:
+        if val is not None and not np.isnan(val):
+            if key not in stats:
+                stats[key] = []
+            stats[key].append(val)
+    
+    for symbol, (backtest, dip_entry, fundamentals) in all_inputs.items():
+        # Backtest metrics
+        _add("sharpe_ratio", backtest.sharpe_ratio)
+        _add("sortino_ratio", backtest.sortino_ratio)
+        _add("calmar_ratio", backtest.calmar_ratio)
+        _add("kelly_fraction", backtest.kelly_fraction)
+        _add("sqn", backtest.sqn)
+        _add("profit_factor", backtest.profit_factor)
+        _add("vs_buyhold_pct", backtest.vs_buyhold_pct)
+        _add("vs_spy_pct", backtest.vs_spy_pct)
+        _add("max_drawdown_pct", abs(backtest.max_drawdown_pct))
+        _add("cvar_5", backtest.cvar_5)
+        _add("wfo_oos_sharpe", backtest.wfo_oos_sharpe)
+        _add("avg_crash_alpha", backtest.avg_crash_alpha)
+        
+        # Dip entry metrics
+        _add("recovery_rate", dip_entry.recovery_rate)
+        _add("full_recovery_rate", dip_entry.full_recovery_rate)
+        _add("avg_recovery_velocity", dip_entry.avg_recovery_velocity)
+        _add("avg_return_optimal_hold", dip_entry.avg_return_optimal_hold)
+        _add("win_rate_optimal_hold", dip_entry.win_rate_optimal_hold)
+        _add("max_further_drawdown", abs(dip_entry.max_further_drawdown))
+        _add("current_drawdown_pct", dip_entry.current_drawdown_pct)
+        
+        # Fundamental metrics
+        _add("pe_ratio", fundamentals.pe_ratio)
+        _add("peg_ratio", fundamentals.peg_ratio)
+        _add("ev_ebitda", getattr(fundamentals, "ev_ebitda", None))
+        _add("profit_margin", fundamentals.profit_margin)
+        _add("roe", fundamentals.roe)
+        _add("revenue_growth", fundamentals.revenue_growth)
+        _add("earnings_growth", fundamentals.earnings_growth)
+        _add("debt_to_equity", fundamentals.debt_to_equity)
+        _add("current_ratio", fundamentals.current_ratio)
+        _add("free_cash_flow", fundamentals.free_cash_flow)
+        _add("target_upside_pct", fundamentals.target_upside_pct)
+    
+    # Convert to numpy arrays
+    return {k: np.array(v) for k, v in stats.items()}
 
 
 # =============================================================================

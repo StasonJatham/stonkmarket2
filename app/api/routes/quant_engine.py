@@ -879,8 +879,14 @@ async def get_recommendations(
         
         best_chance_score = max(0, min(100, best_chance_score))
         
-        # Opportunity rating
-        if best_chance_score >= 75:
+        # Opportunity rating - must be consistent with action
+        # If action is HOLD, opportunity_rating should not be "buy" or "strong_buy"
+        # This prevents confusing users with "Strong Buy" rating but "HOLD" action
+        if action == "HOLD":
+            # For HOLD action, cap rating at "hold" regardless of score
+            # The score still shows opportunity quality for informational purposes
+            opportunity_rating = "hold"
+        elif best_chance_score >= 75:
             opportunity_rating = "strong_buy"
         elif best_chance_score >= 60:
             opportunity_rating = "buy"
