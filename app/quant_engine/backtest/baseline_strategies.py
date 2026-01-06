@@ -271,7 +271,7 @@ class BaselineEngine:
             (optimal_threshold_pct, full_analysis)
         """
         try:
-            from app.quant_engine.dip_entry_optimizer import DipEntryOptimizer
+            from app.quant_engine.dipfinder.entry_optimizer import DipEntryOptimizer
             
             optimizer = DipEntryOptimizer()
             analysis = optimizer.analyze(self.prices, self.symbol)
@@ -895,7 +895,7 @@ class BaselineEngine:
         # Build indicator matrix if not provided
         if indicator_matrix is None:
             try:
-                from app.quant_engine.backtest_v2.alpha_factory import IndicatorMatrix
+                from app.quant_engine.backtest.alpha_factory import IndicatorMatrix
                 indicator_matrix = IndicatorMatrix(self.prices)
             except Exception as e:
                 logger.warning(f"Could not build indicator matrix: {e}")

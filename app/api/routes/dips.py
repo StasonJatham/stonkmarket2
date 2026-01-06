@@ -22,7 +22,7 @@ from app.cache.http_cache import (
 )
 from app.core.exceptions import ExternalServiceError, NotFoundError
 from app.core.security import TokenData
-from app.dipfinder.service import get_dipfinder_service  # For chart price data
+from app.quant_engine.dipfinder.service import get_dipfinder_service  # For chart price data
 from app.repositories import dips_orm as dips_repo
 from app.schemas.dips import ChartPoint, DipStateResponse, RankingEntry, StockInfo
 from app.services.runtime_settings import get_cache_ttl, get_runtime_setting

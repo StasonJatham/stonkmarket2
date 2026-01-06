@@ -40,8 +40,8 @@ from app.quant_engine.scoring.output import (
 )
 
 # Import domain scoring - the source of truth for fundamental quality
-from app.dipfinder.domain import Domain, classify_domain
-from app.dipfinder.domain_scoring import (
+from app.quant_engine.dipfinder.domain import Domain, classify_domain
+from app.quant_engine.dipfinder.domain_scoring import (
     DomainScoreResult,
     get_adapter,
     compute_domain_score,

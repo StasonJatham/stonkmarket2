@@ -1054,36 +1054,33 @@ def run_eiten(context: PortfolioContext) -> dict[str, Any]:
 
 
 def _compute_rsi(series: pd.Series, period: int) -> float:
-    delta = series.diff()
-    up = delta.clip(lower=0).rolling(period).mean()
-    down = (-delta.clip(upper=0)).rolling(period).mean()
-    rs = up / down.replace(0, np.nan)
-    rsi = 100 - (100 / (1 + rs))
-    return float(rsi.iloc[-1])
+    """Fallback RSI using TechnicalService."""
+    from app.quant_engine.core import get_technical_service
+    tech_service = get_technical_service()
+    return tech_service._compute_rsi(series, period)
 
 
 def _compute_macd(series: pd.Series) -> dict[str, float]:
-    fast = series.ewm(span=12, adjust=False).mean()
-    slow = series.ewm(span=26, adjust=False).mean()
-    macd = fast - slow
-    signal = macd.ewm(span=9, adjust=False).mean()
-    hist = macd - signal
+    """Fallback MACD using TechnicalService."""
+    from app.quant_engine.core import get_technical_service
+    tech_service = get_technical_service()
+    macd_line, signal_line, histogram = tech_service.compute_macd_series(series)
     return {
-        "macd": float(macd.iloc[-1]),
-        "signal": float(signal.iloc[-1]),
-        "hist": float(hist.iloc[-1]),
+        "macd": float(macd_line.iloc[-1]) if not macd_line.empty else 0.0,
+        "signal": float(signal_line.iloc[-1]) if not signal_line.empty else 0.0,
+        "hist": float(histogram.iloc[-1]) if not histogram.empty else 0.0,
     }
 
 
 def _compute_bbands(series: pd.Series) -> dict[str, float]:
-    sma = series.rolling(20).mean()
-    std = series.rolling(20).std()
-    upper = sma + 2 * std
-    lower = sma - 2 * std
+    """Fallback Bollinger Bands using TechnicalService."""
+    from app.quant_engine.core import get_technical_service
+    tech_service = get_technical_service()
+    upper, middle, lower = tech_service.compute_bollinger_series(series, period=20, std_dev=2.0)
     return {
-        "upper": float(upper.iloc[-1]),
-        "middle": float(sma.iloc[-1]),
-        "lower": float(lower.iloc[-1]),
+        "upper": float(upper.iloc[-1]) if not upper.empty else 0.0,
+        "middle": float(middle.iloc[-1]) if not middle.empty else 0.0,
+        "lower": float(lower.iloc[-1]) if not lower.empty else 0.0,
     }
 
 

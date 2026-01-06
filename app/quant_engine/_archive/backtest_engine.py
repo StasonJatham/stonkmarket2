@@ -39,8 +39,8 @@ import pandas as pd
 from scipy import stats
 
 # Import shared indicator functions
-from app.quant_engine.config import QUANT_LIMITS
-from app.quant_engine.indicators import (
+from app.quant_engine.core.config import QUANT_LIMITS
+from app.quant_engine.core.indicators import (
     prepare_price_dataframe,
     compute_indicators,
     bootstrap_confidence_interval,

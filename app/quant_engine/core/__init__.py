@@ -36,7 +36,24 @@ from app.quant_engine.core.domain_service import (
 )
 
 # Re-export Domain from dipfinder for convenience
-from app.dipfinder.domain import Domain, DomainClassification
+from app.quant_engine.dipfinder.domain import Domain, DomainClassification
+
+# Config and limits
+from app.quant_engine.core.config import QuantLimits, QUANT_LIMITS
+
+# Domain analysis
+from app.quant_engine.core.domain_analysis import (
+    DomainAnalysis,
+    DomainMetrics,
+    perform_domain_analysis,
+    domain_analysis_to_dict,
+)
+
+# Indicators
+from app.quant_engine.core.indicators import (
+    compute_indicators,
+    prepare_price_dataframe,
+)
 
 __all__ = [
     # Technical Service
@@ -62,4 +79,15 @@ __all__ = [
     "get_domain_service",
     "normalize_sector",
     "domain_to_sector",
+    # Config
+    "QuantLimits",
+    "QUANT_LIMITS",
+    # Domain Analysis
+    "DomainAnalysis",
+    "DomainMetrics",
+    "perform_domain_analysis",
+    "domain_analysis_to_dict",
+    # Indicators
+    "compute_indicators",
+    "prepare_price_dataframe",
 ]

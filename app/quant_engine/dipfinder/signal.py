@@ -18,10 +18,10 @@ from .fundamentals import QualityMetrics
 from .stability import StabilityMetrics
 
 if TYPE_CHECKING:
-    from app.dipfinder.earnings_calendar import EarningsInfo
-    from app.dipfinder.sector_valuation import SectorRelativeValuation
-    from app.dipfinder.structural_analysis import FundamentalMomentum
-    from app.quant_engine.support_resistance import SupportResistanceAnalysis
+    from app.quant_engine.dipfinder.earnings_calendar import EarningsInfo
+    from app.quant_engine.dipfinder.sector_valuation import SectorRelativeValuation
+    from app.quant_engine.dipfinder.structural_analysis import FundamentalMomentum
+    from app.quant_engine.signals.support_resistance import SupportResistanceAnalysis
 
 QUANT_BLEND_WEIGHT = 0.30
 FUND_MOM_WARN_THRESHOLD = 0.35

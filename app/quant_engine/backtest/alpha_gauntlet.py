@@ -23,7 +23,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from app.quant_engine.backtest_v2.walk_forward import WFOResult, WFOSummary
+from app.quant_engine.backtest.walk_forward import WFOResult, WFOSummary
 from app.quant_engine.core import MarketRegime, RegimeService, get_regime_service
 
 logger = logging.getLogger(__name__)

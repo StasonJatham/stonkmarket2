@@ -34,7 +34,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from app.quant_engine.backtest_v2.alpha_factory import (
+from app.quant_engine.backtest.alpha_factory import (
     AlphaFactoryConfig,
     BacktestMetrics,
     ConditionGenome,
@@ -46,7 +46,7 @@ from app.quant_engine.backtest_v2.alpha_factory import (
     VectorizedBacktester,
 )
 from app.quant_engine.core import MarketRegime, get_regime_service
-from app.quant_engine.backtest_v2.strategy_report import (
+from app.quant_engine.backtest.strategy_report import (
     AdvancedMetrics,
     BenchmarkComparison,
     EquityCurvePoint,
@@ -385,7 +385,7 @@ class StrategyAnalyzer:
         baseline_comparison = None
         if include_baseline_comparison:
             try:
-                from app.quant_engine.backtest_v2.baseline_strategies import BaselineEngine
+                from app.quant_engine.backtest.baseline_strategies import BaselineEngine
                 
                 baseline_engine = BaselineEngine(
                     prices=self.prices,

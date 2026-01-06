@@ -10,11 +10,11 @@ async def run_single_symbol(symbol: str):
     from app.database.connection import get_session
     from app.database.orm import StrategySignal, StockFundamentals
     from app.repositories import price_history_orm as price_history_repo
-    from app.quant_engine.backtest_v2.baseline_strategies import (
+    from app.quant_engine.backtest.baseline_strategies import (
         BaselineEngine,
         RecommendationType,
     )
-    from app.quant_engine.dip_entry_optimizer import DipEntryOptimizer
+    from app.quant_engine.dipfinder.entry_optimizer import DipEntryOptimizer
     
     print(f"Running strategy optimization for {symbol}...")
     

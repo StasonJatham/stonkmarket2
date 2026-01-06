@@ -21,12 +21,12 @@ import pandas as pd
 from scipy import stats
 
 from app.core.logging import get_logger
-from app.dipfinder.signal import (
+from app.quant_engine.dipfinder.signal import (
     compute_signal,
     AlertLevel,
 )
-from app.dipfinder.config import DipFinderConfig
-from app.quant_engine.config import QUANT_LIMITS
+from app.quant_engine.dipfinder.config import DipFinderConfig
+from app.quant_engine.core.config import QUANT_LIMITS
 
 logger = get_logger("dipfinder.backtest")
 

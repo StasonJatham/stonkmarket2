@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.core.logging import get_logger
-from app.dipfinder.domain import Domain, DomainClassification
+from app.quant_engine.dipfinder.domain import Domain, DomainClassification
 
 
 logger = get_logger("dipfinder.domain_scoring")

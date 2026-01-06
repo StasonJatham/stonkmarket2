@@ -61,7 +61,7 @@ async def get_dip_card(symbol: str) -> DipCard | None:
     if opportunity_type == "NONE":
         # Try to compute if not cached (lazy import to avoid circular dependency)
         try:
-            from app.dipfinder.service import get_dipfinder_service
+            from app.quant_engine.dipfinder.service import get_dipfinder_service
             dipfinder = get_dipfinder_service()
             signal = await dipfinder.get_signal(symbol)
             if signal:

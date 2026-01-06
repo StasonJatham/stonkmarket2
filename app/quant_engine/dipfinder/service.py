@@ -318,15 +318,15 @@ class DipFinderService:
         If data is missing, triggers on-demand fetch via Celery task.
         Missing data is treated as neutral (not penalizing).
         """
-        from app.dipfinder.earnings_calendar import get_earnings_info_from_stored
-        from app.dipfinder.sector_valuation import (
+        from app.quant_engine.dipfinder.earnings_calendar import get_earnings_info_from_stored
+        from app.quant_engine.dipfinder.sector_valuation import (
             compute_sector_relative_valuation_from_stored,
         )
-        from app.dipfinder.signal import EnhancedAnalysisInputs
-        from app.dipfinder.structural_analysis import (
+        from app.quant_engine.dipfinder.signal import EnhancedAnalysisInputs
+        from app.quant_engine.dipfinder.structural_analysis import (
             analyze_fundamental_momentum_from_stored,
         )
-        from app.quant_engine.support_resistance import analyze_support_resistance
+        from app.quant_engine.signals.support_resistance import analyze_support_resistance
         from app.services.fundamentals import get_fundamentals_from_db
 
         # Load stored fundamentals - if missing, queue a fetch task
@@ -391,18 +391,18 @@ class DipFinderService:
         DEPRECATED: Use _build_enhanced_inputs instead. This method is kept
         for backward compatibility but the scoring now happens in signal.py.
         """
-        from app.dipfinder.earnings_calendar import (
+        from app.quant_engine.dipfinder.earnings_calendar import (
             compute_earnings_penalty,
             get_earnings_info_from_stored,
         )
-        from app.dipfinder.sector_valuation import (
+        from app.quant_engine.dipfinder.sector_valuation import (
             compute_sector_relative_valuation_from_stored,
         )
-        from app.dipfinder.structural_analysis import (
+        from app.quant_engine.dipfinder.structural_analysis import (
             analyze_fundamental_momentum_from_stored,
             is_dip_vs_structural_decline,
         )
-        from app.quant_engine.support_resistance import analyze_support_resistance
+        from app.quant_engine.signals.support_resistance import analyze_support_resistance
         from app.services.fundamentals import get_fundamentals_from_db
 
         enhanced: dict[str, Any] = {}

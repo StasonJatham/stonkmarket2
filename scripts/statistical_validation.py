@@ -24,7 +24,7 @@ from scipy import stats
 from dataclasses import dataclass
 from typing import Any
 
-from app.quant_engine.backtest_v2.baseline_strategies import (
+from app.quant_engine.backtest.baseline_strategies import (
     BaselineEngine,
     BaselineStrategyType,
 )

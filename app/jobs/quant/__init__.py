@@ -88,16 +88,16 @@ async def quant_monthly_job() -> str:
 
 
 # =============================================================================
-# STRATEGY OPTIMIZATION - Nightly after prices (uses backtest_v2)
+# STRATEGY OPTIMIZATION - Nightly after prices (uses backtest)
 # =============================================================================
 
 
 @register_job("strategy_nightly")
 async def strategy_nightly_job() -> str:
     """
-    Nightly strategy optimization using backtest_v2 BaselineEngine.
+    Nightly strategy optimization using backtest BaselineEngine.
     
-    Uses the comprehensive backtest_v2 system to compare:
+    Uses the comprehensive backtest system to compare:
     1. DCA (Dollar Cost Average) - monthly buying
     2. Buy & Hold - buy once, hold forever  
     3. Buy Dips & Hold - only buy on dips
@@ -117,14 +117,14 @@ async def strategy_nightly_job() -> str:
     from app.database.connection import get_session
     from app.database.orm import StrategySignal, StockFundamentals
     from app.repositories import symbols_orm as symbols_repo
-    from app.quant_engine.backtest_v2.baseline_strategies import (
+    from app.quant_engine.backtest.baseline_strategies import (
         BaselineEngine,
         BaselineStrategyType,
         RecommendationType,
     )
-    from app.quant_engine.dip_entry_optimizer import DipEntryOptimizer
+    from app.quant_engine.dipfinder.entry_optimizer import DipEntryOptimizer
     
-    logger.info("Starting strategy_nightly job (using backtest_v2)")
+    logger.info("Starting strategy_nightly job (using backtest)")
     job_start = time.monotonic()
     
     # Initialize dip entry optimizer for recovery time calculation
@@ -142,7 +142,7 @@ async def strategy_nightly_job() -> str:
         if not symbol_list:
             return "No symbols to process"
         
-        logger.info(f"[STRATEGY] Optimizing strategies for {len(symbol_list)} symbols using backtest_v2")
+        logger.info(f"[STRATEGY] Optimizing strategies for {len(symbol_list)} symbols using backtest")
         
         # Get SPY for benchmark comparison
         # Use 3 years by default (matches hero chart), 5 years if stock has enough data
@@ -863,7 +863,7 @@ async def quant_analysis_nightly_job() -> str:
     
     from app.repositories import symbols_orm as symbols_repo
     from app.repositories import quant_precomputed_orm as quant_repo
-    from app.quant_engine.signals import get_historical_triggers
+    from app.quant_engine.signals.scanner import get_historical_triggers
     from app.quant_engine.core import TechnicalService, get_technical_service
     from app.services.prices import get_price_service
 
@@ -1083,7 +1083,7 @@ async def quant_analysis_nightly_job() -> str:
             # 6. Dip Entry Analysis
             dip_entry_data = None
             try:
-                from app.quant_engine.dip_entry_optimizer import DipEntryOptimizer, get_dip_summary, get_dip_signal_triggers
+                from app.quant_engine.dipfinder.entry_optimizer import DipEntryOptimizer, get_dip_summary, get_dip_signal_triggers
                 
                 optimizer = DipEntryOptimizer()
                 result = optimizer.analyze(df, symbol, fundamentals=None)

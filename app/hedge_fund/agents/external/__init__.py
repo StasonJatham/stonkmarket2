@@ -210,7 +210,7 @@ class FundamentalsServiceAdapter(ExternalAgentAdapter):
         run_id: str | None = None,
     ) -> AgentSignal:
         """Get quality score from fundamentals service."""
-        from app.dipfinder.fundamentals import calculate_quality_metrics
+        from app.quant_engine.dipfinder.fundamentals import calculate_quality_metrics
 
         try:
             # Use raw_info from our data

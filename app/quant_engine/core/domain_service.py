@@ -19,7 +19,7 @@ from enum import Enum
 from typing import Any
 
 # Import the canonical Domain enum from dipfinder
-from app.dipfinder.domain import (
+from app.quant_engine.dipfinder.domain import (
     Domain,
     DomainClassification,
     classify_domain,

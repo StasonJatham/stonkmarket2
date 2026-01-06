@@ -160,8 +160,8 @@ async def dipfinder_daily_job() -> str:
     """
     from datetime import date
     
-    from app.dipfinder.config import get_dipfinder_config
-    from app.dipfinder.service import DipFinderService
+    from app.quant_engine.dipfinder.config import get_dipfinder_config
+    from app.quant_engine.dipfinder.service import DipFinderService
     from app.repositories import symbols_orm as symbols_repo
     
     logger.info("Starting dipfinder_daily job")
@@ -212,7 +212,7 @@ async def dipfinder_daily_job() -> str:
         
         # Phase 2: Run dip entry optimizer for all symbols
         from datetime import timedelta
-        from app.quant_engine.dip_entry_optimizer import DipEntryOptimizer, get_dip_summary
+        from app.quant_engine.dipfinder.entry_optimizer import DipEntryOptimizer, get_dip_summary
         from app.repositories import price_history_orm as price_history_repo
         from app.repositories import quant_precomputed_orm as quant_repo
         
@@ -310,7 +310,7 @@ async def regime_daily_job() -> str:
     import pandas as pd
 
     from app.cache.cache import Cache
-    from app.quant_engine.analytics import detect_regime, compute_correlation_analysis
+    from app.quant_engine.risk.analytics import detect_regime, compute_correlation_analysis
     from app.repositories import price_history_orm as price_history_repo
     from app.repositories import symbols_orm as symbols_repo
 

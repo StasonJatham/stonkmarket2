@@ -1120,7 +1120,7 @@ def _simulate_trades_with_exit(
     max_hold: int | None = None,
 ) -> list[TradeCycle]:
     """Simulate trades with a specific exit strategy."""
-    from app.quant_engine.config import QUANT_LIMITS
+    from app.quant_engine.core.config import QUANT_LIMITS
     if max_hold is None:
         max_hold = QUANT_LIMITS.max_holding_days
     

@@ -24,7 +24,7 @@ import pandas as pd
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from app.quant_engine.backtest_v2.regime_filter import (
+from app.quant_engine.backtest.regime_filter import (
     RegimeDetector,
     MarketRegime,
     StrategyMode,

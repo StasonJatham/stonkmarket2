@@ -31,7 +31,7 @@ from app.quant_engine import (
     perform_domain_analysis,
     domain_analysis_to_dict,
 )
-from app.quant_engine.risk_highlights import build_portfolio_risk_highlights
+from app.quant_engine.risk.highlights import build_portfolio_risk_highlights
 from app.repositories import auth_user_orm as auth_repo
 from app.repositories import portfolios_orm as portfolios_repo
 from app.repositories import price_history_orm as price_history_repo
@@ -1205,7 +1205,7 @@ async def get_signal_triggers(
             )
     
     # Fallback to computing inline for non-default lookback
-    from app.quant_engine.signals import get_historical_triggers
+    from app.quant_engine.signals.scanner import get_historical_triggers
     
     # Fetch price data - use same 5-year window as the signals scanner for consistent optimization
     prices_df = await _fetch_prices_for_symbols([symbol], lookback_days=1260)
@@ -1943,14 +1943,14 @@ class BacktestV2Response(BaseModel):
     Uses MAXIMUM available price history for robust analysis.
     """,
 )
-async def get_backtest_v2(
+async def get_backtest(
     symbol: str,
     initial_capital: float = Query(default=10_000.0, ge=1000, le=1_000_000),
     monthly_contribution: float = Query(default=1_000.0, ge=0, le=100_000),
     use_max_history: bool = Query(default=True, description="Use all available history"),
 ) -> BacktestV2Response:
     """Run V2 backtest with regime-adaptive strategies."""
-    from app.quant_engine.backtest_v2 import (
+    from app.quant_engine.backtest import (
         BacktestV2Service,
         BacktestV2Config,
     )

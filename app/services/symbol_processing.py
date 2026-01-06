@@ -22,7 +22,7 @@ logger = get_logger("services.symbol_processing")
 
 async def process_new_symbol(symbol: str) -> None:
     """Process a newly added symbol (fetch data, AI content, cache invalidation)."""
-    from app.dipfinder.service import get_dipfinder_service
+    from app.quant_engine.dipfinder.service import get_dipfinder_service
     from app.services.fundamentals import get_fundamentals_for_analysis
 
     logger.info(f"[NEW SYMBOL] Starting background processing for: {symbol}")
@@ -236,7 +236,7 @@ async def process_new_symbol(symbol: str) -> None:
 
 async def process_approved_symbol(symbol: str) -> None:
     """Process an approved suggestion (fetch data, AI content, update statuses)."""
-    from app.dipfinder.service import get_dipfinder_service
+    from app.quant_engine.dipfinder.service import get_dipfinder_service
 
     logger.info(f"Processing newly approved symbol: {symbol}")
 

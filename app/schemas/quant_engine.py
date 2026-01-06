@@ -10,7 +10,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.quant_engine.config import QUANT_LIMITS
+from app.quant_engine.core.config import QUANT_LIMITS
 
 
 # ============================================================================

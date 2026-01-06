@@ -48,7 +48,7 @@ class TestRealDataFetching:
 
     def test_fetch_msft_history(self):
         """Fetch MSFT price history - should have 20+ years of data."""
-        from app.quant_engine.backtest_v2.service import fetch_all_history
+        from app.quant_engine.backtest.service import fetch_all_history
         
         df = run_async(fetch_all_history("MSFT"))
         
@@ -67,7 +67,7 @@ class TestRealDataFetching:
 
     def test_fetch_spy_for_benchmark(self):
         """Fetch SPY for benchmark comparison."""
-        from app.quant_engine.backtest_v2.service import fetch_all_history
+        from app.quant_engine.backtest.service import fetch_all_history
         
         df = run_async(fetch_all_history("SPY"))
         
@@ -79,7 +79,7 @@ class TestRealDataFetching:
 
     def test_fetch_volatile_stock_tsla(self):
         """Fetch TSLA - volatile stock, IPO'd 2010."""
-        from app.quant_engine.backtest_v2.service import fetch_all_history
+        from app.quant_engine.backtest.service import fetch_all_history
         
         df = run_async(fetch_all_history("TSLA"))
         
@@ -100,8 +100,8 @@ class TestIndicatorMatrixReal:
 
     def test_compute_all_indicators_msft(self):
         """Compute full indicator matrix on MSFT real data."""
-        from app.quant_engine.backtest_v2.service import fetch_all_history
-        from app.quant_engine.backtest_v2.alpha_factory import IndicatorMatrix
+        from app.quant_engine.backtest.service import fetch_all_history
+        from app.quant_engine.backtest.alpha_factory import IndicatorMatrix
         
         # Fetch real data
         df = run_async(fetch_all_history("MSFT"))
@@ -125,8 +125,8 @@ class TestIndicatorMatrixReal:
 
     def test_bollinger_bands_sane(self):
         """Bollinger Band %B should be mostly between -0.5 and 1.5."""
-        from app.quant_engine.backtest_v2.service import fetch_all_history
-        from app.quant_engine.backtest_v2.alpha_factory import IndicatorMatrix
+        from app.quant_engine.backtest.service import fetch_all_history
+        from app.quant_engine.backtest.alpha_factory import IndicatorMatrix
         
         df = run_async(fetch_all_history("AAPL"))
         matrix = IndicatorMatrix(df)
@@ -150,8 +150,8 @@ class TestAlphaFactoryReal:
 
     def test_optimize_msft_strategy(self):
         """Run actual optimization on MSFT data."""
-        from app.quant_engine.backtest_v2.service import fetch_all_history
-        from app.quant_engine.backtest_v2.alpha_factory import (
+        from app.quant_engine.backtest.service import fetch_all_history
+        from app.quant_engine.backtest.alpha_factory import (
             AlphaFactory, AlphaFactoryConfig
         )
         
@@ -185,8 +185,8 @@ class TestAlphaFactoryReal:
 
     def test_optimize_volatile_tsla(self):
         """TSLA optimization should produce different strategy than MSFT."""
-        from app.quant_engine.backtest_v2.service import fetch_all_history
-        from app.quant_engine.backtest_v2.alpha_factory import (
+        from app.quant_engine.backtest.service import fetch_all_history
+        from app.quant_engine.backtest.alpha_factory import (
             AlphaFactory, AlphaFactoryConfig
         )
         
@@ -220,11 +220,11 @@ class TestStrategyReportReal:
 
     def test_generate_full_report_msft(self):
         """Generate complete strategy report with all metrics."""
-        from app.quant_engine.backtest_v2.service import fetch_all_history
-        from app.quant_engine.backtest_v2.alpha_factory import (
+        from app.quant_engine.backtest.service import fetch_all_history
+        from app.quant_engine.backtest.alpha_factory import (
             AlphaFactory, AlphaFactoryConfig
         )
-        from app.quant_engine.backtest_v2.strategy_analyzer import (
+        from app.quant_engine.backtest.strategy_analyzer import (
             create_strategy_analyzer
         )
         
@@ -301,11 +301,11 @@ class TestStrategyReportReal:
 
     def test_report_json_serialization(self):
         """Ensure report can be serialized to JSON without NaN errors."""
-        from app.quant_engine.backtest_v2.service import fetch_all_history
-        from app.quant_engine.backtest_v2.alpha_factory import (
+        from app.quant_engine.backtest.service import fetch_all_history
+        from app.quant_engine.backtest.alpha_factory import (
             AlphaFactory, AlphaFactoryConfig
         )
-        from app.quant_engine.backtest_v2.strategy_analyzer import (
+        from app.quant_engine.backtest.strategy_analyzer import (
             create_strategy_analyzer
         )
         
@@ -341,7 +341,7 @@ class TestRegimeDetectionReal:
 
     def test_detect_2008_crash(self):
         """Regime detector should identify 2008 financial crisis."""
-        from app.quant_engine.backtest_v2.service import fetch_all_history
+        from app.quant_engine.backtest.service import fetch_all_history
         from app.quant_engine.core import get_regime_service, MarketRegime
         
         spy_df = run_async(fetch_all_history("SPY"))
@@ -363,7 +363,7 @@ class TestRegimeDetectionReal:
 
     def test_detect_covid_crash_and_recovery(self):
         """Detect COVID crash (Mar 2020) and recovery (Aug 2020)."""
-        from app.quant_engine.backtest_v2.service import fetch_all_history
+        from app.quant_engine.backtest.service import fetch_all_history
         from app.quant_engine.core import get_regime_service, MarketRegime
         
         spy_df = run_async(fetch_all_history("SPY"))
@@ -399,8 +399,8 @@ class TestCrashTestingReal:
 
     def test_available_crash_periods(self):
         """Check which crash periods are testable with SPY data."""
-        from app.quant_engine.backtest_v2.service import fetch_all_history
-        from app.quant_engine.backtest_v2.crash_testing import (
+        from app.quant_engine.backtest.service import fetch_all_history
+        from app.quant_engine.backtest.crash_testing import (
             get_available_crash_periods_for_data, CrashPeriod
         )
         
@@ -435,11 +435,11 @@ class TestFullBacktestE2E:
         3. Generate report
         4. Serialize to JSON
         """
-        from app.quant_engine.backtest_v2.service import fetch_all_history
-        from app.quant_engine.backtest_v2.alpha_factory import (
+        from app.quant_engine.backtest.service import fetch_all_history
+        from app.quant_engine.backtest.alpha_factory import (
             AlphaFactory, AlphaFactoryConfig
         )
-        from app.quant_engine.backtest_v2.strategy_analyzer import (
+        from app.quant_engine.backtest.strategy_analyzer import (
             create_strategy_analyzer
         )
         

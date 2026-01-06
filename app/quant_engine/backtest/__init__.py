@@ -26,18 +26,18 @@ from app.quant_engine.core import (
     REGIME_STRATEGY_CONFIGS,
 )
 
-from app.quant_engine.backtest_v2.crash_testing import (
+from app.quant_engine.backtest.crash_testing import (
     CrashPeriod,
     identify_crash_periods,
 )
-from app.quant_engine.backtest_v2.fundamental_guardrail import (
+from app.quant_engine.backtest.fundamental_guardrail import (
     FundamentalGuardrail,
     GuardrailConfig,
     GuardrailResult,
     FundamentalData,
     PointInTimeFundamentals,
 )
-from app.quant_engine.backtest_v2.schemas import (
+from app.quant_engine.backtest.schemas import (
     TradeMarkerSchema,
     ScenarioResultSchema,
     BacktestV2Response,
@@ -48,7 +48,7 @@ from app.quant_engine.backtest_v2.schemas import (
     RegimeStateSchema,
     WFOResultSchema,
 )
-from app.quant_engine.backtest_v2.portfolio_simulator import (
+from app.quant_engine.backtest.portfolio_simulator import (
     PortfolioConfig,
     PortfolioSimulator,
     PortfolioSnapshot,
@@ -58,7 +58,7 @@ from app.quant_engine.backtest_v2.portfolio_simulator import (
     Trade,
     calculate_accumulation_metrics,
 )
-from app.quant_engine.backtest_v2.walk_forward import (
+from app.quant_engine.backtest.walk_forward import (
     FoldResult,
     KillSwitchResult,
     WalkForwardOptimizer,
@@ -66,7 +66,7 @@ from app.quant_engine.backtest_v2.walk_forward import (
     WFOResult,
     WFOSummary,
 )
-from app.quant_engine.backtest_v2.alpha_gauntlet import (
+from app.quant_engine.backtest.alpha_gauntlet import (
     AlphaGauntlet,
     GauntletConfig,
     GauntletResult,
@@ -76,7 +76,7 @@ from app.quant_engine.backtest_v2.alpha_gauntlet import (
     TrialResult,
     quick_gauntlet,
 )
-from app.quant_engine.backtest_v2.crash_testing import (
+from app.quant_engine.backtest.crash_testing import (
     AccumulationMetrics,
     CrashDefinition,
     CrashPeriod,
@@ -87,7 +87,7 @@ from app.quant_engine.backtest_v2.crash_testing import (
     CRASH_PERIODS,
     get_crash_summary,
 )
-from app.quant_engine.backtest_v2.fundamental_service import (
+from app.quant_engine.backtest.fundamental_service import (
     FundamentalService,
     QuarterlyFundamentals,
     MetaRuleResult,
@@ -95,16 +95,16 @@ from app.quant_engine.backtest_v2.fundamental_service import (
     BearMarketStrategyFilter,
     backtest_with_meta_rule,
 )
-from app.quant_engine.backtest_v2.service import (
+from app.quant_engine.backtest.service import (
     BacktestV2Service,
     BacktestV2Config,
     BacktestV2Result,
-    get_backtest_v2_service,
+    get_backtest_service,
     fetch_all_history,
     fetch_all_fundamentals,
     MAX_LOOKBACK_DAYS,
 )
-from app.quant_engine.backtest_v2.alpha_factory import (
+from app.quant_engine.backtest.alpha_factory import (
     AlphaFactory,
     AlphaFactoryConfig,
     BacktestMetrics,
@@ -118,7 +118,7 @@ from app.quant_engine.backtest_v2.alpha_factory import (
     create_alpha_factory,
     quick_optimize,
 )
-from app.quant_engine.backtest_v2.strategy_report import (
+from app.quant_engine.backtest.strategy_report import (
     AdvancedMetrics,
     BenchmarkComparison,
     EquityCurvePoint,
@@ -136,7 +136,7 @@ from app.quant_engine.backtest_v2.strategy_report import (
     TradeStats,
     WinningStrategy,
 )
-from app.quant_engine.backtest_v2.strategy_analyzer import (
+from app.quant_engine.backtest.strategy_analyzer import (
     DetailedBacktester,
     StrategyAnalyzer,
     TradeRecord,
@@ -212,7 +212,7 @@ __all__ = [
     "BacktestV2Service",
     "BacktestV2Config",
     "BacktestV2Result",
-    "get_backtest_v2_service",
+    "get_backtest_service",
     "fetch_all_history",
     "fetch_all_fundamentals",
     "MAX_LOOKBACK_DAYS",

@@ -351,8 +351,8 @@ async def data_backfill_job() -> str:
     """
     from datetime import date, timedelta
     
-    from app.dipfinder.config import get_dipfinder_config
-    from app.dipfinder.service import DipFinderService
+    from app.quant_engine.dipfinder.config import get_dipfinder_config
+    from app.quant_engine.dipfinder.service import DipFinderService
     from app.repositories import symbols_orm as symbols_repo
     from app.repositories import quant_scores_orm as quant_repo
     from app.services.prices import get_price_service
@@ -617,8 +617,8 @@ async def prices_daily_job() -> str:
                 return
 
             # Import dipfinder signal computation for opportunity_type
-            from app.dipfinder.signal import compute_signal, OpportunityType
-            from app.dipfinder.config import DipFinderConfig
+            from app.quant_engine.dipfinder.signal import compute_signal, OpportunityType
+            from app.quant_engine.dipfinder.config import DipFinderConfig
             dipfinder_config = DipFinderConfig()
 
             # Use PriceService - it handles fetching, validation, and saving
@@ -660,10 +660,10 @@ async def prices_daily_job() -> str:
                     return_period_years = None
                     regime_dip_percentile = None
                     try:
-                        from app.dipfinder.fundamentals import QualityMetrics, compute_quality_score
-                        from app.dipfinder.stability import compute_stability_score
-                        from app.dipfinder.dip import compute_dip_series_windowed
-                        from app.dipfinder.extreme_value import analyze_tail_events
+                        from app.quant_engine.dipfinder.fundamentals import QualityMetrics, compute_quality_score
+                        from app.quant_engine.dipfinder.stability import compute_stability_score
+                        from app.quant_engine.dipfinder.dip import compute_dip_series_windowed
+                        from app.quant_engine.dipfinder.extreme_value import analyze_tail_events
                         from app.services.fundamentals import get_fundamentals_from_db
                         from datetime import datetime
                         

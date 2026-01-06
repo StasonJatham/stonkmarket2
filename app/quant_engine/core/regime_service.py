@@ -2,13 +2,13 @@
 RegimeService - Single source of truth for market regime detection.
 
 This consolidates the regime logic from:
-- backtest_v2/regime_filter.py (RegimeDetector)
+- backtest/regime_filter.py (RegimeDetector)
 - scoring.py (detect_regimes)
 - analytics.py (detect_regime)
 
 All components (backtester, scorer, API) use THIS service for regime.
 
-PHILOSOPHY (from backtest_v2):
+PHILOSOPHY (from backtest):
 - Bear markets are BUYING opportunities, NOT blocks
 - Different strategies apply based on regime
 - Fundamental checks required in bear mode

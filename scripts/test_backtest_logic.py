@@ -27,7 +27,7 @@ def test_alpha_factory_logic():
     
     # Run optimization
     print("\n[2] Running AlphaFactory optimization (30 trials)...")
-    from app.quant_engine.backtest_v2.alpha_factory import (
+    from app.quant_engine.backtest.alpha_factory import (
         AlphaFactory,
         AlphaFactoryConfig,
     )
@@ -106,7 +106,7 @@ def test_strategy_analyzer_logic(result, msft):
     
     # Create analyzer
     print("\n[2] Creating StrategyAnalyzer...")
-    from app.quant_engine.backtest_v2.strategy_analyzer import create_strategy_analyzer
+    from app.quant_engine.backtest.strategy_analyzer import create_strategy_analyzer
     
     analyzer = create_strategy_analyzer(
         prices=msft,
@@ -303,11 +303,11 @@ def test_multiple_stocks():
     print("TESTING MULTIPLE STOCK TYPES")
     print("=" * 60)
     
-    from app.quant_engine.backtest_v2.alpha_factory import (
+    from app.quant_engine.backtest.alpha_factory import (
         AlphaFactory,
         AlphaFactoryConfig,
     )
-    from app.quant_engine.backtest_v2.baseline_strategies import BaselineEngine
+    from app.quant_engine.backtest.baseline_strategies import BaselineEngine
     
     stocks = {
         "MSFT": "Growth/Tech",

@@ -35,7 +35,7 @@ from typing import Any, Literal
 import numpy as np
 import pandas as pd
 
-from app.quant_engine.config import QUANT_LIMITS
+from app.quant_engine.core.config import QUANT_LIMITS
 
 logger = logging.getLogger(__name__)
 

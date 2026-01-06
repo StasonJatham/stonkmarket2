@@ -37,7 +37,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-from app.quant_engine.config import QUANT_LIMITS
+from app.quant_engine.core.config import QUANT_LIMITS
 
 logger = logging.getLogger(__name__)
 
@@ -204,8 +204,8 @@ def generate_historical_weights(
     Returns:
         Series of weights (0.0 = no position, 1.0 = fully invested)
     """
-    from app.quant_engine.signals import SIGNAL_CONFIGS, optimize_signal_params, apply_cooldown_to_triggers
-    from app.quant_engine.indicators import compute_drawdown, compute_rsi, compute_zscore
+    from app.quant_engine.signals.scanner import SIGNAL_CONFIGS, optimize_signal_params, apply_cooldown_to_triggers
+    from app.quant_engine.core.indicators import compute_drawdown, compute_rsi, compute_zscore
     
     weights = pd.Series(0.0, index=prices.index)
     

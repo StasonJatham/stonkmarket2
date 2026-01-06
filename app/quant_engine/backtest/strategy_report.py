@@ -21,7 +21,7 @@ from typing import Any, TYPE_CHECKING
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 if TYPE_CHECKING:
-    from app.quant_engine.backtest_v2.baseline_strategies import BaselineComparison
+    from app.quant_engine.backtest.baseline_strategies import BaselineComparison
 
 
 # =============================================================================

@@ -23,8 +23,8 @@ import numpy as np
 import pandas as pd
 
 # Import shared indicator functions from centralized module
-from app.quant_engine.config import QUANT_LIMITS
-from app.quant_engine.indicators import (
+from app.quant_engine.core.config import QUANT_LIMITS
+from app.quant_engine.core.indicators import (
     compute_sma,
     compute_ema,
     compute_rsi,

@@ -147,7 +147,7 @@ async def _execute_dipfinder_task(
     tickers: Iterable[str], benchmark: str, windows: Iterable[int]
 ) -> str:
     from app.cache.distributed_lock import DistributedLock
-    from app.dipfinder.service import get_dipfinder_service
+    from app.quant_engine.dipfinder.service import get_dipfinder_service
 
     lock = DistributedLock("dipfinder:bulk", timeout=60 * 30, blocking=False)
     acquired = await lock.acquire()
@@ -402,7 +402,7 @@ def dipfinder_run_task(tickers: list[str], benchmark: str, windows: list[int]) -
 @celery_app.task(name="jobs.dipfinder_refresh_all", **_task_opts("dipfinder_daily"))
 def dipfinder_refresh_all_task(benchmark: str | None = None) -> str:
     """Refresh DipFinder signals for all tracked symbols."""
-    from app.dipfinder.config import get_dipfinder_config
+    from app.quant_engine.dipfinder.config import get_dipfinder_config
     from app.repositories import symbols_orm as symbols_repo
 
     async def _run() -> str:
@@ -509,7 +509,7 @@ def precompute_dip_entry_task(symbol: str) -> str:
     from datetime import date, timedelta
     
     from app.core.logging import get_logger
-    from app.quant_engine.dip_entry_optimizer import DipEntryOptimizer, get_dip_summary, get_dip_signal_triggers
+    from app.quant_engine.dipfinder.entry_optimizer import DipEntryOptimizer, get_dip_summary, get_dip_signal_triggers
     from app.repositories import price_history_orm as price_history_repo
     from app.repositories import quant_precomputed_orm as quant_repo
     from app.repositories import symbols_orm

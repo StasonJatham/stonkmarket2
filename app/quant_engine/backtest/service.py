@@ -34,14 +34,14 @@ from app.quant_engine.core import (
     StrategyMode,
     StrategyConfig,
 )
-from app.quant_engine.backtest_v2.fundamental_service import (
+from app.quant_engine.backtest.fundamental_service import (
     FundamentalService,
     BearMarketStrategyFilter,
     MetaRuleResult,
     MetaRuleDecision,
     QuarterlyFundamentals,
 )
-from app.quant_engine.backtest_v2.portfolio_simulator import (
+from app.quant_engine.backtest.portfolio_simulator import (
     PortfolioConfig,
     PortfolioSimulator,
     SimulationResult,
@@ -49,21 +49,21 @@ from app.quant_engine.backtest_v2.portfolio_simulator import (
     ScenarioResult,
     Trade,
 )
-from app.quant_engine.backtest_v2.alpha_gauntlet import (
+from app.quant_engine.backtest.alpha_gauntlet import (
     AlphaGauntlet,
     GauntletConfig,
     GauntletResult,
     GauntletVerdict,
     quick_gauntlet,
 )
-from app.quant_engine.backtest_v2.crash_testing import (
+from app.quant_engine.backtest.crash_testing import (
     CrashTester,
     CrashTestResult,
     CRASH_PERIODS,
     get_crash_summary,
     identify_crash_periods,
 )
-from app.quant_engine.backtest_v2.walk_forward import (
+from app.quant_engine.backtest.walk_forward import (
     WalkForwardOptimizer,
     WFOConfig,
     WFOResult,
@@ -71,7 +71,7 @@ from app.quant_engine.backtest_v2.walk_forward import (
 )
 
 # Note: Schemas are NOT imported here - API routes define their own response models
-# from app.quant_engine.backtest_v2.schemas import ...
+# from app.quant_engine.backtest.schemas import ...
 
 logger = logging.getLogger(__name__)
 
@@ -451,15 +451,15 @@ class BacktestV2Service:
 
 
 # Singleton pattern for service access
-_backtest_v2_service: BacktestV2Service | None = None
+_backtest_service: BacktestV2Service | None = None
 
 
-def get_backtest_v2_service() -> BacktestV2Service:
+def get_backtest_service() -> BacktestV2Service:
     """Get or create the BacktestV2Service singleton."""
-    global _backtest_v2_service
-    if _backtest_v2_service is None:
-        _backtest_v2_service = BacktestV2Service()
-    return _backtest_v2_service
+    global _backtest_service
+    if _backtest_service is None:
+        _backtest_service = BacktestV2Service()
+    return _backtest_service
 
 
 async def fetch_all_history(

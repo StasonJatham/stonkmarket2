@@ -26,7 +26,7 @@ from app.quant_engine.core import (
     RegimeState,
     StrategyMode,
 )
-from app.quant_engine.backtest_v2.fundamental_guardrail import (
+from app.quant_engine.backtest.fundamental_guardrail import (
     FundamentalGuardrail,
     FundamentalData,
     GuardrailResult,

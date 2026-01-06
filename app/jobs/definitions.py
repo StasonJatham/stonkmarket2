@@ -192,7 +192,7 @@ async def cache_warmup_job() -> str:
     from datetime import date, timedelta
 
     from app.cache.cache import Cache
-    from app.dipfinder.service import get_dipfinder_service
+    from app.quant_engine.dipfinder.service import get_dipfinder_service
     from app.services.runtime_settings import get_runtime_setting
 
     logger.info("Starting cache_warmup job")

@@ -26,7 +26,7 @@ Modules
 - analytics: Portfolio risk diagnostics and analysis
 - risk_optimizer: Risk-based portfolio optimization methods
 - signals: Technical signal scanner with per-stock optimization
-- backtest_v2: Advanced backtesting with regime awareness
+- backtest: Advanced backtesting with regime awareness
 """
 
 from __future__ import annotations
@@ -71,7 +71,7 @@ from app.quant_engine.scoring import (
 # ANALYTICS - Portfolio risk diagnostics
 # =============================================================================
 
-from app.quant_engine.analytics import (
+from app.quant_engine.risk.analytics import (
     analyze_portfolio,
     compute_correlation_analysis,
     compute_covariance_matrix,
@@ -91,7 +91,7 @@ from app.quant_engine.analytics import (
 # RISK OPTIMIZER - Data Types Only
 # =============================================================================
 
-from app.quant_engine.risk_optimizer import (
+from app.quant_engine.risk.optimizer import (
     AllocationRecommendation,
     RiskOptimizationConstraints,
     RiskOptimizationMethod,
@@ -102,7 +102,7 @@ from app.quant_engine.risk_optimizer import (
 # SIGNALS - Technical signal scanning
 # =============================================================================
 
-from app.quant_engine.signals import (
+from app.quant_engine.signals.scanner import (
     OptimizedSignal,
     scan_all_stocks,
     ScanResult,
@@ -117,7 +117,7 @@ from app.quant_engine.signals import (
 from app.quant_engine.core import Sector, normalize_sector
 
 # Domain analysis functions for sector-specific technical analysis
-from app.quant_engine.domain_analysis import (
+from app.quant_engine.core.domain_analysis import (
     DomainAnalysis,
     DomainMetrics,
     perform_domain_analysis,

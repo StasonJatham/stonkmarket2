@@ -14,8 +14,8 @@ from app.celery_app import celery_app
 from app.core.exceptions import BadRequestError, NotFoundError
 from app.core.logging import get_logger
 from app.core.security import TokenData
-from app.dipfinder.config import get_dipfinder_config
-from app.dipfinder.service import get_dipfinder_service
+from app.quant_engine.dipfinder.config import get_dipfinder_config
+from app.quant_engine.dipfinder.service import get_dipfinder_service
 from app.schemas.dipfinder import (
     DipFinderConfigResponse,
     DipFinderRunRequest,

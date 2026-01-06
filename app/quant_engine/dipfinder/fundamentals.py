@@ -859,8 +859,8 @@ async def _compute_domain_quality_score(
     config: DipFinderConfig,
 ) -> QualityMetrics:
     """Compute quality score using domain-specific scoring adapters."""
-    from app.dipfinder.domain import get_domain_from_info
-    from app.dipfinder.domain_scoring import compute_domain_score
+    from app.quant_engine.dipfinder.domain import get_domain_from_info
+    from app.quant_engine.dipfinder.domain_scoring import compute_domain_score
 
     # Classify the security's domain
     classification = get_domain_from_info(merged_info)
