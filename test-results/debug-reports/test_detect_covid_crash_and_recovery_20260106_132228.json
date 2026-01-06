@@ -1,0 +1,29 @@
+{
+  "test_id": "system_tests/smoke/test_backtest_engine.py::TestRegimeDetectionReal::test_detect_covid_crash_and_recovery",
+  "test_name": "test_detect_covid_crash_and_recovery",
+  "test_start": "2026-01-06T13:22:28.701082+00:00",
+  "test_end": "2026-01-06T13:22:29.324149+00:00",
+  "duration_seconds": 0.623067,
+  "summary": "2 warning(s)",
+  "errors": [],
+  "tracebacks": [],
+  "warnings": [
+    "2026-01-06T13:22:29.215132001Z {\"timestamp\": \"2026-01-06T13:22:29.214531+00:00\", \"level\": \"WARNING\", \"logger\": \"app.api.routes.metrics\", \"message\": \"Poor Web Vital: LCP=4652.00 on http://localhost:5173/dashboard?sort=signal\", \"request_id\": \"05130329-734b-4d22-ab08-ed07843e3a65\", \"location\": {\"file\": \"metrics.py\", \"line\": 63, \"function\": \"collect_vitals\"}}",
+    "2026-01-06T13:22:29.215323917Z {\"timestamp\": \"2026-01-06T13:22:29.214840+00:00\", \"level\": \"WARNING\", \"logger\": \"app.api.routes.metrics\", \"message\": \"Poor Web Vital: LCP=4916.00 on http://localhost:5173/dashboard?sort=signal\", \"request_id\": \"05130329-734b-4d22-ab08-ed07843e3a65\", \"location\": {\"file\": \"metrics.py\", \"line\": 63, \"function\": \"collect_vitals\"}}"
+  ],
+  "container_logs": {
+    "api": [
+      "2026-01-06T13:22:29.215132001Z {\"timestamp\": \"2026-01-06T13:22:29.214531+00:00\", \"level\": \"WARNING\", \"logger\": \"app.api.routes.metrics\", \"message\": \"Poor Web Vital: LCP=4652.00 on http://localhost:5173/dashboard?sort=signal\", \"request_id\": \"05130329-734b-4d22-ab08-ed07843e3a65\", \"location\": {\"file\": \"metrics.py\", \"line\": 63, \"function\": \"collect_vitals\"}}",
+      "2026-01-06T13:22:29.215323917Z {\"timestamp\": \"2026-01-06T13:22:29.214840+00:00\", \"level\": \"WARNING\", \"logger\": \"app.api.routes.metrics\", \"message\": \"Poor Web Vital: LCP=4916.00 on http://localhost:5173/dashboard?sort=signal\", \"request_id\": \"05130329-734b-4d22-ab08-ed07843e3a65\", \"location\": {\"file\": \"metrics.py\", \"line\": 63, \"function\": \"collect_vitals\"}}",
+      "2026-01-06T13:22:29.215592376Z {\"timestamp\": \"2026-01-06T13:22:29.215542+00:00\", \"level\": \"INFO\", \"logger\": \"stonkmarket.api\", \"message\": \"POST /api/metrics/vitals -> 200 (0.009s)\", \"request_id\": \"05130329-734b-4d22-ab08-ed07843e3a65\", \"location\": {\"file\": \"app.py\", \"line\": 144, \"function\": \"dispatch\"}}"
+    ],
+    "worker": [],
+    "worker-batch": [],
+    "postgres": [],
+    "valkey": []
+  },
+  "request": null,
+  "response": null,
+  "database": null,
+  "assertion_error": null
+}

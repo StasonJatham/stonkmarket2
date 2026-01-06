@@ -34,7 +34,9 @@ from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from app.cache.cache import Cache
+from app.core.data_helpers import safe_float, safe_int, safe_date, latest_value
 from app.core.logging import get_logger
+from app.core.stock_classification import is_etf_or_index
 from app.database.connection import get_session
 from app.database.orm import StockFundamentals, Symbol
 from app.services.data_providers import get_yfinance_service
@@ -47,103 +49,14 @@ LIVE_FUNDAMENTALS_CACHE_TTL = 900  # 15 minutes
 _live_fundamentals_cache = Cache(prefix="fundamentals_live", default_ttl=LIVE_FUNDAMENTALS_CACHE_TTL)
 
 
-def _is_etf_or_index(symbol: str, quote_type: str | None = None) -> bool:
-    """Check if symbol is an ETF or index (no fundamentals available)."""
-    if symbol.startswith("^"):
-        return True
-    if quote_type:
-        quote_type_upper = quote_type.upper()
-        return quote_type_upper in ("ETF", "INDEX", "MUTUALFUND", "TRUST")
-    return False
-
-
-def _safe_float(value: Any) -> float | None:
-    """Safely convert value to float, returning None for invalid values."""
-    if value is None:
-        return None
-    try:
-        f = float(value)
-        if f != f or f == float('inf') or f == float('-inf'):
-            return None
-        return f
-    except (ValueError, TypeError):
-        return None
-
-
-def _safe_int(value: Any) -> int | None:
-    """Safely convert value to int, returning None for invalid values."""
-    if value is None:
-        return None
-    try:
-        return int(value)
-    except (ValueError, TypeError):
-        return None
-
-
-def _safe_date(value: Any) -> date | None:
-    """Safely convert value to date, returning None for invalid values.
-    
-    Handles:
-    - datetime objects
-    - date objects  
-    - pandas Timestamp
-    - unix timestamps (seconds or ms)
-    - ISO format strings (YYYY-MM-DD)
-    """
-    if value is None:
-        return None
-    try:
-        # Already a date
-        if isinstance(value, date) and not isinstance(value, datetime):
-            return value
-        # datetime -> date
-        if isinstance(value, datetime):
-            return value.date()
-        # pandas Timestamp
-        if hasattr(value, 'date') and callable(value.date):
-            return value.date()
-        # Unix timestamp
-        if isinstance(value, (int, float)):
-            ts = float(value)
-            if ts > 1e12:
-                ts = ts / 1000.0
-            return datetime.fromtimestamp(ts, tz=UTC).date()
-        # String in ISO format
-        if isinstance(value, str):
-            # Handle 'YYYY-MM-DD' format
-            return datetime.strptime(value.split('T')[0], '%Y-%m-%d').date()
-        return None
-    except (ValueError, TypeError, AttributeError):
-        return None
-
-
-def _sorted_period_keys(keys: list[Any]) -> list[Any]:
-    def _key(item: Any) -> datetime:
-        if isinstance(item, datetime):
-            return item
-        if isinstance(item, date):
-            return datetime.combine(item, datetime.min.time(), tzinfo=UTC)
-        try:
-            return datetime.fromisoformat(str(item))
-        except (ValueError, TypeError):
-            return datetime.min
-    return sorted(keys, key=_key, reverse=True)
-
-
-def _latest_value(value: Any) -> float | None:
-    """Return most recent numeric value from a scalar or date-keyed dict."""
-    if isinstance(value, dict):
-        for key in _sorted_period_keys(list(value.keys())):
-            v = value.get(key)
-            if v is not None:
-                return _safe_float(v)
-        return None
-    if isinstance(value, list):
-        for item in value:
-            if item is not None:
-                return _safe_float(item)
-        return None
-    return _safe_float(value)
+# Aliases for backward compatibility - use centralized versions
+_safe_float = safe_float
+_safe_int = safe_int
+_safe_date = safe_date
+_latest_value = latest_value
+_is_etf_or_index = is_etf_or_index
+# Note: _detect_domain and _calculate_domain_metrics are defined locally
+# with more comprehensive logic specific to fundamentals service
 
 
 # =============================================================================

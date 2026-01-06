@@ -36,6 +36,7 @@ import pandas as pd
 import yfinance as yf
 
 from app.cache.cache import Cache
+from app.core.data_helpers import run_in_executor, safe_int
 from app.core.logging import get_logger
 from app.database.connection import get_session
 from app.database.orm import (
@@ -71,14 +72,8 @@ def _safe_decimal(value: Any) -> Decimal | None:
         return None
 
 
-def _safe_int(value: Any) -> int | None:
-    """Safely convert a value to int."""
-    if value is None or pd.isna(value):
-        return None
-    try:
-        return int(value)
-    except (ValueError, TypeError):
-        return None
+# Use centralized safe_int (handles pd.isna)
+_safe_int = safe_int
 
 
 def _df_to_records(df: pd.DataFrame | None) -> list[dict[str, Any]]:
@@ -144,10 +139,8 @@ def _fetch_economic_events_calendar(start: datetime, end: datetime) -> list[dict
         return []
 
 
-async def _run_in_executor(func, *args):
-    """Run blocking yfinance call in thread pool."""
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, func, *args)
+# Alias for backward compatibility
+_run_in_executor = run_in_executor
 
 
 # =============================================================================

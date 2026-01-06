@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 from app.api.dependencies import require_user
 from app.cache.cache import Cache
+from app.core.data_helpers import safe_float
 from app.core.exceptions import NotFoundError, ValidationError
 from app.core.logging import get_logger
 from app.quant_engine import (
@@ -249,13 +250,6 @@ async def _get_symbol_max_history(symbol: str) -> pd.DataFrame | None:
         return None
 
 
-def _safe_float(value: float | None, default: float = 0.0) -> float:
-    """Convert a float to JSON-safe value (handle NaN/inf)."""
-    import math
-    if value is None or math.isnan(value) or math.isinf(value):
-        return default
-    return float(value)
-
 
 # =============================================================================
 # Portfolio Analytics Endpoint
@@ -353,7 +347,7 @@ async def get_portfolio_analytics(
     return {
         "portfolio_id": portfolio_id,
         "analyzed_at": datetime.now().isoformat(),
-        "total_value_eur": _safe_float(total_value),
+        "total_value_eur": safe_float(total_value, 0.0),
         "n_positions": analytics.n_positions,
         "risk_score": analytics.overall_risk_score,
         "summary": user_friendly["summary"],
@@ -365,15 +359,15 @@ async def get_portfolio_analytics(
         "risk_highlights": risk_highlights,
         # Raw analytics for power users
         "raw": {
-            "portfolio_volatility": _safe_float(analytics.risk_decomposition.portfolio_volatility),
-            "var_95": _safe_float(analytics.tail_risk.var_95_daily),
-            "cvar_95": _safe_float(analytics.tail_risk.cvar_95_daily),
-            "max_drawdown": _safe_float(analytics.tail_risk.max_drawdown),
-            "effective_n": _safe_float(analytics.diversification.effective_n),
-            "diversification_ratio": _safe_float(analytics.diversification.diversification_ratio),
+            "portfolio_volatility": safe_float(analytics.risk_decomposition.portfolio_volatility, 0.0),
+            "var_95": safe_float(analytics.tail_risk.var_95_daily, 0.0),
+            "cvar_95": safe_float(analytics.tail_risk.cvar_95_daily, 0.0),
+            "max_drawdown": safe_float(analytics.tail_risk.max_drawdown, 0.0),
+            "effective_n": safe_float(analytics.diversification.effective_n, 0.0),
+            "diversification_ratio": safe_float(analytics.diversification.diversification_ratio, 0.0),
             "regime": analytics.regime.regime,
             "risk_contributions": {
-                s: _safe_float(v) 
+                s: safe_float(v, 0.0) 
                 for s, v in analytics.risk_decomposition.risk_contribution_pct.items()
             },
         },
@@ -519,22 +513,22 @@ async def get_allocation_recommendation(
         "portfolio_id": portfolio_id,
         "method": best_method,
         "inflow_eur": inflow_eur,
-        "portfolio_value_eur": _safe_float(data.get("portfolio_value", 0)),
+        "portfolio_value_eur": safe_float(data.get("portfolio_value", 0), 0.0),
         "confidence": data.get("confidence", "MEDIUM"),
         "explanation": method_explanations.get(best_method, "Risk-based optimization"),
         "risk_improvement": data.get("risk_improvement", ""),
         "current_risk": {
-            "volatility": _safe_float(current_vol),
+            "volatility": safe_float(current_vol, 0.0),
             "label": vol_label(current_vol),
         },
         "optimal_risk": {
-            "volatility": _safe_float(target_vol),
+            "volatility": safe_float(target_vol, 0.0),
             "label": vol_label(target_vol),
-            "diversification_ratio": _safe_float(data.get("sharpe", 0) + 1),  # Approximation
+            "diversification_ratio": safe_float(data.get("sharpe", 0) + 1, 0.0),  # Approximation
         },
         "trades": data.get("trades", []),
-        "current_weights": {s: _safe_float(v * 100) for s, v in data.get("current_weights", {}).items()},
-        "target_weights": {s: _safe_float(v * 100) for s, v in data.get("weights", {}).items()},
+        "current_weights": {s: safe_float(v * 100, 0.0) for s, v in data.get("current_weights", {}).items()},
+        "target_weights": {s: safe_float(v * 100, 0.0) for s, v in data.get("weights", {}).items()},
         "cv_results": data.get("cv_results", {}),
         "warnings": result.get("warnings", []),
     }

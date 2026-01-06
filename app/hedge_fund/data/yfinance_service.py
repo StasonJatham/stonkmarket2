@@ -10,6 +10,8 @@ import logging
 from datetime import date, datetime, timedelta
 from typing import Any
 
+from app.core.data_helpers import safe_float, safe_int, latest_value
+from app.core.stock_classification import detect_domain, calculate_domain_metrics
 from app.hedge_fund.schemas import (
     CalendarEvents,
     Fundamentals,
@@ -24,147 +26,12 @@ from app.services.prices import get_price_service
 logger = logging.getLogger(__name__)
 
 
-def _sorted_period_keys(keys: list[Any]) -> list[Any]:
-    def _key(item: Any) -> datetime:
-        try:
-            return datetime.fromisoformat(str(item))
-        except (ValueError, TypeError):
-            return datetime.min
-    return sorted(keys, key=_key, reverse=True)
-
-
-def _latest_value(value: Any) -> float | None:
-    if isinstance(value, dict):
-        for key in _sorted_period_keys(list(value.keys())):
-            v = value.get(key)
-            if v is not None:
-                try:
-                    return float(v)
-                except (ValueError, TypeError):
-                    return None
-        return None
-    if isinstance(value, list):
-        for item in value:
-            if item is not None:
-                try:
-                    return float(item)
-                except (ValueError, TypeError):
-                    return None
-        return None
-    try:
-        return float(value)
-    except (ValueError, TypeError):
-        return None
-
-
-# =============================================================================
-# Domain Detection
-# =============================================================================
-
-
-def _detect_domain(info: dict[str, Any]) -> str | None:
-    """Detect the domain type from ticker info."""
-    quote_type = (info.get("quote_type") or info.get("quoteType") or "").upper()
-    sector = (info.get("sector") or "").lower()
-    industry = (info.get("industry") or "").lower()
-    name = (info.get("name") or info.get("shortName") or "").lower()
-
-    # ETFs and Funds
-    if quote_type in ("ETF", "MUTUALFUND", "INDEX"):
-        return "etf"
-
-    # Banks
-    if "bank" in industry or "bank" in name:
-        return "bank"
-    if sector == "financial services" and any(
-        term in industry for term in ["banks", "credit", "savings"]
-    ):
-        return "bank"
-
-    # REITs
-    if "reit" in industry or "reit" in name or "real estate" in industry:
-        return "reit"
-
-    # Insurance
-    if "insurance" in industry:
-        return "insurer"
-
-    # Utilities
-    if sector == "utilities" or "utility" in industry:
-        return "utility"
-
-    # Biotech
-    if "biotechnology" in industry:
-        return "biotech"
-
-    return None
-
-
-def _calculate_domain_metrics(
-    info: dict[str, Any],
-    financials: dict[str, Any] | None,
-    domain: str | None,
-) -> dict[str, Any]:
-    """Calculate domain-specific metrics from financial statements."""
-    metrics = {}
-
-    if not financials or not domain:
-        return metrics
-
-    quarterly = financials.get("quarterly", {})
-    income = quarterly.get("income_statement", {})
-    balance = quarterly.get("balance_sheet", {})
-    cashflow = quarterly.get("cash_flow", {})
-
-    if domain == "bank":
-        # Net Interest Income
-        nii = _latest_value(income.get("Net Interest Income"))
-        if nii:
-            metrics["net_interest_income"] = nii
-
-            # Calculate NIM proxy: NII (annualized) / Total Assets
-            total_assets = _latest_value(balance.get("Total Assets"))
-            if total_assets and total_assets > 0:
-                metrics["net_interest_margin"] = (nii * 4) / total_assets
-
-    elif domain == "reit":
-        # FFO = Net Income + Depreciation
-        net_income = _latest_value(income.get("Net Income"))
-        depreciation = (
-            cashflow.get("Depreciation Amortization Depletion") or
-            cashflow.get("Depreciation And Amortization")
-        )
-        depreciation = _latest_value(depreciation)
-
-        if net_income is not None and depreciation is not None:
-            ffo = net_income + depreciation
-            metrics["ffo"] = ffo * 4  # Annualize
-
-            shares = _latest_value(info.get("shares_outstanding") or info.get("sharesOutstanding"))
-            current_price = _latest_value(info.get("current_price") or info.get("regularMarketPrice"))
-
-            if shares and shares > 0:
-                ffo_per_share = (ffo * 4) / shares
-                metrics["ffo_per_share"] = ffo_per_share
-
-                if current_price and ffo_per_share > 0:
-                    metrics["p_ffo"] = current_price / ffo_per_share
-
-    elif domain == "insurer":
-        # Loss Ratio = Losses / Premiums (approximated by revenue)
-        loss_expense = _latest_value(
-            income.get("Net Policyholder Benefits And Claims") or
-            income.get("Loss Adjustment Expense")
-        )
-        revenue = _latest_value(
-            income.get("Total Revenue") or
-            income.get("Operating Revenue")
-        )
-
-        if loss_expense and revenue and revenue > 0:
-            metrics["loss_ratio"] = loss_expense / revenue
-
-    return metrics
+# Aliases for backward compatibility - now using centralized versions
+_latest_value = latest_value
+_detect_domain = detect_domain
+_calculate_domain_metrics = calculate_domain_metrics
+_safe_float = safe_float
+_safe_int = safe_int
 
 
 # =============================================================================
@@ -499,34 +366,6 @@ async def get_market_data_batch(
             data[symbol] = result
 
     return data
-
-
-# =============================================================================
-# Helpers
-# =============================================================================
-
-
-def _safe_float(value: Any, default: float | None = None) -> float | None:
-    """Safely convert value to float."""
-    if value is None:
-        return default
-    try:
-        f = float(value)
-        if f != f:  # NaN check
-            return default
-        return f
-    except (ValueError, TypeError):
-        return default
-
-
-def _safe_int(value: Any, default: int | None = None) -> int | None:
-    """Safely convert value to int."""
-    if value is None:
-        return default
-    try:
-        return int(float(value))
-    except (ValueError, TypeError):
-        return default
 
 
 # =============================================================================

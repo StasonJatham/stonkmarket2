@@ -6,8 +6,8 @@ Pure calculation-based - no LLM required.
 """
 
 import logging
-import math
 
+from app.core.technical_utils import atr, ema, macd, rsi, sma, std, volatility
 from app.hedge_fund.agents.base import AgentSignal, CalculationAgentBase
 from app.hedge_fund.schemas import (
     AgentType,
@@ -123,42 +123,34 @@ class TechnicalsAgent(CalculationAgentBase):
 
         current_price = closes[-1] if closes else None
 
-        # Moving averages
-        sma_20 = self._sma(closes, 20)
-        sma_50 = self._sma(closes, 50)
-        sma_200 = self._sma(closes, 200)
-        ema_12 = self._ema(closes, 12)
-        ema_26 = self._ema(closes, 26)
+        # Moving averages (using centralized utilities)
+        sma_20 = sma(closes, 20)
+        sma_50 = sma(closes, 50)
+        sma_200 = sma(closes, 200)
+        ema_12 = ema(closes, 12)
+        ema_26 = ema(closes, 26)
 
-        # MACD
-        macd = ema_12 - ema_26 if ema_12 and ema_26 else None
-        macd_signal = None
-        macd_histogram = None
-        if macd is not None:
-            macd_values = self._calculate_macd_series(closes)
-            if macd_values:
-                macd_signal = self._ema(macd_values, 9)
-                if macd_signal:
-                    macd_histogram = macd - macd_signal
+        # MACD (using centralized utility)
+        macd_line, macd_signal, macd_histogram = macd(closes, 12, 26, 9)
 
         # RSI
-        rsi_14 = self._rsi(closes, 14)
+        rsi_14 = rsi(closes, 14)
 
         # Bollinger Bands
         bb_middle = sma_20
-        bb_std = self._std(closes, 20)
+        bb_std = std(closes, 20)
         bb_upper = bb_middle + 2 * bb_std if bb_middle and bb_std else None
         bb_lower = bb_middle - 2 * bb_std if bb_middle and bb_std else None
         bb_width = (bb_upper - bb_lower) / bb_middle if bb_upper and bb_lower and bb_middle else None
 
         # ATR
-        atr_14 = self._atr(highs, lows, closes, 14)
+        atr_14 = atr(highs, lows, closes, 14)
 
         # Volatility
-        volatility_20 = self._volatility(closes, 20)
+        volatility_20 = volatility(closes, 20)
 
         # Volume
-        volume_sma_20 = self._sma(volumes, 20)
+        volume_sma_20 = sma(volumes, 20)
         volume_ratio = volumes[-1] / volume_sma_20 if volume_sma_20 and volumes else None
 
         # Price vs MAs
@@ -173,7 +165,7 @@ class TechnicalsAgent(CalculationAgentBase):
             sma_200=sma_200,
             ema_12=ema_12,
             ema_26=ema_26,
-            macd=macd,
+            macd=macd_line,
             macd_signal=macd_signal,
             macd_histogram=macd_histogram,
             rsi_14=rsi_14,
@@ -190,121 +182,6 @@ class TechnicalsAgent(CalculationAgentBase):
             price_vs_sma_50=price_vs_sma_50,
             price_vs_sma_200=price_vs_sma_200,
         )
-
-    def _sma(self, values: list[float], period: int) -> float | None:
-        """Calculate Simple Moving Average."""
-        if len(values) < period:
-            return None
-        return sum(values[-period:]) / period
-
-    def _ema(self, values: list[float], period: int) -> float | None:
-        """Calculate Exponential Moving Average."""
-        if len(values) < period:
-            return None
-
-        multiplier = 2 / (period + 1)
-        ema = sum(values[:period]) / period  # Start with SMA
-
-        for price in values[period:]:
-            ema = (price - ema) * multiplier + ema
-
-        return ema
-
-    def _std(self, values: list[float], period: int) -> float | None:
-        """Calculate standard deviation."""
-        if len(values) < period:
-            return None
-
-        subset = values[-period:]
-        mean = sum(subset) / period
-        variance = sum((x - mean) ** 2 for x in subset) / period
-        return math.sqrt(variance)
-
-    def _rsi(self, closes: list[float], period: int = 14) -> float | None:
-        """Calculate Relative Strength Index."""
-        if len(closes) < period + 1:
-            return None
-
-        # Calculate price changes
-        changes = [closes[i] - closes[i-1] for i in range(1, len(closes))]
-
-        # Separate gains and losses
-        gains = [max(0, c) for c in changes]
-        losses = [abs(min(0, c)) for c in changes]
-
-        # Initial averages
-        avg_gain = sum(gains[:period]) / period
-        avg_loss = sum(losses[:period]) / period
-
-        # Smooth averages
-        for i in range(period, len(gains)):
-            avg_gain = (avg_gain * (period - 1) + gains[i]) / period
-            avg_loss = (avg_loss * (period - 1) + losses[i]) / period
-
-        if avg_loss == 0:
-            return 100
-
-        rs = avg_gain / avg_loss
-        return 100 - (100 / (1 + rs))
-
-    def _calculate_macd_series(self, closes: list[float]) -> list[float]:
-        """Calculate MACD line series."""
-        if len(closes) < 26:
-            return []
-
-        result = []
-        for i in range(26, len(closes) + 1):
-            subset = closes[:i]
-            ema_12 = self._ema(subset, 12)
-            ema_26 = self._ema(subset, 26)
-            if ema_12 and ema_26:
-                result.append(ema_12 - ema_26)
-
-        return result
-
-    def _atr(
-        self,
-        highs: list[float],
-        lows: list[float],
-        closes: list[float],
-        period: int = 14,
-    ) -> float | None:
-        """Calculate Average True Range."""
-        if len(closes) < period + 1:
-            return None
-
-        trs = []
-        for i in range(1, len(closes)):
-            tr = max(
-                highs[i] - lows[i],
-                abs(highs[i] - closes[i-1]),
-                abs(lows[i] - closes[i-1])
-            )
-            trs.append(tr)
-
-        return sum(trs[-period:]) / period
-
-    def _volatility(self, closes: list[float], period: int = 20) -> float | None:
-        """Calculate historical volatility (annualized)."""
-        if len(closes) < period + 1:
-            return None
-
-        # Daily returns
-        returns = [
-            (closes[i] - closes[i-1]) / closes[i-1]
-            for i in range(1, len(closes))
-        ]
-
-        if len(returns) < period:
-            return None
-
-        subset = returns[-period:]
-        mean = sum(subset) / len(subset)
-        variance = sum((r - mean) ** 2 for r in subset) / len(subset)
-        daily_vol = math.sqrt(variance)
-
-        # Annualize (252 trading days)
-        return daily_vol * math.sqrt(252)
 
     def _score_trend(self, ind: TechnicalIndicators) -> float:
         """Score trend indicators (0-100)."""

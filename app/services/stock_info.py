@@ -21,15 +21,6 @@ logger = get_logger("services.stock_info")
 _yf_service = get_yfinance_service()
 
 
-def is_index_or_etf(symbol: str, quote_type: str | None = None) -> bool:
-    """Check if a symbol is an index, ETF, or fund - detected dynamically from quote_type."""
-    if symbol.startswith("^"):
-        return True
-    if quote_type:
-        return quote_type.upper() in ("ETF", "INDEX", "MUTUALFUND", "TRUST")
-    return False
-
-
 async def _enrich_from_universe(symbol: str, info: dict[str, Any]) -> dict[str, Any]:
     """Enrich stock info with sector/country from FinancialUniverse if missing.
     

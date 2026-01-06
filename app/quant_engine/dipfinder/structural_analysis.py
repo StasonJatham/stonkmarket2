@@ -14,6 +14,7 @@ from typing import Any
 
 import numpy as np
 
+from app.core.data_helpers import safe_float as _safe_float
 from app.core.logging import get_logger
 
 logger = get_logger("dipfinder.structural_analysis")
@@ -68,17 +69,6 @@ class FundamentalMomentum:
             "data_quality": self.data_quality,
             "quarters_analyzed": self.quarters_analyzed,
         }
-
-
-def _safe_float(value: Any) -> float | None:
-    """Safely convert to float."""
-    if value is None:
-        return None
-    try:
-        f = float(value)
-        return f if not np.isnan(f) else None
-    except (ValueError, TypeError):
-        return None
 
 
 def _compute_pct_change(current: float | None, previous: float | None) -> float | None:

@@ -49,6 +49,9 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal
 
+from app.core.data_helpers import safe_float, safe_int
+from app.core.stock_classification import is_etf_or_index
+
 import pandas as pd
 import yfinance as yf
 from sqlalchemy import or_, select
@@ -154,36 +157,10 @@ def _compute_hash(data: Any) -> str:
     return hashlib.sha256(content.encode()).hexdigest()[:16]
 
 
-def _safe_float(value: Any) -> float | None:
-    """Safely convert value to float."""
-    if value is None:
-        return None
-    try:
-        f = float(value)
-        if f != f or f == float('inf') or f == float('-inf'):
-            return None
-        return f
-    except (ValueError, TypeError):
-        return None
-
-
-def _safe_int(value: Any) -> int | None:
-    """Safely convert value to int."""
-    if value is None:
-        return None
-    try:
-        return int(value)
-    except (ValueError, TypeError):
-        return None
-
-
-def _is_etf_or_index(symbol: str, quote_type: str | None = None) -> bool:
-    """Check if symbol is ETF, index, or fund."""
-    if symbol.startswith("^"):
-        return True
-    if quote_type:
-        return quote_type.upper() in ("ETF", "INDEX", "MUTUALFUND", "TRUST")
-    return False
+# Helper aliases for backward compatibility - use centralized versions
+_safe_float = safe_float
+_safe_int = safe_int
+_is_etf_or_index = is_etf_or_index
 
 
 class YFinanceService:

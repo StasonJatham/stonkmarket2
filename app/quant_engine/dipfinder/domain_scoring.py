@@ -17,6 +17,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
+from app.core.data_helpers import latest_value as _latest_value, safe_float as _safe_float
 from app.core.logging import get_logger
 from app.quant_engine.dipfinder.domain import Domain, DomainClassification
 
@@ -99,31 +100,6 @@ def _normalize_score(value: float, optimal: float, bad: float, higher_better: bo
         if value >= bad:
             return 0.0
         return ((bad - value) / (bad - optimal)) * 100.0
-
-
-def _safe_float(value: Any) -> float | None:
-    """Safely convert to float."""
-    if value is None:
-        return None
-    try:
-        return float(value)
-    except (ValueError, TypeError):
-        return None
-
-
-def _latest_value(value: Any) -> float | None:
-    if isinstance(value, dict):
-        for key in sorted(value.keys(), reverse=True):
-            v = value.get(key)
-            if v is not None:
-                return _safe_float(v)
-        return None
-    if isinstance(value, list):
-        for item in value:
-            if item is not None:
-                return _safe_float(item)
-        return None
-    return _safe_float(value)
 
 
 # Key mappings: normalized key -> list of possible yfinance/alternative keys

@@ -34,6 +34,7 @@ import pandas as pd
 import yfinance as yf
 
 from app.cache.cache import Cache
+from app.core.data_helpers import run_in_executor
 from app.core.logging import get_logger
 from app.database.connection import get_session
 from app.database.orm import MarketIndustry, MarketSector
@@ -116,10 +117,8 @@ def _fetch_industry_data(industry_key: str) -> dict[str, Any] | None:
         return None
 
 
-async def _run_in_executor(func, *args):
-    """Run blocking yfinance call in thread pool."""
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, func, *args)
+# Alias for backward compatibility
+_run_in_executor = run_in_executor
 
 
 # =============================================================================

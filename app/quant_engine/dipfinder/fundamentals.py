@@ -11,6 +11,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from app.core.data_helpers import safe_float as _safe_float
 from app.core.logging import get_logger
 from app.repositories import yfinance_cache_orm as yfinance_cache_repo
 from app.services.data_providers import get_yfinance_service
@@ -131,19 +132,6 @@ class QualityMetrics:
         """
         from app.domain import QualityMetrics as QualityMetricsPydantic
         return QualityMetricsPydantic.model_validate(self.to_dict())
-
-
-def _safe_float(value: Any, default: float | None = None) -> float | None:
-    """Safely convert value to float, handling None and invalid values."""
-    if value is None:
-        return default
-    try:
-        f = float(value)
-        if not (f != f):  # Check for NaN
-            return f
-        return default
-    except (ValueError, TypeError):
-        return default
 
 
 def _normalize_score(

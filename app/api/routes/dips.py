@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-import math
 from datetime import UTC, date, timedelta
 
 import pandas as pd
 from fastapi import APIRouter, Depends, Path, Query, Request
 from pydantic import BaseModel
 
-from app.api.dependencies import require_admin, require_user
+from app.api.dependencies import require_admin, require_user, normalize_symbol
 from app.cache.cache import Cache
 from app.cache.data_version import get_data_version
 from app.cache.http_cache import (
@@ -20,6 +19,7 @@ from app.cache.http_cache import (
     check_if_none_match,
     generate_etag,
 )
+from app.core.data_helpers import safe_float
 from app.core.exceptions import ExternalServiceError, NotFoundError
 from app.core.security import TokenData
 from app.quant_engine.dipfinder.service import get_dipfinder_service  # For chart price data
@@ -30,22 +30,6 @@ from app.services.stock_info import get_stock_info
 
 
 router = APIRouter()
-
-
-def _safe_float(value: float, default: float = 0.0) -> float:
-    """Convert value to a JSON-safe float (replace NaN/Inf/NA with default)."""
-    if value is None:
-        return default
-    # Handle pandas NA/NaT types
-    if pd.isna(value):
-        return default
-    try:
-        fval = float(value)
-        if math.isnan(fval) or math.isinf(fval):
-            return default
-        return fval
-    except (ValueError, TypeError):
-        return default
 
 
 def _validate_chart_data(chart_points: list) -> list:
@@ -80,10 +64,8 @@ _chart_cache = Cache(prefix="chart", default_ttl=600)
 _info_cache = Cache(prefix="stockinfo", default_ttl=300)
 
 
-
-def _validate_symbol_path(symbol: str = Path(..., min_length=1, max_length=10)) -> str:
-    """Validate and normalize symbol from path parameter."""
-    return symbol.strip().upper()
+# Alias for backward compatibility
+_validate_symbol_path = normalize_symbol
 
 
 class BenchmarkInfo(BaseModel):
@@ -522,7 +504,7 @@ async def get_chart(
         
         # Convert to chart points
         chart_points = []
-        ref_high = _safe_float(prices[close_col].max())
+        ref_high = safe_float(prices[close_col].max(), 0.0)
         threshold = ref_high * (1.0 - min_dip_pct)
 
         # Calculate ref_high date and dip low date from the prices data
@@ -541,7 +523,7 @@ async def get_chart(
                 dip_start_date = str(dip_low_idx.date()) if hasattr(dip_low_idx, "date") else str(dip_low_idx)
 
         for idx, row_data in prices.iterrows():
-            close = _safe_float(row_data.get(close_col, 0.0))
+            close = safe_float(row_data.get(close_col, 0.0), 0.0)
             # Skip rows with zero/invalid close price
             if close <= 0:
                 continue
@@ -550,10 +532,10 @@ async def get_chart(
             chart_points.append(
                 ChartPoint(
                     date=str(idx.date()) if hasattr(idx, "date") else str(idx),
-                    close=_safe_float(close),
-                    ref_high=_safe_float(ref_high),
-                    threshold=_safe_float(threshold),
-                    drawdown=_safe_float(drawdown),
+                    close=safe_float(close, 0.0),
+                    ref_high=safe_float(ref_high, 0.0),
+                    threshold=safe_float(threshold, 0.0),
+                    drawdown=safe_float(drawdown, 0.0),
                     since_dip=None,  # Would need dip start calculation
                     dip_start_date=dip_start_date,
                     ref_high_date=ref_high_date,
@@ -610,7 +592,7 @@ async def get_batch_charts(
             cached = await _chart_cache.get(cache_key)
             if cached:
                 # Extract just date and close for mini chart (last 50 points)
-                points = [{"date": p["date"], "close": _safe_float(p["close"])} for p in cached[-50:] if _safe_float(p["close"]) > 0]
+                points = [{"date": p["date"], "close": safe_float(p["close"], 0.0)} for p in cached[-50:] if safe_float(p["close"], 0.0) > 0]
                 return MiniChartData(symbol=symbol, points=points)
             
             # Fetch from service
@@ -630,7 +612,7 @@ async def get_batch_charts(
             # Convert to mini chart points (last 50)
             points = []
             for idx, row_data in list(prices.iterrows())[-50:]:
-                close = _safe_float(row_data.get(close_col, 0.0))
+                close = safe_float(row_data.get(close_col, 0.0), 0.0)
                 if close <= 0:
                     continue
                 points.append({

@@ -35,11 +35,22 @@ __all__ = [
     "get_request_fingerprint",
     "get_suggestion_identifier",
     "get_vote_identifier",
+    "normalize_symbol",
     "rate_limit_api",
     "rate_limit_auth",
     "require_admin",
     "require_user",
 ]
+
+
+# =============================================================================
+# SYMBOL NORMALIZATION
+# =============================================================================
+
+
+def normalize_symbol(symbol: str = Path(..., min_length=1, max_length=10)) -> str:
+    """Validate and normalize a stock symbol from path parameter."""
+    return symbol.strip().upper()
 
 
 # =============================================================================

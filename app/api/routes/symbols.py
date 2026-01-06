@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Path, Query, status
 from pydantic import BaseModel
 from sqlalchemy import func, or_, select
 
-from app.api.dependencies import require_admin, require_user
+from app.api.dependencies import require_admin, require_user, normalize_symbol
 from app.cache.cache import Cache
 from app.celery_app import celery_app
 from app.core.exceptions import ConflictError, NotFoundError
@@ -74,9 +74,8 @@ class SymbolValidationResponse(BaseModel):
     error: str | None = None
 
 
-def _validate_symbol_path(symbol: str = Path(..., min_length=1, max_length=10)) -> str:
-    """Validate and normalize symbol from path parameter."""
-    return symbol.strip().upper()
+# Alias for backward compatibility
+_validate_symbol_path = normalize_symbol
 
 
 @router.get(

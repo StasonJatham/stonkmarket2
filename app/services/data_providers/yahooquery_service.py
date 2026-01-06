@@ -61,31 +61,8 @@ class YahooQueryResult:
     error_message: str | None = None
 
 
-def _safe_float(value: Any) -> float | None:
-    """Safely convert value to float."""
-    if value is None:
-        return None
-    if isinstance(value, str):
-        return None
-    try:
-        f = float(value)
-        if f != f or f == float('inf') or f == float('-inf'):
-            return None
-        return f
-    except (ValueError, TypeError):
-        return None
-
-
-def _safe_int(value: Any) -> int | None:
-    """Safely convert value to int."""
-    if value is None:
-        return None
-    if isinstance(value, str):
-        return None
-    try:
-        return int(value)
-    except (ValueError, TypeError):
-        return None
+# Import centralized utilities
+from app.core.data_helpers import safe_float as _safe_float, safe_int as _safe_int
 
 
 def _safe_str(value: Any) -> str | None:
