@@ -179,7 +179,12 @@ class TechnicalService:
         low = prices.get("low", close)
         volume = prices.get("volume", pd.Series([0] * len(close), index=close.index))
         
-        current_price = float(close.iloc[-1])
+        # Handle None/NaN values in close price
+        last_close = close.iloc[-1]
+        if last_close is None or (hasattr(last_close, '__iter__') is False and pd.isna(last_close)):
+            logger.warning("Last close price is None/NaN")
+            return TechnicalSnapshot()
+        current_price = float(last_close)
         
         # Use TA library if available, otherwise fallback to custom
         if TA_AVAILABLE:
@@ -188,9 +193,15 @@ class TechnicalService:
             return self._compute_fallback(close, high, low, volume, current_price)
     
     def _normalize_columns(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Normalize column names to lowercase."""
+        """Normalize column names to lowercase and handle duplicates."""
         df = df.copy()
         df.columns = [c.lower() for c in df.columns]
+        
+        # If both 'close' and 'adj close' exist, prefer 'adj close' and drop 'close'
+        if "adj close" in df.columns and "close" in df.columns:
+            df = df.drop(columns=["close"])
+        if "adj_close" in df.columns and "close" in df.columns:
+            df = df.drop(columns=["close"])
         
         # Handle common variations
         rename_map = {

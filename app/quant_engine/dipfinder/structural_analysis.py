@@ -14,7 +14,7 @@ from typing import Any
 
 import numpy as np
 
-from app.core.data_helpers import safe_float as _safe_float
+from app.core.data_helpers import safe_float as _safe_float, pct_change
 from app.core.logging import get_logger
 
 logger = get_logger("dipfinder.structural_analysis")
@@ -72,10 +72,8 @@ class FundamentalMomentum:
 
 
 def _compute_pct_change(current: float | None, previous: float | None) -> float | None:
-    """Compute percentage change between two values."""
-    if current is None or previous is None or previous == 0:
-        return None
-    return ((current - previous) / abs(previous)) * 100
+    """Compute percentage change between two values (returns as percent, e.g. 10.0 for 10%)."""
+    return pct_change(current, previous, as_percent=True)
 
 
 def _count_declining_periods(values: list[float | None]) -> int:

@@ -35,6 +35,15 @@ from app.quant_engine.backtest.fundamental_guardrail import (
 logger = logging.getLogger(__name__)
 
 
+def _normalize_tz(series: pd.Series | pd.DataFrame | None) -> pd.Series | pd.DataFrame | None:
+    """Normalize a Series/DataFrame to timezone-naive for safe comparisons."""
+    if series is None:
+        return None
+    if hasattr(series.index, 'tz') and series.index.tz is not None:
+        return series.tz_localize(None) if hasattr(series, 'tz_localize') else series.copy()
+    return series
+
+
 class SimulationScenario(str, Enum):
     """Scenarios to simulate."""
 
@@ -202,6 +211,24 @@ class PortfolioSimulator:
         Returns:
             SimulationResult with all scenarios and comparison metrics
         """
+        # Normalize all timestamps to timezone-naive for safe comparisons
+        # (yfinance returns tz-aware America/New_York timestamps)
+        if hasattr(prices.index, 'tz') and prices.index.tz is not None:
+            prices = prices.copy()
+            prices.index = prices.index.tz_localize(None)
+        if dip_signals is not None and hasattr(dip_signals.index, 'tz') and dip_signals.index.tz is not None:
+            dip_signals = dip_signals.copy()
+            dip_signals.index = dip_signals.index.tz_localize(None)
+        if technical_signals is not None and hasattr(technical_signals.index, 'tz') and technical_signals.index.tz is not None:
+            technical_signals = technical_signals.copy()
+            technical_signals.index = technical_signals.index.tz_localize(None)
+        if regime_series is not None and hasattr(regime_series.index, 'tz') and regime_series.index.tz is not None:
+            regime_series = regime_series.copy()
+            regime_series.index = regime_series.index.tz_localize(None)
+        if fundamentals_history is not None and hasattr(fundamentals_history.index, 'tz') and fundamentals_history.index.tz is not None:
+            fundamentals_history = fundamentals_history.copy()
+            fundamentals_history.index = fundamentals_history.index.tz_localize(None)
+        
         results: dict[SimulationScenario, ScenarioResult] = {}
 
         # Scenario 1: Pure Buy & Hold (lump sum)

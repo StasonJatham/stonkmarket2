@@ -49,6 +49,9 @@ from app.database.orm import (
 
 logger = get_logger("services.calendar_data")
 
+# Module-level cache instance for calendar data
+_calendar_cache = Cache(prefix="calendar", default_ttl=60 * 60 * 24)  # 24 hours
+
 
 # Cache TTL: 1 day (data is updated weekly but can be queried frequently)
 CACHE_TTL = 60 * 60 * 24  # 24 hours
@@ -525,7 +528,7 @@ async def get_upcoming_earnings(
         List of earnings events
     """
     cache_key = f"calendar:earnings:upcoming:{days}:{symbol or 'all'}:{limit}"
-    cached = await Cache.get(cache_key)
+    cached = await _calendar_cache.get(cache_key)
     if cached:
         return cached
     
@@ -563,14 +566,14 @@ async def get_upcoming_earnings(
             for e in earnings
         ]
         
-        await Cache.set(cache_key, data, ttl=CACHE_TTL)
+        await _calendar_cache.set(cache_key, data, ttl=CACHE_TTL)
         return data
 
 
 async def get_symbol_earnings(symbol: str, limit: int = 10) -> list[dict[str, Any]]:
     """Get earnings history and upcoming for a specific symbol."""
     cache_key = f"calendar:earnings:symbol:{symbol.upper()}:{limit}"
-    cached = await Cache.get(cache_key)
+    cached = await _calendar_cache.get(cache_key)
     if cached:
         return cached
     
@@ -602,14 +605,14 @@ async def get_symbol_earnings(symbol: str, limit: int = 10) -> list[dict[str, An
             for e in earnings
         ]
         
-        await Cache.set(cache_key, data, ttl=CACHE_TTL)
+        await _calendar_cache.set(cache_key, data, ttl=CACHE_TTL)
         return data
 
 
 async def get_upcoming_splits(days: int = 30, limit: int = 50) -> list[dict[str, Any]]:
     """Get upcoming stock splits."""
     cache_key = f"calendar:splits:upcoming:{days}:{limit}"
-    cached = await Cache.get(cache_key)
+    cached = await _calendar_cache.get(cache_key)
     if cached:
         return cached
     
@@ -643,7 +646,7 @@ async def get_upcoming_splits(days: int = 30, limit: int = 50) -> list[dict[str,
             for s in splits
         ]
         
-        await Cache.set(cache_key, data, ttl=CACHE_TTL)
+        await _calendar_cache.set(cache_key, data, ttl=CACHE_TTL)
         return data
 
 
@@ -678,7 +681,7 @@ async def get_symbol_splits(symbol: str) -> list[dict[str, Any]]:
 async def get_upcoming_ipos(days: int = 30, limit: int = 50) -> list[dict[str, Any]]:
     """Get upcoming IPOs."""
     cache_key = f"calendar:ipos:upcoming:{days}:{limit}"
-    cached = await Cache.get(cache_key)
+    cached = await _calendar_cache.get(cache_key)
     if cached:
         return cached
     
@@ -715,14 +718,14 @@ async def get_upcoming_ipos(days: int = 30, limit: int = 50) -> list[dict[str, A
             for i in ipos
         ]
         
-        await Cache.set(cache_key, data, ttl=CACHE_TTL)
+        await _calendar_cache.set(cache_key, data, ttl=CACHE_TTL)
         return data
 
 
 async def get_upcoming_economic_events(days: int = 14, limit: int = 50) -> list[dict[str, Any]]:
     """Get upcoming economic events."""
     cache_key = f"calendar:economic:upcoming:{days}:{limit}"
-    cached = await Cache.get(cache_key)
+    cached = await _calendar_cache.get(cache_key)
     if cached:
         return cached
     
@@ -757,7 +760,7 @@ async def get_upcoming_economic_events(days: int = 14, limit: int = 50) -> list[
             for e in events
         ]
         
-        await Cache.set(cache_key, data, ttl=CACHE_TTL)
+        await _calendar_cache.set(cache_key, data, ttl=CACHE_TTL)
         return data
 
 
@@ -768,7 +771,7 @@ async def get_calendar_summary(days: int = 7) -> dict[str, Any]:
     Useful for the calendar widget in the UI.
     """
     cache_key = f"calendar:summary:{days}"
-    cached = await Cache.get(cache_key)
+    cached = await _calendar_cache.get(cache_key)
     if cached:
         return cached
     
@@ -789,5 +792,5 @@ async def get_calendar_summary(days: int = 7) -> dict[str, Any]:
         "economic_events": economic_events[:5],
     }
     
-    await Cache.set(cache_key, summary, ttl=CACHE_TTL)
+    await _calendar_cache.set(cache_key, summary, ttl=CACHE_TTL)
     return summary

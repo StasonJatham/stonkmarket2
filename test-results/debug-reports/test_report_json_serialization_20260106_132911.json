@@ -1,0 +1,34 @@
+{
+  "test_id": "system_tests/smoke/test_backtest_engine.py::TestStrategyReportReal::test_report_json_serialization",
+  "test_name": "test_report_json_serialization",
+  "test_start": "2026-01-06T13:29:11.333731+00:00",
+  "test_end": "2026-01-06T13:29:12.403892+00:00",
+  "duration_seconds": 1.070161,
+  "summary": "1 warning(s)",
+  "errors": [],
+  "tracebacks": [],
+  "warnings": [
+    "2026-01-06T13:29:11.717798381Z WARNING:  WatchFiles detected changes in 'app/quant_engine/dipfinder/structural_analysis.py', 'app/core/data_helpers.py', 'app/quant_engine/risk/highlights.py'. Reloading..."
+  ],
+  "container_logs": {
+    "api": [
+      "2026-01-06T13:29:11.717798381Z WARNING:  WatchFiles detected changes in 'app/quant_engine/dipfinder/structural_analysis.py', 'app/core/data_helpers.py', 'app/quant_engine/risk/highlights.py'. Reloading...",
+      "2026-01-06T13:29:11.763687215Z INFO:     Shutting down",
+      "2026-01-06T13:29:11.868224965Z INFO:     Waiting for application shutdown.",
+      "2026-01-06T13:29:11.868662298Z {\"timestamp\": \"2026-01-06T13:29:11.868496+00:00\", \"level\": \"INFO\", \"logger\": \"stonkmarket.main\", \"message\": \"Shutting down...\", \"location\": {\"file\": \"main.py\", \"line\": 132, \"function\": \"lifespan\"}}",
+      "2026-01-06T13:29:11.870550215Z {\"timestamp\": \"2026-01-06T13:29:11.870378+00:00\", \"level\": \"INFO\", \"logger\": \"stonkmarket.cache.client\", \"message\": \"Valkey connection pool closed\", \"location\": {\"file\": \"client.py\", \"line\": 69, \"function\": \"close_valkey_client\"}}",
+      "2026-01-06T13:29:11.881436631Z {\"timestamp\": \"2026-01-06T13:29:11.881226+00:00\", \"level\": \"INFO\", \"logger\": \"stonkmarket.database\", \"message\": \"PostgreSQL pool closed\", \"location\": {\"file\": \"connection.py\", \"line\": 140, \"function\": \"close_pg_pool\"}}",
+      "2026-01-06T13:29:11.881512673Z {\"timestamp\": \"2026-01-06T13:29:11.881379+00:00\", \"level\": \"INFO\", \"logger\": \"stonkmarket.main\", \"message\": \"Shutdown complete\", \"location\": {\"file\": \"main.py\", \"line\": 140, \"function\": \"lifespan\"}}",
+      "2026-01-06T13:29:11.881930340Z INFO:     Application shutdown complete.",
+      "2026-01-06T13:29:11.882180048Z INFO:     Finished server process [1213]"
+    ],
+    "worker": [],
+    "worker-batch": [],
+    "postgres": [],
+    "valkey": []
+  },
+  "request": null,
+  "response": null,
+  "database": null,
+  "assertion_error": null
+}

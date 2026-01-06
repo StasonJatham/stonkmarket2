@@ -227,11 +227,13 @@ async def strategy_nightly_job() -> str:
                     results_map = {
                         "DCA Monthly": comparison.dca,
                         "Buy & Hold": comparison.buy_hold,
+                        "Lump Sum": comparison.lump_sum,
                         "Buy Dips & Hold": comparison.buy_dips,
                         "Perfect Dip Trading": comparison.dip_trading,
                         "Technical Trading": comparison.technical_trading,
                         "Regime-Aware Technical": comparison.regime_aware_technical,
                         "SPY DCA": comparison.spy_dca,
+                        "SPY Buy & Hold": comparison.spy_buy_hold,
                     }
                     
                     # Use the #1 ranked strategy
@@ -254,6 +256,8 @@ async def strategy_nightly_job() -> str:
                                 "pnl_pct": t.return_pct * 100,  # Convert to %
                                 "exit_reason": t.exit_reason,
                                 "holding_days": t.holding_days,
+                                # Calculate amount invested from shares * entry_price
+                                "amount_invested": float(t.shares * t.entry_price) if t.shares and t.entry_price else None,
                             }
                             for t in best_result.trade_details[:20]  # Last 20 trades
                         ]
@@ -264,19 +268,23 @@ async def strategy_nightly_job() -> str:
                         close_prices = df[close_col]
                         
                         if strategy_name == "buy_and_hold":
-                            # Single buy on first day
+                            # Single buy on first day with initial capital
+                            initial_capital = 10_000.0  # Match engine default
                             first_date = close_prices.index[0]
+                            entry_price = float(close_prices.iloc[0])
                             best_trades = [{
                                 "entry_date": first_date.strftime("%Y-%m-%d"),
                                 "exit_date": None,
-                                "entry_price": float(close_prices.iloc[0]),
+                                "entry_price": entry_price,
                                 "exit_price": None,
                                 "pnl_pct": best_result.total_return_pct,
                                 "exit_reason": "holding",
                                 "holding_days": len(close_prices),
+                                "amount_invested": initial_capital,
                             }]
                         elif strategy_name == "dollar_cost_average":
                             # Monthly buys - sample ~20 buys evenly spaced
+                            monthly_contribution = 1_000.0  # Match engine default
                             total_months = int(len(close_prices) / 21)  # ~21 trading days/month
                             step = max(1, total_months // 20)  # Get ~20 samples
                             
@@ -293,6 +301,7 @@ async def strategy_nightly_job() -> str:
                                     "pnl_pct": 0,  # DCA doesn't have individual trade P&L
                                     "exit_reason": "accumulating",
                                     "holding_days": None,
+                                    "amount_invested": monthly_contribution,
                                 })
                             
                             # Limit to recent 20 buys
@@ -339,16 +348,95 @@ async def strategy_nightly_job() -> str:
                             # Keep most recent 20 buys
                             best_trades = best_trades[-20:]
                     
-                    # Calculate vs buy & hold
-                    vs_buy_hold = best_result.total_return_pct - comparison.buy_hold.total_return_pct
+                    # Calculate vs buy & hold - compare DCA/Dips to Buy & Hold for THIS STOCK
+                    # This answers: "Does our active strategy beat passive investing in this stock?"
+                    # We compare our best active strategy (DCA or Buy Dips) vs Buy & Hold
+                    dca_return = comparison.dca.total_return_pct
+                    buy_dips_return = comparison.buy_dips.total_return_pct
+                    buy_hold_return = comparison.buy_hold.total_return_pct
                     
-                    # beats_buy_hold should only be True if OUR strategies beat buy & hold
-                    # If the recommendation is to switch to SPY, that means our strategies LOSE
-                    is_spy_recommendation = rec.recommendation in (
-                        RecommendationType.SPY_DCA,
-                        RecommendationType.SWITCH_TO_SPY,
-                    )
-                    beats_buy_hold = vs_buy_hold > 0 and not is_spy_recommendation
+                    # Our best active strategy for this stock
+                    best_active_return = max(dca_return, buy_dips_return)
+                    best_active_name = "dollar_cost_average" if dca_return >= buy_dips_return else "buy_dips_hold"
+                    
+                    # Does our active strategy beat passive Buy & Hold?
+                    active_vs_buy_hold = best_active_return - buy_hold_return
+                    beats_buy_hold = active_vs_buy_hold > 0
+                    
+                    # vs_buy_hold_pct stores how much better our best active strategy is
+                    # Positive = our strategy beats passive, Negative = passive wins
+                    vs_buy_hold = active_vs_buy_hold
+                    
+                    # Override strategy_name if our active strategy is the winner
+                    # This makes the landing page show the correct strategy
+                    if beats_buy_hold:
+                        strategy_name = best_active_name
+                        # Also update best_result to reflect the active strategy we're showcasing
+                        if best_active_name == "dollar_cost_average":
+                            best_result = comparison.dca
+                        else:
+                            best_result = comparison.buy_dips
+                        
+                        # Regenerate trades for the winning active strategy
+                        # since original trade generation used the overall best strategy
+                        close_col = get_close_column(df)
+                        close_prices = df[close_col]
+                        
+                        if strategy_name == "dollar_cost_average":
+                            # Monthly buys - sample ~20 buys evenly spaced
+                            monthly_contribution = 1_000.0
+                            total_months = int(len(close_prices) / 21)
+                            step = max(1, total_months // 20)
+                            best_trades = []
+                            
+                            for month_idx in range(0, total_months, step):
+                                day_idx = min(month_idx * 21, len(close_prices) - 1)
+                                entry_date = close_prices.index[day_idx]
+                                entry_price = float(close_prices.iloc[day_idx])
+                                
+                                best_trades.append({
+                                    "entry_date": entry_date.strftime("%Y-%m-%d"),
+                                    "exit_date": None,
+                                    "entry_price": entry_price,
+                                    "exit_price": None,
+                                    "pnl_pct": 0,
+                                    "exit_reason": "accumulating",
+                                    "holding_days": None,
+                                    "amount_invested": monthly_contribution,
+                                })
+                            best_trades = best_trades[-20:]
+                        elif strategy_name == "buy_dips_hold":
+                            # Buy on dips
+                            dip_threshold = engine.dip_threshold_pct / 100 if engine.dip_threshold_pct else -0.10
+                            rolling_high = close_prices.rolling(window=63).max()
+                            drawdown = (close_prices - rolling_high) / rolling_high
+                            dip_mask = drawdown <= dip_threshold
+                            
+                            monthly_contribution = 1000.0
+                            cash_waiting = 10000.0
+                            last_month = None
+                            best_trades = []
+                            
+                            for i, (date, price) in enumerate(close_prices.items()):
+                                is_dip = dip_mask.iloc[i] if i < len(dip_mask) else False
+                                current_month = (date.year, date.month)
+                                if last_month is not None and current_month != last_month:
+                                    cash_waiting += monthly_contribution
+                                last_month = current_month
+                                
+                                if is_dip and cash_waiting > 0:
+                                    best_trades.append({
+                                        "entry_date": date.strftime("%Y-%m-%d"),
+                                        "exit_date": None,
+                                        "entry_price": float(price),
+                                        "exit_price": None,
+                                        "pnl_pct": 0,
+                                        "exit_reason": "dip_buy",
+                                        "holding_days": None,
+                                        "amount_invested": cash_waiting,
+                                    })
+                                    cash_waiting = 0
+                            best_trades = best_trades[-20:]
                     
                     # Calculate vs SPY
                     vs_spy = best_result.total_return_pct - comparison.spy_dca.total_return_pct
@@ -435,8 +523,24 @@ async def strategy_nightly_job() -> str:
                                 "total_return_pct": comparison.spy_dca.total_return_pct,
                                 "n_buys": comparison.spy_dca.total_buys,
                             },
+                            "spy_buy_hold": {
+                                "name": "SPY Buy & Hold",
+                                "description": "Invest $10k in SPY on day 1, hold forever",
+                                "total_invested": comparison.spy_buy_hold.total_invested,
+                                "final_value": comparison.spy_buy_hold.final_value,
+                                "total_return_pct": comparison.spy_buy_hold.total_return_pct,
+                                "n_buys": 1,
+                            },
+                            "lump_sum": {
+                                "name": "Lump Sum",
+                                "description": "Same total capital invested on day 1",
+                                "total_invested": comparison.lump_sum.total_invested,
+                                "final_value": comparison.lump_sum.final_value,
+                                "total_return_pct": comparison.lump_sum.total_return_pct,
+                                "n_buys": 1,
+                            },
                         },
-                        "ranked_by_return": comparison.ranked_by_return[:5],
+                        "ranked_by_return": comparison.ranked_by_return[:7],
                         "winner": comparison.ranked_by_return[0] if comparison.ranked_by_return else "DCA Monthly",
                     }
                     

@@ -163,10 +163,42 @@ async def run_in_executor(func: Any, *args: Any) -> Any:
     return await loop.run_in_executor(None, func, *args)
 
 
+def pct_change(
+    current: float | None,
+    previous: float | None,
+    *,
+    as_percent: bool = False,
+) -> float | None:
+    """
+    Compute percentage change between two values.
+    
+    Args:
+        current: Current/new value
+        previous: Previous/old value (base for comparison)
+        as_percent: If True, multiply by 100 (e.g., 0.05 -> 5.0)
+        
+    Returns:
+        Percentage change as decimal (0.05) or percent (5.0), or None if invalid
+        
+    Examples:
+        >>> pct_change(110, 100)
+        0.1
+        >>> pct_change(110, 100, as_percent=True)
+        10.0
+        >>> pct_change(50, 100)
+        -0.5
+    """
+    if current is None or previous is None or previous == 0:
+        return None
+    result = (current - previous) / abs(previous)
+    return result * 100 if as_percent else result
+
+
 __all__ = [
     "safe_float",
     "safe_int",
     "safe_date",
     "latest_value",
     "run_in_executor",
+    "pct_change",
 ]

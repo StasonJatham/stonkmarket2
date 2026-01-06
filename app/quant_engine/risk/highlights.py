@@ -6,6 +6,7 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any
 
+from app.core.data_helpers import pct_change
 from app.core.logging import get_logger
 from app.quant_engine.dipfinder.structural_analysis import _extract_quarterly_series
 from app.quant_engine.core import Sector, normalize_sector
@@ -103,10 +104,8 @@ def _trend(
     return True
 
 
-def _pct_change(current: float | None, previous: float | None) -> float | None:
-    if current is None or previous is None or previous == 0:
-        return None
-    return (current - previous) / abs(previous)
+# Alias for backward compatibility within this file
+_pct_change = pct_change
 
 
 def _append_highlight(

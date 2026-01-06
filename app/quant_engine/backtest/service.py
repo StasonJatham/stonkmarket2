@@ -209,6 +209,12 @@ class BacktestV2Service:
         
         close_prices.index = pd.to_datetime(close_prices.index)
         
+        # Normalize timezone to avoid tz-aware vs tz-naive comparison issues
+        # (yfinance returns America/New_York tz-aware timestamps)
+        if hasattr(close_prices.index, 'tz') and close_prices.index.tz is not None:
+            close_prices = close_prices.copy()
+            close_prices.index = close_prices.index.tz_localize(None)
+        
         # 1. Detect current regime - wrap close prices in a DataFrame for RegimeService
         price_df = pd.DataFrame({"close": close_prices})
         current_regime = self.regime_service.get_current_regime(price_df)

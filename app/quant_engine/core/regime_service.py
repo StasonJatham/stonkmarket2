@@ -248,9 +248,21 @@ class RegimeService:
         
         This ensures no look-ahead bias - only uses data available on that date.
         """
-        # Truncate data to as_of_date
+        # Convert as_of_date to pd.Timestamp and match timezone of prices index
         if isinstance(as_of_date, date) and not isinstance(as_of_date, datetime):
             as_of_date = pd.Timestamp(as_of_date)
+        
+        # Handle timezone mismatch: convert as_of_date to match price index timezone
+        if hasattr(spy_prices.index, 'tz') and spy_prices.index.tz is not None:
+            # Prices are tz-aware, make as_of_date tz-aware too
+            if as_of_date.tz is None:
+                as_of_date = as_of_date.tz_localize(spy_prices.index.tz)
+            else:
+                as_of_date = as_of_date.tz_convert(spy_prices.index.tz)
+        else:
+            # Prices are tz-naive, make as_of_date tz-naive too
+            if hasattr(as_of_date, 'tz') and as_of_date.tz is not None:
+                as_of_date = as_of_date.tz_localize(None)
         
         historical_prices = spy_prices.loc[:as_of_date]
         

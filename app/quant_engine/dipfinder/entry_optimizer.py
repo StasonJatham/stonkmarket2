@@ -1618,9 +1618,9 @@ def get_dip_summary(result: OptimalDipEntry) -> dict:
                 "continuation_risk": s.continuation_risk,
                 "entry_score": s.entry_score,
                 "confidence": s.confidence,
-                # Legacy aliases for backward compatibility
-                "win_rate_60d": s.win_rate_60d,
-                "avg_return_60d": s.avg_return_60d,
+                # Legacy aliases for backward compatibility - use dynamic lookup
+                "win_rate_60d": s.win_rates.get(60, 0.0),
+                "avg_return_60d": s.avg_returns.get(60, 0.0),
             }
             for s in result.threshold_stats
         ],

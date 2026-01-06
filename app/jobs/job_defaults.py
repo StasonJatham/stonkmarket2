@@ -103,37 +103,37 @@ DEFAULT_SCHEDULES: dict[str, tuple[str, str]] = {
     # Individual jobs (NOT scheduled - triggered by pipeline or manually)
     # These are kept for: manual retries, debugging, or partial re-runs
     "prices_daily": (
-        "0 0 31 2 *",  # Never runs (Feb 31 doesn't exist) - triggered by pipeline
+        "0 0 29 2 *",  # Never runs (Feb 31 doesn't exist) - triggered by pipeline
         "Daily price update - fetches closing prices and updates dip states. "
         "NOT SCHEDULED - runs as part of market_close_pipeline."
     ),
     "signals_daily": (
-        "0 0 31 2 *",  # Never runs - triggered by pipeline
+        "0 0 29 2 *",  # Never runs - triggered by pipeline
         "Technical signal scanner - RSI, MACD, Bollinger signals. "
         "NOT SCHEDULED - runs as part of market_close_pipeline."
     ),
     "regime_daily": (
-        "0 0 31 2 *",  # Never runs - triggered by pipeline
+        "0 0 29 2 *",  # Never runs - triggered by pipeline
         "Market regime detection - bull/bear, volatility. "
         "NOT SCHEDULED - runs as part of market_close_pipeline."
     ),
     "strategy_nightly": (
-        "0 0 31 2 *",  # Never runs - triggered by pipeline
+        "0 0 29 2 *",  # Never runs - triggered by pipeline
         "Strategy optimization - backtests and finds best strategies. "
         "NOT SCHEDULED - runs as part of market_close_pipeline."
     ),
     "quant_scoring_daily": (
-        "0 0 31 2 *",  # Never runs - triggered by pipeline
+        "0 0 29 2 *",  # Never runs - triggered by pipeline
         "Quant scoring - momentum, quality, value metrics. "
         "NOT SCHEDULED - runs as part of market_close_pipeline."
     ),
     "dipfinder_daily": (
-        "0 0 31 2 *",  # Never runs - triggered by pipeline
+        "0 0 29 2 *",  # Never runs - triggered by pipeline
         "DipFinder + Dip Entry Optimizer - dip metrics and optimal buy thresholds. "
         "NOT SCHEDULED - runs as part of market_close_pipeline."
     ),
     "quant_analysis_nightly": (
-        "0 0 31 2 *",  # Never runs - triggered by pipeline
+        "0 0 29 2 *",  # Never runs - triggered by pipeline
         "Quant analysis pre-compute - caches all quant results for API. "
         "NOT SCHEDULED - runs as part of market_close_pipeline."
     ),
@@ -153,19 +153,19 @@ DEFAULT_SCHEDULES: dict[str, tuple[str, str]] = {
     
     # Individual jobs (NOT scheduled - triggered by pipeline or manually)
     "data_backfill": (
-        "0 0 31 2 *",  # Never runs (Feb 31 doesn't exist) - triggered by pipeline
+        "0 0 29 2 *",  # Never runs (Feb 31 doesn't exist) - triggered by pipeline
         "Comprehensive data backfill - fills ALL data gaps: missing sectors, summaries, "
         "price history, fundamentals, quant scores, dipfinder signals. "
         "NOT SCHEDULED - runs as part of weekly_ai_pipeline."
     ),
     "ai_personas_weekly": (
-        "0 0 31 2 *",  # Never runs - triggered by pipeline
+        "0 0 29 2 *",  # Never runs - triggered by pipeline
         "AI investor personas (Warren Buffett, Peter Lynch, Cathie Wood, Michael Burry) - "
         "each analyzes all stocks from their investment philosophy. "
         "NOT SCHEDULED - runs as part of weekly_ai_pipeline."
     ),
     "ai_bios_weekly": (
-        "0 0 31 2 *",  # Never runs - triggered by pipeline
+        "0 0 29 2 *",  # Never runs - triggered by pipeline
         "AI swipe bios - generates fun 'dating profile' style descriptions for stocks. "
         "NOT SCHEDULED - runs as part of weekly_ai_pipeline."
     ),

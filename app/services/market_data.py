@@ -42,6 +42,9 @@ from app.database.orm import MarketIndustry, MarketSector
 
 logger = get_logger("services.market_data")
 
+# Module-level cache instance for market data
+_market_cache = Cache(prefix="market", default_ttl=86400)  # 1 day default
+
 
 # All sector keys from yfinance
 SECTOR_KEYS = [
@@ -344,7 +347,7 @@ async def sync_all_market_data() -> dict[str, Any]:
 async def get_all_sectors() -> list[dict[str, Any]]:
     """Get all sectors with basic info."""
     # Check cache first
-    cached = await Cache.get("market:sectors:all")
+    cached = await _market_cache.get("sectors:all")
     if cached:
         return cached
     
@@ -367,14 +370,14 @@ async def get_all_sectors() -> list[dict[str, Any]]:
         ]
         
         # Cache for 1 day
-        await Cache.set("market:sectors:all", data, ttl=86400)
+        await _market_cache.set("sectors:all", data, ttl=86400)
         return data
 
 
 async def get_sector(sector_key: str) -> dict[str, Any] | None:
     """Get full sector data including companies and industries."""
     # Check cache first
-    cached = await Cache.get(f"market:sector:{sector_key}")
+    cached = await _market_cache.get(f"sector:{sector_key}")
     if cached:
         return cached
     
@@ -411,13 +414,13 @@ async def get_sector(sector_key: str) -> dict[str, Any] | None:
             "updated_at": sector.updated_at.isoformat() if sector.updated_at else None,
         }
         
-        await Cache.set(f"market:sector:{sector_key}", data, ttl=CACHE_TTL)
+        await _market_cache.set(f"sector:{sector_key}", data, ttl=CACHE_TTL)
         return data
 
 
 async def get_industry(industry_key: str) -> dict[str, Any] | None:
     """Get full industry data including top companies."""
-    cached = await Cache.get(f"market:industry:{industry_key}")
+    cached = await _market_cache.get(f"industry:{industry_key}")
     if cached:
         return cached
     
@@ -445,7 +448,7 @@ async def get_industry(industry_key: str) -> dict[str, Any] | None:
             "updated_at": industry.updated_at.isoformat() if industry.updated_at else None,
         }
         
-        await Cache.set(f"market:industry:{industry_key}", data, ttl=CACHE_TTL)
+        await _market_cache.set(f"industry:{industry_key}", data, ttl=CACHE_TTL)
         return data
 
 

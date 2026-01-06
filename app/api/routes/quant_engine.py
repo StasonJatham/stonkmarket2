@@ -1992,7 +1992,7 @@ async def get_backtest(
     regime_info = RegimeInfoResponse(
         regime=result.current_regime.regime.value,
         strategy_mode=result.current_regime.strategy_mode.value,
-        drawdown_pct=result.current_regime.drawdown_pct,
+        drawdown_pct=result.current_regime.spy_drawdown_pct,
         volatility_regime=result.current_regime.volatility_regime,
         description=result.current_regime.description,
     )
@@ -2019,11 +2019,11 @@ async def get_backtest(
     crash_tests = []
     for ct in result.crash_tests:
         crash_tests.append(CrashTestV2Response(
-            crash_name=ct.crash_name,
-            peak_to_trough_pct=ct.drawdown.peak_to_trough_pct if ct.drawdown else 0,
-            recovery_days=ct.recovery.days_to_recover if ct.recovery else None,
-            accumulation_shares=ct.accumulation.shares_accumulated if ct.accumulation else 0,
-            avg_buy_price=ct.accumulation.avg_buy_price if ct.accumulation else 0,
+            crash_name=ct.crash.name,
+            peak_to_trough_pct=ct.drawdown.max_drawdown_strategy if ct.drawdown else 0,
+            recovery_days=ct.recovery.recovery_days_strategy if ct.recovery else None,
+            accumulation_shares=ct.accumulation.shares_accumulated_strategy if ct.accumulation else 0,
+            avg_buy_price=ct.accumulation.avg_cost_strategy if ct.accumulation else 0,
         ))
     
     # Build trade markers
