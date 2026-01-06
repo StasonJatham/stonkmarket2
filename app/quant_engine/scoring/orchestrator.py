@@ -1,14 +1,15 @@
 """
 ScoringOrchestrator - Unified entry point for all stock scoring.
 
-This replaces the fragmented scoring systems with a single orchestrator that:
-1. Uses TechnicalService for all indicator calculations
-2. Uses RegimeService for market regime detection
-3. Uses DomainScoringAdapter for fundamental quality
-4. Outputs a unified StockAnalysisDashboard
+V3 ARCHITECTURE:
+1. DomainScoringAdapter: Quality score (0-100) from fundamentals
+2. RegimeService: Market-wide regime (Bull/Bear/Crash)
+3. SectorRegimeService: Sector-specific regime (NEW)
+4. EntryTriggerService: BUY/WAIT signals (NEW)
+5. EventRiskService: Earnings/dividend awareness (NEW)
+6. LiquidityGate: Volume adequacy (NEW)
 
-All other scoring files (scoring.py, scoring_v2.py, trade_engine.py)
-should be deprecated in favor of this orchestrator.
+Output: StockAnalysisDashboard with UI-ready badges and chart markers.
 """
 
 from __future__ import annotations
@@ -32,11 +33,34 @@ from app.quant_engine.core.regime_service import (
     RegimeState,
     get_regime_service,
 )
+# V3 Services
+from app.quant_engine.core.sector_regime import (
+    SectorRegimeService,
+    SectorRegimeState,
+    get_sector_regime_service,
+)
+from app.quant_engine.core.entry_trigger import (
+    EntryTriggerService,
+    EntryTriggerState,
+    get_entry_trigger_service,
+)
+from app.quant_engine.core.event_risk import (
+    EventRiskService,
+    EventRiskState,
+    get_event_risk_service,
+)
+from app.quant_engine.core.liquidity_gate import (
+    LiquidityGate,
+    LiquidityState,
+    get_liquidity_gate,
+)
 from app.quant_engine.scoring.output import (
     StockAnalysisDashboard,
     ScoreComponents,
     EntryAnalysis,
     RiskAssessment,
+    BadgeInfo,
+    ChartMarker,
 )
 
 # Import domain scoring - the source of truth for fundamental quality
@@ -49,7 +73,7 @@ from app.quant_engine.dipfinder.domain_scoring import (
 
 logger = logging.getLogger(__name__)
 
-SCORING_VERSION = "3.0.0"
+SCORING_VERSION = "3.1.0"
 
 
 @dataclass
@@ -79,6 +103,14 @@ class ScoringOrchestrator:
     """
     Main orchestrator for unified stock scoring.
     
+    V3 Architecture integrates:
+    - TechnicalService: Price/volume indicators
+    - RegimeService: Market-wide regime
+    - SectorRegimeService: Sector-specific momentum
+    - EntryTriggerService: BUY/WAIT signals
+    - EventRiskService: Earnings/dividend awareness
+    - LiquidityGate: Volume adequacy
+    
     Usage:
         orchestrator = ScoringOrchestrator()
         dashboard = await orchestrator.analyze(
@@ -94,10 +126,19 @@ class ScoringOrchestrator:
         config: OrchestratorConfig | None = None,
         technical_service: TechnicalService | None = None,
         regime_service: RegimeService | None = None,
+        sector_regime_service: SectorRegimeService | None = None,
+        entry_trigger_service: EntryTriggerService | None = None,
+        event_risk_service: EventRiskService | None = None,
+        liquidity_gate: LiquidityGate | None = None,
     ):
         self.config = config or OrchestratorConfig()
         self.tech_service = technical_service or get_technical_service()
         self.regime_service = regime_service or get_regime_service()
+        # V3 services
+        self.sector_regime_service = sector_regime_service or get_sector_regime_service()
+        self.entry_trigger_service = entry_trigger_service or get_entry_trigger_service()
+        self.event_risk_service = event_risk_service or get_event_risk_service()
+        self.liquidity_gate = liquidity_gate or get_liquidity_gate()
     
     async def analyze(
         self,
@@ -108,9 +149,13 @@ class ScoringOrchestrator:
         name: str | None = None,
         sector: str | None = None,
         vix_level: float | None = None,
+        # V3 parameters
+        sector_prices: pd.DataFrame | None = None,
+        next_earnings_date: date | None = None,
+        ex_dividend_date: date | None = None,
     ) -> StockAnalysisDashboard:
         """
-        Perform complete stock analysis.
+        Perform complete stock analysis with V3 gates and triggers.
         
         Args:
             symbol: Stock ticker
@@ -120,17 +165,49 @@ class ScoringOrchestrator:
             name: Company name
             sector: Sector classification
             vix_level: Optional current VIX level
+            sector_prices: OHLCV data for sector ETF (e.g., XLK for tech)
+            next_earnings_date: Next earnings announcement date
+            ex_dividend_date: Next ex-dividend date
             
         Returns:
-            StockAnalysisDashboard with complete analysis
+            StockAnalysisDashboard with complete analysis including V3 fields
         """
-        logger.debug(f"Analyzing {symbol}")
+        logger.debug(f"Analyzing {symbol} (V3)")
         
         # Get technical snapshot
         technicals = self.tech_service.get_snapshot(stock_prices)
         
         # Get market regime
         regime = self.regime_service.get_current_regime(spy_prices, vix_level)
+        
+        # ===== V3: Sector Regime =====
+        sector_regime: SectorRegimeState | None = None
+        if sector and sector_prices is not None and len(sector_prices) > 0:
+            sector_regime = self.sector_regime_service.get_sector_regime(
+                sector=sector,
+                sector_etf_prices=sector_prices,
+                spy_prices=spy_prices,
+            )
+        
+        # ===== V3: Event Risk =====
+        event_risk = self.event_risk_service.analyze_event_risk(
+            earnings_date=next_earnings_date,
+            ex_dividend_date=ex_dividend_date,
+        )
+        
+        # ===== V3: Liquidity Gate =====
+        prices = stock_prices.copy()
+        prices.columns = [c.lower() for c in prices.columns]
+        close = prices.get("close", prices.get("adj close", prices.iloc[:, 0]))
+        volume = prices.get("volume", pd.Series([0] * len(close), index=close.index))
+        current_price = float(close.iloc[-1]) if len(close) > 0 else 0.0
+        avg_volume = float(volume.rolling(20).mean().iloc[-1]) if len(volume) >= 20 else float(volume.mean())
+        
+        liquidity = self.liquidity_gate.check_liquidity(
+            volume_series=None,
+            price=current_price,
+            avg_volume=avg_volume,
+        )
         
         # Get domain classification and quality score
         # Extract classification parameters from fundamentals dict
@@ -158,15 +235,40 @@ class ScoringOrchestrator:
             technicals, domain_quality, regime, entry_analysis
         )
         
+        # ===== V3: Entry Trigger =====
+        entry_trigger = self.entry_trigger_service.analyze_entry(
+            technicals=technicals,
+            current_drawdown_pct=entry_analysis.current_drawdown_pct,
+        )
+        
         # Compute composite score with dynamic weights
         weights = self._get_dynamic_weights(regime)
-        composite_score = (
+        base_composite = (
             technical_score * weights["technical"] +
             fundamental_score * weights["fundamental"] +
             regime_score * weights["regime"] +
             entry_timing_score * weights["entry"] +
             risk_assessment.risk_score * weights["risk"]
         )
+        
+        # ===== V3: Apply multipliers =====
+        # Sector regime multiplier (0.5-1.15)
+        sector_multiplier = sector_regime.score_multiplier if sector_regime else 1.0
+        
+        # Event risk multiplier (0.0-1.0) - blocks trades before earnings
+        event_multiplier = event_risk.score_multiplier
+        
+        # Final composite after V3 adjustments
+        composite_score = base_composite * sector_multiplier * event_multiplier
+        
+        # Log V3 adjustments if they significantly impact score
+        if sector_multiplier != 1.0 or event_multiplier != 1.0:
+            logger.debug(
+                f"{symbol}: base={base_composite:.1f}, "
+                f"sector_mult={sector_multiplier:.2f}, "
+                f"event_mult={event_multiplier:.2f}, "
+                f"final={composite_score:.1f}"
+            )
         
         # Build score components
         scores = ScoreComponents(
@@ -178,6 +280,23 @@ class ScoringOrchestrator:
             composite=composite_score,
         )
         
+        # ===== V3: Generate Badges =====
+        badges = self._generate_badges(
+            recommendation=None,  # Will be set after determination
+            entry_trigger=entry_trigger,
+            event_risk=event_risk,
+            liquidity=liquidity,
+            sector_regime=sector_regime,
+            technicals=technicals,
+        )
+        
+        # ===== V3: Generate Chart Markers =====
+        chart_markers = self._generate_chart_markers(
+            entry_trigger=entry_trigger,
+            entry_analysis=entry_analysis,
+            current_price=current_price,
+        )
+        
         # Determine recommendation
         recommendation, summary = self._determine_recommendation(
             scores=scores,
@@ -185,6 +304,19 @@ class ScoringOrchestrator:
             entry_analysis=entry_analysis,
             risk_assessment=risk_assessment,
             domain_quality=domain_quality,
+            entry_trigger=entry_trigger,  # V3: influence recommendation
+            event_risk=event_risk,  # V3: block if earnings imminent
+            liquidity=liquidity,  # V3: warn if illiquid
+        )
+        
+        # Update badges with recommendation
+        badges = self._generate_badges(
+            recommendation=recommendation,
+            entry_trigger=entry_trigger,
+            event_risk=event_risk,
+            liquidity=liquidity,
+            sector_regime=sector_regime,
+            technicals=technicals,
         )
         
         # Calculate confidence
@@ -214,6 +346,13 @@ class ScoringOrchestrator:
             risk=risk_assessment,
             data_quality=data_quality,
             scoring_version=SCORING_VERSION,
+            # V3 fields - convert state objects to dicts
+            sector_regime=sector_regime.to_dict() if sector_regime else None,
+            entry_trigger=entry_trigger.to_dict() if entry_trigger else None,
+            event_risk=event_risk.to_dict() if event_risk else None,
+            liquidity=liquidity.to_dict() if liquidity else None,
+            badges=badges,
+            chart_markers=chart_markers,
         )
     
     def _compute_technical_score(
@@ -477,10 +616,32 @@ class ScoringOrchestrator:
         entry_analysis: EntryAnalysis,
         risk_assessment: RiskAssessment,
         domain_quality: DomainScoreResult,
+        # V3 parameters
+        entry_trigger: EntryTriggerState | None = None,
+        event_risk: EventRiskState | None = None,
+        liquidity: LiquidityState | None = None,
     ) -> tuple[Literal["STRONG_BUY", "BUY", "ACCUMULATE", "HOLD", "AVOID", "SELL"], str]:
-        """Determine final recommendation and summary."""
+        """Determine final recommendation and summary with V3 gates."""
         cfg = self.config
         composite = scores.composite
+        
+        # ===== V3: Event Risk Gate =====
+        # Block trades before earnings (gambling prevention)
+        if event_risk and event_risk.risk_level == "BLOCKED":
+            return (
+                "HOLD",
+                f"⚠️ Earnings in {event_risk.days_to_earnings or 0} days. "
+                f"Wait until after {event_risk.next_earnings_date} to avoid binary event risk."
+            )
+        
+        # ===== V3: Liquidity Gate =====
+        # Warn if stock is illiquid
+        if liquidity and liquidity.liquidity_tier == "ILLIQUID":
+            return (
+                "AVOID",
+                f"Insufficient liquidity. Daily volume: ${liquidity.dollar_volume_daily:,.0f}. "
+                f"Minimum required: $500K. Risk of slippage on entry/exit."
+            )
         
         # Special case: Bear/crash market accumulation
         if regime.regime in (MarketRegime.BEAR, MarketRegime.CRASH):
@@ -517,7 +678,11 @@ class ScoringOrchestrator:
         # Standard scoring thresholds
         if composite >= cfg.strong_buy_threshold:
             summary = f"Strong buy signal. Composite: {composite:.0f}. "
-            if entry_analysis.is_dip_entry:
+            # V3: Entry trigger influence
+            if entry_trigger and entry_trigger.signal == "BUY_NOW":
+                triggers = ", ".join(entry_trigger.active_triggers[:2])
+                summary += f"🎯 BUY NOW ({triggers}). "
+            elif entry_analysis.is_dip_entry:
                 summary += f"Dip entry at {entry_analysis.current_drawdown_pct:.0f}% discount."
             elif scores.technical >= 70:
                 summary += f"Strong technicals (momentum: {scores.technical:.0f})."
@@ -527,13 +692,25 @@ class ScoringOrchestrator:
         
         elif composite >= cfg.buy_threshold:
             summary = f"Buy signal. Composite: {composite:.0f}. "
-            if regime.regime == MarketRegime.BULL:
+            # V3: Entry trigger refinement
+            if entry_trigger and entry_trigger.signal == "BUY_NOW":
+                summary += f"🎯 Entry triggers active. "
+            elif entry_trigger and entry_trigger.signal == "BUY_ZONE":
+                summary += f"In buy zone (scale in). "
+            elif regime.regime == MarketRegime.BULL:
                 summary += "Bull market conditions."
             elif entry_analysis.is_dip_entry:
                 summary += f"Dip entry opportunity."
             return ("BUY", summary)
         
         elif composite >= cfg.accumulate_threshold:
+            # V3: Wait signal overrides accumulate
+            if entry_trigger and entry_trigger.signal == "WAIT":
+                return (
+                    "HOLD",
+                    f"Composite {composite:.0f} is decent, but entry timing is unfavorable. "
+                    f"Wait for better setup (RSI: {entry_trigger.rsi:.0f})."
+                )
             if entry_analysis.is_dip_entry:
                 return (
                     "ACCUMULATE",
@@ -638,6 +815,178 @@ class ScoringOrchestrator:
             notes.append(domain_quality.notes)
         
         return notes[:5]  # Limit to 5 notes
+    
+    def _generate_badges(
+        self,
+        recommendation: str | None,
+        entry_trigger: EntryTriggerState | None,
+        event_risk: EventRiskState | None,
+        liquidity: LiquidityState | None,
+        sector_regime: SectorRegimeState | None,
+        technicals: TechnicalSnapshot,
+    ) -> list[BadgeInfo]:
+        """Generate V3 UI badges based on analysis state."""
+        badges: list[BadgeInfo] = []
+        
+        # Entry trigger badges
+        if entry_trigger:
+            if entry_trigger.signal == "BUY_NOW":
+                badges.append(BadgeInfo(
+                    text="BUY NOW",
+                    color="green",
+                    tooltip=f"Active triggers: {', '.join(entry_trigger.active_triggers)}",
+                    icon="zap",
+                ))
+            elif entry_trigger.signal == "BUY_ZONE":
+                badges.append(BadgeInfo(
+                    text="BUY ZONE",
+                    color="blue",
+                    tooltip="Good entry zone - scale in",
+                    icon="target",
+                ))
+            elif entry_trigger.signal == "WAIT":
+                badges.append(BadgeInfo(
+                    text="WAIT",
+                    color="yellow",
+                    tooltip="Wait for better entry",
+                    icon="clock",
+                ))
+        
+        # Event risk badges
+        if event_risk:
+            if event_risk.risk_level == "BLOCKED":
+                badges.append(BadgeInfo(
+                    text=f"EARNINGS {event_risk.days_to_earnings}D",
+                    color="red",
+                    tooltip=f"Earnings on {event_risk.next_earnings_date}. Hold until after.",
+                    icon="alert-triangle",
+                ))
+            elif event_risk.risk_level == "CAUTION":
+                badges.append(BadgeInfo(
+                    text="EARNINGS SOON",
+                    color="yellow",
+                    tooltip=f"Earnings in {event_risk.days_to_earnings} days. Consider position size.",
+                    icon="calendar",
+                ))
+            if event_risk.ex_dividend_date and event_risk.days_to_ex_dividend is not None:
+                if event_risk.days_to_ex_dividend <= 7:
+                    badges.append(BadgeInfo(
+                        text="EX-DIV SOON",
+                        color="purple",
+                        tooltip=f"Ex-dividend: {event_risk.ex_dividend_date}",
+                        icon="dollar-sign",
+                    ))
+        
+        # Liquidity badges
+        if liquidity:
+            if liquidity.liquidity_tier == "ILLIQUID":
+                badges.append(BadgeInfo(
+                    text="LOW VOLUME",
+                    color="red",
+                    tooltip=f"Daily volume: ${liquidity.dollar_volume_daily:,.0f}. Exit risk.",
+                    icon="alert-circle",
+                ))
+            elif liquidity.liquidity_tier == "POOR":
+                badges.append(BadgeInfo(
+                    text="THIN VOLUME",
+                    color="yellow",
+                    tooltip=f"Limited liquidity. Max position: ${liquidity.max_position_dollars:,.0f}",
+                    icon="droplet",
+                ))
+        
+        # Sector regime badges
+        if sector_regime:
+            if sector_regime.regime == "CRISIS":
+                badges.append(BadgeInfo(
+                    text="SECTOR CRISIS",
+                    color="red",
+                    tooltip=f"Sector in crisis mode. Score reduced by {(1-sector_regime.score_multiplier)*100:.0f}%",
+                    icon="trending-down",
+                ))
+            elif sector_regime.regime == "WEAK":
+                badges.append(BadgeInfo(
+                    text="WEAK SECTOR",
+                    color="yellow",
+                    tooltip=f"Sector underperforming market",
+                    icon="arrow-down",
+                ))
+            elif sector_regime.regime == "STRONG":
+                badges.append(BadgeInfo(
+                    text="STRONG SECTOR",
+                    color="green",
+                    tooltip=f"Sector outperforming market (+{(sector_regime.score_multiplier-1)*100:.0f}% boost)",
+                    icon="arrow-up",
+                ))
+        
+        # Technical badges
+        if technicals.death_cross:
+            badges.append(BadgeInfo(
+                text="DEATH CROSS",
+                color="red",
+                tooltip="SMA50 crossed below SMA200",
+                icon="x-circle",
+            ))
+        elif technicals.golden_cross:
+            badges.append(BadgeInfo(
+                text="GOLDEN CROSS",
+                color="green",
+                tooltip="SMA50 crossed above SMA200",
+                icon="sun",
+            ))
+        
+        if technicals.volatility_regime == "EXTREME":
+            badges.append(BadgeInfo(
+                text="HIGH VOL",
+                color="orange",
+                tooltip=f"Extreme volatility regime",
+                icon="activity",
+            ))
+        
+        return badges[:6]  # Limit to 6 badges
+    
+    def _generate_chart_markers(
+        self,
+        entry_trigger: EntryTriggerState | None,
+        entry_analysis: EntryAnalysis,
+        current_price: float,
+    ) -> list[ChartMarker]:
+        """Generate V3 chart markers for UI visualization."""
+        markers: list[ChartMarker] = []
+        
+        # Entry zone markers
+        if entry_trigger and entry_trigger.entry_zone_low and entry_trigger.entry_zone_high:
+            markers.append(ChartMarker(
+                price=entry_trigger.entry_zone_low,
+                marker_type="entry_zone_low",
+                label=f"Entry Low: ${entry_trigger.entry_zone_low:.2f}",
+                color="green",
+            ))
+            markers.append(ChartMarker(
+                price=entry_trigger.entry_zone_high,
+                marker_type="entry_zone_high",
+                label=f"Entry High: ${entry_trigger.entry_zone_high:.2f}",
+                color="blue",
+            ))
+        
+        # Optimal entry marker
+        if entry_analysis.optimal_entry_price:
+            markers.append(ChartMarker(
+                price=entry_analysis.optimal_entry_price,
+                marker_type="optimal_entry",
+                label=f"Target: ${entry_analysis.optimal_entry_price:.2f}",
+                color="gold",
+            ))
+        
+        # Current price marker
+        if current_price > 0:
+            markers.append(ChartMarker(
+                price=current_price,
+                marker_type="current_price",
+                label=f"Now: ${current_price:.2f}",
+                color="white",
+            ))
+        
+        return markers
 
 
 # Singleton instance

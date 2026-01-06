@@ -848,11 +848,12 @@ async def get_fundamentals(
                 if row:
                     return _fundamentals_to_dict(row)
 
-    # Fetch via unified service
+    # Fetch via unified service (skip cache when forcing refresh)
     data = await _fetch_fundamentals_from_service(
         symbol,
         include_financials=include_financials,
         include_calendar=include_calendar,
+        skip_cache=force_refresh,
     )
 
     if data:

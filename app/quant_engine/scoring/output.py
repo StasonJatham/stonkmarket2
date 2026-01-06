@@ -79,12 +79,58 @@ class RiskAssessment:
 
 
 @dataclass
+class ChartMarker:
+    """Marker for frontend chart overlay."""
+    price: float
+    marker_type: Literal["buy", "sell", "support", "resistance", "entry_zone_low", "entry_zone_high", "optimal_entry", "current_price"]
+    label: str
+    color: str = "blue"
+    timestamp: str | None = None  # ISO format, optional
+    
+    def to_dict(self) -> dict[str, Any]:
+        result = {
+            "price": round(self.price, 2),
+            "type": self.marker_type,
+            "label": self.label,
+            "color": self.color,
+        }
+        if self.timestamp:
+            result["timestamp"] = self.timestamp
+        return result
+
+
+@dataclass
+class BadgeInfo:
+    """UI badge for quick visual scanning."""
+    text: str
+    color: Literal["green", "yellow", "red", "blue", "gray", "orange", "purple"]
+    tooltip: str
+    icon: str  # Lucide icon name
+    
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "text": self.text,
+            "color": self.color,
+            "tooltip": self.tooltip,
+            "icon": self.icon,
+        }
+
+
+@dataclass
 class StockAnalysisDashboard:
     """
     Unified output model for all stock analysis.
     
     This is the single format returned by the ScoringOrchestrator,
     consumed by the API and frontend.
+    
+    V3 additions:
+    - sector_regime: Sector-specific trend analysis
+    - entry_trigger: Discrete BUY/WAIT signals
+    - event_risk: Earnings/dividend event awareness
+    - liquidity: Volume adequacy check
+    - badges: UI-ready quick-glance info
+    - chart_markers: Visualization data
     """
     
     # Identity
@@ -104,23 +150,41 @@ class StockAnalysisDashboard:
     # Technical Details
     technicals: TechnicalSnapshot | None = None
     
-    # Regime Context
+    # Regime Context (Market-wide)
     regime: RegimeState | None = None
+    
+    # V3: Sector Regime
+    sector_regime: dict[str, Any] | None = None
+    
+    # V3: Entry Trigger
+    entry_trigger: dict[str, Any] | None = None
+    
+    # V3: Event Risk (Earnings/Dividends)
+    event_risk: dict[str, Any] | None = None
+    
+    # V3: Liquidity
+    liquidity: dict[str, Any] | None = None
     
     # Domain Quality (simplified)
     fundamental_score: float = 50.0
     fundamental_notes: list[str] = field(default_factory=list)
     
-    # Entry Analysis
+    # Entry Analysis (legacy, still used)
     entry: EntryAnalysis = field(default_factory=EntryAnalysis)
     
     # Risk Assessment
     risk: RiskAssessment = field(default_factory=RiskAssessment)
     
+    # V3: UI Badges
+    badges: list[BadgeInfo] = field(default_factory=list)
+    
+    # V3: Chart Markers
+    chart_markers: list[ChartMarker] = field(default_factory=list)
+    
     # Metadata
     analysis_date: date = field(default_factory=date.today)
     data_quality: Literal["HIGH", "MEDIUM", "LOW"] = "MEDIUM"
-    scoring_version: str = "3.0.0"
+    scoring_version: str = "3.1.0"
     
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for API response."""
@@ -135,6 +199,14 @@ class StockAnalysisDashboard:
             "scores": self.scores.to_dict(),
             "technicals": self.technicals.to_dict() if self.technicals else None,
             "regime": self.regime.to_dict() if self.regime else None,
+            # V3 additions
+            "sector_regime": self.sector_regime,
+            "entry_trigger": self.entry_trigger,
+            "event_risk": self.event_risk,
+            "liquidity": self.liquidity,
+            "badges": [b.to_dict() for b in self.badges],
+            "chart_markers": [m.to_dict() for m in self.chart_markers],
+            # Legacy
             "fundamental_score": round(self.fundamental_score, 1),
             "fundamental_notes": self.fundamental_notes,
             "entry": self.entry.to_dict(),
@@ -157,4 +229,8 @@ class StockAnalysisDashboard:
             "current_drawdown_pct": round(self.entry.current_drawdown_pct, 2),
             "is_dip_entry": self.entry.is_dip_entry,
             "regime": self.regime.regime.value if self.regime else None,
+            # V3: Include key flags
+            "entry_signal": self.entry_trigger.get("signal") if self.entry_trigger else None,
+            "event_risk_level": self.event_risk.get("risk_level") if self.event_risk else None,
+            "sector_regime": self.sector_regime.get("regime") if self.sector_regime else None,
         }

@@ -1654,14 +1654,14 @@ export function StockDetailsPanel({
                         {dipEntry.is_buy_now ? '● BUY' : '○ WAIT'}
                       </Badge>
                       <span className="text-xs text-muted-foreground">
-                        Target: -{((dipEntry.max_profit_threshold ?? 0) * 100).toFixed(0)}% from 52w high
+                        Target: {(Math.abs(dipEntry.max_profit_threshold ?? 0) * 100).toFixed(0)}% dip from peak
                       </span>
                     </div>
                   </div>
                   <p className="text-xs text-muted-foreground leading-relaxed">
                     {dipEntry.is_buy_now 
-                      ? <>Currently -{((dipEntry.current_drawdown_pct ?? 0) * 100).toFixed(1)}% from peak. Buy signal active.</>
-                      : <>Currently -{((dipEntry.current_drawdown_pct ?? 0) * 100).toFixed(1)}% from peak. Need -{((dipEntry.max_profit_threshold ?? 0) * 100).toFixed(0)}% to trigger buy.</>
+                      ? <>Currently {((dipEntry.current_drawdown_pct ?? 0) * 100).toFixed(1)}% below peak. Buy signal active.</>
+                      : <>Currently {((dipEntry.current_drawdown_pct ?? 0) * 100).toFixed(1)}% below peak. Need {(Math.abs(dipEntry.max_profit_threshold ?? 0) * 100).toFixed(0)}% to trigger buy.</>
                     }
                   </p>
                 </div>

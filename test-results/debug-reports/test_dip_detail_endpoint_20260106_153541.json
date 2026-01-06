@@ -1,0 +1,27 @@
+{
+  "test_id": "system_tests/workflows/test_dipfinder_flow.py::TestDipFinderFlow::test_dip_detail_endpoint",
+  "test_name": "test_dip_detail_endpoint",
+  "test_start": "2026-01-06T15:35:41.716298+00:00",
+  "test_end": "2026-01-06T15:35:42.178865+00:00",
+  "duration_seconds": 0.462567,
+  "summary": "1 error(s) in logs",
+  "errors": [
+    "2026-01-06T15:35:41.784747504Z 2026-01-06 15:35:41.784 UTC [75101] ERROR:  column \"symbol\" does not exist at character 8"
+  ],
+  "tracebacks": [],
+  "warnings": [],
+  "container_logs": {
+    "api": [],
+    "worker": [],
+    "worker-batch": [],
+    "postgres": [
+      "2026-01-06T15:35:41.784747504Z 2026-01-06 15:35:41.784 UTC [75101] ERROR:  column \"symbol\" does not exist at character 8",
+      "2026-01-06T15:35:41.784814171Z 2026-01-06 15:35:41.784 UTC [75101] STATEMENT:  SELECT symbol FROM dipfinder_signals LIMIT 1"
+    ],
+    "valkey": []
+  },
+  "request": null,
+  "response": null,
+  "database": null,
+  "assertion_error": null
+}

@@ -368,7 +368,8 @@ async def get_dip_entry(
         # Get current price from dip_state
         dip_state = await dip_state_repo.get_dip_state(symbol)
         current_price = float(dip_state.current_price) if dip_state and dip_state.current_price else 0.0
-        recent_high = float(dip_state.ref_high) if dip_state and dip_state.ref_high else 0.0
+        # Use ath_price for recent high (ref_high is legacy/NULL)
+        recent_high = float(dip_state.ath_price) if dip_state and dip_state.ath_price else 0.0
         current_drawdown = float(dip_state.dip_percentage) if dip_state and dip_state.dip_percentage else 0.0
         
         # Get symbol's min_dip_pct to filter threshold analysis
@@ -439,16 +440,22 @@ async def get_dip_entry(
             for t in raw_triggers.get("triggers", [])
         ]
         
+        # Calculate entry prices dynamically from current recent_high and thresholds
+        # (precomputed prices may be stale if ATH changed)
+        optimal_threshold_decimal = _to_decimal(float(precomputed.dip_entry_optimal_threshold))
+        calculated_optimal_entry = recent_high * (1 + optimal_threshold_decimal) if recent_high > 0 else 0.0
+        calculated_max_profit_entry = recent_high * (1 + max_profit_threshold_decimal) if recent_high > 0 and max_profit_threshold_decimal else 0.0
+        
         return DipEntryResponse(
             symbol=symbol,
             current_price=current_price,
             recent_high=recent_high,
             current_drawdown_pct=_to_decimal(current_drawdown),  # Convert to decimal
             volatility_regime="normal",  # Could be enhanced
-            optimal_dip_threshold=_to_decimal(float(precomputed.dip_entry_optimal_threshold)),  # Convert to decimal
-            optimal_entry_price=float(precomputed.dip_entry_optimal_price) if precomputed.dip_entry_optimal_price else current_price,
+            optimal_dip_threshold=optimal_threshold_decimal,
+            optimal_entry_price=calculated_optimal_entry,
             max_profit_threshold=max_profit_threshold_decimal or 0.0,  # Already in decimal
-            max_profit_entry_price=float(precomputed.dip_entry_max_profit_price) if precomputed.dip_entry_max_profit_price else 0.0,
+            max_profit_entry_price=calculated_max_profit_entry,
             max_profit_total_return=_to_decimal(float(precomputed.dip_entry_max_profit_total_return)) if precomputed.dip_entry_max_profit_total_return else 0.0,
             backtest=backtest_data,
             is_buy_now=precomputed.dip_entry_is_buy_now,

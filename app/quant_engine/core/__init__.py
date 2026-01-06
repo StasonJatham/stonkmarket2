@@ -55,6 +55,29 @@ from app.quant_engine.core.indicators import (
     prepare_price_dataframe,
 )
 
+# V3 Services - Sector Regime, Entry Triggers, Event Risk, Liquidity
+from app.quant_engine.core.sector_regime import (
+    SectorRegimeService,
+    SectorRegimeState,
+    get_sector_regime_service,
+)
+from app.quant_engine.core.entry_trigger import (
+    EntryTriggerService,
+    EntryTriggerState,
+    TriggerCondition,
+    get_entry_trigger_service,
+)
+from app.quant_engine.core.event_risk import (
+    EventRiskService,
+    EventRiskState,
+    get_event_risk_service,
+)
+from app.quant_engine.core.liquidity_gate import (
+    LiquidityGate,
+    LiquidityState,
+    get_liquidity_gate,
+)
+
 __all__ = [
     # Technical Service
     "TechnicalService",
@@ -90,4 +113,18 @@ __all__ = [
     # Indicators
     "compute_indicators",
     "prepare_price_dataframe",
+    # V3 Services
+    "SectorRegimeService",
+    "SectorRegimeState",
+    "get_sector_regime_service",
+    "EntryTriggerService",
+    "EntryTriggerState",
+    "TriggerCondition",
+    "get_entry_trigger_service",
+    "EventRiskService",
+    "EventRiskState",
+    "get_event_risk_service",
+    "LiquidityGate",
+    "LiquidityState",
+    "get_liquidity_gate",
 ]

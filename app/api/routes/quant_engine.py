@@ -645,9 +645,10 @@ async def get_recommendations(
     dip_state_map = {d.symbol: d for d in dip_states}
     ai_map = {a.symbol: a for a in ai_analyses}
     
-    # Get pre-computed strategy signals and quant scores from database
+    # Get pre-computed strategy signals, quant scores, and fundamentals from database
     strategy_map: dict[str, Any] = {}
     quant_score_map: dict[str, Any] = {}
+    fundamentals_map: dict[str, Any] = {}
     try:
         async with get_session() as session:
             result = await session.execute(select(StrategySignal))
@@ -660,6 +661,13 @@ async def get_recommendations(
             quant_scores = result.scalars().all()
             for qs in quant_scores:
                 quant_score_map[qs.symbol] = qs
+            
+            # Load fundamentals for intrinsic value calculation
+            from app.database.orm import StockFundamentals
+            result = await session.execute(select(StockFundamentals))
+            all_fundamentals = result.scalars().all()
+            for f in all_fundamentals:
+                fundamentals_map[f.symbol] = f
     except Exception as e:
         logger.warning(f"Failed to fetch strategy signals or quant scores: {e}")
     
@@ -873,6 +881,25 @@ async def get_recommendations(
         
         best_chance_score = max(0, min(100, best_chance_score))
         
+        # Calculate intrinsic value from fundamentals
+        intrinsic_value = None
+        upside_pct = None
+        valuation_status = None
+        fund = fundamentals_map.get(symbol)
+        if fund and current_price and current_price > 0:
+            from app.api.routes.symbols import calculate_intrinsic_value
+            fund_data = {
+                "target_mean_price": float(fund.target_mean_price) if fund.target_mean_price else None,
+                "num_analyst_opinions": fund.num_analyst_opinions,
+                "peg_ratio": float(fund.peg_ratio) if fund.peg_ratio else None,
+                "pe_ratio": float(fund.pe_ratio) if fund.pe_ratio else None,
+                "price_to_book": float(fund.price_to_book) if fund.price_to_book else None,
+            }
+            iv_result = calculate_intrinsic_value(fund_data, current_price)
+            intrinsic_value = iv_result.get("intrinsic_value")
+            upside_pct = iv_result.get("upside_pct")
+            valuation_status = iv_result.get("valuation_status")
+        
         # Opportunity rating - must be consistent with action
         # If action is HOLD, opportunity_rating should not be "buy" or "strong_buy"
         # This prevents confusing users with "Strong Buy" rating but "HOLD" action
@@ -937,6 +964,10 @@ async def get_recommendations(
             quant_score_b=quant_score_b,
             quant_gate_pass=quant_gate_pass,
             quant_evidence=evidence_response,
+            # Intrinsic Value
+            intrinsic_value=intrinsic_value,
+            upside_pct=upside_pct,
+            valuation_status=valuation_status,
         ))
     
     # Sort by best_chance_score

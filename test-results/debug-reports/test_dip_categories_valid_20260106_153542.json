@@ -1,0 +1,29 @@
+{
+  "test_id": "system_tests/workflows/test_dipfinder_flow.py::TestDipFinderFlow::test_dip_categories_valid",
+  "test_name": "test_dip_categories_valid",
+  "test_start": "2026-01-06T15:35:42.678814+00:00",
+  "test_end": "2026-01-06T15:35:43.118357+00:00",
+  "duration_seconds": 0.439543,
+  "summary": "1 error(s) in logs",
+  "errors": [
+    "2026-01-06T15:35:42.724921755Z 2026-01-06 15:35:42.724 UTC [75115] ERROR:  column \"dip_category\" does not exist at character 17"
+  ],
+  "tracebacks": [],
+  "warnings": [],
+  "container_logs": {
+    "api": [
+      "2026-01-06T15:35:42.730540546Z {\"timestamp\": \"2026-01-06T15:35:42.730453+00:00\", \"level\": \"INFO\", \"logger\": \"stonkmarket.api\", \"message\": \"GET /api/health/live -> 200 (0.000s)\", \"request_id\": \"7c3ffc7f-47c0-4d5a-aa3c-045061c3bf14\", \"location\": {\"file\": \"app.py\", \"line\": 144, \"function\": \"dispatch\"}}"
+    ],
+    "worker": [],
+    "worker-batch": [],
+    "postgres": [
+      "2026-01-06T15:35:42.724921755Z 2026-01-06 15:35:42.724 UTC [75115] ERROR:  column \"dip_category\" does not exist at character 17",
+      "2026-01-06T15:35:42.724947296Z 2026-01-06 15:35:42.724 UTC [75115] STATEMENT:  SELECT DISTINCT dip_category FROM dipfinder_signals WHERE dip_category IS NOT NULL"
+    ],
+    "valkey": []
+  },
+  "request": null,
+  "response": null,
+  "database": null,
+  "assertion_error": null
+}
