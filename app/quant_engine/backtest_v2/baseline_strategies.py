@@ -26,8 +26,8 @@ import numpy as np
 import pandas as pd
 from pydantic import BaseModel, Field, field_validator
 
-from app.quant_engine.backtest_v2.regime_filter import (
-    RegimeDetector,
+from app.quant_engine.core import (
+    RegimeService,
     MarketRegime,
     StrategyMode,
 )

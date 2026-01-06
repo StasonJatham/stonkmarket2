@@ -24,7 +24,7 @@ import numpy as np
 import pandas as pd
 
 from app.quant_engine.backtest_v2.walk_forward import WFOResult, WFOSummary
-from app.quant_engine.backtest_v2.regime_filter import MarketRegime, RegimeDetector
+from app.quant_engine.core import MarketRegime, RegimeService
 
 logger = logging.getLogger(__name__)
 

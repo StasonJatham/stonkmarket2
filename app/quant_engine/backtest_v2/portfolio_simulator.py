@@ -20,9 +20,9 @@ from typing import Any, Literal
 import numpy as np
 import pandas as pd
 
-from app.quant_engine.backtest_v2.regime_filter import (
+from app.quant_engine.core import (
     MarketRegime,
-    RegimeDetector,
+    RegimeService,
     RegimeState,
     StrategyMode,
 )

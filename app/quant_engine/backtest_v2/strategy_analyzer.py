@@ -45,7 +45,7 @@ from app.quant_engine.backtest_v2.alpha_factory import (
     StrategyGenome,
     VectorizedBacktester,
 )
-from app.quant_engine.backtest_v2.regime_filter import MarketRegime, RegimeDetector
+from app.quant_engine.core import MarketRegime, RegimeService
 from app.quant_engine.backtest_v2.strategy_report import (
     AdvancedMetrics,
     BenchmarkComparison,

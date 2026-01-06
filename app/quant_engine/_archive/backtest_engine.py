@@ -1,4 +1,12 @@
 """
+DEPRECATED - This file is deprecated as of V3 refactor.
+
+Use app.quant_engine.backtest_v2 for backtesting.
+The V2 backtester provides improved features and regime-aware analysis.
+
+This file will be removed in a future version.
+---
+
 Professional Backtesting Engine with Statistical Validation.
 
 This module implements a rigorous, institutional-grade backtesting framework:

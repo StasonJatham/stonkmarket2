@@ -1630,27 +1630,70 @@ async def get_dip_analysis(
     
     Returns pre-computed results from the nightly quant analysis job.
     Results are refreshed daily after market close.
+    
+    The overall_action is adjusted to be consistent with:
+    - The quant scoring system (mode: HOLD/DOWNTREND)
+    - The strategy signal (signal_type: not BUY)
     """,
 )
 async def get_current_signals(
     symbol: str,
 ) -> CurrentSignalsResponse:
-    """Get pre-computed current signals."""
+    """Get pre-computed current signals, adjusted for quant score consistency."""
     from app.repositories import quant_precomputed_orm as quant_repo
+    from app.repositories.quant_scores_orm import get_quant_score
+    from sqlalchemy import select
+    from app.database.orm import StrategySignal
+    from app.database.connection import get_session
     
     symbol = symbol.strip().upper()
     
     # Get pre-computed results from database
     cached = await quant_repo.get_precomputed(symbol)
     
+    # Also get the quant score to check mode
+    quant_score = await get_quant_score(symbol)
+    
+    # Also check strategy signal - if it says HOLD/WAIT, respect that
+    strategy_signal_type = None
+    async with get_session() as session:
+        result = await session.execute(
+            select(StrategySignal.signal_type).where(StrategySignal.symbol == symbol)
+        )
+        row = result.scalar_one_or_none()
+        if row:
+            strategy_signal_type = row
+    
     if cached and cached.current_signals:
         signals = cached.current_signals
+        overall_action = signals.get("overall_action", "HOLD")
+        reasoning = signals.get("reasoning", "")
+        
+        should_hold = False
+        hold_reason = ""
+        
+        # Check 1: quant mode is HOLD or DOWNTREND
+        if quant_score and quant_score.mode in ("HOLD", "DOWNTREND"):
+            should_hold = True
+            hold_reason = f"Quant mode: {quant_score.mode}"
+        
+        # Check 2: strategy signal is not BUY (e.g., HOLD, WAIT, WATCH)
+        if strategy_signal_type and strategy_signal_type not in ("BUY",):
+            should_hold = True
+            hold_reason = hold_reason or f"Strategy: {strategy_signal_type}"
+        
+        # Consistency adjustment: if quant/strategy says hold, cap the action
+        if should_hold and overall_action in ("STRONG_BUY", "BUY", "WEAK_BUY"):
+            original_action = overall_action
+            overall_action = "HOLD"
+            reasoning = f"Technical: {original_action}, but {hold_reason}"
+        
         return CurrentSignalsResponse(
             symbol=symbol,
             buy_signals=signals.get("buy_signals", []),
             sell_signals=signals.get("sell_signals", []),
-            overall_action=signals.get("overall_action", "HOLD"),
-            reasoning=signals.get("reasoning", ""),
+            overall_action=overall_action,
+            reasoning=reasoning,
         )
     
     # No cached data - return empty

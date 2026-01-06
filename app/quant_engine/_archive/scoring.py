@@ -1,4 +1,12 @@
 """
+DEPRECATED - This file is deprecated as of V3 refactor.
+
+Use app.quant_engine.scoring_v2 for integrated scoring.
+Use app.quant_engine.scoring.ScoringOrchestrator for new implementations.
+
+This file will be removed in a future version.
+---
+
 Dual-Mode Scoring Pipeline (APUS + DOUS)
 
 Implements the complete scoring specification:

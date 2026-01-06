@@ -44,7 +44,7 @@ from ta.volume import (
     AccDistIndexIndicator, MFIIndicator,
 )
 
-from app.quant_engine.backtest_v2.regime_filter import MarketRegime
+from app.quant_engine.core import MarketRegime
 
 logger = logging.getLogger(__name__)
 

@@ -1,14 +1,15 @@
 """
-Quantitative Portfolio Engine V2
-================================
+Quantitative Portfolio Engine V3 - Unified Architecture
+========================================================
 
-A non-predictive, risk-based portfolio optimization system.
+A non-predictive, risk-based portfolio optimization system with unified services.
 
 This engine DOES NOT forecast future returns. Instead, it provides:
 - Risk diagnostics (decomposition, tail risk, diversification metrics)
 - Risk-based portfolio optimization (Risk Parity, Min Variance, CVaR, HRP)
 - Technical signal scanning with per-stock optimization
-- User-friendly translation of complex analytics
+- Unified scoring via ScoringOrchestrator
+- Regime-aware strategy selection
 
 Design Philosophy
 -----------------
@@ -16,28 +17,60 @@ Design Philosophy
 2. Risk-based allocation - optimize for risk, not expected returns  
 3. Robust optimization - methods that don't require return estimates
 4. Backtested signals - only use signals with proven historical edge
-5. User-friendly output - translate quant jargon to plain English
+5. SINGLE SOURCE OF TRUTH - TechnicalService, RegimeService, DomainScoring
 
 Modules
 -------
+- core: Shared services (TechnicalService, RegimeService)
+- scoring: Unified scoring system (ScoringOrchestrator)
 - analytics: Portfolio risk diagnostics and analysis
 - risk_optimizer: Risk-based portfolio optimization methods
 - signals: Technical signal scanner with per-stock optimization
-
-Optimization Methods
---------------------
-- RISK_PARITY: Equal risk contribution from each asset
-- MIN_VARIANCE: Minimize total portfolio volatility
-- MAX_DIVERSIFICATION: Maximize diversification ratio
-- CVAR: Minimize Conditional VaR (expected shortfall)
-- HRP: Hierarchical Risk Parity (López de Prado)
+- backtest_v2: Advanced backtesting with regime awareness
 """
 
 from __future__ import annotations
 
-__version__ = "2.0.0"
+__version__ = "3.0.0"
 
-# Analytics
+# =============================================================================
+# CORE SERVICES - The foundation of V3
+# =============================================================================
+
+from app.quant_engine.core import (
+    # Technical Analysis
+    TechnicalService,
+    TechnicalSnapshot,
+    IndicatorConfig,
+    get_technical_service,
+    # Regime Detection
+    RegimeService,
+    RegimeState,
+    RegimeConfig,
+    StrategyConfig,
+    MarketRegime,
+    StrategyMode,
+    REGIME_STRATEGY_CONFIGS,
+    get_regime_service,
+)
+
+# =============================================================================
+# SCORING - Unified entry point for stock analysis
+# =============================================================================
+
+from app.quant_engine.scoring import (
+    ScoringOrchestrator,
+    get_scoring_orchestrator,
+    StockAnalysisDashboard,
+    ScoreComponents,
+    EntryAnalysis,
+    RiskAssessment,
+)
+
+# =============================================================================
+# ANALYTICS - Portfolio risk diagnostics
+# =============================================================================
+
 from app.quant_engine.analytics import (
     analyze_portfolio,
     compute_correlation_analysis,
@@ -49,13 +82,15 @@ from app.quant_engine.analytics import (
     detect_regime,
     DiversificationMetrics,
     PortfolioAnalytics,
-    RegimeState,
     RiskDecomposition,
     TailRiskAnalysis,
     translate_for_user,
 )
 
-# Risk Optimizer - Data Types Only (optimization is now in skfolio)
+# =============================================================================
+# RISK OPTIMIZER - Data Types Only
+# =============================================================================
+
 from app.quant_engine.risk_optimizer import (
     AllocationRecommendation,
     RiskOptimizationConstraints,
@@ -63,7 +98,10 @@ from app.quant_engine.risk_optimizer import (
     RiskOptimizationResult,
 )
 
-# Signals
+# =============================================================================
+# SIGNALS - Technical signal scanning
+# =============================================================================
+
 from app.quant_engine.signals import (
     OptimizedSignal,
     scan_all_stocks,
@@ -71,7 +109,10 @@ from app.quant_engine.signals import (
     StockOpportunity,
 )
 
-# Domain Analysis
+# =============================================================================
+# DOMAIN ANALYSIS - Sector-specific metrics
+# =============================================================================
+
 from app.quant_engine.domain_analysis import (
     DomainAnalysis,
     DomainMetrics,
@@ -84,6 +125,27 @@ from app.quant_engine.domain_analysis import (
 
 __all__ = [
     "__version__",
+    # Core Services - Technical
+    "TechnicalService",
+    "TechnicalSnapshot",
+    "IndicatorConfig",
+    "get_technical_service",
+    # Core Services - Regime
+    "RegimeService",
+    "RegimeState",
+    "RegimeConfig",
+    "StrategyConfig",
+    "MarketRegime",
+    "StrategyMode",
+    "REGIME_STRATEGY_CONFIGS",
+    "get_regime_service",
+    # Scoring
+    "ScoringOrchestrator",
+    "get_scoring_orchestrator",
+    "StockAnalysisDashboard",
+    "ScoreComponents",
+    "EntryAnalysis",
+    "RiskAssessment",
     # Analytics
     "analyze_portfolio",
     "compute_correlation_analysis",
@@ -95,11 +157,10 @@ __all__ = [
     "detect_regime",
     "DiversificationMetrics",
     "PortfolioAnalytics",
-    "RegimeState",
     "RiskDecomposition",
     "TailRiskAnalysis",
     "translate_for_user",
-    # Risk Optimizer - Data Types Only
+    # Risk Optimizer
     "AllocationRecommendation",
     "RiskOptimizationConstraints",
     "RiskOptimizationMethod",
@@ -115,5 +176,7 @@ __all__ = [
     "perform_domain_analysis",
     "domain_analysis_to_dict",
     "normalize_sector",
+    "Sector",
+]
     "Sector",
 ]

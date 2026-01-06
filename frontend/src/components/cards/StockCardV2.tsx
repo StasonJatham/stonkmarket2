@@ -598,14 +598,14 @@ function MiniSparkline({ data, color, id }: MiniSparklineProps) {
   
   return (
     <div className="absolute bottom-0 left-0 right-0 h-1/2 pointer-events-none">
-      {/* Milky glass overlay for better readability */}
-      <div className="absolute inset-0 bg-background/40 backdrop-blur-[2px]" />
-      <div className="relative h-full opacity-50">
+      {/* Milky glass overlay for better readability - enhanced opacity and blur */}
+      <div className="absolute inset-0 bg-background/60 backdrop-blur-[3px]" />
+      <div className="relative h-full opacity-40">
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={data} margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
             <defs>
               <linearGradient id={`sparkline-${id}`} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={color} stopOpacity={0.35} />
+                <stop offset="0%" stopColor={color} stopOpacity={0.30} />
                 <stop offset="100%" stopColor={color} stopOpacity={0.02} />
               </linearGradient>
             </defs>

@@ -755,3 +755,44 @@ def get_available_crash_periods_for_data(prices: pd.Series) -> list[CrashPeriod]
             available.append(period)
     
     return available
+
+
+def identify_crash_periods(
+    spy_prices: pd.Series,
+    threshold_pct: float = -20.0,
+) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
+    """
+    Identify historical crash periods for stress testing.
+
+    Returns list of (start_date, end_date) tuples for periods where
+    SPY dropped more than threshold_pct from its rolling high.
+    
+    Args:
+        spy_prices: SPY price series with DatetimeIndex
+        threshold_pct: Drawdown threshold (default -20% for bear market)
+        
+    Returns:
+        List of (start, end) tuples for each crash period
+    """
+    if len(spy_prices) < 252:
+        return []
+        
+    rolling_high = spy_prices.rolling(252).max()
+    drawdown = (spy_prices / rolling_high - 1) * 100
+
+    in_crash = drawdown <= threshold_pct
+    crash_periods = []
+
+    start = None
+    for date, is_crash in in_crash.items():
+        if is_crash and start is None:
+            start = date
+        elif not is_crash and start is not None:
+            crash_periods.append((start, date))
+            start = None
+
+    # Handle ongoing crash at end of data
+    if start is not None:
+        crash_periods.append((start, spy_prices.index[-1]))
+
+    return crash_periods

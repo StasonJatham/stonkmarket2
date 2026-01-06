@@ -16,12 +16,18 @@ Key Philosophy:
 - Technical signals are regime-dependent
 """
 
-from app.quant_engine.backtest_v2.regime_filter import (
+# Core services (unified V3)
+from app.quant_engine.core import (
     MarketRegime,
     StrategyMode,
     StrategyConfig,
     RegimeState,
-    RegimeDetector,
+    RegimeService,
+    REGIME_STRATEGY_CONFIGS,
+)
+
+from app.quant_engine.backtest_v2.crash_testing import (
+    CrashPeriod,
     identify_crash_periods,
 )
 from app.quant_engine.backtest_v2.fundamental_guardrail import (

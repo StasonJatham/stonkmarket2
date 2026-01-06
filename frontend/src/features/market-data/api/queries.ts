@@ -5,7 +5,7 @@
  * Each hook handles loading, error, and caching automatically.
  */
 
-import { useQuery, useQueries } from '@tanstack/react-query';
+import { useQuery, useQueries, keepPreviousData } from '@tanstack/react-query';
 import { queryKeys } from '@/lib/query';
 import { apiGet, apiPost, buildUrl } from '@/lib/api-client';
 import {
@@ -361,6 +361,9 @@ export function useBatchCharts(symbols: string[], days: number = 45) {
     queryFn: () => fetchBatchCharts(symbols, days),
     enabled: symbols.length > 0,
     staleTime: 5 * 60 * 1000,
+    // Keep previous data while fetching new symbols (infinite scroll)
+    // This prevents charts from disappearing when scrolling
+    placeholderData: keepPreviousData,
   });
 }
 
