@@ -1,6 +1,6 @@
 /* eslint-disable react-refresh/only-export-components */
 /**
- * StockCardV2 - Information-dense dashboard card for stock display.
+ * StockCard - Information-dense dashboard card for stock display.
  * 
  * Features:
  * - Mini sparkline chart as subtle background
@@ -35,6 +35,7 @@ import {
   Zap,
   Target,
   BarChart2,
+  Calendar,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useTheme } from '@/context/ThemeContext';
@@ -142,6 +143,9 @@ export interface StockCardData {
   upside_pct?: number | null;
   valuation_status?: 'undervalued' | 'fair' | 'overvalued' | null;
   
+  // Earnings
+  next_earnings_date?: string | null;
+  
   // APUS + DOUS Dual-Mode Scoring
   quant_mode?: 'CERTIFIED_BUY' | 'DIP_ENTRY' | 'HOLD' | 'DOWNTREND' | null;
   quant_score_a?: number | null;  // Mode A (APUS) score 0-100
@@ -161,9 +165,31 @@ export interface StockCardData {
     p_recovery: number;
     expected_value: number;
   } | null;
+  
+  // Action from quant engine (authoritative signal)
+  action?: 'BUY' | 'SELL' | 'HOLD';
+  
+  // Strategy Comparison (from quant recommendations)
+  strategy_comparison?: {
+    initial_capital: number;
+    monthly_contribution: number;
+    backtest_days: number;
+    strategies: {
+      [key: string]: {
+        name: string;
+        description: string;
+        total_invested: number;
+        final_value: number;
+        total_return_pct: number;
+        n_buys: number;
+      };
+    };
+    ranked_by_return: string[];
+    winner: string;
+  } | null;
 }
 
-interface StockCardV2Props {
+interface StockCardProps {
   stock: StockCardData;
   chartData?: ChartDataPoint[];
   isLoading?: boolean;
@@ -274,12 +300,29 @@ function calculateOpportunityScore(stock: StockCardData): number {
   return Math.max(0, Math.min(100, score));
 }
 
-function getOpportunityRating(score: number, mode?: string | null): 'strong_buy' | 'buy' | 'hold' | 'avoid' {
-  // If mode is HOLD or DOWNTREND, don't show as buy opportunity regardless of score
-  if (mode === 'HOLD' || mode === 'DOWNTREND') {
-    if (score >= 60) return 'hold';  // High score but not in dip = hold
+function getOpportunityRating(score: number, mode?: string | null, action?: string | null): 'strong_buy' | 'buy' | 'hold' | 'avoid' {
+  // If action is provided from quant engine, use it as authoritative signal
+  if (action === 'BUY') {
+    return score >= 75 ? 'strong_buy' : 'buy';
+  }
+  if (action === 'SELL') {
+    return 'avoid';
+  }
+  if (action === 'HOLD') {
     return 'hold';
   }
+  
+  // Fallback: If mode is HOLD or DOWNTREND, don't show as buy opportunity regardless of score
+  if (mode === 'HOLD' || mode === 'DOWNTREND') {
+    return 'hold';
+  }
+  
+  // Mode-based rating for CERTIFIED_BUY and DIP_ENTRY
+  if (mode === 'CERTIFIED_BUY' || mode === 'DIP_ENTRY') {
+    return score >= 75 ? 'strong_buy' : 'buy';
+  }
+  
+  // Score-based fallback
   if (score >= 75) return 'strong_buy';
   if (score >= 60) return 'buy';
   if (score >= 40) return 'hold';
@@ -628,14 +671,14 @@ function MiniSparkline({ data, color, id }: MiniSparklineProps) {
 // Main Component
 // ============================================================================
 
-export const StockCardV2 = memo(function StockCardV2({
+export const StockCard = memo(function StockCard({
   stock,
   chartData,
   isLoading,
   isSelected,
   compact = false,
   onClick,
-}: StockCardV2Props) {
+}: StockCardProps) {
   const isPositive = (stock.change_percent ?? 0) >= 0;
   
   // Get theme-aware colors for SVG chart (respects colorblind mode)
@@ -644,7 +687,7 @@ export const StockCardV2 = memo(function StockCardV2({
   
   // Calculate opportunity metrics
   const opportunityScore = stock.opportunity_score ?? calculateOpportunityScore(stock);
-  const opportunityRating = stock.opportunity_rating ?? getOpportunityRating(opportunityScore, stock.quant_mode);
+  const opportunityRating = stock.opportunity_rating ?? getOpportunityRating(opportunityScore, stock.quant_mode, stock.action);
   
   // Prepare chart data for sparkline
   const sparklineData = (() => {
@@ -659,7 +702,7 @@ export const StockCardV2 = memo(function StockCardV2({
   }
   
   if (isLoading) {
-    return <StockCardV2Skeleton compact={compact} />;
+    return <StockCardSkeleton compact={compact} />;
   }
   
   return (
@@ -790,6 +833,28 @@ export const StockCardV2 = memo(function StockCardV2({
             {/* Technical Signal with description */}
             {stock.top_signal && <SignalBadge signal={stock.top_signal} />}
             
+            {/* Earnings Badge - show if within 14 days */}
+            {stock.next_earnings_date && (() => {
+              const earningsDate = new Date(stock.next_earnings_date);
+              const today = new Date();
+              const daysUntil = Math.ceil((earningsDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+              
+              if (daysUntil > 0 && daysUntil <= 14) {
+                return (
+                  <InfoTooltip content={`Earnings on ${earningsDate.toLocaleDateString()}`}>
+                    <Badge 
+                      variant="outline" 
+                      className="gap-0.5 text-[10px] px-1.5 py-0 h-5 cursor-help border-amber-500/50 text-amber-500 bg-amber-500/10"
+                    >
+                      <Calendar className="h-3 w-3" />
+                      {daysUntil}d
+                    </Badge>
+                  </InfoTooltip>
+                );
+              }
+              return null;
+            })()}
+            
             {/* Win Rate - REMOVED: Strategy backtest win rate is misleading for dip stocks
                Users think it means "% of similar dips recovered" but it's actually
                "% of trades from a trading strategy were profitable" - different concept.
@@ -810,7 +875,7 @@ export const StockCardV2 = memo(function StockCardV2({
 // Skeleton
 // ============================================================================
 
-export function StockCardV2Skeleton({ compact = false }: { compact?: boolean }) {
+export function StockCardSkeleton({ compact = false }: { compact?: boolean }) {
   return (
     <Card className="overflow-hidden h-full">
       <CardContent className={cn('relative', compact ? 'p-3' : 'p-4')}>
@@ -840,4 +905,4 @@ export function StockCardV2Skeleton({ compact = false }: { compact?: boolean }) 
   );
 }
 
-export default StockCardV2;
+export default StockCard;

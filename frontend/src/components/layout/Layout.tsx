@@ -13,10 +13,10 @@ const ENABLE_LEGAL_PAGES = import.meta.env.VITE_ENABLE_LEGAL_PAGES === 'true';
 export function Layout() {
   const { decoded, decode, getPayPalLink } = useObfuscatedContact();
   // Use quant recommendations for ticker - includes action (BUY/SELL/HOLD) and change_percent
-  const recsQuery = useQuantRecommendations(1000, 40);
+  const recsQuery = useQuantRecommendations(1000, 100);
   
-  // Map quant recommendations to TickerStock format
-  const tickerStocks: TickerStock[] = (recsQuery.data?.recommendations ?? []).slice(0, 40).map(rec => ({
+  // Map ALL quant recommendations to TickerStock format (no arbitrary limit)
+  const tickerStocks: TickerStock[] = (recsQuery.data?.recommendations ?? []).map(rec => ({
     symbol: rec.ticker,
     name: rec.name,
     depth: rec.legacy_dip_pct ? Math.abs(rec.legacy_dip_pct) : 0,

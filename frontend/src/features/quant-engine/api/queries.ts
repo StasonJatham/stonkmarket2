@@ -127,27 +127,17 @@ export function useLandingData(inflow: number = 1000, limit: number = 25) {
   // Get all recommendations
   const allRecommendations = recsQuery.data?.recommendations ?? [];
   
-  // Filter to only show stocks where our strategy beats buy & hold
-  // This showcases stocks where dip-buying is proven to outperform
-  // Also exclude stocks where the recommendation is "switch to SPY" - those underperform
-  const strategyBeaters = allRecommendations.filter(r => 
-    r.strategy_beats_bh === true && 
-    r.strategy_name !== 'switch_to_spy' &&
-    r.strategy_name !== 'spy_dca'
-  );
+  // Filter to only show BUY recommendations for the landing page
+  // This shows actionable opportunities, not stocks to avoid
+  const buyRecommendations = allRecommendations.filter(r => r.action === 'BUY');
   
-  // Use filtered list if we have any, otherwise fallback to SPY-only or first stock
-  const recommendations = strategyBeaters.length > 0 
-    ? strategyBeaters 
-    : allRecommendations.filter(r => r.ticker === 'SPY').slice(0, 1);
-  
-  // If no SPY either, just use first recommendation as fallback
-  const finalRecommendations = recommendations.length > 0 
-    ? recommendations 
+  // Use BUY list if we have any, otherwise fallback to first recommendation
+  const finalRecommendations = buyRecommendations.length > 0 
+    ? buyRecommendations 
     : allRecommendations.slice(0, 1);
   
-  // Derive hero symbol (first BUY recommendation that beats B&H)
-  const heroRec = finalRecommendations.find(r => r.action === 'BUY') ?? finalRecommendations[0] ?? null;
+  // Derive hero symbol (first BUY recommendation)
+  const heroRec = finalRecommendations[0] ?? null;
   const heroSymbol = heroRec?.ticker ?? '';
   
   // Signal board symbols (top N recommendations that beat B&H)

@@ -1,30 +1,26 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   getStockChart, 
-  getStockInfo,
   getBenchmarkChart,
   mergeChartData,
   aggregatePortfolioPerformance,
-  getDipCard,
   quantToStockCardData,
 } from '@/services/api';
 import { useBenchmarks, useBatchCharts } from '@/features/market-data/api/queries';
 import type { 
   DipStock, 
   ChartDataPoint, 
-  StockInfo, 
   BenchmarkType,
   ComparisonChartData,
   AggregatedPerformance,
-  DipCard,
   StockCardData,
 } from '@/services/api';
 import { useQuantRecommendations } from '@/features/quant-engine/api/queries';
 import { useSEO, generateBreadcrumbJsonLd } from '@/lib/seo';
-import { StockCardV2 } from '@/components/cards/StockCardV2';
-import { StockDetailsPanel } from '@/components/StockDetailsPanel';
+import { StockCard } from '@/components/cards/StockCard';
+import { StockDetailPanel } from '@/components/stock-detail';
 import { BenchmarkSelector } from '@/components/BenchmarkSelector';
 import { PortfolioChart } from '@/components/PortfolioChart';
 import { Button } from '@/components/ui/button';
@@ -33,11 +29,10 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Drawer, DrawerContent, DrawerTitle } from '@/components/ui/drawer';
-import { Switch } from '@/components/ui/switch';
-import { Label } from '@/components/ui/label';
 import { 
   Search, 
   TrendingDown, 
+  TrendingUp,
   LayoutGrid, 
   List,
   SlidersHorizontal,
@@ -76,7 +71,7 @@ const item = {
 
 export function Dashboard() {
   // Local state for UI toggles that were previously in DipContext
-  const [showAllStocks, setShowAllStocks] = useState(false);
+  const [showAllStocks, setShowAllStocks] = useState(true);  // Always show all stocks
   // Inflow amount for quant engine - could be exposed in UI later
   const inflow = 1000;
   
@@ -115,13 +110,21 @@ export function Dashboard() {
     return map;
   })();
   
+  // Also keep full recommendation map for detail panel (single source of truth)
+  const recommendationMap = (() => {
+    const map = new Map<string, typeof recommendations[0]>();
+    recommendations.forEach(rec => {
+      map.set(rec.ticker, rec);
+    });
+    return map;
+  })();
+  
   const [searchParams, setSearchParams] = useSearchParams();
-  const [selectedStock, setSelectedStock] = useState<DipStock | null>(null);
+  const [selectedStock, setSelectedStock] = useState<StockCardData | null>(null);
+  const [selectedRec, setSelectedRec] = useState<typeof recommendations[0] | null>(null);
   const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
-  const [stockInfo, setStockInfo] = useState<StockInfo | null>(null);
   const [chartPeriod, setChartPeriod] = useState(365);
   const [isLoadingChart, setIsLoadingChart] = useState(false);
-  const [isLoadingInfo, setIsLoadingInfo] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
   const [sortBy, setSortBy] = useState<SortBy>('signal');
@@ -143,29 +146,6 @@ export function Dashboard() {
   const [comparisonData, setComparisonData] = useState<ComparisonChartData[]>([]);
   const [aggregatedData, setAggregatedData] = useState<AggregatedPerformance[]>([]);
   const [showPortfolioChart, setShowPortfolioChart] = useState(false);
-  
-  // AI Analysis state
-  const [aiData, setAiData] = useState<{
-    ai_rating: DipCard['ai_rating'];
-    ai_reasoning: string | null;
-    domain_analysis: string | null;
-    domain_context?: string | null;
-    domain_adjustment?: number | null;
-    domain_adjustment_reason?: string | null;
-    domain_risk_level?: string | null;
-    domain_risk_factors?: string[] | null;
-    domain_recovery_days?: number | null;
-    domain_warnings?: string[] | null;
-    volatility_regime?: string | null;
-    volatility_percentile?: number | null;
-    vs_sector_performance?: number | null;
-    sector?: string | null;
-  } | null>(null);
-  const [isLoadingAi, setIsLoadingAi] = useState(false);
-  
-  // Infinite scroll state
-  const [visibleCount, setVisibleCount] = useState(20);
-  const loadMoreRef = useRef<HTMLDivElement>(null);
 
   // SEO - Dynamic meta tags based on selected stock
   useSEO({
@@ -244,7 +224,15 @@ export function Dashboard() {
       }
       
       if (stock) {
-        setSelectedStock(stock);
+        // Get the full StockCardData and QuantRecommendation for the selected stock
+        const cardData = stockCardDataMap.get(stock.symbol);
+        const rec = recommendationMap.get(stock.symbol);
+        if (cardData) {
+          setSelectedStock(cardData);
+        }
+        if (rec) {
+          setSelectedRec(rec);
+        }
         // Keep the stock param in URL for sharing
         updateUrlParams({ stock: stock.symbol });
       }
@@ -274,7 +262,7 @@ export function Dashboard() {
       const bCard = stockCardDataMap.get(b.symbol);
       
       switch (sortBy) {
-        case 'signal':
+        case 'signal': {
           // Best chance score = composite of all our quant factors
           // Computed in backend: stationary bootstrap, deflated Sharpe, recovery probability,
           // fundamental momentum, valuation z-score, sector relative performance
@@ -284,6 +272,7 @@ export function Dashboard() {
           if (bGate !== aGate) return bGate - aGate;
           // P2: Sort by best_chance_score (already in dip_score)
           return (b.dip_score ?? 0) - (a.dip_score ?? 0);
+        }
         case 'chance':
           // Sort by best_chance_score from quant engine
           return (b.dip_score ?? 0) - (a.dip_score ?? 0);
@@ -316,36 +305,37 @@ export function Dashboard() {
     return result;
   })();
 
-  // Reset visible count when search/filter changes
-  useEffect(() => {
-    setVisibleCount(20);
-  }, [searchQuery, sortBy, showAllStocks]);
+  // Split stocks into buy recommendations and others
+  const { buyStocks, holdStocks } = (() => {
+    const buy: DipStock[] = [];
+    const hold: DipStock[] = [];
+    
+    for (const stock of filteredStocks) {
+      const cardData = stockCardDataMap.get(stock.symbol);
+      const isBuy = cardData?.quant_mode === 'CERTIFIED_BUY' || 
+                    cardData?.quant_mode === 'DIP_ENTRY' ||
+                    cardData?.action === 'BUY';
+      if (isBuy) {
+        buy.push(stock);
+      } else {
+        hold.push(stock);
+      }
+    }
+    
+    // Sort buys by opportunity score (descending)
+    buy.sort((a, b) => {
+      const aScore = stockCardDataMap.get(a.symbol)?.opportunity_score ?? 0;
+      const bScore = stockCardDataMap.get(b.symbol)?.opportunity_score ?? 0;
+      return bScore - aScore;
+    });
+    
+    return { buyStocks: buy, holdStocks: hold };
+  })();
 
-  // Visible stocks for pagination - plain derivation
-  const visibleStocks = filteredStocks.slice(0, visibleCount);
-
-  // Fetch mini charts for visible cards via TanStack Query
-  const symbolsForCards = visibleStocks.map(s => s.symbol);
+  // Fetch mini charts for all stock cards via TanStack Query
+  const symbolsForCards = filteredStocks.map(s => s.symbol);
   const cardChartsQuery = useBatchCharts(symbolsForCards, 90);
   const cardCharts = cardChartsQuery.data ?? {};
-
-  // Infinite scroll observer
-  useEffect(() => {
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting && visibleCount < filteredStocks.length) {
-          setVisibleCount((prev) => Math.min(prev + 20, filteredStocks.length));
-        }
-      },
-      { threshold: 0.1 }
-    );
-
-    if (loadMoreRef.current) {
-      observer.observe(loadMoreRef.current);
-    }
-
-    return () => observer.disconnect();
-  }, [visibleCount, filteredStocks.length]);
 
   // Calculate optimal chart period to show high and dip
   function calculateOptimalPeriod(stock: DipStock): number {
@@ -363,65 +353,13 @@ export function Dashboard() {
     return 365; // Default to 1 year if nothing fits
   }
 
-  // Helper functions for loading stock data - defined before useEffect that uses them
-  async function loadStockInfo(symbol: string) {
-    setIsLoadingInfo(true);
-    try {
-      const info = await getStockInfo(symbol);
-      setStockInfo(info);
-    } catch (err) {
-      console.error('Failed to load stock info:', err);
-      setStockInfo(null);
-    } finally {
-      setIsLoadingInfo(false);
-    }
-  }
-
-  async function loadAiData(symbol: string) {
-    setIsLoadingAi(true);
-    try {
-      // First check if we have domain analysis from the recommendations
-      const cardData = stockCardDataMap.get(symbol);
-      const card = await getDipCard(symbol);
-      setAiData({
-        ai_rating: card.ai_rating,
-        ai_reasoning: card.ai_reasoning,
-        // Use domain_analysis from recommendations (quant data) if available
-        domain_analysis: cardData?.domain_analysis || null,
-        // Pass through all domain-specific analysis fields
-        domain_context: cardData?.domain_context || null,
-        domain_adjustment: cardData?.domain_adjustment ?? null,
-        domain_adjustment_reason: cardData?.domain_adjustment_reason || null,
-        domain_risk_level: cardData?.domain_risk_level || null,
-        domain_risk_factors: cardData?.domain_risk_factors || null,
-        domain_recovery_days: cardData?.domain_recovery_days ?? null,
-        domain_warnings: cardData?.domain_warnings || null,
-        volatility_regime: cardData?.volatility_regime || null,
-        volatility_percentile: cardData?.volatility_percentile ?? null,
-        vs_sector_performance: cardData?.vs_sector_performance ?? null,
-        sector: cardData?.sector || null,
-      });
-    } catch (err) {
-      console.error('Failed to load AI data:', err);
-      setAiData(null);
-    } finally {
-      setIsLoadingAi(false);
-    }
-  }
-
   // Load chart and info when stock selected
   useEffect(() => {
     if (selectedStock) {
       // Auto-select optimal period based on dip timeline
       const optimalPeriod = calculateOptimalPeriod(selectedStock);
       setChartPeriod(optimalPeriod);
-      
-      loadStockInfo(selectedStock.symbol);
-      loadAiData(selectedStock.symbol);
-    } else {
-      setAiData(null);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedStock]);
 
   // Consolidated chart loading - load both stock and benchmark chart together
@@ -520,7 +458,15 @@ export function Dashboard() {
   }, [stocks.length, benchmarkData.length, benchmark, chartPeriod]);
 
   function handleStockSelect(stock: DipStock) {
-    setSelectedStock(stock);
+    // Get the full StockCardData for the selected stock
+    const cardData = stockCardDataMap.get(stock.symbol);
+    const rec = recommendationMap.get(stock.symbol);
+    if (cardData) {
+      setSelectedStock(cardData);
+    }
+    if (rec) {
+      setSelectedRec(rec);
+    }
     // Only open mobile drawer on small screens
     if (window.innerWidth < 1024) {
       setIsMobileDetailOpen(true);
@@ -673,18 +619,6 @@ export function Dashboard() {
             </DropdownMenuContent>
           </DropdownMenu>
 
-          {/* Show All Toggle */}
-          <div className="flex items-center gap-2 border rounded-lg px-3 py-1.5">
-            <Switch
-              id="show-all"
-              checked={showAllStocks}
-              onCheckedChange={setShowAllStocks}
-            />
-            <Label htmlFor="show-all" className="text-sm cursor-pointer whitespace-nowrap">
-              Show all
-            </Label>
-          </div>
-
           {/* View Mode Toggle */}
           <div className="flex items-center border rounded-lg p-0.5">
             <Button
@@ -766,112 +700,160 @@ export function Dashboard() {
             </motion.div>
           ) : (
             <>
-              <motion.div
-                variants={container}
-                initial="hidden"
-                animate="show"
-                className={
-                  viewMode === 'grid'
-                    ? 'grid gap-4 sm:grid-cols-2 xl:grid-cols-3'
-                    : 'space-y-3'
-                }
-              >
-                {visibleStocks.map((stock) => {
-                  const cardData = stockCardDataMap.get(stock.symbol);
-                  const miniChartData = cardCharts[stock.symbol];
-                  return (
-                    <motion.div 
-                      key={stock.symbol} 
-                      variants={item}
-                      initial="hidden"
-                      animate="show"
-                    >
-                      <StockCardV2
-                        stock={cardData || {
-                          symbol: stock.symbol,
-                          name: stock.name,
-                          sector: stock.sector,
-                          last_price: stock.last_price,
-                          change_percent: stock.change_percent,
-                          high_52w: stock.high_52w,
-                          low_52w: stock.low_52w,
-                          market_cap: stock.market_cap,
-                          depth: stock.depth,
-                          days_since_dip: stock.days_since_dip,
-                          dip_bucket: null,
-                        }}
-                        chartData={miniChartData}
-                        isSelected={selectedStock?.symbol === stock.symbol}
-                        compact={viewMode === 'list'}
-                        onClick={() => handleStockSelect(stock)}
-                      />
-                    </motion.div>
-                  );
-                })}
-              </motion.div>
-              
-              {/* Load more trigger for infinite scroll */}
-              {visibleCount < filteredStocks.length && (
-                <div
-                  ref={loadMoreRef}
-                  className="flex justify-center py-8"
-                >
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                    Loading more stocks...
+              {/* Active Buy Recommendations Section */}
+              {buyStocks.length > 0 && (
+                <>
+                  <div className="flex items-center gap-2 mb-4">
+                    <TrendingUp className="h-5 w-5 text-success" />
+                    <h3 className="text-lg font-semibold">Active Buy Signals</h3>
+                    <Badge variant="outline" className="border-success/50 text-success bg-success/10">
+                      {buyStocks.length}
+                    </Badge>
                   </div>
+                  <motion.div
+                    variants={container}
+                    initial="hidden"
+                    animate="show"
+                    className={
+                      viewMode === 'grid'
+                        ? 'grid gap-4 sm:grid-cols-2 xl:grid-cols-3'
+                        : 'space-y-3'
+                    }
+                  >
+                    {buyStocks.map((stock) => {
+                      const cardData = stockCardDataMap.get(stock.symbol);
+                      const miniChartData = cardCharts[stock.symbol];
+                      return (
+                        <motion.div 
+                          key={stock.symbol} 
+                          variants={item}
+                          initial="hidden"
+                          animate="show"
+                        >
+                          <StockCard
+                            stock={cardData || {
+                              symbol: stock.symbol,
+                              name: stock.name,
+                              sector: stock.sector,
+                              last_price: stock.last_price,
+                              change_percent: stock.change_percent,
+                              high_52w: stock.high_52w,
+                              low_52w: stock.low_52w,
+                              market_cap: stock.market_cap,
+                              depth: stock.depth,
+                              days_since_dip: stock.days_since_dip,
+                              dip_bucket: null,
+                            }}
+                            chartData={miniChartData}
+                            isSelected={selectedStock?.symbol === stock.symbol}
+                            compact={viewMode === 'list'}
+                            onClick={() => handleStockSelect(stock)}
+                          />
+                        </motion.div>
+                      );
+                    })}
+                  </motion.div>
+                </>
+              )}
+
+              {/* Separator between buy and hold sections */}
+              {buyStocks.length > 0 && holdStocks.length > 0 && (
+                <div className="flex items-center gap-4 my-8">
+                  <div className="flex-1 h-px bg-border" />
+                  <span className="text-sm text-muted-foreground">Other Holdings</span>
+                  <div className="flex-1 h-px bg-border" />
                 </div>
+              )}
+
+              {/* Hold/Other Stocks Section */}
+              {holdStocks.length > 0 && (
+                <motion.div
+                  variants={container}
+                  initial="hidden"
+                  animate="show"
+                  className={
+                    viewMode === 'grid'
+                      ? 'grid gap-4 sm:grid-cols-2 xl:grid-cols-3'
+                      : 'space-y-3'
+                  }
+                >
+                  {holdStocks.map((stock) => {
+                    const cardData = stockCardDataMap.get(stock.symbol);
+                    const miniChartData = cardCharts[stock.symbol];
+                    return (
+                      <motion.div 
+                        key={stock.symbol} 
+                        variants={item}
+                        initial="hidden"
+                        animate="show"
+                      >
+                        <StockCard
+                          stock={cardData || {
+                            symbol: stock.symbol,
+                            name: stock.name,
+                            sector: stock.sector,
+                            last_price: stock.last_price,
+                            change_percent: stock.change_percent,
+                            high_52w: stock.high_52w,
+                            low_52w: stock.low_52w,
+                            market_cap: stock.market_cap,
+                            depth: stock.depth,
+                            days_since_dip: stock.days_since_dip,
+                            dip_bucket: null,
+                          }}
+                          chartData={miniChartData}
+                          isSelected={selectedStock?.symbol === stock.symbol}
+                          compact={viewMode === 'list'}
+                          onClick={() => handleStockSelect(stock)}
+                        />
+                      </motion.div>
+                    );
+                  })}
+                </motion.div>
               )}
               
               {/* Show count info */}
-              {visibleCount >= filteredStocks.length && filteredStocks.length > 20 && (
-                <div className="text-center py-4 text-sm text-muted-foreground">
-                  Showing all {filteredStocks.length} stocks
-                </div>
-              )}
+              <div className="text-center py-4 text-sm text-muted-foreground">
+                Showing {buyStocks.length + holdStocks.length} stocks ({buyStocks.length} buy signals, {holdStocks.length} others)
+              </div>
             </>
           )}
         </div>
 
         {/* Desktop Details Panel */}
-        <div className="hidden lg:block sticky top-16 h-[calc(100vh-5rem)]">
-          <StockDetailsPanel
-            stock={selectedStock}
+        <div className="hidden lg:block sticky top-20 h-[calc(100vh-6rem)] self-start">
+          <StockDetailPanel
+            recommendation={selectedRec}
             chartData={chartData}
-            stockInfo={stockInfo}
             chartPeriod={chartPeriod}
             onPeriodChange={setChartPeriod}
             isLoadingChart={isLoadingChart}
-            isLoadingInfo={isLoadingInfo}
-            onClose={() => setSelectedStock(null)}
+            onClose={() => {
+              setSelectedStock(null);
+              setSelectedRec(null);
+            }}
             benchmark={benchmark}
             comparisonData={comparisonData}
             isLoadingBenchmark={isLoadingBenchmark}
-            aiData={aiData}
-            isLoadingAi={isLoadingAi}
           />
         </div>
       </div>
 
       {/* Mobile Details Drawer - swipe down to close */}
-      <Drawer open={isMobileDetailOpen && !!selectedStock} onOpenChange={setIsMobileDetailOpen}>
+      <Drawer open={isMobileDetailOpen && !!selectedRec} onOpenChange={setIsMobileDetailOpen}>
         <DrawerContent className="h-[85dvh] max-h-[calc(100dvh-env(safe-area-inset-top)-2rem)] p-0">
           <DrawerTitle className="sr-only">Stock Details</DrawerTitle>
           <div className="h-full overflow-hidden pb-safe">
-            <StockDetailsPanel
-              stock={selectedStock}
+            <StockDetailPanel
+              recommendation={selectedRec}
               chartData={chartData}
-              stockInfo={stockInfo}
               chartPeriod={chartPeriod}
               onPeriodChange={setChartPeriod}
               isLoadingChart={isLoadingChart}
-              isLoadingInfo={isLoadingInfo}
               onClose={() => setIsMobileDetailOpen(false)}
               benchmark={benchmark}
               comparisonData={comparisonData}
               isLoadingBenchmark={isLoadingBenchmark}
-              aiData={aiData}
-              isLoadingAi={isLoadingAi}
             />
           </div>
         </DrawerContent>

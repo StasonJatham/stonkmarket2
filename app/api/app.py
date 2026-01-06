@@ -154,6 +154,26 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         return response
 
 
+class DataVersionMiddleware(BaseHTTPMiddleware):
+    """Refresh data version from Redis at the start of each request.
+    
+    This ensures all responses include the latest data version,
+    preventing cache thrashing from stale in-memory versions.
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        # Skip health checks for performance
+        if not request.url.path.startswith("/api/health"):
+            from app.cache.data_version import get_data_version
+            try:
+                await get_data_version()
+            except Exception:
+                # Don't fail request if Redis unavailable
+                pass
+        
+        return await call_next(request)
+
+
 def create_api_app() -> FastAPI:
     """Create and configure the API application."""
     app = FastAPI(
@@ -179,6 +199,7 @@ def create_api_app() -> FastAPI:
     # Add middlewares (order matters - first added is outermost)
     app.add_middleware(RequestLoggingMiddleware)
     app.add_middleware(RequestIDMiddleware)
+    app.add_middleware(DataVersionMiddleware)  # Refresh data version from Redis
     app.add_middleware(SecurityHeadersMiddleware)
 
     # CORS - strict configuration (no wildcards with credentials)

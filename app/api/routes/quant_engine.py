@@ -675,6 +675,8 @@ async def get_recommendations(
     symbol_names = {s.symbol: s.name or s.symbol for s in symbols}
     symbol_sector_map = {s.symbol: s.sector for s in symbols}
     symbol_mcap_map = {s.symbol: s.market_cap for s in symbols}
+    symbol_type_map = {s.symbol: s.symbol_type for s in symbols}  # stock, etf, index
+    symbol_min_dip_map = {s.symbol: float(s.min_dip_pct) * 100 for s in symbols}  # Convert to percentage
     symbol_list = [s.symbol for s in symbols if s.symbol not in ("SPY", "^GSPC", "URTH")]
 
     dipfinder_signals = await dipfinder_repo.get_latest_signals_for_tickers(symbol_list)
@@ -687,6 +689,16 @@ async def get_recommendations(
     
     for symbol in symbol_list:
         dip = dip_state_map.get(symbol)
+        
+        # Calculate metrics from dip state (already in DB)
+        dip_pct = float(dip.dip_percentage) if dip and dip.dip_percentage is not None else None
+        min_dip_pct = symbol_min_dip_map.get(symbol, 10.0)  # Default 10% threshold
+        
+        # Skip symbols that haven't met their minimum dip threshold
+        # No point recommending something that isn't actually in a meaningful dip
+        if dip_pct is None or dip_pct < min_dip_pct:
+            continue
+        
         ai = ai_map.get(symbol)
         dipfinder = dipfinder_map.get(symbol)
         strategy = strategy_map.get(symbol)
@@ -694,9 +706,7 @@ async def get_recommendations(
         name = symbol_names.get(symbol, symbol)
         sector = symbol_sector_map.get(symbol)
         market_cap = symbol_mcap_map.get(symbol)
-        
-        # Calculate metrics from dip state (already in DB)
-        dip_pct = float(dip.dip_percentage) if dip and dip.dip_percentage is not None else None
+        symbol_type = symbol_type_map.get(symbol, "stock")  # Default to stock
         current_price = float(dip.current_price) if dip and dip.current_price else 0
         opportunity_type = dip.opportunity_type if dip and dip.opportunity_type else "NONE"
         # Extreme Value Analysis (EVA) fields
@@ -968,6 +978,8 @@ async def get_recommendations(
             intrinsic_value=intrinsic_value,
             upside_pct=upside_pct,
             valuation_status=valuation_status,
+            # Earnings
+            next_earnings_date=str(fund.next_earnings_date) if fund and fund.next_earnings_date else None,
         ))
     
     # Sort by best_chance_score

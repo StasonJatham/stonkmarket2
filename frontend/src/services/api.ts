@@ -1373,6 +1373,8 @@ export interface QuantRecommendation {
   intrinsic_value: number | null;
   upside_pct: number | null;
   valuation_status: 'undervalued' | 'fair' | 'overvalued' | null;
+  // Earnings
+  next_earnings_date: string | null;
   // Legacy compatibility
   legacy_dip_pct: number | null;
   legacy_days_in_dip: number | null;
@@ -1525,12 +1527,37 @@ export interface StockCardData {
   upside_pct?: number | null;
   valuation_status?: 'undervalued' | 'fair' | 'overvalued' | null;
   
+  // Earnings
+  next_earnings_date?: string | null;
+  
   // APUS + DOUS Dual-Mode Scoring
   quant_mode?: 'CERTIFIED_BUY' | 'DIP_ENTRY' | 'HOLD' | 'DOWNTREND' | null;
   quant_score_a?: number | null;  // Mode A (APUS) score 0-100
   quant_score_b?: number | null;  // Mode B (DOUS) score 0-100
   quant_gate_pass?: boolean;
   quant_evidence?: EvidenceBlock | null;
+  
+  // Action from quant engine
+  action?: 'BUY' | 'SELL' | 'HOLD';
+  
+  // Strategy Comparison (from quant recommendations)
+  strategy_comparison?: {
+    initial_capital: number;
+    monthly_contribution: number;
+    backtest_days: number;
+    strategies: {
+      [key: string]: {
+        name: string;
+        description: string;
+        total_invested: number;
+        final_value: number;
+        total_return_pct: number;
+        n_buys: number;
+      };
+    };
+    ranked_by_return: string[];
+    winner: string;
+  } | null;
 }
 
 /**
@@ -1660,12 +1687,18 @@ export function quantToStockCardData(
     intrinsic_value: rec.intrinsic_value,
     upside_pct: rec.upside_pct,
     valuation_status: rec.valuation_status,
+    // Earnings
+    next_earnings_date: rec.next_earnings_date,
     // APUS + DOUS Dual-Mode Scoring
     quant_mode: rec.quant_mode,
     quant_score_a: rec.quant_score_a,
     quant_score_b: rec.quant_score_b,
     quant_gate_pass: rec.quant_gate_pass,
     quant_evidence: rec.quant_evidence,
+    // Action from quant engine
+    action: rec.action,
+    // Strategy Comparison from quant recommendations (available without auth)
+    strategy_comparison: rec.strategy_comparison,
   };
 }
 

@@ -320,6 +320,9 @@ class ApiCache {
   /**
    * Check data version from server and clear cache if version changed.
    * Called automatically when X-Data-Version header is received.
+   * 
+   * Only clears cache if version is NEWER (larger timestamp) to avoid
+   * thrashing from multi-process inconsistencies.
    */
   checkDataVersion(serverVersion: string): void {
     if (typeof window === 'undefined') return;
@@ -328,11 +331,21 @@ class ApiCache {
       const storedVersion = localStorage.getItem(DATA_VERSION_KEY);
       
       if (storedVersion && storedVersion !== serverVersion) {
-        console.warn(`Data version changed: ${storedVersion} → ${serverVersion}. Clearing caches.`);
-        this.clear();
+        // Only clear if server version is newer (larger timestamp)
+        // This prevents thrashing when different server instances have slightly different versions
+        const storedNum = parseInt(storedVersion, 10);
+        const serverNum = parseInt(serverVersion, 10);
+        
+        if (!isNaN(storedNum) && !isNaN(serverNum) && serverNum > storedNum) {
+          console.info(`Data version updated: ${storedVersion} → ${serverVersion}. Clearing caches.`);
+          this.clear();
+          localStorage.setItem(DATA_VERSION_KEY, serverVersion);
+        }
+        // If server version is older or same, ignore it (stale server response)
+      } else if (!storedVersion) {
+        // First time - just store it
+        localStorage.setItem(DATA_VERSION_KEY, serverVersion);
       }
-      
-      localStorage.setItem(DATA_VERSION_KEY, serverVersion);
     } catch {
       // Storage unavailable
     }

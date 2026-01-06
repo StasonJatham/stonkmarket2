@@ -13,7 +13,7 @@ import {
 } from 'recharts';
 import { ChartTooltip, SimpleChartTooltipContent } from '@/components/ui/chart';
 import { CHART_LINE_ANIMATION, CHART_TRENDLINE_ANIMATION, CHART_ANIMATION } from '@/lib/chartConfig';
-import type { DipStock, ChartDataPoint, StockInfo, BenchmarkType, ComparisonChartData, SignalTrigger, SignalTriggersResponse, DipAnalysis, CurrentSignals, AgentAnalysis, SymbolFundamentals, StrategySignalResponse, DipEntryResponse } from '@/services/api';
+import type { ChartDataPoint, StockInfo, BenchmarkType, ComparisonChartData, SignalTrigger, SignalTriggersResponse, DipAnalysis, CurrentSignals, AgentAnalysis, SymbolFundamentals, StrategySignalResponse, DipEntryResponse, StockCardData } from '@/services/api';
 import { getSignalTriggers, getDipAnalysis, getCurrentSignals, getAgentAnalysis, getSymbolFundamentals, getStrategySignal, getDipEntry } from '@/services/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -35,7 +35,6 @@ import {
   Zap,
   AlertTriangle,
   CheckCircle2,
-  XCircle,
   Building,
   Landmark,
   Shield,
@@ -50,7 +49,6 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { StockLogo } from '@/components/StockLogo';
-import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import {
   Tooltip,
@@ -77,7 +75,7 @@ interface AiData {
 }
 
 interface StockDetailsPanelProps {
-  stock: DipStock | null;
+  stock: StockCardData | null;
   chartData: ChartDataPoint[];
   stockInfo: StockInfo | null;
   chartPeriod: number;
@@ -92,6 +90,24 @@ interface StockDetailsPanelProps {
   // AI props (optional)
   aiData?: AiData | null;
   isLoadingAi?: boolean;
+  // Strategy comparison from quant recommendations (no auth required)
+  strategyComparison?: {
+    initial_capital: number;
+    monthly_contribution: number;
+    backtest_days: number;
+    strategies: {
+      [key: string]: {
+        name: string;
+        description: string;
+        total_invested: number;
+        final_value: number;
+        total_return_pct: number;
+        n_buys: number;
+      };
+    };
+    ranked_by_return: string[];
+    winner: string;
+  } | null;
 }
 
 function formatMarketCap(value: number | null): string {
@@ -202,13 +218,13 @@ export function StockDetailsPanel({
   isLoadingBenchmark = false,
   aiData: _aiData,
   isLoadingAi: _isLoadingAi,
+  strategyComparison: propStrategyComparison,
 }: StockDetailsPanelProps) {
   // Track when dots should be visible (after chart animation completes)
   const [dotsVisible, setDotsVisible] = useState(false);
   
   // Signal triggers for buy signal markers with benchmark comparison
   const [signalsResponse, setSignalsResponse] = useState<SignalTriggersResponse | null>(null);
-  const [showSignals, setShowSignals] = useState(true);
   
   // Extract triggers from response for backward compatibility
   const signalTriggers = signalsResponse?.triggers ?? [];
@@ -405,10 +421,9 @@ export function StockDetailsPanel({
   // Find signal trigger points that match chart dates (for technical strategy)
   const signalPoints = (() => {
     // Don't show signals if:
-    // 1. User toggled them off
-    // 2. Strategy is "dip" (no real backtested signals)
-    // 3. Signal doesn't beat buy-and-hold (no edge = useless signal)
-    if (!showSignals || !hasValidStrategy || !signalsBeatBuyHold || signalTriggers.length === 0 || formattedChartData.length === 0) return [];
+    // 1. Strategy is "dip" (no real backtested signals)
+    // 2. Signal doesn't beat buy-and-hold (no edge = useless signal)
+    if (!hasValidStrategy || !signalsBeatBuyHold || signalTriggers.length === 0 || formattedChartData.length === 0) return [];
     
     // Create a map of date -> signal for quick lookup
     const signalMap = new Map<string, SignalTrigger>();
@@ -424,16 +439,11 @@ export function StockDetailsPanel({
   })();
 
   // Find dip signal trigger points that match chart dates (for dip strategy)
-  // Only show when no valid technical strategy is available
+  // Always show dip buy points when available
   const dipSignalPoints = (() => {
-    // Show dip signals when:
-    // 1. User has signals toggled on
-    // 2. No valid technical strategy OR strategy doesn't beat B&H
-    // 3. Dip entry data with signal triggers is available
-    const showDipSignals = showSignals && (!hasValidStrategy || !signalsBeatBuyHold);
     const dipTriggers = dipEntry?.signal_triggers ?? [];
     
-    if (!showDipSignals || dipTriggers.length === 0 || formattedChartData.length === 0) return [];
+    if (dipTriggers.length === 0 || formattedChartData.length === 0) return [];
     
     // Create a map of date -> signal for quick lookup
     const dipSignalMap = new Map<string, typeof dipTriggers[0]>();
@@ -561,19 +571,11 @@ export function StockDetailsPanel({
                   {stock.days_since_dip && (
                     <span className="text-muted-foreground">{stock.days_since_dip}d</span>
                   )}
-                  {/* Signals toggle - only show if stock has valid strategy */}
-                  {hasValidStrategy && (
+                  {/* Show dip buy signal count if available */}
+                  {dipSignalPoints.length > 0 && (
                   <div className="flex items-center gap-1.5 ml-1 border-l border-border pl-2">
                     <Zap className="h-3 w-3 text-success" />
-                    <Switch
-                      id="signals-toggle"
-                      checked={showSignals}
-                      onCheckedChange={setShowSignals}
-                      className="h-4 w-7 data-[state=checked]:bg-success"
-                    />
-                    {signalTriggers.length > 0 && (
-                      <span className="text-muted-foreground">({signalTriggers.length})</span>
-                    )}
+                    <span className="text-muted-foreground">Buys: {dipSignalPoints.length}</span>
                   </div>
                   )}
                 </div>
@@ -770,7 +772,7 @@ export function StockDetailsPanel({
                       />
                     )}
                     {/* Buy signal trigger dots with tooltip */}
-                    {dotsVisible && showSignals && signalPoints.map((point, idx) => {
+                    {dotsVisible && signalPoints.map((point, idx) => {
                       // Calculate expected value: win_rate * avg_return (risk-adjusted return)
                       const expectedValue = point.signal.win_rate * point.signal.avg_return_pct;
                       const isEntry = point.signal.signal_type === 'entry';
@@ -831,7 +833,7 @@ export function StockDetailsPanel({
                       </ReferenceDot>
                     );})}
                     {/* Dip strategy buy/sell signal dots (shown when no valid technical strategy) */}
-                    {dotsVisible && showSignals && dipSignalPoints.map((point, idx) => {
+                    {dotsVisible && dipSignalPoints.map((point, idx) => {
                       const isEntry = point.signal.signal_type === 'entry';
                       const dotColor = isEntry ? 'var(--success)' : 'var(--danger)';
                       const signalIcon = isEntry ? '▲' : '▼';
@@ -943,49 +945,43 @@ export function StockDetailsPanel({
 
           {/* Data Section - Complete Analysis Dashboard */}
           <CardContent className="pt-3 pb-4 px-3 md:px-6">
-            {/* HERO: Overall Recommendation Card */}
-            {(currentSignals || agentAnalysis) && !isLoadingQuant && !isLoadingAgents && (
+            {/* HERO: Overall Recommendation Card - Use stock.quant_mode from recommendations for consistency */}
+            {stock && (
               <div className={cn(
                 "p-4 rounded-xl mb-4",
-                (currentSignals?.overall_action === 'STRONG_BUY' || agentAnalysis?.overall_signal === 'strong_buy') && "bg-gradient-to-br from-success/20 to-success/5 border-2 border-success/40",
-                (currentSignals?.overall_action === 'BUY' || agentAnalysis?.overall_signal === 'buy') && "bg-gradient-to-br from-success/15 to-success/5 border border-success/30",
-                (currentSignals?.overall_action === 'HOLD' || agentAnalysis?.overall_signal === 'hold') && "bg-gradient-to-br from-muted/40 to-muted/20 border border-border",
-                (currentSignals?.overall_action === 'SELL' || agentAnalysis?.overall_signal === 'sell') && "bg-gradient-to-br from-warning/15 to-warning/5 border border-warning/30",
-                (currentSignals?.overall_action === 'STRONG_SELL' || agentAnalysis?.overall_signal === 'strong_sell') && "bg-gradient-to-br from-danger/20 to-danger/10 border-2 border-danger/40",
-                !currentSignals?.overall_action && !agentAnalysis?.overall_signal && "bg-gradient-to-br from-muted/40 to-muted/20 border border-border"
+                (stock.quant_mode === 'CERTIFIED_BUY' || stock.action === 'BUY') && "bg-gradient-to-br from-success/15 to-success/5 border border-success/30",
+                (stock.quant_mode === 'DIP_ENTRY') && "bg-gradient-to-br from-primary/15 to-primary/5 border border-primary/30",
+                (stock.quant_mode === 'HOLD' || stock.action === 'HOLD') && "bg-gradient-to-br from-muted/40 to-muted/20 border border-border",
+                (stock.quant_mode === 'DOWNTREND' || stock.action === 'SELL') && "bg-gradient-to-br from-warning/15 to-warning/5 border border-warning/30",
               )}>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    {(currentSignals?.overall_action === 'STRONG_BUY' || agentAnalysis?.overall_signal === 'strong_buy') && <Zap className="h-6 w-6 text-success" />}
-                    {(currentSignals?.overall_action === 'BUY' || agentAnalysis?.overall_signal === 'buy') && <TrendingUp className="h-6 w-6 text-success" />}
-                    {(currentSignals?.overall_action === 'HOLD' || agentAnalysis?.overall_signal === 'hold') && <Activity className="h-5 w-5 text-muted-foreground" />}
-                    {(currentSignals?.overall_action === 'SELL' || agentAnalysis?.overall_signal === 'sell') && <TrendingDown className="h-5 w-5 text-warning" />}
-                    {(currentSignals?.overall_action === 'STRONG_SELL' || agentAnalysis?.overall_signal === 'strong_sell') && <XCircle className="h-6 w-6 text-danger" />}
+                    {(stock.quant_mode === 'CERTIFIED_BUY' || stock.action === 'BUY') && <TrendingUp className="h-6 w-6 text-success" />}
+                    {stock.quant_mode === 'DIP_ENTRY' && <Target className="h-6 w-6 text-primary" />}
+                    {(stock.quant_mode === 'HOLD' || stock.action === 'HOLD') && <Activity className="h-5 w-5 text-muted-foreground" />}
+                    {(stock.quant_mode === 'DOWNTREND' || stock.action === 'SELL') && <TrendingDown className="h-5 w-5 text-warning" />}
                     <span className={cn(
                       "text-2xl font-bold",
-                      (currentSignals?.overall_action?.includes('BUY') || ['strong_buy', 'buy'].includes(agentAnalysis?.overall_signal || '')) && "text-success",
-                      (currentSignals?.overall_action === 'HOLD' || agentAnalysis?.overall_signal === 'hold') && "text-foreground",
-                      (currentSignals?.overall_action?.includes('SELL') || ['strong_sell', 'sell'].includes(agentAnalysis?.overall_signal || '')) && "text-danger",
+                      (stock.quant_mode === 'CERTIFIED_BUY' || stock.action === 'BUY') && "text-success",
+                      stock.quant_mode === 'DIP_ENTRY' && "text-primary",
+                      (stock.quant_mode === 'HOLD' || stock.action === 'HOLD') && "text-foreground",
+                      (stock.quant_mode === 'DOWNTREND' || stock.action === 'SELL') && "text-warning",
                     )}>
-                      {(currentSignals?.overall_action || agentAnalysis?.overall_signal || 'ANALYZING').replace('_', ' ').toUpperCase()}
+                      {stock.quant_mode?.replace('_', ' ') || stock.action || 'ANALYZING'}
                     </span>
+                    {stock.quant_gate_pass && (
+                      <Badge variant="outline" className="text-xs border-success/50 text-success bg-success/10">
+                        Certified
+                      </Badge>
+                    )}
                   </div>
-                  {/* Show counts matching the signal source being used */}
-                  {currentSignals?.overall_action ? (
-                    <div className="flex gap-2 text-xs items-center">
-                      <span className="text-success flex items-center gap-0.5"><ArrowUpCircle className="h-3 w-3" /> {currentSignals.buy_signals?.length || 0}</span>
-                      <span className="text-danger flex items-center gap-0.5"><ArrowDownCircle className="h-3 w-3" /> {currentSignals.sell_signals?.length || 0}</span>
-                    </div>
-                  ) : agentAnalysis && (
-                    <div className="flex gap-2 text-xs items-center">
-                      <span className="text-success flex items-center gap-0.5"><ArrowUpCircle className="h-3 w-3" /> {agentAnalysis.bullish_count || 0}</span>
-                      <span className="text-muted-foreground flex items-center gap-0.5"><MinusCircle className="h-3 w-3" /> {agentAnalysis.neutral_count || 0}</span>
-                      <span className="text-danger flex items-center gap-0.5"><ArrowDownCircle className="h-3 w-3" /> {agentAnalysis.bearish_count || 0}</span>
-                    </div>
-                  )}
+                  <div className="text-right">
+                    <p className="text-lg font-bold">{stock.opportunity_score?.toFixed(0) ?? '—'}</p>
+                    <p className="text-xs text-muted-foreground">Opportunity Score</p>
+                  </div>
                 </div>
-                {currentSignals?.reasoning && (
-                  <p className="text-sm text-muted-foreground mt-2">{currentSignals.reasoning}</p>
+                {stock.domain_context && (
+                  <p className="text-sm text-muted-foreground mt-2">{stock.domain_context}</p>
                 )}
               </div>
             )}
@@ -1094,7 +1090,12 @@ export function StockDetailsPanel({
                       "text-[10px] mt-2 pt-2 border-t border-border/50",
                       dipEntry.is_buy_now ? "text-success font-medium" : "text-muted-foreground"
                     )}>
-                      {dipEntry.is_buy_now ? "✓ Buy now" : `Wait for $${(displayPrice - dipEntry.max_profit_entry_price).toFixed(2)} more drop`}
+                      {dipEntry.is_buy_now 
+                        ? "✓ Buy now" 
+                        : displayPrice > dipEntry.max_profit_entry_price 
+                          ? `Wait for $${(displayPrice - dipEntry.max_profit_entry_price).toFixed(2)} more drop`
+                          : `Already ${((dipEntry.max_profit_entry_price - displayPrice) / dipEntry.max_profit_entry_price * 100).toFixed(0)}% below target`
+                      }
                     </p>
                   </div>
                 )}
@@ -1559,49 +1560,55 @@ export function StockDetailsPanel({
               </div>
             )}
             
-            {/* Strategy Comparison Table - DCA vs B&H vs Dips - Always show when data exists */}
-            {strategySignal?.comparison && (
-              <div className="mb-4 p-3 rounded-lg bg-muted/20 border border-border/50">
-                <p className="text-xs font-medium text-muted-foreground mb-2">
-                  Strategy Comparison (${strategySignal.comparison.initial_capital.toLocaleString()} start + ${strategySignal.comparison.monthly_contribution.toLocaleString()}/mo)
-                </p>
-                <div className="space-y-1.5">
-                  {['buy_dips', 'dca', 'buy_hold', 'spy_dca'].map(key => {
-                    const strat = strategySignal.comparison?.strategies[key];
-                    if (!strat) return null;
-                    const isWinner = strategySignal.comparison?.winner?.toLowerCase().replace(/ & /g, '_').replace(/ /g, '_') === key || 
-                                     strategySignal.comparison?.winner === strat.name;
-                    return (
-                      <div key={key} className={cn(
-                        "flex items-center justify-between text-xs p-2 rounded",
-                        isWinner ? "bg-success/10 border border-success/30" : "bg-muted/30"
-                      )}>
-                        <div className="flex items-center gap-2">
-                          {isWinner && <CheckCircle2 className="h-3 w-3 text-success" />}
-                          <span className={isWinner ? 'font-medium text-foreground' : 'text-muted-foreground'}>
-                            {strat.name}
-                          </span>
+            {/* Strategy Comparison Table - DCA vs B&H vs Dips vs Technical - Always show when data exists */}
+            {(() => {
+              // Use strategySignal comparison if available, fallback to prop from quant recommendations
+              const comparison = strategySignal?.comparison || propStrategyComparison;
+              if (!comparison) return null;
+              
+              return (
+                <div className="mb-4 p-3 rounded-lg bg-muted/20 border border-border/50">
+                  <p className="text-xs font-medium text-muted-foreground mb-2">
+                    Strategy Comparison (${comparison.initial_capital.toLocaleString()} start + ${comparison.monthly_contribution.toLocaleString()}/mo)
+                  </p>
+                  <div className="space-y-1.5">
+                    {['buy_dips', 'dca', 'buy_hold', 'technical', 'spy_dca'].map(key => {
+                      const strat = comparison.strategies[key];
+                      if (!strat) return null;
+                      const isWinner = comparison.winner?.toLowerCase().replace(/ & /g, '_').replace(/ /g, '_') === key || 
+                                       comparison.winner === strat.name;
+                      return (
+                        <div key={key} className={cn(
+                          "flex items-center justify-between text-xs p-2 rounded",
+                          isWinner ? "bg-success/10 border border-success/30" : "bg-muted/30"
+                        )}>
+                          <div className="flex items-center gap-2">
+                            {isWinner && <CheckCircle2 className="h-3 w-3 text-success" />}
+                            <span className={isWinner ? 'font-medium text-foreground' : 'text-muted-foreground'}>
+                              {strat.name}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <span className="text-muted-foreground text-[10px]">
+                              ${strat.total_invested.toLocaleString()} →
+                            </span>
+                            <span className={cn("font-mono font-medium", isWinner ? "text-success" : "text-foreground")}>
+                              ${strat.final_value.toLocaleString()}
+                            </span>
+                            <span className={cn("font-mono text-[10px]", strat.total_return_pct >= 0 ? "text-success" : "text-danger")}>
+                              ({strat.total_return_pct >= 0 ? '+' : ''}{strat.total_return_pct.toFixed(0)}%)
+                            </span>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-3">
-                          <span className="text-muted-foreground text-[10px]">
-                            ${strat.total_invested.toLocaleString()} →
-                          </span>
-                          <span className={cn("font-mono font-medium", isWinner ? "text-success" : "text-foreground")}>
-                            ${strat.final_value.toLocaleString()}
-                          </span>
-                          <span className={cn("font-mono text-[10px]", strat.total_return_pct >= 0 ? "text-success" : "text-danger")}>
-                            ({strat.total_return_pct >= 0 ? '+' : ''}{strat.total_return_pct.toFixed(0)}%)
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
+                  <p className="text-[10px] text-muted-foreground mt-2">
+                    {comparison.backtest_days} trading days • 3y backtest period
+                  </p>
                 </div>
-                <p className="text-[10px] text-muted-foreground mt-2">
-                  {strategySignal.comparison.backtest_days} trading days • 3y backtest period
-                </p>
-              </div>
-            )}
+              );
+            })()}
             
             {(isLoadingStrategy || isLoadingDipEntry) && !strategySignal && !dipEntry && (
               <div className="mb-4 space-y-2">
@@ -1625,94 +1632,7 @@ export function StockDetailsPanel({
               </div>
             )}
 
-            {/* Dip Strategy Backtest - Show when no optimized strategy beats B&H */}
-            {dipEntry?.backtest && (!strategySignal?.benchmarks.beats_buy_hold || !hasValidStrategy) && (
-              <div className="mb-4">
-                <div className="flex items-center gap-2 mb-2">
-                  <TrendingDown className="h-4 w-4 text-primary" />
-                  <span className="text-sm font-semibold">Dip Buying Strategy</span>
-                  <Badge variant="outline" className="text-[10px] border-muted-foreground/50 text-muted-foreground bg-muted/20">
-                    Historical
-                  </Badge>
-                </div>
-                
-                {/* Strategy explanation */}
-                <div className={cn(
-                  "p-3 rounded-lg border mb-3",
-                  dipEntry.is_buy_now && "bg-success/10 border-success/30",
-                  !dipEntry.is_buy_now && "bg-muted/30 border-border",
-                )}>
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2">
-                      <Badge 
-                        variant="outline"
-                        className={cn(
-                          "text-xs font-semibold",
-                          dipEntry.is_buy_now ? "border-success text-success" : "border-muted-foreground text-muted-foreground",
-                        )}
-                      >
-                        {dipEntry.is_buy_now ? '● BUY' : '○ WAIT'}
-                      </Badge>
-                      <span className="text-xs text-muted-foreground">
-                        Target: {(Math.abs(dipEntry.max_profit_threshold ?? 0) * 100).toFixed(0)}% dip from peak
-                      </span>
-                    </div>
-                  </div>
-                  <p className="text-xs text-muted-foreground leading-relaxed">
-                    {dipEntry.is_buy_now 
-                      ? <>Currently {((dipEntry.current_drawdown_pct ?? 0) * 100).toFixed(1)}% below peak. Buy signal active.</>
-                      : <>Currently {((dipEntry.current_drawdown_pct ?? 0) * 100).toFixed(1)}% below peak. Need {(Math.abs(dipEntry.max_profit_threshold ?? 0) * 100).toFixed(0)}% to trigger buy.</>
-                    }
-                  </p>
-                </div>
-                
-                {/* Performance metrics */}
-                <div className="grid grid-cols-4 gap-2 mb-3">
-                  <div className="text-center">
-                    <p className="text-xs text-muted-foreground">Win Rate</p>
-                    <p className={cn(
-                      "text-sm font-bold",
-                      (dipEntry.backtest.win_rate ?? 0) >= 0.60 && "text-success",
-                      (dipEntry.backtest.win_rate ?? 0) < 0.50 && "text-danger"
-                    )}>
-                      {((dipEntry.backtest.win_rate ?? 0) * 100).toFixed(0)}%
-                    </p>
-                  </div>
-                  <div className="text-center">
-                    <p className="text-xs text-muted-foreground">{(dipEntry.backtest.years_tested ?? 0).toFixed(0)}yr Return</p>
-                    <p className={cn(
-                      "text-sm font-bold",
-                      (dipEntry.backtest.strategy_return ?? 0) >= 0 ? "text-success" : "text-danger"
-                    )}>
-                      {(dipEntry.backtest.strategy_return ?? 0) >= 0 ? '+' : ''}
-                      {((dipEntry.backtest.strategy_return ?? 0) * 100).toFixed(0)}%
-                    </p>
-                  </div>
-                  <div className="text-center">
-                    <p className="text-xs text-muted-foreground">Optimal Hold</p>
-                    <p className="text-sm font-bold">
-                      {dipEntry.backtest.optimal_holding_days ?? 90}d
-                    </p>
-                  </div>
-                  <div className="text-center">
-                    <p className="text-xs text-muted-foreground">vs B&H</p>
-                    <p className={cn(
-                      "text-sm font-bold",
-                      (dipEntry.backtest.vs_buy_hold ?? 0) >= 0 ? "text-success" : "text-danger"
-                    )}>
-                      {(dipEntry.backtest.vs_buy_hold ?? 0) >= 0 ? '+' : ''}
-                      {((dipEntry.backtest.vs_buy_hold ?? 0) * 100).toFixed(0)}%
-                    </p>
-                  </div>
-                </div>
-                
-                {/* Stats footer */}
-                <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-                  <span>{dipEntry.backtest.n_trades ?? 0} trades over {(dipEntry.backtest.years_tested ?? 0).toFixed(1)} years</span>
-                  <span>Avg {((dipEntry.backtest.avg_return_per_trade ?? 0) * 100).toFixed(1)}% per trade</span>
-                </div>
-              </div>
-            )}
+            {/* Dip Strategy Backtest section removed - Strategy Comparison provides better information */}
 
                 </div>
               </details>
@@ -1865,13 +1785,13 @@ export function StockDetailsPanel({
                 )}
 
                 {/* Analyst consensus */}
-                {fundamentals?.recommendation && (
+                {fundamentals?.recommendation && fundamentals.recommendation.toLowerCase() !== 'none' && (
                   <div className="flex items-center gap-3">
                     <Badge 
-                      variant={fundamentals.recommendation === 'buy' ? 'default' : 'secondary'}
+                      variant={fundamentals.recommendation.toLowerCase() === 'buy' ? 'default' : 'secondary'}
                       className={cn(
-                        fundamentals.recommendation === 'buy' && "bg-success",
-                        fundamentals.recommendation === 'sell' && "bg-danger",
+                        fundamentals.recommendation.toLowerCase() === 'buy' && "bg-success",
+                        fundamentals.recommendation.toLowerCase() === 'sell' && "bg-danger",
                       )}
                     >
                       {fundamentals.recommendation.toUpperCase()}
@@ -1881,6 +1801,17 @@ export function StockDetailsPanel({
                     </span>
                     {fundamentals.next_earnings_date && (
                       <span className="text-xs text-muted-foreground">
+                        • Earnings: {new Date(fundamentals.next_earnings_date).toLocaleDateString()}
+                      </span>
+                    )}
+                  </div>
+                )}
+                {/* Show analyst count and earnings even without rating */}
+                {fundamentals && (!fundamentals.recommendation || fundamentals.recommendation.toLowerCase() === 'none') && fundamentals.num_analyst_opinions && fundamentals.num_analyst_opinions > 0 && (
+                  <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                    <span>{fundamentals.num_analyst_opinions} analyst{fundamentals.num_analyst_opinions !== 1 ? 's' : ''} covering</span>
+                    {fundamentals.next_earnings_date && (
+                      <span>
                         • Earnings: {new Date(fundamentals.next_earnings_date).toLocaleDateString()}
                       </span>
                     )}

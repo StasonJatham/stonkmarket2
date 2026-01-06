@@ -156,7 +156,6 @@ class StrategySignalsListResponse(BaseModel):
 )
 async def get_strategy_signal(
     symbol: str = Path(..., min_length=1, max_length=10, description="Stock ticker"),
-    _user: TokenData = Depends(require_user),
 ) -> StrategySignalResponse:
     """Get the optimized strategy signal for a specific symbol."""
     symbol = symbol.upper().strip()

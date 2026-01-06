@@ -353,6 +353,9 @@ class QuantRecommendation(BaseModel):
     intrinsic_value: float | None = Field(None, description="Fair value estimate")
     upside_pct: float | None = Field(None, description="Percentage upside/downside vs intrinsic value")
     valuation_status: str | None = Field(None, description="undervalued, fair, or overvalued")
+    
+    # Earnings
+    next_earnings_date: str | None = Field(None, description="Next earnings date ISO format")
 
 
 
