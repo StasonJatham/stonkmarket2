@@ -8,7 +8,7 @@ from typing import Any
 
 from app.core.logging import get_logger
 from app.dipfinder.structural_analysis import _extract_quarterly_series
-from app.quant_engine.domain_analysis import Sector, normalize_sector
+from app.quant_engine.core import Sector, normalize_sector
 from app.repositories import symbols_orm
 from app.services.fundamentals import get_fundamentals_with_status
 

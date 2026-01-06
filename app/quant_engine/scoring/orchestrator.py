@@ -133,13 +133,18 @@ class ScoringOrchestrator:
         regime = self.regime_service.get_current_regime(spy_prices, vix_level)
         
         # Get domain classification and quality score
+        # Extract classification parameters from fundamentals dict
+        info = fundamentals or {}
         domain_classification = classify_domain(
-            sector=sector,
-            info=fundamentals or {},
+            symbol=symbol,
+            sector=sector or info.get("sector"),
+            industry=info.get("industry"),
+            name=name or info.get("shortName") or info.get("longName"),
+            quote_type=info.get("quoteType"),
         )
         domain_quality = compute_domain_score(
             classification=domain_classification,
-            info=fundamentals or {},
+            info=info,
             fundamentals=fundamentals,
         )
         

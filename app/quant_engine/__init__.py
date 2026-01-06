@@ -113,13 +113,15 @@ from app.quant_engine.signals import (
 # DOMAIN ANALYSIS - Sector-specific metrics
 # =============================================================================
 
+# Sector and normalize_sector come from core.domain_service (single source of truth)
+from app.quant_engine.core import Sector, normalize_sector
+
+# Domain analysis functions for sector-specific technical analysis
 from app.quant_engine.domain_analysis import (
     DomainAnalysis,
     DomainMetrics,
     perform_domain_analysis,
     domain_analysis_to_dict,
-    normalize_sector,
-    Sector,
 )
 
 

@@ -24,7 +24,7 @@ import numpy as np
 import pandas as pd
 
 from app.quant_engine.backtest_v2.walk_forward import WFOResult, WFOSummary
-from app.quant_engine.core import MarketRegime, RegimeService
+from app.quant_engine.core import MarketRegime, RegimeService, get_regime_service
 
 logger = logging.getLogger(__name__)
 
@@ -153,10 +153,10 @@ class AlphaGauntlet:
     def __init__(
         self,
         config: GauntletConfig | None = None,
-        regime_detector: RegimeDetector | None = None,
+        regime_service: RegimeService | None = None,
     ):
         self.config = config or GauntletConfig()
-        self.regime_detector = regime_detector
+        self.regime_service = regime_service or get_regime_service()
 
     def run_gauntlet(
         self,

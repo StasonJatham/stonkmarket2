@@ -561,56 +561,38 @@ async def strategy_nightly_job() -> str:
 
 
 # =============================================================================
-# QUANT SCORING V2 - Integrated scoring pipeline (daily)
+# QUANT SCORING V3 - Unified scoring with ScoringOrchestrator
 # =============================================================================
 
 
 @register_job("quant_scoring_daily")
 async def quant_scoring_daily_job() -> str:
     """
-    Daily integrated scoring pipeline using scoring_v2.
+    Daily unified scoring pipeline using V3 ScoringOrchestrator.
     
-    Uses all available data sources with NO hardcoded thresholds:
-    - backtest_v2 metrics (Kelly, SQN, Sharpe, crash performance, WFO)
-    - dip_entry_optimizer data (recovery velocity, optimal thresholds, MAE)
-    - Fundamentals (domain-specific ratios, financial health)
-    - Percentile ranking against universe (dynamic distribution-based scoring)
-    
-    Key improvements over v1:
-    - All thresholds discovered through statistics, not hardcoded
-    - Confidence-weighted scoring (higher confidence = higher weight)
-    - Uses precomputed data from quant_precomputed table
-    - Universe statistics for percentile ranking
+    Uses the unified scoring system:
+    - TechnicalService for indicators
+    - RegimeService for market regime detection  
+    - DomainScoring for fundamental quality
+    - ScoringOrchestrator combines all scores
     
     Schedule: Mon-Fri 11:45 PM UTC (15 min after strategy_nightly)
     """
     from datetime import date, timedelta
     from decimal import Decimal
     
-    import numpy as np
     from sqlalchemy import select
     from sqlalchemy.dialects.postgresql import insert
     
     from app.cache.cache import Cache
     from app.database.connection import get_session
-    from app.database.orm import (
-        DipState,
-        QuantPrecomputed,
-        QuantScore,
-        StrategySignal,
-        StockFundamentals,
-        Symbol,
-    )
+    from app.database.orm import QuantScore, StockFundamentals, Symbol
     from app.repositories import symbols_orm as symbols_repo
-    from app.quant_engine.scoring_v2 import (
-        compute_score_v2,
-        SCORING_VERSION,
-    )
-    from app.quant_engine.scoring_v2_adapters import (
-        load_all_inputs_batch,
-    )
+    from app.repositories import price_history_orm as price_history_repo
+    from app.quant_engine.scoring import ScoringOrchestrator, get_scoring_orchestrator
+    from app.quant_engine.scoring.orchestrator import SCORING_VERSION
     
-    logger.info("Starting quant_scoring_daily job (v2 integrated scoring)")
+    logger.info("Starting quant_scoring_daily job (V3 unified scoring)")
     job_start = time.monotonic()
     
     try:
@@ -625,132 +607,133 @@ async def quant_scoring_daily_job() -> str:
         if not symbol_list:
             return "No symbols to process"
         
-        logger.info(f"[SCORING V2] Computing scores for {len(symbol_list)} symbols")
+        logger.info(f"[SCORING V3] Computing scores for {len(symbol_list)} symbols")
+        
+        # Get SPY prices for regime detection
+        end_date = date.today()
+        start_date = end_date - timedelta(days=750)  # 3 years for good MA data
+        
+        spy_df = await price_history_repo.get_prices_as_dataframe("SPY", start_date, end_date)
+        if spy_df is None or spy_df.empty:
+            logger.error("[SCORING V3] Could not fetch SPY prices")
+            return "Failed: No SPY data"
+        
+        # Initialize orchestrator
+        orchestrator = get_scoring_orchestrator()
         
         processed = 0
         failed = 0
-        mode_certified_count = 0
-        mode_dip_count = 0
-        mode_hold_count = 0
-        mode_downtrend_count = 0
+        rec_counts = {"STRONG_BUY": 0, "BUY": 0, "ACCUMULATE": 0, "HOLD": 0, "AVOID": 0, "SELL": 0}
         
         async with get_session() as session:
-            # Load ALL data for ALL symbols in batch (efficient bulk queries)
-            logger.info("[SCORING V2] Loading precomputed data for all symbols...")
-            all_inputs = await load_all_inputs_batch(session, symbol_list)
-            
-            # Build universe statistics for percentile ranking
-            # This is the KEY innovation - we rank against the universe, not hardcoded thresholds
-            logger.info("[SCORING V2] Building universe statistics for percentile ranking...")
-            universe_stats = _build_universe_stats_from_inputs(all_inputs)
-            
-            # Load dip state for mode determination
+            # Load fundamentals in batch
             result = await session.execute(
-                select(DipState).where(DipState.symbol.in_(symbol_list))
+                select(StockFundamentals).where(StockFundamentals.symbol.in_(symbol_list))
             )
-            dip_state_map = {d.symbol: d for d in result.scalars().all()}
+            fundamentals_map = {f.symbol: f for f in result.scalars().all()}
             
-            # Score each symbol
+            # Load symbol info
+            result = await session.execute(
+                select(Symbol).where(Symbol.symbol.in_(symbol_list))
+            )
+            symbol_info = {s.symbol: s for s in result.scalars().all()}
+            
             for symbol in symbol_list:
                 try:
-                    if symbol not in all_inputs:
-                        logger.warning(f"[SCORING V2] No data for {symbol}, skipping")
+                    # Get price data
+                    stock_df = await price_history_repo.get_prices_as_dataframe(
+                        symbol, start_date, end_date
+                    )
+                    
+                    if stock_df is None or len(stock_df) < 100:
+                        logger.debug(f"[SCORING V3] Insufficient data for {symbol}")
                         failed += 1
                         continue
                     
-                    backtest, dip_entry, fundamentals = all_inputs[symbol]
+                    # Get fundamentals dict
+                    fund_row = fundamentals_map.get(symbol)
+                    fundamentals = _orm_to_fundamentals_dict(fund_row) if fund_row else None
                     
-                    # Compute score using new V2 system
-                    result = compute_score_v2(
+                    # Get symbol info
+                    sym_info = symbol_info.get(symbol)
+                    name = sym_info.name if sym_info else None
+                    sector = sym_info.sector if sym_info else None
+                    
+                    # Run orchestrator analysis
+                    dashboard = await orchestrator.analyze(
                         symbol=symbol,
-                        backtest=backtest,
-                        dip_entry=dip_entry,
+                        stock_prices=stock_df,
+                        spy_prices=spy_df,
                         fundamentals=fundamentals,
-                        universe_stats=universe_stats,
+                        name=name,
+                        sector=sector,
                     )
                     
-                    # Track modes
-                    if result.mode == "CERTIFIED_BUY":
-                        mode_certified_count += 1
-                    elif result.mode == "DIP_ENTRY":
-                        mode_dip_count += 1
-                    elif result.mode == "DOWNTREND":
-                        mode_downtrend_count += 1
-                    else:
-                        mode_hold_count += 1
+                    # Track recommendations
+                    rec_counts[dashboard.recommendation] = rec_counts.get(dashboard.recommendation, 0) + 1
                     
-                    # Determine data range from dip_state or defaults
-                    dip_state = dip_state_map.get(symbol)
-                    data_start = date.today() - timedelta(days=int(dip_entry.data_years * 365) if dip_entry.data_years > 0 else 1260)
-                    data_end = date.today()
-                    
-                    # Build evidence dict for storage
+                    # Build evidence dict
                     evidence_dict = {
-                        "components": result.components.to_dict(),
-                        "key_metrics": result.key_metrics,
-                        "action": result.action,
-                        "action_reason": result.action_reason,
-                        "confidence": result.confidence,
-                        "confidence_reason": result.confidence_reason,
-                        # Legacy compatibility fields
-                        "p_outperf": result.components.backtest_confidence / 100,
-                        "fund_mom": result.components.fundamental_score / 100,
-                        "val_z": 0.0,  # Not computed in v2
-                        "p_recovery": result.components.recovery_score / 100,
-                        "expected_value": dip_entry.entry_score,
+                        "scores": dashboard.scores.to_dict(),
+                        "entry": dashboard.entry.to_dict(),
+                        "risk": dashboard.risk.to_dict(),
+                        "recommendation": dashboard.recommendation,
+                        "summary": dashboard.summary,
+                        "confidence": dashboard.confidence,
+                        "regime": dashboard.regime.regime.value if dashboard.regime else None,
+                        "fundamental_notes": dashboard.fundamental_notes,
                     }
+                    
+                    # Map recommendation to mode
+                    mode = _recommendation_to_mode(dashboard.recommendation)
                     
                     # Upsert to database
                     stmt = insert(QuantScore).values(
                         symbol=symbol,
-                        best_score=Decimal(str(round(result.score, 2))),
-                        mode=result.mode,
-                        score_a=Decimal(str(round(result.components.backtest_quality, 2))),
-                        score_b=Decimal(str(round(result.components.entry_timing, 2))),
-                        gate_pass=result.mode == "CERTIFIED_BUY",
-                        # Statistical validation (from v2 components)
-                        p_outperf=Decimal(str(round(result.components.backtest_confidence / 100, 4))),
-                        ci_low=Decimal("0.0"),  # Not computed same way in v2
+                        best_score=Decimal(str(round(dashboard.scores.composite, 2))),
+                        mode=mode,
+                        score_a=Decimal(str(round(dashboard.scores.technical, 2))),
+                        score_b=Decimal(str(round(dashboard.scores.entry_timing, 2))),
+                        gate_pass=dashboard.recommendation in ("STRONG_BUY", "BUY"),
+                        # Statistical validation
+                        p_outperf=Decimal(str(round(dashboard.confidence / 100, 4))),
+                        ci_low=Decimal("0.0"),
                         ci_high=Decimal("0.0"),
                         dsr=Decimal("0.0"),
-                        # Edge metrics (from v2 key_metrics)
-                        median_edge=Decimal(str(round(result.key_metrics.get("sharpe_ratio", 0), 4))),
+                        # Edge metrics
+                        median_edge=Decimal(str(round(dashboard.scores.composite / 100, 4))),
                         edge_vs_stock=Decimal("0.0"),
                         edge_vs_spy=Decimal("0.0"),
                         worst_regime_edge=Decimal("0.0"),
                         cvar_5=Decimal("0.0"),
                         # Fundamental metrics
-                        fund_mom=Decimal(str(round(result.components.fundamental_score / 100, 4))),
+                        fund_mom=Decimal(str(round(dashboard.scores.fundamental / 100, 4))),
                         val_z=Decimal("0.0"),
                         event_risk=False,
-                        # Dip metrics (from v2 recovery and entry)
-                        p_recovery=Decimal(str(round(result.components.recovery_score / 100, 4))),
-                        expected_value=Decimal(str(round(dip_entry.entry_score, 4))),
-                        sector_relative=Decimal(str(round(result.components.momentum_score / 100, 4))),
+                        # Dip metrics
+                        p_recovery=Decimal(str(round(dashboard.scores.entry_timing / 100, 4))),
+                        expected_value=Decimal(str(round(dashboard.scores.composite / 100, 4))),
+                        sector_relative=Decimal("0.0"),
                         # Metadata
-                        config_hash="v2-" + SCORING_VERSION,
+                        config_hash="v3-" + SCORING_VERSION,
                         scoring_version=SCORING_VERSION,
-                        data_start=data_start,
-                        data_end=data_end,
+                        data_start=stock_df.index[0].date() if hasattr(stock_df.index[0], 'date') else start_date,
+                        data_end=stock_df.index[-1].date() if hasattr(stock_df.index[-1], 'date') else end_date,
                         evidence=evidence_dict,
                     ).on_conflict_do_update(
                         index_elements=["symbol"],
                         set_={
-                            "best_score": Decimal(str(round(result.score, 2))),
-                            "mode": result.mode,
-                            "score_a": Decimal(str(round(result.components.backtest_quality, 2))),
-                            "score_b": Decimal(str(round(result.components.entry_timing, 2))),
-                            "gate_pass": result.mode == "CERTIFIED_BUY",
-                            "p_outperf": Decimal(str(round(result.components.backtest_confidence / 100, 4))),
-                            "median_edge": Decimal(str(round(result.key_metrics.get("sharpe_ratio", 0), 4))),
-                            "fund_mom": Decimal(str(round(result.components.fundamental_score / 100, 4))),
-                            "p_recovery": Decimal(str(round(result.components.recovery_score / 100, 4))),
-                            "expected_value": Decimal(str(round(dip_entry.entry_score, 4))),
-                            "sector_relative": Decimal(str(round(result.components.momentum_score / 100, 4))),
-                            "config_hash": "v2-" + SCORING_VERSION,
+                            "best_score": Decimal(str(round(dashboard.scores.composite, 2))),
+                            "mode": mode,
+                            "score_a": Decimal(str(round(dashboard.scores.technical, 2))),
+                            "score_b": Decimal(str(round(dashboard.scores.entry_timing, 2))),
+                            "gate_pass": dashboard.recommendation in ("STRONG_BUY", "BUY"),
+                            "p_outperf": Decimal(str(round(dashboard.confidence / 100, 4))),
+                            "fund_mom": Decimal(str(round(dashboard.scores.fundamental / 100, 4))),
+                            "p_recovery": Decimal(str(round(dashboard.scores.entry_timing / 100, 4))),
+                            "expected_value": Decimal(str(round(dashboard.scores.composite / 100, 4))),
+                            "config_hash": "v3-" + SCORING_VERSION,
                             "scoring_version": SCORING_VERSION,
-                            "data_start": data_start,
-                            "data_end": data_end,
                             "computed_at": datetime.now(UTC),
                             "evidence": evidence_dict,
                         }
@@ -760,11 +743,11 @@ async def quant_scoring_daily_job() -> str:
                     processed += 1
                     
                     if processed % 10 == 0:
-                        logger.info(f"[SCORING V2] Processed {processed}/{len(symbol_list)} symbols")
+                        logger.info(f"[SCORING V3] Processed {processed}/{len(symbol_list)} symbols")
                         await session.commit()
                     
                 except Exception as e:
-                    logger.exception(f"[SCORING V2] Failed to score {symbol}: {e}")
+                    logger.exception(f"[SCORING V3] Failed to score {symbol}: {e}")
                     failed += 1
                     continue
             
@@ -774,27 +757,21 @@ async def quant_scoring_daily_job() -> str:
         cache = Cache(prefix="quant_scores", default_ttl=86400)
         await cache.invalidate_pattern("*")
         
-        # Also clear recommendations cache
         recs_cache = Cache(prefix="recommendations", default_ttl=300)
         await recs_cache.invalidate_pattern("*")
         
         duration_ms = int((time.monotonic() - job_start) * 1000)
         message = (
-            f"Scored {processed} symbols ({failed} failed) using V2, "
-            f"Certified: {mode_certified_count}, Dip Entry: {mode_dip_count}, "
-            f"Hold: {mode_hold_count}, Downtrend: {mode_downtrend_count}"
+            f"Scored {processed} symbols ({failed} failed) using V3. "
+            f"Recs: {rec_counts}"
         )
         
-        # Structured success log
         log_job_success(
             "quant_scoring_daily",
             message,
             symbols_scored=processed,
             symbols_failed=failed,
-            mode_certified=mode_certified_count,
-            mode_dip_entry=mode_dip_count,
-            mode_hold=mode_hold_count,
-            mode_downtrend=mode_downtrend_count,
+            recommendations=rec_counts,
             symbols_total=len(symbol_list),
             duration_ms=duration_ms,
             scoring_version=SCORING_VERSION,
@@ -806,48 +783,42 @@ async def quant_scoring_daily_job() -> str:
         raise
 
 
-def _build_universe_stats_from_inputs(
-    all_inputs: dict[str, tuple],
-) -> dict[str, "np.ndarray"]:
-    """
-    Build universe statistics arrays from all symbol inputs.
-    
-    This enables percentile ranking - each metric is ranked against the
-    universe of all symbols, not against hardcoded thresholds.
-    """
-    import numpy as np
-    from app.quant_engine.scoring_v2 import BacktestV2Input, DipEntryInput, FundamentalsInput
-    
-    stats: dict[str, list[float]] = {}
-    
-    def _add(key: str, val: float | None) -> None:
-        if val is not None and not np.isnan(val):
-            if key not in stats:
-                stats[key] = []
-            stats[key].append(val)
-    
-    for symbol, (backtest, dip_entry, fundamentals) in all_inputs.items():
-        # Backtest metrics
-        _add("sharpe_ratio", backtest.sharpe_ratio)
-        _add("sortino_ratio", backtest.sortino_ratio)
-        _add("calmar_ratio", backtest.calmar_ratio)
-        _add("kelly_fraction", backtest.kelly_fraction)
-        _add("sqn", backtest.sqn)
-        _add("profit_factor", backtest.profit_factor)
-        _add("vs_buyhold_pct", backtest.vs_buyhold_pct)
-        _add("vs_spy_pct", backtest.vs_spy_pct)
-        _add("max_drawdown_pct", abs(backtest.max_drawdown_pct))
-        _add("cvar_5", backtest.cvar_5)
-        _add("wfo_oos_sharpe", backtest.wfo_oos_sharpe)
-        _add("avg_crash_alpha", backtest.avg_crash_alpha)
-        
-        # Dip entry metrics
-        _add("recovery_rate", dip_entry.recovery_rate)
-        _add("full_recovery_rate", dip_entry.full_recovery_rate)
-        _add("avg_recovery_velocity", dip_entry.avg_recovery_velocity)
-        _add("avg_return_optimal_hold", dip_entry.avg_return_optimal_hold)
-        _add("win_rate_optimal_hold", dip_entry.win_rate_optimal_hold)
-        _add("max_further_drawdown", abs(dip_entry.max_further_drawdown))
+def _orm_to_fundamentals_dict(fund: "StockFundamentals") -> dict:
+    """Convert ORM StockFundamentals to dict for scoring."""
+    if fund is None:
+        return {}
+    return {
+        "pe_ratio": float(fund.pe_ratio) if fund.pe_ratio else None,
+        "forward_pe": float(fund.forward_pe) if fund.forward_pe else None,
+        "peg_ratio": float(fund.peg_ratio) if fund.peg_ratio else None,
+        "price_to_book": float(fund.price_to_book) if fund.price_to_book else None,
+        "price_to_sales": float(fund.price_to_sales) if fund.price_to_sales else None,
+        "profit_margin": float(fund.profit_margin) if fund.profit_margin else None,
+        "operating_margin": float(fund.operating_margin) if fund.operating_margin else None,
+        "gross_margin": float(fund.gross_margin) if fund.gross_margin else None,
+        "return_on_equity": float(fund.return_on_equity) if fund.return_on_equity else None,
+        "return_on_assets": float(fund.return_on_assets) if fund.return_on_assets else None,
+        "debt_to_equity": float(fund.debt_to_equity) if fund.debt_to_equity else None,
+        "current_ratio": float(fund.current_ratio) if fund.current_ratio else None,
+        "quick_ratio": float(fund.quick_ratio) if fund.quick_ratio else None,
+        "free_cash_flow": fund.free_cash_flow,
+        "revenue_growth": float(fund.revenue_growth) if fund.revenue_growth else None,
+        "earnings_growth": float(fund.earnings_growth) if fund.earnings_growth else None,
+        "beta": float(fund.beta) if fund.beta else None,
+        "recommendation_mean": float(fund.recommendation_mean) if fund.recommendation_mean else None,
+    }
+
+
+def _recommendation_to_mode(rec: str) -> str:
+    """Map recommendation to legacy mode."""
+    if rec in ("STRONG_BUY", "BUY"):
+        return "CERTIFIED_BUY"
+    elif rec == "ACCUMULATE":
+        return "DIP_ENTRY"
+    elif rec == "AVOID":
+        return "DOWNTREND"
+    else:
+        return "HOLD"
         _add("current_drawdown_pct", dip_entry.current_drawdown_pct)
         
         # Fundamental metrics
@@ -878,11 +849,10 @@ async def quant_analysis_nightly_job() -> str:
     Pre-compute all quant engine analysis results for tracked symbols.
     
     This job runs nightly after market close and pre-computes:
-    - Signal backtest results (signal vs buy-and-hold comparison)
-    - Full trade strategies (optimized entry/exit)
-    - Signal combinations
-    - Dip analysis (overreaction vs falling knife)
-    - Current signals
+    - Technical snapshot (from TechnicalService)
+    - Signal triggers (from signals module)
+    - Dip analysis (from dip_entry_optimizer)
+    - Current indicator states
     
     Results are stored in quant_precomputed table. API endpoints read from
     here instead of computing inline.
@@ -894,17 +864,14 @@ async def quant_analysis_nightly_job() -> str:
     from app.repositories import symbols_orm as symbols_repo
     from app.repositories import quant_precomputed_orm as quant_repo
     from app.quant_engine.signals import get_historical_triggers
-    from app.quant_engine.trade_engine import (
-        get_best_trade_strategy,
-        test_signal_combination,
-        analyze_dip,
-        get_current_signals,
-        SIGNAL_COMBINATIONS,
-    )
+    from app.quant_engine.core import TechnicalService, get_technical_service
     from app.services.prices import get_price_service
 
-    logger.info("Starting quant_analysis_nightly job")
+    logger.info("Starting quant_analysis_nightly job (V3 - unified services)")
     job_start = time.monotonic()
+    
+    # Initialize technical service
+    tech_service = get_technical_service()
 
     symbols_list = await symbols_repo.list_symbols()
     tickers = [s.symbol for s in symbols_list if s.is_active]
@@ -954,7 +921,7 @@ async def quant_analysis_nightly_job() -> str:
             data_start_date = prices.index[0].date() if hasattr(prices.index[0], 'date') else start_date
             data_end_date = prices.index[-1].date() if hasattr(prices.index[-1], 'date') else end_date
             
-            # 1. Signal Backtest
+            # 1. Signal Backtest using historical triggers
             backtest_data = None
             try:
                 triggers = get_historical_triggers(price_data, lookback_days=730)
@@ -992,72 +959,124 @@ async def quant_analysis_nightly_job() -> str:
             except Exception as e:
                 logger.debug(f"Backtest failed for {symbol}: {e}")
             
-            # 2. Trade Strategy
+            # 2. Technical Snapshot using TechnicalService
             trade_data = None
             try:
-                result = get_best_trade_strategy(price_data, symbol, spy_prices=spy_prices)
-                if result:
-                    trade_data = {
-                        "entry_signal": result.entry_signal,
-                        "entry_threshold": result.entry_threshold,
-                        "exit_signal": result.exit_signal,
-                        "exit_threshold": result.exit_threshold,
-                        "n_trades": result.n_trades,
-                        "win_rate": result.win_rate,
-                        "avg_return_pct": result.avg_return_pct,
-                        "sharpe_ratio": result.sharpe_ratio,
-                        "buy_hold_return_pct": result.buy_hold_return_pct,
-                        "spy_return_pct": result.spy_return_pct,
-                        "beats_both": result.beats_both_benchmarks,
-                    }
+                # Get technical snapshot from unified service
+                snapshot = tech_service.get_snapshot(df)
+                
+                # Calculate buy-hold and SPY returns for comparison
+                if len(prices) >= 252:
+                    bh_prices = prices.iloc[-252:]
+                else:
+                    bh_prices = prices
+                buy_hold_return = ((bh_prices.iloc[-1] / bh_prices.iloc[0]) - 1) * 100 if len(bh_prices) >= 2 else 0
+                
+                spy_return = 0.0
+                if spy_prices is not None and len(spy_prices) >= 252:
+                    spy_slice = spy_prices.iloc[-252:]
+                    spy_return = ((spy_slice.iloc[-1] / spy_slice.iloc[0]) - 1) * 100 if len(spy_slice) >= 2 else 0
+                
+                trade_data = {
+                    "rsi_14": snapshot.rsi_14,
+                    "macd_histogram": snapshot.macd_histogram,
+                    "momentum_score": snapshot.momentum_score,
+                    "trend_direction": snapshot.trend_direction,
+                    "volatility_regime": snapshot.volatility_regime,
+                    "adx": snapshot.adx,
+                    "sma_50": snapshot.sma_50,
+                    "sma_200": snapshot.sma_200,
+                    "golden_cross": snapshot.golden_cross,
+                    "death_cross": snapshot.death_cross,
+                    "buy_hold_return_pct": buy_hold_return,
+                    "spy_return_pct": spy_return,
+                }
             except Exception as e:
-                logger.debug(f"Trade strategy failed for {symbol}: {e}")
+                logger.debug(f"Technical analysis failed for {symbol}: {e}")
             
-            # 3. Signal Combinations
+            # 3. Signal Combinations - skip legacy (use signals from backtest)
             combinations_data = None
-            try:
-                combos = []
-                for combo_cfg in SIGNAL_COMBINATIONS:
-                    combo = test_signal_combination(price_data, combo_cfg, holding_days=20, min_signals=3)
-                    if combo is not None:
-                        combos.append({
-                            "name": combo.name,
-                            "component_signals": combo.component_signals,
-                            "logic": combo.logic,
-                            "win_rate": combo.win_rate,
-                            "avg_return_pct": combo.avg_return_pct,
-                            "n_signals": combo.n_signals,
-                            "improvement_vs_best_single": combo.improvement_vs_best_single,
-                        })
-                combos.sort(key=lambda c: c["win_rate"] * c["avg_return_pct"], reverse=True)
-                combinations_data = combos
-            except Exception as e:
-                logger.debug(f"Combinations failed for {symbol}: {e}")
             
-            # 4. Dip Analysis
+            # 4. Dip Analysis using TechnicalService
             dip_data = None
             try:
-                analysis = analyze_dip(price_data, symbol)
-                dip_type_str = analysis.dip_type.value if hasattr(analysis.dip_type, 'value') else str(analysis.dip_type)
+                # Get drawdown metrics from technical snapshot
+                snapshot = tech_service.get_snapshot(df)
+                
+                # Calculate current drawdown from price data
+                if len(prices) >= 252:
+                    high_252 = prices.iloc[-252:].max()
+                else:
+                    high_252 = prices.max()
+                current_price = prices.iloc[-1]
+                current_drawdown_pct = ((current_price / high_252) - 1) * 100 if high_252 > 0 else 0
+                
+                # Historical drawdown analysis
+                rolling_max = prices.rolling(window=252, min_periods=1).max()
+                drawdowns = ((prices - rolling_max) / rolling_max) * 100
+                typical_dip_pct = abs(drawdowns.quantile(0.25))  # 25th percentile
+                max_historical_dip_pct = abs(drawdowns.min())
+                
+                # Z-score of current drawdown
+                drawdown_std = drawdowns.std()
+                dip_zscore = (current_drawdown_pct - drawdowns.mean()) / drawdown_std if drawdown_std > 0 else 0
+                
+                # Classify dip type based on severity
+                if current_drawdown_pct >= -5:
+                    dip_type = "minor"
+                    action = "hold"
+                    confidence = 0.5
+                elif current_drawdown_pct >= -10:
+                    dip_type = "moderate"
+                    action = "consider_buying"
+                    confidence = 0.6
+                elif current_drawdown_pct >= -20:
+                    dip_type = "significant"
+                    action = "buy"
+                    confidence = 0.7
+                else:
+                    dip_type = "severe"
+                    action = "buy_aggressive"
+                    confidence = 0.8
+                
+                # Recovery probability based on historical patterns
+                historical_recoveries = (drawdowns < current_drawdown_pct).sum()
+                recovery_probability = historical_recoveries / len(drawdowns) if len(drawdowns) > 0 else 0.5
+                
                 dip_data = {
-                    "current_drawdown_pct": analysis.current_drawdown_pct,
-                    "typical_pct": analysis.typical_dip_pct,
-                    "max_historical_pct": analysis.max_historical_dip_pct,
-                    "zscore": analysis.dip_zscore,
-                    "type": dip_type_str,
-                    "action": analysis.action,
-                    "confidence": analysis.confidence,
-                    "reasoning": analysis.reasoning,
-                    "recovery_probability": analysis.recovery_probability,
+                    "current_drawdown_pct": round(current_drawdown_pct, 2),
+                    "typical_pct": round(typical_dip_pct, 2),
+                    "max_historical_pct": round(max_historical_dip_pct, 2),
+                    "zscore": round(dip_zscore, 2),
+                    "type": dip_type,
+                    "action": action,
+                    "confidence": round(confidence, 2),
+                    "reasoning": f"Drawdown of {abs(current_drawdown_pct):.1f}% vs typical {typical_dip_pct:.1f}%",
+                    "recovery_probability": round(recovery_probability, 2),
                 }
             except Exception as e:
                 logger.debug(f"Dip analysis failed for {symbol}: {e}")
             
-            # 5. Current Signals
+            # 5. Current Signals from TechnicalService
             signals_data = None
             try:
-                signals = get_current_signals(price_data, symbol)
-                signals_data = signals
+                snapshot = tech_service.get_snapshot(df)
+                
+                # Build signals dict from snapshot
+                signals_data = {
+                    "rsi_14": snapshot.rsi_14,
+                    "rsi_signal": "oversold" if snapshot.rsi_14 < 30 else ("overbought" if snapshot.rsi_14 > 70 else "neutral"),
+                    "macd_histogram": snapshot.macd_histogram,
+                    "macd_signal": "bullish" if snapshot.macd_histogram > 0 else "bearish",
+                    "momentum_score": snapshot.momentum_score,
+                    "momentum_signal": "strong" if abs(snapshot.momentum_score) > 50 else "weak",
+                    "trend_direction": snapshot.trend_direction,
+                    "volatility_regime": snapshot.volatility_regime,
+                    "golden_cross": snapshot.golden_cross,
+                    "death_cross": snapshot.death_cross,
+                    "adx": snapshot.adx,
+                    "trend_strength": "strong" if snapshot.adx > 25 else "weak",
+                }
             except Exception as e:
                 logger.debug(f"Current signals failed for {symbol}: {e}")
             

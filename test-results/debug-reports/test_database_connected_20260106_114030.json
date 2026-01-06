@@ -1,0 +1,30 @@
+{
+  "test_id": "system_tests/smoke/test_stack_healthy.py::TestStackHealth::test_database_connected",
+  "test_name": "test_database_connected",
+  "test_start": "2026-01-06T11:40:30.709463+00:00",
+  "test_end": "2026-01-06T11:40:31.261245+00:00",
+  "duration_seconds": 0.551782,
+  "summary": "1 warning(s)",
+  "errors": [],
+  "tracebacks": [],
+  "warnings": [
+    "2026-01-06T11:40:30.992990878Z WARNING:  WatchFiles detected changes in 'app/jobs/quant/__init__.py'. Reloading..."
+  ],
+  "container_logs": {
+    "api": [
+      "2026-01-06T11:40:30.992990878Z WARNING:  WatchFiles detected changes in 'app/jobs/quant/__init__.py'. Reloading...",
+      "2026-01-06T11:40:31.095879878Z INFO:     Shutting down",
+      "2026-01-06T11:40:31.198211503Z INFO:     Waiting for application shutdown.",
+      "2026-01-06T11:40:31.199292794Z {\"timestamp\": \"2026-01-06T11:40:31.198882+00:00\", \"level\": \"INFO\", \"logger\": \"stonkmarket.main\", \"message\": \"Shutting down...\", \"location\": {\"file\": \"main.py\", \"line\": 132, \"function\": \"lifespan\"}}",
+      "2026-01-06T11:40:31.201329961Z {\"timestamp\": \"2026-01-06T11:40:31.201162+00:00\", \"level\": \"INFO\", \"logger\": \"stonkmarket.cache.client\", \"message\": \"Valkey connection pool closed\", \"location\": {\"file\": \"client.py\", \"line\": 69, \"function\": \"close_valkey_client\"}}"
+    ],
+    "worker": [],
+    "worker-batch": [],
+    "postgres": [],
+    "valkey": []
+  },
+  "request": null,
+  "response": null,
+  "database": null,
+  "assertion_error": null
+}

@@ -342,55 +342,52 @@ class TestRegimeDetectionReal:
     def test_detect_2008_crash(self):
         """Regime detector should identify 2008 financial crisis."""
         from app.quant_engine.backtest_v2.service import fetch_all_history
-        from app.quant_engine.backtest_v2.regime_filter import RegimeDetector, MarketRegime
+        from app.quant_engine.core import get_regime_service, MarketRegime
         
         spy_df = run_async(fetch_all_history("SPY"))
         
-        detector = RegimeDetector()
-        # Extract Close column as Series (fetch_all_history returns DataFrame)
-        close_prices = spy_df["Close"] if isinstance(spy_df, pd.DataFrame) else spy_df
-        detector.set_spy_prices(close_prices)
+        regime_service = get_regime_service()
         
-        # Check regime in late 2008 (crash bottom)
+        # Get regime at crash date
         crash_date = pd.Timestamp(2008, 11, 20, tz="UTC")  # Near bottom
         
-        regime = detector.detect_at_date(crash_date)
+        # Get regime state directly for the date
+        regime_state = regime_service.get_regime_at_date(spy_df, crash_date)
+        regime = regime_state.regime
         
         # Should detect bearish/crash regime
-        assert regime.regime in [MarketRegime.BEAR, MarketRegime.CRASH], \
-            f"Expected BEAR/CRASH in Nov 2008, got {regime.regime}"
+        assert regime in [MarketRegime.BEAR, MarketRegime.CRASH], \
+            f"Expected BEAR/CRASH in Nov 2008, got {regime}"
         
-        logger.info(f"2008 Crash Detection: {regime.regime.value}")
-        logger.info(f"  Drawdown: {regime.drawdown_pct:.1f}%")
+        logger.info(f"2008 Crash Detection: {regime.value}")
 
     def test_detect_covid_crash_and_recovery(self):
         """Detect COVID crash (Mar 2020) and recovery (Aug 2020)."""
         from app.quant_engine.backtest_v2.service import fetch_all_history
-        from app.quant_engine.backtest_v2.regime_filter import RegimeDetector, MarketRegime
+        from app.quant_engine.core import get_regime_service, MarketRegime
         
         spy_df = run_async(fetch_all_history("SPY"))
         
-        detector = RegimeDetector()
-        # Extract Close column as Series (fetch_all_history returns DataFrame)
-        close_prices = spy_df["Close"] if isinstance(spy_df, pd.DataFrame) else spy_df
-        detector.set_spy_prices(close_prices)
+        regime_service = get_regime_service()
         
         # March 2020 = COVID crash
         crash_date = pd.Timestamp(2020, 3, 23, tz="UTC")
-        crash_regime = detector.detect_at_date(crash_date)
+        crash_state = regime_service.get_regime_at_date(spy_df, crash_date)
+        crash_regime = crash_state.regime
         
         # August 2020 = Recovery/Bull
         recovery_date = pd.Timestamp(2020, 8, 15, tz="UTC")
-        recovery_regime = detector.detect_at_date(recovery_date)
+        recovery_state = regime_service.get_regime_at_date(spy_df, recovery_date)
+        recovery_regime = recovery_state.regime
         
-        logger.info(f"COVID Crash (Mar 2020): {crash_regime.regime.value}")
-        logger.info(f"Recovery (Aug 2020): {recovery_regime.regime.value}")
+        logger.info(f"COVID Crash (Mar 2020): {crash_regime.value}")
+        logger.info(f"Recovery (Aug 2020): {recovery_regime.value}")
         
         # Crash should be BEAR or CRASH
-        assert crash_regime.regime in [MarketRegime.BEAR, MarketRegime.CRASH]
+        assert crash_regime in [MarketRegime.BEAR, MarketRegime.CRASH]
         
         # Recovery should be RECOVERY or BULL
-        assert recovery_regime.regime in [MarketRegime.RECOVERY, MarketRegime.BULL]
+        assert recovery_regime in [MarketRegime.RECOVERY, MarketRegime.BULL]
 
 
 # =============================================================================

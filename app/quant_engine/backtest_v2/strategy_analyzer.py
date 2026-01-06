@@ -45,7 +45,7 @@ from app.quant_engine.backtest_v2.alpha_factory import (
     StrategyGenome,
     VectorizedBacktester,
 )
-from app.quant_engine.core import MarketRegime, RegimeService
+from app.quant_engine.core import MarketRegime, get_regime_service
 from app.quant_engine.backtest_v2.strategy_report import (
     AdvancedMetrics,
     BenchmarkComparison,
@@ -263,10 +263,11 @@ class StrategyAnalyzer:
         self.matrix = IndicatorMatrix(prices)
         self.detailed_backtester = DetailedBacktester(self.matrix)
         
-        # Regime detection
-        self.regime_detector = RegimeDetector()
+        # Regime detection - use unified RegimeService
+        self.regime_service = get_regime_service()
         if spy_prices is not None:
-            self.regime_detector.set_spy_prices(spy_prices)
+            # RegimeService automatically uses SPY data for regime detection
+            pass
     
     def analyze_genome(
         self,

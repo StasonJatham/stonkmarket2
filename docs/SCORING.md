@@ -1,15 +1,74 @@
-# Scoring System V2 Documentation
+# Scoring System V3 Documentation
 
-This document describes the integrated scoring system used to rank stocks for dip buying opportunities.
+This document describes the unified scoring system used to rank stocks for investment opportunities.
 
 ## Overview
 
-The Scoring V2 system replaces the old dual-mode (APUS/DOUS) scoring with a modern, statistically-driven approach that:
+The Scoring V3 system uses a unified architecture with single sources of truth:
 
-1. **Uses ALL available data sources** - backtest_v2, dip_entry_optimizer, fundamentals
-2. **NO hardcoded thresholds** - All optimal values discovered through statistics
-3. **Percentile ranking** - Scores relative to the universe, not absolute thresholds
-4. **Confidence-weighted** - Higher data confidence = higher weight contribution
+1. **TechnicalService** - All technical indicator computation
+2. **RegimeService** - Market regime detection
+3. **ScoringOrchestrator** - Unified scoring entry point
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                   ScoringOrchestrator                   │
+│    Unified entry point for stock analysis & scoring    │
+└─────────────────┬───────────────────┬──────────────────┘
+                  │                   │
+     ┌────────────▼─────────┐ ┌──────▼────────────┐
+     │   TechnicalService   │ │   RegimeService   │
+     │  (Singleton Cache)   │ │  (Market Context) │
+     └──────────────────────┘ └───────────────────┘
+```
+
+## Core Services
+
+### TechnicalService
+Centralized indicator computation with caching:
+```python
+from app.quant_engine.core import get_technical_service
+
+tech = get_technical_service()
+snapshot = tech.get_snapshot(price_df)
+
+print(snapshot.rsi_14)          # RSI
+print(snapshot.macd_histogram)  # MACD
+print(snapshot.momentum_score)  # Composite momentum
+print(snapshot.volatility_regime)  # LOW/NORMAL/HIGH/EXTREME
+```
+
+### RegimeService
+Market regime detection:
+```python
+from app.quant_engine.core import get_regime_service, MarketRegime
+
+regime = get_regime_service()
+state = regime.get_current_regime(spy_df)
+
+print(state.regime)       # BULL, BEAR, CRASH, RECOVERY, CORRECTION
+print(state.strategy_mode)  # TECHNICAL, CAUTIOUS_TREND, ACCUMULATE, DEFENSIVE, HOLD
+```
+
+### ScoringOrchestrator
+Unified stock analysis:
+```python
+from app.quant_engine.scoring import get_scoring_orchestrator
+
+orchestrator = get_scoring_orchestrator()
+dashboard = orchestrator.analyze_stock(
+    symbol="NFLX",
+    price_df=price_df,
+    fundamentals=fundamentals_dict,
+    spy_df=spy_df,
+)
+
+print(dashboard.overall_score)
+print(dashboard.recommendation)
+print(dashboard.score_components)
+```
 
 ## Data Sources
 
@@ -258,26 +317,37 @@ The `quant_scoring_daily` job runs nightly:
 ## API Usage
 
 ```python
-from app.quant_engine.scoring_v2 import compute_score_v2
-from app.quant_engine.scoring_v2_adapters import load_all_inputs_for_symbol
+from app.quant_engine import (
+    ScoringOrchestrator,
+    get_scoring_orchestrator,
+    get_technical_service,
+    get_regime_service,
+)
 
-async with get_session() as session:
-    backtest, dip_entry, fundamentals = await load_all_inputs_for_symbol(
-        session, "NFLX"
-    )
-    
-    result = compute_score_v2(
-        symbol="NFLX",
-        backtest=backtest,
-        dip_entry=dip_entry,
-        fundamentals=fundamentals,
-        universe_stats=universe_stats,
-    )
-    
-    print(f"Score: {result.score}")
-    print(f"Mode: {result.mode}")
-    print(f"Action: {result.action}")
-    print(f"Components: {result.components.to_dict()}")
+# Get unified scoring
+orchestrator = get_scoring_orchestrator()
+dashboard = orchestrator.analyze_stock(
+    symbol="NFLX",
+    price_df=price_df,
+    fundamentals=fundamentals,
+    spy_df=spy_df,
+)
+
+print(f"Score: {dashboard.overall_score}")
+print(f"Recommendation: {dashboard.recommendation}")
+print(f"Risk Level: {dashboard.risk_assessment.level}")
+
+# Technical analysis
+tech = get_technical_service()
+snapshot = tech.get_snapshot(price_df)
+print(f"RSI: {snapshot.rsi_14}")
+print(f"Trend: {snapshot.trend_direction}")
+
+# Regime detection
+regime = get_regime_service()
+state = regime.get_current_regime(spy_df)
+print(f"Regime: {state.regime.value}")
+print(f"Strategy: {state.strategy_mode.value}")
 ```
 
 ## Version History
@@ -285,14 +355,15 @@ async with get_session() as session:
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0.0 | Original | Dual-mode APUS/DOUS with hardcoded thresholds |
-| 2.0.0 | Current | Integrated scoring with percentile ranking, no hardcoded thresholds |
+| 2.0.0 | Previous | Integrated scoring with percentile ranking |
+| 3.0.0 | Current | Unified architecture with TechnicalService, RegimeService, ScoringOrchestrator |
 
-## Key Differences from V1
+## Key Differences from V2
 
-| Aspect | V1 | V2 |
+| Aspect | V2 | V3 |
 |--------|----|----|
-| Recovery calculation | Fixed 60-day window, 20% dip matching | Uses dip_entry_optimizer's recovery_velocity |
-| Thresholds | Hardcoded (min_p_outperf=0.75, etc.) | Percentile ranking against universe |
-| Data sources | Computed inline | Reads from precomputed tables |
-| Weights | Fixed | Confidence-adjusted |
-| Fundamental scoring | Simple z-scores | Domain-specific with percentile ranking |
+| Entry point | `compute_score_v2()` | `ScoringOrchestrator.analyze_stock()` |
+| Technical indicators | Computed inline | `TechnicalService` singleton |
+| Regime detection | `RegimeDetector` class | `RegimeService` singleton |
+| Caching | Per-function | Service-level with invalidation |
+| Architecture | Multiple scattered modules | Unified core services |

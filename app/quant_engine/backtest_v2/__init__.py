@@ -144,12 +144,11 @@ from app.quant_engine.backtest_v2.strategy_analyzer import (
 )
 
 __all__ = [
-    # Regime
+    # Regime - Use RegimeService from core for runtime access
     "MarketRegime",
     "StrategyMode",
     "StrategyConfig",
     "RegimeState",
-    "RegimeDetector",
     "identify_crash_periods",
     # Fundamentals (Guardrail)
     "FundamentalGuardrail",

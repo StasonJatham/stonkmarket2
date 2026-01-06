@@ -11,96 +11,24 @@ Different sectors require different analysis frameworks:
 
 This module provides sector-aware analysis that interprets dips differently
 based on what matters for each domain.
+
+NOTE: Sector enum and normalize_sector are imported from core.domain_service
+which is the single source of truth for domain classification.
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
+# Import Sector enum and normalize_sector from core - SINGLE SOURCE OF TRUTH
+from app.quant_engine.core.domain_service import Sector, normalize_sector
+
 logger = logging.getLogger(__name__)
-
-
-# =============================================================================
-# Domain/Sector Definitions
-# =============================================================================
-
-
-class Sector(str, Enum):
-    """Stock sectors with domain-specific analysis."""
-    
-    TECHNOLOGY = "technology"
-    FINANCIALS = "financials"  # Banks, insurance
-    HEALTHCARE = "healthcare"
-    CONSUMER_DISCRETIONARY = "consumer_discretionary"
-    CONSUMER_STAPLES = "consumer_staples"
-    ENERGY = "energy"
-    INDUSTRIALS = "industrials"
-    MATERIALS = "materials"
-    REAL_ESTATE = "real_estate"
-    UTILITIES = "utilities"
-    COMMUNICATION = "communication"
-    UNKNOWN = "unknown"
-
-
-# Map common sector names to our enum
-SECTOR_MAPPING = {
-    # Technology
-    "technology": Sector.TECHNOLOGY,
-    "information technology": Sector.TECHNOLOGY,
-    "tech": Sector.TECHNOLOGY,
-    "software": Sector.TECHNOLOGY,
-    "semiconductors": Sector.TECHNOLOGY,
-    
-    # Financials
-    "financials": Sector.FINANCIALS,
-    "financial services": Sector.FINANCIALS,
-    "banks": Sector.FINANCIALS,
-    "banking": Sector.FINANCIALS,
-    "insurance": Sector.FINANCIALS,
-    
-    # Healthcare
-    "healthcare": Sector.HEALTHCARE,
-    "health care": Sector.HEALTHCARE,
-    "biotechnology": Sector.HEALTHCARE,
-    "pharmaceuticals": Sector.HEALTHCARE,
-    "biotech": Sector.HEALTHCARE,
-    
-    # Consumer
-    "consumer discretionary": Sector.CONSUMER_DISCRETIONARY,
-    "consumer cyclical": Sector.CONSUMER_DISCRETIONARY,
-    "retail": Sector.CONSUMER_DISCRETIONARY,
-    "consumer staples": Sector.CONSUMER_STAPLES,
-    "consumer defensive": Sector.CONSUMER_STAPLES,
-    
-    # Energy
-    "energy": Sector.ENERGY,
-    "oil & gas": Sector.ENERGY,
-    
-    # Others
-    "industrials": Sector.INDUSTRIALS,
-    "materials": Sector.MATERIALS,
-    "basic materials": Sector.MATERIALS,
-    "real estate": Sector.REAL_ESTATE,
-    "utilities": Sector.UTILITIES,
-    "communication services": Sector.COMMUNICATION,
-    "communication": Sector.COMMUNICATION,
-    "telecommunications": Sector.COMMUNICATION,
-}
-
-
-def normalize_sector(sector_name: str | None) -> Sector:
-    """Normalize sector name to enum."""
-    if not sector_name:
-        return Sector.UNKNOWN
-    
-    normalized = sector_name.lower().strip()
-    return SECTOR_MAPPING.get(normalized, Sector.UNKNOWN)
 
 
 # =============================================================================

@@ -29,7 +29,7 @@ import pandas as pd
 
 from app.quant_engine.core import (
     MarketRegime,
-    RegimeService,
+    get_regime_service,
     RegimeState,
     StrategyMode,
     StrategyConfig,
@@ -163,7 +163,7 @@ class BacktestV2Service:
         self.config = config or BacktestV2Config()
         
         # Initialize components - use singleton RegimeService
-        self.regime_service = RegimeService.get_instance()
+        self.regime_service = get_regime_service()
         self.fundamental_service = FundamentalService()
         self.bear_filter = BearMarketStrategyFilter(self.fundamental_service)
         self.portfolio_simulator = PortfolioSimulator(

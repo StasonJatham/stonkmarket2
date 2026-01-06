@@ -428,23 +428,23 @@ class DeepValueService:
             return "UNKNOWN", "Insufficient data"
         
         try:
-            from app.quant_engine.backtest_v2.regime_filter import RegimeDetector
+            from app.quant_engine.core import get_regime_service
             
-            # Create DataFrame for RegimeDetector
+            # Use unified RegimeService
+            regime_service = get_regime_service()
+            
+            # Get current regime from SPY data
             spy_df = pd.DataFrame({"Close": spy_prices})
-            detector = RegimeDetector(spy_df, "SPY")
-            
-            # Get current regime
-            regime = detector.detect_regime(spy_prices.index[-1])
+            regime_state = regime_service.get_current_regime(spy_df)
             
             context = {
                 "BULL": "Uptrend - be selective, quality over discount",
                 "BEAR": "Downtrend - opportunities emerging, wait for capitulation",
                 "CRASH": "Crisis - maximum opportunity, deploy capital aggressively",
                 "RECOVERY": "Early recovery - best risk/reward window",
-            }.get(regime.value, "Unknown regime")
+            }.get(regime_state.regime.value, "Unknown regime")
             
-            return regime.value, context
+            return regime_state.regime.value, context
         except Exception:
             return "UNKNOWN", "Could not detect regime"
     

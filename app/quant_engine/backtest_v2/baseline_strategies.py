@@ -27,7 +27,7 @@ import pandas as pd
 from pydantic import BaseModel, Field, field_validator
 
 from app.quant_engine.core import (
-    RegimeService,
+    get_regime_service,
     MarketRegime,
     StrategyMode,
 )
@@ -1041,8 +1041,10 @@ class BaselineEngine:
             logger.warning(f"Insufficient SPY data for regime detection")
             return None
         
-        # Initialize regime detector with SPY prices
-        regime_detector = RegimeDetector(self.spy_close)
+        # Use unified RegimeService for regime detection
+        regime_service = get_regime_service()
+        spy_df = pd.DataFrame({"Close": self.spy_close})
+        regime_series = regime_service.get_regime_series(spy_df)
         
         # Calculate technical indicators for the stock
         sma50 = close.rolling(50).mean()
@@ -1101,10 +1103,17 @@ class BaselineEngine:
                 equity.append(cash + shares * price)
                 continue
             
-            # Detect current market regime
+            # Detect current market regime from pre-computed series
             try:
-                regime_state = regime_detector.detect_at_date(date)
-                regime = regime_state.regime
+                if date in regime_series.index:
+                    regime = regime_series.loc[date]
+                else:
+                    # Find closest previous date
+                    prev_dates = regime_series.index[regime_series.index <= date]
+                    if len(prev_dates) > 0:
+                        regime = regime_series.loc[prev_dates[-1]]
+                    else:
+                        regime = MarketRegime.BULL
             except Exception:
                 regime = MarketRegime.BULL  # Default to BULL if detection fails
             
