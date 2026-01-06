@@ -77,7 +77,7 @@ export function Dashboard() {
   
   // Use quant engine for primary stock ranking (sorted by marginal utility)
   // TanStack Query replaces the old QuantContext with proper caching
-  const quantQuery = useQuantRecommendations(inflow, 40);
+  const quantQuery = useQuantRecommendations(inflow, 100);
   
   // Extract data from query - the select transform gives us 'stocks' already
   // Plain derivation - React Compiler optimizes this automatically
@@ -312,9 +312,8 @@ export function Dashboard() {
     
     for (const stock of filteredStocks) {
       const cardData = stockCardDataMap.get(stock.symbol);
-      const isBuy = cardData?.quant_mode === 'CERTIFIED_BUY' || 
-                    cardData?.quant_mode === 'DIP_ENTRY' ||
-                    cardData?.action === 'BUY';
+      // Use action as source of truth, not quant_mode
+      const isBuy = cardData?.action === 'BUY';
       if (isBuy) {
         buy.push(stock);
       } else {
@@ -338,29 +337,42 @@ export function Dashboard() {
   const cardCharts = cardChartsQuery.data ?? {};
 
   // Calculate optimal chart period to show high and dip
-  function calculateOptimalPeriod(stock: DipStock): number {
+  function calculateOptimalPeriod(stock: DipStock, rec: QuantRecommendation | undefined): number {
     const daysSinceDip = stock.days_since_dip || 90;
     // Add buffer to show context before the dip (at least 20% more time)
-    const requiredDays = Math.ceil(daysSinceDip * 1.3);
+    let requiredDays = Math.ceil(daysSinceDip * 1.3);
+    
+    // If stock has trade history, extend period to show the earliest trade
+    if (rec?.strategy_recent_trades && rec.strategy_recent_trades.length > 0) {
+      const earliestTrade = rec.strategy_recent_trades.reduce((earliest, trade) => {
+        const tradeDate = new Date(trade.entry_date);
+        return tradeDate < new Date(earliest.entry_date) ? trade : earliest;
+      });
+      const daysSinceFirstTrade = Math.ceil(
+        (Date.now() - new Date(earliestTrade.entry_date).getTime()) / (1000 * 60 * 60 * 24)
+      );
+      // Add 10% buffer to show context before first trade
+      requiredDays = Math.max(requiredDays, Math.ceil(daysSinceFirstTrade * 1.1));
+    }
     
     // Find smallest period that covers the required days
-    const periods = [30, 90, 180, 365];
+    const periods = [30, 90, 180, 365, 1825];
     for (const period of periods) {
       if (period >= requiredDays) {
         return period;
       }
     }
-    return 365; // Default to 1 year if nothing fits
+    return 1825; // Default to 5 years if nothing fits
   }
 
   // Load chart and info when stock selected
   useEffect(() => {
-    if (selectedStock) {
-      // Auto-select optimal period based on dip timeline
-      const optimalPeriod = calculateOptimalPeriod(selectedStock);
+    if (selectedStock && selectedRec) {
+      // Auto-select optimal period based on dip timeline and trade history
+      const optimalPeriod = calculateOptimalPeriod(selectedStock, selectedRec);
       setChartPeriod(optimalPeriod);
     }
-  }, [selectedStock]);
+  }, [selectedStock, selectedRec]);
 
   // Consolidated chart loading - load both stock and benchmark chart together
   useEffect(() => {

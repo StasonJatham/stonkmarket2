@@ -22,6 +22,7 @@ from . import (
     auth_user_orm,
     cronjobs_orm,
     dip_history_orm,
+    dip_state_orm,
     dip_votes_orm,
     portfolio_analytics_jobs_orm,
     portfolios_orm,

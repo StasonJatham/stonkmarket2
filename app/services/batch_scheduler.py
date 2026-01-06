@@ -818,7 +818,7 @@ async def queue_ai_for_symbols(symbols: list[str]) -> dict:
     """
     from app.services import stock_info
     from app.services.fundamentals import get_fundamentals_for_analysis
-    from app.repositories import dip_state_repo
+    from app.repositories import dip_state_orm
     
     if not symbols:
         return {"pending": 0, "batch_ids": []}
@@ -847,7 +847,7 @@ async def queue_ai_for_symbols(symbols: list[str]) -> dict:
     batch_items = []
     for symbol in symbols:
         try:
-            dip_state = await dip_state_repo.get_dip_state(symbol)
+            dip_state = await dip_state_orm.get_dip_state(symbol)
             info = await stock_info.get_stock_info_async(symbol)
             fundamentals = await get_fundamentals_for_analysis(symbol)
             

@@ -694,10 +694,8 @@ async def get_recommendations(
         dip_pct = float(dip.dip_percentage) if dip and dip.dip_percentage is not None else None
         min_dip_pct = symbol_min_dip_map.get(symbol, 10.0)  # Default 10% threshold
         
-        # Skip symbols that haven't met their minimum dip threshold
-        # No point recommending something that isn't actually in a meaningful dip
-        if dip_pct is None or dip_pct < min_dip_pct:
-            continue
+        # Track if stock is currently in a meaningful dip (used for scoring, NOT filtering)
+        is_in_dip = dip_pct is not None and dip_pct >= min_dip_pct
         
         ai = ai_map.get(symbol)
         dipfinder = dipfinder_map.get(symbol)
@@ -851,41 +849,45 @@ async def get_recommendations(
             quant_score_b = float(quant_score.score_b) if quant_score.score_b else None
             quant_gate_pass = quant_score.gate_pass
             
-            # Build evidence block from stored data
-            if quant_score.evidence:
-                evidence_response = EvidenceBlockResponse(**quant_score.evidence)
-            else:
-                # Build from individual columns if JSONB is missing
-                evidence_response = EvidenceBlockResponse(
-                    p_outperf=float(quant_score.p_outperf or 0),
-                    ci_low=float(quant_score.ci_low or 0),
-                    ci_high=float(quant_score.ci_high or 0),
-                    dsr=float(quant_score.dsr or 0),
-                    median_edge=float(quant_score.median_edge or 0),
-                    edge_vs_stock=float(quant_score.edge_vs_stock or 0),
-                    edge_vs_spy=float(quant_score.edge_vs_spy or 0),
-                    worst_regime_edge=float(quant_score.worst_regime_edge or 0),
-                    cvar_5=float(quant_score.cvar_5 or 0),
-                    fund_mom=float(quant_score.fund_mom or 0),
-                    val_z=float(quant_score.val_z or 0),
-                    event_risk=quant_score.event_risk or False,
-                    p_recovery=float(quant_score.p_recovery or 0),
-                    expected_value=float(quant_score.expected_value or 0),
-                    sector_relative=float(quant_score.sector_relative or 0),
-                )
+            # Build evidence block from individual columns (JSONB has different schema)
+            evidence_response = EvidenceBlockResponse(
+                p_outperf=float(quant_score.p_outperf or 0),
+                ci_low=float(quant_score.ci_low or 0),
+                ci_high=float(quant_score.ci_high or 0),
+                dsr=float(quant_score.dsr or 0),
+                median_edge=float(quant_score.median_edge or 0),
+                edge_vs_stock=float(quant_score.edge_vs_stock or 0),
+                edge_vs_spy=float(quant_score.edge_vs_spy or 0),
+                worst_regime_edge=float(quant_score.worst_regime_edge or 0),
+                cvar_5=float(quant_score.cvar_5 or 0),
+                fund_mom=float(quant_score.fund_mom or 0),
+                val_z=float(quant_score.val_z or 0),
+                event_risk=quant_score.event_risk or False,
+                p_recovery=float(quant_score.p_recovery or 0),
+                expected_value=float(quant_score.expected_value or 0),
+                sector_relative=float(quant_score.sector_relative or 0),
+            )
             
-            # Update best_chance_reasons with quant mode
+            # Generate human-readable best_chance_reasons
+            best_chance_reasons = []
             if quant_gate_pass:
-                best_chance_reasons = [f"Mode A: {best_chance_score:.0f}"]
+                # Mode A: Quality-focused
                 if evidence_response and evidence_response.p_outperf >= 0.75:
-                    best_chance_reasons.append(f"P(edge>0)={evidence_response.p_outperf:.0%}")
+                    best_chance_reasons.append(f"High confidence ({evidence_response.p_outperf:.0%} probability of edge)")
+                else:
+                    best_chance_reasons.append("Strong quality metrics")
+                if is_in_dip and dip_pct:
+                    best_chance_reasons.append(f"Currently {dip_pct:.1f}% below peak")
             else:
-                best_chance_reasons = [f"Mode B: {best_chance_score:.0f}"]
+                # Mode B: Timing-focused
+                if is_in_dip and dip_pct:
+                    best_chance_reasons.append(f"Dip opportunity ({dip_pct:.1f}% below peak)")
                 if evidence_response and evidence_response.p_recovery > 0.5:
-                    best_chance_reasons.append(f"P(rec)={evidence_response.p_recovery:.0%}")
+                    best_chance_reasons.append(f"Recovery likely ({evidence_response.p_recovery:.0%})")
             
-            # Upgrade action based on quant gate
-            if quant_gate_pass and quant_score.best_score >= 70:
+            # Upgrade action based on quant gate AND dip threshold
+            # A stock can only be a BUY if it's in a meaningful dip (meets min_dip_pct)
+            if quant_gate_pass and quant_score.best_score >= 70 and is_in_dip:
                 action = "BUY"
                 buy_score = float(quant_score.best_score)
         

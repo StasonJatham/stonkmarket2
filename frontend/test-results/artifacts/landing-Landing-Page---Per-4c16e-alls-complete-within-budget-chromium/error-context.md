@@ -1,0 +1,627 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - generic [ref=e5]:
+      - button "HOLD XLC $117.75" [ref=e6] [cursor=pointer]:
+        - generic [ref=e7]:
+          - img [ref=e8]
+          - text: HOLD
+        - generic [ref=e11]: XLC
+        - generic [ref=e12]: $117.75
+      - button "HOLD XLV $155.04" [ref=e13] [cursor=pointer]:
+        - generic [ref=e14]:
+          - img [ref=e15]
+          - text: HOLD
+        - generic [ref=e18]: XLV
+        - generic [ref=e19]: $155.04
+      - button "HOLD XLE $46.89" [ref=e20] [cursor=pointer]:
+        - generic [ref=e21]:
+          - img [ref=e22]
+          - text: HOLD
+        - generic [ref=e25]: XLE
+        - generic [ref=e26]: $46.89
+      - button "HOLD XLI $159.85" [ref=e27] [cursor=pointer]:
+        - generic [ref=e28]:
+          - img [ref=e29]
+          - text: HOLD
+        - generic [ref=e32]: XLI
+        - generic [ref=e33]: $159.85
+      - button "HOLD XLB $46.58" [ref=e34] [cursor=pointer]:
+        - generic [ref=e35]:
+          - img [ref=e36]
+          - text: HOLD
+        - generic [ref=e39]: XLB
+        - generic [ref=e40]: $46.58
+      - button "BUY NFLX $91.46" [ref=e41] [cursor=pointer]:
+        - generic [ref=e42]:
+          - img [ref=e43]
+          - text: BUY
+        - generic [ref=e46]: NFLX
+        - generic [ref=e47]: $91.46
+      - button "HOLD XLU $42.70" [ref=e48] [cursor=pointer]:
+        - generic [ref=e49]:
+          - img [ref=e50]
+          - text: HOLD
+        - generic [ref=e53]: XLU
+        - generic [ref=e54]: $42.70
+      - button "HOLD GOOG $317.32" [ref=e55] [cursor=pointer]:
+        - generic [ref=e56]:
+          - img [ref=e57]
+          - text: HOLD
+        - generic [ref=e60]: GOOG
+        - generic [ref=e61]: $317.32
+      - button "HOLD XLY $120.30" [ref=e62] [cursor=pointer]:
+        - generic [ref=e63]:
+          - img [ref=e64]
+          - text: HOLD
+        - generic [ref=e67]: XLY
+        - generic [ref=e68]: $120.30
+      - button "HOLD NVDA $188.12" [ref=e69] [cursor=pointer]:
+        - generic [ref=e70]:
+          - img [ref=e71]
+          - text: HOLD
+        - generic [ref=e74]: NVDA
+        - generic [ref=e75]: $188.12
+      - button "HOLD HOOD $123.24" [ref=e76] [cursor=pointer]:
+        - generic [ref=e77]:
+          - img [ref=e78]
+          - text: HOLD
+        - generic [ref=e81]: HOOD
+        - generic [ref=e82]: $123.24
+      - button "HOLD XLF $56.13" [ref=e83] [cursor=pointer]:
+        - generic [ref=e84]:
+          - img [ref=e85]
+          - text: HOLD
+        - generic [ref=e88]: XLF
+        - generic [ref=e89]: $56.13
+      - button "HOLD XLK $144.62" [ref=e90] [cursor=pointer]:
+        - generic [ref=e91]:
+          - img [ref=e92]
+          - text: HOLD
+        - generic [ref=e95]: XLK
+        - generic [ref=e96]: $144.62
+      - button "HOLD BLK $1119.76" [ref=e97] [cursor=pointer]:
+        - generic [ref=e98]:
+          - img [ref=e99]
+          - text: HOLD
+        - generic [ref=e102]: BLK
+        - generic [ref=e103]: $1119.76
+      - button "HOLD GS $948.44" [ref=e104] [cursor=pointer]:
+        - generic [ref=e105]:
+          - img [ref=e106]
+          - text: HOLD
+        - generic [ref=e109]: GS
+        - generic [ref=e110]: $948.44
+      - button "HOLD BAC $56.89" [ref=e111] [cursor=pointer]:
+        - generic [ref=e112]:
+          - img [ref=e113]
+          - text: HOLD
+        - generic [ref=e116]: BAC
+        - generic [ref=e117]: $56.89
+      - button "HOLD XLP $77.35" [ref=e118] [cursor=pointer]:
+        - generic [ref=e119]:
+          - img [ref=e120]
+          - text: HOLD
+        - generic [ref=e123]: XLP
+        - generic [ref=e124]: $77.35
+      - button "HOLD XLRE $40.43" [ref=e125] [cursor=pointer]:
+        - generic [ref=e126]:
+          - img [ref=e127]
+          - text: HOLD
+        - generic [ref=e130]: XLRE
+        - generic [ref=e131]: $40.43
+      - button "HOLD XLC $117.75" [ref=e132] [cursor=pointer]:
+        - generic [ref=e133]:
+          - img [ref=e134]
+          - text: HOLD
+        - generic [ref=e137]: XLC
+        - generic [ref=e138]: $117.75
+      - button "HOLD XLV $155.04" [ref=e139] [cursor=pointer]:
+        - generic [ref=e140]:
+          - img [ref=e141]
+          - text: HOLD
+        - generic [ref=e144]: XLV
+        - generic [ref=e145]: $155.04
+      - button "HOLD XLE $46.89" [ref=e146] [cursor=pointer]:
+        - generic [ref=e147]:
+          - img [ref=e148]
+          - text: HOLD
+        - generic [ref=e151]: XLE
+        - generic [ref=e152]: $46.89
+      - button "HOLD XLI $159.85" [ref=e153] [cursor=pointer]:
+        - generic [ref=e154]:
+          - img [ref=e155]
+          - text: HOLD
+        - generic [ref=e158]: XLI
+        - generic [ref=e159]: $159.85
+      - button "HOLD XLB $46.58" [ref=e160] [cursor=pointer]:
+        - generic [ref=e161]:
+          - img [ref=e162]
+          - text: HOLD
+        - generic [ref=e165]: XLB
+        - generic [ref=e166]: $46.58
+      - button "BUY NFLX $91.46" [ref=e167] [cursor=pointer]:
+        - generic [ref=e168]:
+          - img [ref=e169]
+          - text: BUY
+        - generic [ref=e172]: NFLX
+        - generic [ref=e173]: $91.46
+      - button "HOLD XLU $42.70" [ref=e174] [cursor=pointer]:
+        - generic [ref=e175]:
+          - img [ref=e176]
+          - text: HOLD
+        - generic [ref=e179]: XLU
+        - generic [ref=e180]: $42.70
+      - button "HOLD GOOG $317.32" [ref=e181] [cursor=pointer]:
+        - generic [ref=e182]:
+          - img [ref=e183]
+          - text: HOLD
+        - generic [ref=e186]: GOOG
+        - generic [ref=e187]: $317.32
+      - button "HOLD XLY $120.30" [ref=e188] [cursor=pointer]:
+        - generic [ref=e189]:
+          - img [ref=e190]
+          - text: HOLD
+        - generic [ref=e193]: XLY
+        - generic [ref=e194]: $120.30
+      - button "HOLD NVDA $188.12" [ref=e195] [cursor=pointer]:
+        - generic [ref=e196]:
+          - img [ref=e197]
+          - text: HOLD
+        - generic [ref=e200]: NVDA
+        - generic [ref=e201]: $188.12
+      - button "HOLD HOOD $123.24" [ref=e202] [cursor=pointer]:
+        - generic [ref=e203]:
+          - img [ref=e204]
+          - text: HOLD
+        - generic [ref=e207]: HOOD
+        - generic [ref=e208]: $123.24
+      - button "HOLD XLF $56.13" [ref=e209] [cursor=pointer]:
+        - generic [ref=e210]:
+          - img [ref=e211]
+          - text: HOLD
+        - generic [ref=e214]: XLF
+        - generic [ref=e215]: $56.13
+      - button "HOLD XLK $144.62" [ref=e216] [cursor=pointer]:
+        - generic [ref=e217]:
+          - img [ref=e218]
+          - text: HOLD
+        - generic [ref=e221]: XLK
+        - generic [ref=e222]: $144.62
+      - button "HOLD BLK $1119.76" [ref=e223] [cursor=pointer]:
+        - generic [ref=e224]:
+          - img [ref=e225]
+          - text: HOLD
+        - generic [ref=e228]: BLK
+        - generic [ref=e229]: $1119.76
+      - button "HOLD GS $948.44" [ref=e230] [cursor=pointer]:
+        - generic [ref=e231]:
+          - img [ref=e232]
+          - text: HOLD
+        - generic [ref=e235]: GS
+        - generic [ref=e236]: $948.44
+      - button "HOLD BAC $56.89" [ref=e237] [cursor=pointer]:
+        - generic [ref=e238]:
+          - img [ref=e239]
+          - text: HOLD
+        - generic [ref=e242]: BAC
+        - generic [ref=e243]: $56.89
+      - button "HOLD XLP $77.35" [ref=e244] [cursor=pointer]:
+        - generic [ref=e245]:
+          - img [ref=e246]
+          - text: HOLD
+        - generic [ref=e249]: XLP
+        - generic [ref=e250]: $77.35
+      - button "HOLD XLRE $40.43" [ref=e251] [cursor=pointer]:
+        - generic [ref=e252]:
+          - img [ref=e253]
+          - text: HOLD
+        - generic [ref=e256]: XLRE
+        - generic [ref=e257]: $40.43
+    - banner [ref=e258]:
+      - generic [ref=e259]:
+        - link "StonkMarket" [ref=e260] [cursor=pointer]:
+          - /url: /
+          - img [ref=e261]
+          - generic [ref=e264]: StonkMarket
+        - navigation [ref=e265]:
+          - link "Dashboard" [ref=e266] [cursor=pointer]:
+            - /url: /dashboard
+          - link "DipSwipe" [ref=e267] [cursor=pointer]:
+            - /url: /swipe
+            - img [ref=e268]
+            - text: DipSwipe
+          - link "Methodology" [ref=e270] [cursor=pointer]:
+            - /url: /learn
+        - generic [ref=e271]:
+          - button "Suggest" [ref=e272] [cursor=pointer]:
+            - img
+            - generic [ref=e273]: Suggest
+          - button "Toggle theme" [ref=e274] [cursor=pointer]:
+            - img
+            - generic [ref=e275]: Toggle theme
+          - link "Sign in" [ref=e276] [cursor=pointer]:
+            - /url: /login
+            - button "Sign in" [ref=e277]
+    - main [ref=e278]:
+      - generic [ref=e280]:
+        - generic [ref=e285]:
+          - generic [ref=e286]:
+            - generic [ref=e288]:
+              - img
+              - text: AI-Powered Signal Engine
+            - heading "Catch real dips with AI-backed conviction." [level=1] [ref=e289]:
+              - text: Catch real dips with
+              - text: AI-backed conviction.
+            - paragraph [ref=e290]: StonkMarket scans the market, flags high-probability reversals, and explains the signal in plain language.
+            - generic [ref=e291]:
+              - generic [ref=e292]:
+                - img
+                - text: Live signals
+              - generic [ref=e293]:
+                - img
+                - text: AI debate
+              - generic [ref=e294]:
+                - img
+                - text: Optimized entries
+            - generic [ref=e295]:
+              - button "Get Started Free" [ref=e296] [cursor=pointer]:
+                - text: Get Started Free
+                - img
+              - button "Learn More" [ref=e297] [cursor=pointer]:
+                - text: Learn More
+                - img
+            - generic [ref=e298]:
+              - generic [ref=e299]:
+                - img [ref=e300]
+                - text: Updated 20h ago
+              - generic [ref=e303]: 1 ranked | 1 buy signals
+          - generic [ref=e313]:
+            - generic [ref=e314]:
+              - generic [ref=e315]:
+                - generic [ref=e316]:
+                  - img [ref=e317]
+                  - text: "Backtest: dollar_cost_average"
+                - generic [ref=e319]:
+                  - generic [ref=e320]:
+                    - img
+                    - text: Beats B&H
+                  - generic [ref=e321]:
+                    - img
+                    - text: HOLD
+              - paragraph [ref=e322]: Buy $1k monthly regardless of price. Simple, consistent accumulation.
+              - generic [ref=e323]:
+                - generic [ref=e324]:
+                  - paragraph [ref=e325]: +92%
+                  - paragraph [ref=e326]: Total Return
+                - generic [ref=e327]:
+                  - paragraph [ref=e328]: +$108,557
+                  - paragraph [ref=e329]: vs Buy & Hold
+                - generic [ref=e330]:
+                  - paragraph [ref=e331]: "18"
+                  - paragraph [ref=e332]: Buys
+            - generic [ref=e333]:
+              - generic [ref=e334]:
+                - paragraph [ref=e335]: Dip Buys (Last 3 Years)
+                - generic [ref=e336]:
+                  - generic [ref=e338]:
+                    - generic [ref=e339]: Jan 9, 23
+                    - generic [ref=e340]:
+                      - generic [ref=e341]: 31.7 shares
+                      - generic [ref=e342]: "@ $31.52"
+                  - generic [ref=e344]:
+                    - generic [ref=e345]: Mar 10, 23
+                    - generic [ref=e346]:
+                      - generic [ref=e347]: 34.2 shares
+                      - generic [ref=e348]: "@ $29.28"
+                  - generic [ref=e350]:
+                    - generic [ref=e351]: May 10, 23
+                    - generic [ref=e352]:
+                      - generic [ref=e353]: 29.8 shares
+                      - generic [ref=e354]: "@ $33.54"
+                  - generic [ref=e356]:
+                    - generic [ref=e357]: Jul 12, 23
+                    - generic [ref=e358]:
+                      - generic [ref=e359]: 22.5 shares
+                      - generic [ref=e360]: "@ $44.40"
+                  - generic [ref=e362]:
+                    - generic [ref=e363]: Sep 11, 23
+                    - generic [ref=e364]:
+                      - generic [ref=e365]: 22.5 shares
+                      - generic [ref=e366]: "@ $44.54"
+                  - generic [ref=e368]:
+                    - generic [ref=e369]: Nov 8, 23
+                    - generic [ref=e370]:
+                      - generic [ref=e371]: 22.9 shares
+                      - generic [ref=e372]: "@ $43.67"
+                  - generic [ref=e374]:
+                    - generic [ref=e375]: Jan 10, 24
+                    - generic [ref=e376]:
+                      - generic [ref=e377]: 20.9 shares
+                      - generic [ref=e378]: "@ $47.83"
+                  - generic [ref=e380]:
+                    - generic [ref=e381]: Mar 12, 24
+                    - generic [ref=e382]:
+                      - generic [ref=e383]: 16.4 shares
+                      - generic [ref=e384]: "@ $61.11"
+                  - generic [ref=e386]:
+                    - generic [ref=e387]: May 10, 24
+                    - generic [ref=e388]:
+                      - generic [ref=e389]: 16.4 shares
+                      - generic [ref=e390]: "@ $61.09"
+                  - generic [ref=e392]:
+                    - generic [ref=e393]: Jul 12, 24
+                    - generic [ref=e394]:
+                      - generic [ref=e395]: 15.4 shares
+                      - generic [ref=e396]: "@ $64.76"
+                  - generic [ref=e398]:
+                    - generic [ref=e399]: Sep 11, 24
+                    - generic [ref=e400]:
+                      - generic [ref=e401]: 14.7 shares
+                      - generic [ref=e402]: "@ $68.15"
+                  - generic [ref=e404]:
+                    - generic [ref=e405]: Nov 8, 24
+                    - generic [ref=e406]:
+                      - generic [ref=e407]: 12.6 shares
+                      - generic [ref=e408]: "@ $79.50"
+                  - generic [ref=e410]:
+                    - generic [ref=e411]: Jan 13, 25
+                    - generic [ref=e412]:
+                      - generic [ref=e413]: 11.9 shares
+                      - generic [ref=e414]: "@ $84.03"
+                  - generic [ref=e416]:
+                    - generic [ref=e417]: Mar 14, 25
+                    - generic [ref=e418]:
+                      - generic [ref=e419]: 10.9 shares
+                      - generic [ref=e420]: "@ $91.80"
+                  - generic [ref=e422]:
+                    - generic [ref=e423]: May 14, 25
+                    - generic [ref=e424]:
+                      - generic [ref=e425]: 8.7 shares
+                      - generic [ref=e426]: "@ $115.10"
+                  - generic [ref=e428]:
+                    - generic [ref=e429]: Jul 16, 25
+                    - generic [ref=e430]:
+                      - generic [ref=e431]: 8.0 shares
+                      - generic [ref=e432]: "@ $125.03"
+                  - generic [ref=e434]:
+                    - generic [ref=e435]: Sep 15, 25
+                    - generic [ref=e436]:
+                      - generic [ref=e437]: 8.3 shares
+                      - generic [ref=e438]: "@ $120.23"
+                  - generic [ref=e440]:
+                    - generic [ref=e441]: Nov 12, 25
+                    - generic [ref=e442]:
+                      - generic [ref=e443]: 8.6 shares
+                      - generic [ref=e444]: "@ $115.75"
+              - generic [ref=e445]:
+                - generic [ref=e446]:
+                  - img [ref=e447]
+                  - text: Backtested strategy outperforms passive investing
+                - button "Details" [ref=e450] [cursor=pointer]:
+                  - text: Details
+                  - img
+              - generic [ref=e451]:
+                - paragraph [ref=e452]: Strategy Comparison ($10,000 start + $1,000/mo)
+                - generic [ref=e453]:
+                  - generic [ref=e454]:
+                    - generic [ref=e456]: Buy Dips & Hold
+                    - generic [ref=e457]:
+                      - generic [ref=e458]: $67,000 →
+                      - generic [ref=e459]: $126,528.958
+                      - generic [ref=e460]: (+89%)
+                  - generic [ref=e461]:
+                    - generic [ref=e462]:
+                      - img [ref=e463]
+                      - generic [ref=e469]: DCA Monthly
+                    - generic [ref=e470]:
+                      - generic [ref=e471]: $70,000 →
+                      - generic [ref=e472]: $134,233.789
+                      - generic [ref=e473]: (+92%)
+                  - generic [ref=e474]:
+                    - generic [ref=e476]: Buy & Hold
+                    - generic [ref=e477]:
+                      - generic [ref=e478]: $10,000 →
+                      - generic [ref=e479]: $17,972.45
+                      - generic [ref=e480]: (+80%)
+                  - generic [ref=e481]:
+                    - generic [ref=e483]: SPY DCA
+                    - generic [ref=e484]:
+                      - generic [ref=e485]: $70,000 →
+                      - generic [ref=e486]: $110,078.295
+                      - generic [ref=e487]: (+57%)
+        - generic [ref=e489]:
+          - generic [ref=e490]:
+            - generic [ref=e491]:
+              - img
+              - text: AI Analysis
+            - heading "AI investor council for NFLX" [level=2] [ref=e492]
+            - paragraph [ref=e493]: See how legendary investing styles react to the same setup.
+          - generic [ref=e498]: Loading AI analysis...
+        - generic [ref=e500]:
+          - generic [ref=e501]:
+            - generic [ref=e502]:
+              - heading "Live Signal Board" [level=2] [ref=e503]
+              - paragraph [ref=e504]: Top-ranked opportunities, refreshed every 15 minutes.
+            - button "View Full Board" [ref=e505] [cursor=pointer]:
+              - text: View Full Board
+              - img
+          - generic [ref=e509] [cursor=pointer]:
+            - generic [ref=e510]:
+              - generic [ref=e511]:
+                - img "NFLX logo" [ref=e513]
+                - generic [ref=e514]:
+                  - generic [ref=e515]:
+                    - generic [ref=e516]: NFLX
+                    - generic [ref=e517]:
+                      - img
+                      - text: BUY
+                  - paragraph [ref=e518]: Netflix, Inc.
+              - generic [ref=e519]:
+                - paragraph [ref=e520]: $91.46
+                - paragraph [ref=e521]: N/A
+            - generic [ref=e522]:
+              - generic [ref=e523]:
+                - paragraph [ref=e524]: Expected Return
+                - paragraph [ref=e525]: +12.0%
+              - generic [ref=e526]:
+                - paragraph [ref=e527]: Signal Score
+                - paragraph [ref=e528]: "50"
+        - generic [ref=e535]:
+          - generic [ref=e536]:
+            - generic [ref=e537]:
+              - img
+              - text: How It Works
+            - heading "The AI pipeline behind every signal" [level=2] [ref=e538]
+            - paragraph [ref=e539]: From raw market data to validated trade opportunities — a systematic approach that removes emotion from investing.
+          - generic [ref=e540]:
+            - generic [ref=e541]:
+              - generic [ref=e543]:
+                - generic [ref=e545]: STEP 01
+                - img [ref=e547]
+                - heading "Market Scanner" [level=3] [ref=e550]
+                - paragraph [ref=e551]: Continuously monitors 8,000+ US stocks and ETFs for significant price anomalies and dip patterns.
+                - generic [ref=e552]:
+                  - img [ref=e553]
+                  - generic [ref=e556]: Updates every 15 min
+              - img [ref=e558]
+            - generic [ref=e560]:
+              - generic [ref=e562]:
+                - generic [ref=e564]: STEP 02
+                - img [ref=e566]
+                - heading "AI Debate Engine" [level=3] [ref=e574]
+                - paragraph [ref=e575]: Multiple AI personas (value, growth, technical) analyze each signal and challenge assumptions.
+                - generic [ref=e576]:
+                  - img [ref=e577]
+                  - generic [ref=e580]: 5 investor perspectives
+              - img [ref=e582]
+            - generic [ref=e584]:
+              - generic [ref=e586]:
+                - generic [ref=e588]: STEP 03
+                - img [ref=e590]
+                - heading "Entry Optimizer" [level=3] [ref=e594]
+                - paragraph [ref=e595]: Calculates optimal entry zones using statistical analysis and volatility-adjusted position sizing.
+                - generic [ref=e596]:
+                  - img [ref=e597]
+                  - generic [ref=e600]: Risk-adjusted entries
+              - img [ref=e602]
+            - generic [ref=e606]:
+              - generic [ref=e608]: STEP 04
+              - img [ref=e610]
+              - heading "Backtest Validator" [level=3] [ref=e612]
+              - paragraph [ref=e613]: Every signal is validated against 5+ years of historical data to verify statistical edge.
+              - generic [ref=e614]:
+                - img [ref=e615]
+                - generic [ref=e618]: Verified performance
+          - generic [ref=e620]:
+            - generic [ref=e625]: Processing signals in real-time
+            - img [ref=e626]
+          - generic [ref=e628]:
+            - generic [ref=e630]:
+              - img [ref=e632]
+              - generic [ref=e634]:
+                - paragraph [ref=e635]: "20"
+                - paragraph [ref=e636]: Active Signals
+            - generic [ref=e638]:
+              - img [ref=e640]
+              - generic [ref=e645]:
+                - paragraph [ref=e646]: —
+                - paragraph [ref=e647]: AI Verdicts
+            - generic [ref=e649]:
+              - img [ref=e651]
+              - generic [ref=e654]:
+                - paragraph [ref=e655]: +1.0%
+                - paragraph [ref=e656]: Expected Return
+            - generic [ref=e658]:
+              - img [ref=e660]
+              - generic [ref=e663]:
+                - paragraph [ref=e664]: "18"
+                - paragraph [ref=e665]: Backtested
+        - generic [ref=e667]:
+          - generic [ref=e668]:
+            - generic [ref=e669]:
+              - img
+              - text: Verified Performance
+            - heading "Real backtest results" [level=2] [ref=e670]
+            - paragraph [ref=e671]: Historical performance of our signals, not simulated scenarios.
+          - generic [ref=e672]:
+            - generic [ref=e675]:
+              - img [ref=e677]
+              - paragraph [ref=e683]:
+                - generic [ref=e684]: 67%
+              - paragraph [ref=e685]: Win Rate
+              - paragraph [ref=e686]: 18 completed trades
+            - generic [ref=e689]:
+              - img [ref=e691]
+              - paragraph [ref=e694]: +12%
+              - paragraph [ref=e695]: vs Buy & Hold
+              - paragraph [ref=e696]: Signal strategy edge
+            - generic [ref=e699]:
+              - img [ref=e701]
+              - paragraph [ref=e703]: dollar_cost_average
+              - paragraph [ref=e704]: Strategy
+              - paragraph [ref=e705]: Avg +0.0% per trade
+          - paragraph [ref=e706]:
+            - img [ref=e707]
+            - text: Data as of Jan 6, 2026 • Past performance does not guarantee future results
+        - generic [ref=e711]:
+          - generic [ref=e712]:
+            - heading "Built for signal-driven traders" [level=2] [ref=e713]
+            - paragraph [ref=e714]: A quant + AI stack that turns noisy markets into clear entry decisions.
+          - generic [ref=e715]:
+            - generic [ref=e717]:
+              - generic [ref=e718]:
+                - img [ref=e720]
+                - generic [ref=e722]: Signal Engine
+              - generic [ref=e724]: Detects oversold conditions with mean-reversion, volatility filters, and statistical validation.
+            - generic [ref=e726]:
+              - generic [ref=e727]:
+                - img [ref=e729]
+                - generic [ref=e737]: AI Personas
+              - generic [ref=e739]: Explains each setup with multiple investor viewpoints so you see the risks and the upside.
+            - generic [ref=e741]:
+              - generic [ref=e742]:
+                - img [ref=e744]
+                - generic [ref=e748]: Portfolio Optimizer
+              - generic [ref=e750]: Position sizing based on expected return, risk, and correlation for smarter allocations.
+        - generic [ref=e753]:
+          - heading "Ready to trade with AI conviction?" [level=2] [ref=e754]
+          - paragraph [ref=e755]: Join traders using StonkMarket to move faster on signals that are explained, tested, and optimized.
+          - button "Start Trading Smarter" [ref=e756] [cursor=pointer]:
+            - text: Start Trading Smarter
+            - img
+    - contentinfo [ref=e757]:
+      - generic [ref=e758]:
+        - generic [ref=e759]:
+          - generic [ref=e761]: StonkMarket • Not financial advice
+          - generic [ref=e762]:
+            - generic [ref=e763]:
+              - generic [ref=e765]:
+                - button "Up color" [ref=e766] [cursor=pointer]:
+                  - img [ref=e767]
+                - button "Down color" [ref=e771] [cursor=pointer]:
+                  - img [ref=e772]
+                - button "Reset colors" [ref=e776] [cursor=pointer]:
+                  - img [ref=e777]
+              - button "Colorblind" [ref=e780] [cursor=pointer]:
+                - img [ref=e781]
+                - generic [ref=e786]: Colorblind
+            - generic [ref=e787]:
+              - link "About" [ref=e788] [cursor=pointer]:
+                - /url: /about
+              - link "Contact" [ref=e789] [cursor=pointer]:
+                - /url: /contact
+                - img [ref=e790]
+                - text: Contact
+            - button "Donate" [ref=e793] [cursor=pointer]:
+              - img [ref=e794]
+              - generic [ref=e796]: Donate
+        - link "Logos provided by Logo.dev" [ref=e798] [cursor=pointer]:
+          - /url: https://logo.dev
+  - generic [ref=e799]:
+    - img [ref=e801]
+    - button "Open Tanstack query devtools" [ref=e849] [cursor=pointer]:
+      - img [ref=e850]
+```

@@ -1,0 +1,235 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - banner [ref=e4]:
+      - generic [ref=e5]:
+        - link "StonkMarket" [ref=e6] [cursor=pointer]:
+          - /url: /
+          - img [ref=e7]
+          - generic [ref=e10]: StonkMarket
+        - navigation [ref=e11]:
+          - link "Dashboard" [ref=e12] [cursor=pointer]:
+            - /url: /dashboard
+          - link "DipSwipe" [ref=e13] [cursor=pointer]:
+            - /url: /swipe
+            - img [ref=e14]
+            - text: DipSwipe
+          - link "Methodology" [ref=e16] [cursor=pointer]:
+            - /url: /learn
+        - generic [ref=e17]:
+          - button "Suggest" [ref=e18] [cursor=pointer]:
+            - img
+            - generic [ref=e19]: Suggest
+          - button "Toggle theme" [ref=e20] [cursor=pointer]:
+            - img
+            - generic [ref=e21]: Toggle theme
+          - link "Sign in" [ref=e22] [cursor=pointer]:
+            - /url: /login
+            - button "Sign in" [ref=e23]
+    - main [ref=e24]:
+      - generic [ref=e26]:
+        - generic [ref=e32]:
+          - generic [ref=e34]:
+            - img
+            - text: AI-Powered Signal Engine
+          - heading "Catch real dips with AI-backed conviction." [level=1] [ref=e35]:
+            - text: Catch real dips with
+            - text: AI-backed conviction.
+          - paragraph [ref=e36]: StonkMarket scans the market, flags high-probability reversals, and explains the signal in plain language.
+          - generic [ref=e37]:
+            - generic [ref=e38]:
+              - img
+              - text: Live signals
+            - generic [ref=e39]:
+              - img
+              - text: AI debate
+            - generic [ref=e40]:
+              - img
+              - text: Optimized entries
+          - generic [ref=e41]:
+            - button "Get Started Free" [ref=e42] [cursor=pointer]:
+              - text: Get Started Free
+              - img
+            - button "Learn More" [ref=e43] [cursor=pointer]:
+              - text: Learn More
+              - img
+          - generic [ref=e44]:
+            - generic [ref=e45]:
+              - img [ref=e46]
+              - text: Updating...
+            - generic [ref=e49]: Loading signals...
+        - generic [ref=e60]:
+          - generic [ref=e61]:
+            - generic [ref=e62]:
+              - img
+              - text: AI Analysis
+            - heading "AI investor council for today's top signal" [level=2] [ref=e63]
+            - paragraph [ref=e64]: See how legendary investing styles react to the same setup.
+          - generic [ref=e67]:
+            - img [ref=e68]
+            - paragraph [ref=e73]: No AI analysis available for this signal yet.
+        - generic [ref=e76]:
+          - generic [ref=e77]:
+            - heading "Live Signal Board" [level=2] [ref=e78]
+            - paragraph [ref=e79]: Top-ranked opportunities, refreshed every 15 minutes.
+          - button "View Full Board" [ref=e80] [cursor=pointer]:
+            - text: View Full Board
+            - img
+        - generic [ref=e116]:
+          - generic [ref=e117]:
+            - generic [ref=e118]:
+              - img
+              - text: How It Works
+            - heading "The AI pipeline behind every signal" [level=2] [ref=e119]
+            - paragraph [ref=e120]: From raw market data to validated trade opportunities — a systematic approach that removes emotion from investing.
+          - generic [ref=e121]:
+            - generic [ref=e122]:
+              - generic [ref=e124]:
+                - generic [ref=e126]: STEP 01
+                - img [ref=e128]
+                - heading "Market Scanner" [level=3] [ref=e131]
+                - paragraph [ref=e132]: Continuously monitors 8,000+ US stocks and ETFs for significant price anomalies and dip patterns.
+                - generic [ref=e133]:
+                  - img [ref=e134]
+                  - generic [ref=e137]: Updates every 15 min
+              - img [ref=e139]
+            - generic [ref=e141]:
+              - generic [ref=e143]:
+                - generic [ref=e145]: STEP 02
+                - img [ref=e147]
+                - heading "AI Debate Engine" [level=3] [ref=e155]
+                - paragraph [ref=e156]: Multiple AI personas (value, growth, technical) analyze each signal and challenge assumptions.
+                - generic [ref=e157]:
+                  - img [ref=e158]
+                  - generic [ref=e161]: 5 investor perspectives
+              - img [ref=e163]
+            - generic [ref=e165]:
+              - generic [ref=e167]:
+                - generic [ref=e169]: STEP 03
+                - img [ref=e171]
+                - heading "Entry Optimizer" [level=3] [ref=e175]
+                - paragraph [ref=e176]: Calculates optimal entry zones using statistical analysis and volatility-adjusted position sizing.
+                - generic [ref=e177]:
+                  - img [ref=e178]
+                  - generic [ref=e181]: Risk-adjusted entries
+              - img [ref=e183]
+            - generic [ref=e187]:
+              - generic [ref=e189]: STEP 04
+              - img [ref=e191]
+              - heading "Backtest Validator" [level=3] [ref=e193]
+              - paragraph [ref=e194]: Every signal is validated against 5+ years of historical data to verify statistical edge.
+              - generic [ref=e195]:
+                - img [ref=e196]
+                - generic [ref=e199]: Verified performance
+          - generic [ref=e201]:
+            - generic [ref=e206]: Processing signals in real-time
+            - img [ref=e207]
+          - generic [ref=e209]:
+            - generic [ref=e211]:
+              - img [ref=e213]
+              - generic [ref=e215]:
+                - paragraph [ref=e216]: —
+                - paragraph [ref=e217]: Active Signals
+            - generic [ref=e219]:
+              - img [ref=e221]
+              - generic [ref=e226]:
+                - paragraph [ref=e227]: —
+                - paragraph [ref=e228]: AI Verdicts
+            - generic [ref=e230]:
+              - img [ref=e232]
+              - generic [ref=e235]:
+                - paragraph [ref=e236]: +0.0%
+                - paragraph [ref=e237]: Expected Return
+            - generic [ref=e239]:
+              - img [ref=e241]
+              - generic [ref=e244]:
+                - paragraph [ref=e245]: —
+                - paragraph [ref=e246]: Backtested
+        - generic [ref=e248]:
+          - generic [ref=e249]:
+            - generic [ref=e250]:
+              - img
+              - text: Verified Performance
+            - heading "Real backtest results" [level=2] [ref=e251]
+            - paragraph [ref=e252]: Historical performance of our signals, not simulated scenarios.
+          - generic [ref=e253]:
+            - generic [ref=e256]:
+              - img [ref=e258]
+              - paragraph [ref=e264]:
+                - generic [ref=e265]: 67%
+              - paragraph [ref=e266]: Win Rate
+              - paragraph [ref=e267]: 0 completed trades
+            - generic [ref=e270]:
+              - img [ref=e272]
+              - paragraph [ref=e275]: N/A%
+              - paragraph [ref=e276]: vs Buy & Hold
+              - paragraph [ref=e277]: Signal strategy edge
+            - generic [ref=e280]:
+              - img [ref=e282]
+              - paragraph [ref=e284]: Signal
+              - paragraph [ref=e285]: Strategy
+              - paragraph [ref=e286]: Avg N/A per trade
+          - paragraph [ref=e287]:
+            - img [ref=e288]
+            - text: Data as of Jan 6, 2026 • Past performance does not guarantee future results
+        - generic [ref=e292]:
+          - generic [ref=e293]:
+            - heading "Built for signal-driven traders" [level=2] [ref=e294]
+            - paragraph [ref=e295]: A quant + AI stack that turns noisy markets into clear entry decisions.
+          - generic [ref=e296]:
+            - generic [ref=e298]:
+              - generic [ref=e299]:
+                - img [ref=e301]
+                - generic [ref=e303]: Signal Engine
+              - generic [ref=e305]: Detects oversold conditions with mean-reversion, volatility filters, and statistical validation.
+            - generic [ref=e307]:
+              - generic [ref=e308]:
+                - img [ref=e310]
+                - generic [ref=e318]: AI Personas
+              - generic [ref=e320]: Explains each setup with multiple investor viewpoints so you see the risks and the upside.
+            - generic [ref=e322]:
+              - generic [ref=e323]:
+                - img [ref=e325]
+                - generic [ref=e329]: Portfolio Optimizer
+              - generic [ref=e331]: Position sizing based on expected return, risk, and correlation for smarter allocations.
+        - generic [ref=e334]:
+          - heading "Ready to trade with AI conviction?" [level=2] [ref=e335]
+          - paragraph [ref=e336]: Join traders using StonkMarket to move faster on signals that are explained, tested, and optimized.
+          - button "Start Trading Smarter" [ref=e337] [cursor=pointer]:
+            - text: Start Trading Smarter
+            - img
+    - contentinfo [ref=e338]:
+      - generic [ref=e339]:
+        - generic [ref=e340]:
+          - generic [ref=e342]: StonkMarket • Not financial advice
+          - generic [ref=e343]:
+            - generic [ref=e344]:
+              - generic [ref=e346]:
+                - button "Up color" [ref=e347] [cursor=pointer]:
+                  - img [ref=e348]
+                - button "Down color" [ref=e352] [cursor=pointer]:
+                  - img [ref=e353]
+                - button "Reset colors" [ref=e357] [cursor=pointer]:
+                  - img [ref=e358]
+              - button "Colorblind" [ref=e361] [cursor=pointer]:
+                - img [ref=e362]
+                - generic [ref=e367]: Colorblind
+            - generic [ref=e368]:
+              - link "About" [ref=e369] [cursor=pointer]:
+                - /url: /about
+              - link "Contact" [ref=e370] [cursor=pointer]:
+                - /url: /contact
+                - img [ref=e371]
+                - text: Contact
+            - button "Donate" [ref=e374] [cursor=pointer]:
+              - img [ref=e375]
+              - generic [ref=e377]: Donate
+        - link "Logos provided by Logo.dev" [ref=e379] [cursor=pointer]:
+          - /url: https://logo.dev
+  - generic [ref=e380]:
+    - img [ref=e382]
+    - button "Open Tanstack query devtools" [ref=e430] [cursor=pointer]:
+      - img [ref=e431]
+```

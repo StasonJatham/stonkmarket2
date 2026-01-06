@@ -21,8 +21,7 @@ import {
   ResponsiveContainer,
   ComposedChart,
   ReferenceLine,
-  Scatter,
-  Cell,
+  Line,
 } from 'recharts';
 import { ChartTooltip, SimpleChartTooltipContent } from '@/components/ui/chart';
 import { CHART_LINE_ANIMATION, CHART_ANIMATION } from '@/lib/chartConfig';
@@ -110,51 +109,85 @@ function formatPercent(value: number | null | undefined): string {
 
 function normalizeChartData<T extends { close: number; date: string }>(
   data: T[], 
-  targetPoints: number = NORMALIZED_CHART_POINTS
+  targetPoints: number = NORMALIZED_CHART_POINTS,
+  preserveDates?: Set<string>  // Dates that MUST be included (e.g., trade dates)
 ): T[] {
   if (data.length === 0) return data;
-  if (data.length === targetPoints) return data;
+  if (data.length <= targetPoints) return data;
   
-  if (data.length > targetPoints) {
-    const result: T[] = [data[0]];
-    const bucketSize = (data.length - 2) / (targetPoints - 2);
-    
-    for (let i = 1; i < targetPoints - 1; i++) {
-      const start = Math.floor((i - 1) * bucketSize) + 1;
-      const end = Math.floor(i * bucketSize) + 1;
-      const bucket = data.slice(start, end + 1);
-      
-      if (bucket.length === 0) {
-        result.push(data[Math.floor(i * bucketSize) + 1]);
-        continue;
+  // If we have dates to preserve, first extract them
+  const preservedPoints: T[] = [];
+  const remainingData: T[] = [];
+  
+  if (preserveDates && preserveDates.size > 0) {
+    for (const point of data) {
+      const dateKey = point.date.split('T')[0];
+      if (preserveDates.has(dateKey)) {
+        preservedPoints.push(point);
+      } else {
+        remainingData.push(point);
       }
-      
-      // Pick point with largest deviation (LTTB-style)
-      const lastPoint = result[result.length - 1];
-      const nextBucketMid = Math.min(data.length - 1, Math.floor((i + 0.5) * bucketSize) + 1);
-      const nextY = data[nextBucketMid].close;
-      
-      let maxArea = 0;
-      let selectedPoint = bucket[0];
-      
-      for (const point of bucket) {
-        const area = Math.abs(
-          (lastPoint.close - nextY) * (new Date(point.date).getTime() - new Date(lastPoint.date).getTime())
-        );
-        if (area > maxArea) {
-          maxArea = area;
-          selectedPoint = point;
-        }
-      }
-      
-      result.push(selectedPoint);
     }
     
-    result.push(data[data.length - 1]);
-    return result;
+    // Adjust target to account for preserved points
+    const adjustedTarget = Math.max(10, targetPoints - preservedPoints.length);
+    
+    // Downsample the remaining data
+    const downsampled = downsampleLTTB(remainingData, adjustedTarget);
+    
+    // Merge and sort by date
+    const merged = [...preservedPoints, ...downsampled];
+    merged.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    return merged;
   }
   
-  return data;
+  return downsampleLTTB(data, targetPoints);
+}
+
+// LTTB (Largest Triangle Three Buckets) downsampling
+function downsampleLTTB<T extends { close: number; date: string }>(
+  data: T[],
+  targetPoints: number
+): T[] {
+  if (data.length === 0) return data;
+  if (data.length <= targetPoints) return data;
+  
+  const result: T[] = [data[0]];
+  const bucketSize = (data.length - 2) / (targetPoints - 2);
+  
+  for (let i = 1; i < targetPoints - 1; i++) {
+    const start = Math.floor((i - 1) * bucketSize) + 1;
+    const end = Math.floor(i * bucketSize) + 1;
+    const bucket = data.slice(start, end + 1);
+    
+    if (bucket.length === 0) {
+      result.push(data[Math.floor(i * bucketSize) + 1]);
+      continue;
+    }
+    
+    // Pick point with largest deviation (LTTB-style)
+    const lastPoint = result[result.length - 1];
+    const nextBucketMid = Math.min(data.length - 1, Math.floor((i + 0.5) * bucketSize) + 1);
+    const nextY = data[nextBucketMid].close;
+    
+    let maxArea = 0;
+    let selectedPoint = bucket[0];
+    
+    for (const point of bucket) {
+      const area = Math.abs(
+        (lastPoint.close - nextY) * (new Date(point.date).getTime() - new Date(lastPoint.date).getTime())
+      );
+      if (area > maxArea) {
+        maxArea = area;
+        selectedPoint = point;
+      }
+    }
+    
+    result.push(selectedPoint);
+  }
+  
+  result.push(data[data.length - 1]);
+  return result;
 }
 
 // ============================================================================
@@ -186,64 +219,95 @@ export function StockDetailPanel({
     };
   }, [chartKey]);
 
-  // Format chart data with trade markers
-  const { formattedChartData, tradeMarkers } = (() => {
-    const normalized = normalizeChartData(chartData, NORMALIZED_CHART_POINTS);
-    const chartPoints = normalized.map((point) => ({
-      ...point,
-      displayDate: new Date(point.date).toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric',
-      }),
-    }));
-    
-    // Create trade markers from strategy_recent_trades
-    const markers: Array<{
-      date: string;
-      displayDate: string;
-      price: number;
-      type: 'entry' | 'exit';
-      pnl_pct?: number;
-    }> = [];
-    
+  // Format chart data with trade markers embedded
+  const { formattedChartData } = (() => {
+    // First, collect all trade dates so we can preserve them during normalization
+    const tradeDates = new Set<string>();
     if (rec?.strategy_recent_trades) {
       for (const trade of rec.strategy_recent_trades) {
-        // Find closest chart point for entry
+        tradeDates.add(trade.entry_date.split('T')[0]);
+        if (trade.exit_date) {
+          tradeDates.add(trade.exit_date.split('T')[0]);
+        }
+      }
+    }
+    
+    // Normalize chart data, preserving trade dates
+    const normalized = normalizeChartData(chartData, NORMALIZED_CHART_POINTS, tradeDates);
+    
+    // Build a map of trade dates to marker info
+    const tradeMap = new Map<string, { type: 'entry' | 'exit'; tradePrice: number; pnl_pct?: number }>();
+    
+    // Get chart date range to filter trades
+    const chartStartDate = normalized.length > 0 ? new Date(normalized[0].date) : null;
+    const chartEndDate = normalized.length > 0 ? new Date(normalized[normalized.length - 1].date) : null;
+    
+    if (rec?.strategy_recent_trades && chartStartDate && chartEndDate) {
+      for (const trade of rec.strategy_recent_trades) {
         const entryDate = new Date(trade.entry_date);
-        const entryChartPoint = chartPoints.find(p => {
-          const pDate = new Date(p.date);
-          return Math.abs(pDate.getTime() - entryDate.getTime()) < 7 * 24 * 60 * 60 * 1000; // within 7 days
-        });
-        if (entryChartPoint) {
-          markers.push({
-            date: trade.entry_date,
-            displayDate: entryChartPoint.displayDate,
-            price: trade.entry_price,
-            type: 'entry',
-          });
+        
+        // Only include trades within the chart date range
+        if (entryDate >= chartStartDate && entryDate <= chartEndDate) {
+          // Find exact match or closest chart point for entry
+          const entryDateKey = trade.entry_date.split('T')[0];
+          const exactMatch = normalized.find(p => p.date.split('T')[0] === entryDateKey);
+          
+          if (exactMatch) {
+            tradeMap.set(exactMatch.date, {
+              type: 'entry',
+              tradePrice: trade.entry_price,
+            });
+          }
         }
         
-        // Find closest chart point for exit (if exists)
+        // Find chart point for exit (if exists and within range)
         if (trade.exit_date && trade.exit_price) {
           const exitDate = new Date(trade.exit_date);
-          const exitChartPoint = chartPoints.find(p => {
-            const pDate = new Date(p.date);
-            return Math.abs(pDate.getTime() - exitDate.getTime()) < 7 * 24 * 60 * 60 * 1000;
-          });
-          if (exitChartPoint) {
-            markers.push({
-              date: trade.exit_date,
-              displayDate: exitChartPoint.displayDate,
-              price: trade.exit_price,
-              type: 'exit',
-              pnl_pct: trade.pnl_pct,
-            });
+          if (exitDate >= chartStartDate && exitDate <= chartEndDate) {
+            const exitDateKey = trade.exit_date.split('T')[0];
+            const exactMatch = normalized.find(p => p.date.split('T')[0] === exitDateKey);
+            
+            if (exactMatch) {
+              tradeMap.set(exactMatch.date, {
+                type: 'exit',
+                tradePrice: trade.exit_price,
+                pnl_pct: trade.pnl_pct,
+              });
+            }
           }
         }
       }
     }
     
-    return { formattedChartData: chartPoints, tradeMarkers: markers };
+    // Build chart points with marker info embedded
+    const chartPoints = normalized.map((point, index) => {
+      const dateKey = point.date.split('T')[0];
+      // Look up marker by date key (handles both full date and date-only formats)
+      let marker = tradeMap.get(point.date);
+      if (!marker) {
+        // Try finding by date prefix
+        for (const [key, val] of tradeMap.entries()) {
+          if (key.split('T')[0] === dateKey) {
+            marker = val;
+            break;
+          }
+        }
+      }
+      return {
+        ...point,
+        displayDate: new Date(point.date).toLocaleDateString('en-US', {
+          month: 'short',
+          day: 'numeric',
+        }),
+        index, // Use index for ReferenceDot x position
+        markerType: marker?.type ?? null,
+        markerPrice: marker ? point.close : null, // Use chart close for alignment
+        tradePrice: marker?.tradePrice ?? null,
+        pnl_pct: marker?.pnl_pct ?? null,
+      };
+    });
+    
+    return { formattedChartData: chartPoints };
   })();
 
   // Calculate price change
@@ -283,9 +347,9 @@ export function StockDetailPanel({
       transition={{ duration: 0.2 }}
       className="h-full"
     >
-      <Card className="h-full flex flex-col overflow-hidden">
+      <Card className="h-full flex flex-col">
         {/* Header */}
-        <CardHeader className="py-3 px-4 shrink-0 border-b border-border/50">
+        <CardHeader className="py-3 px-4 flex-shrink-0 border-b border-border/50">
           <div className="flex items-start gap-3">
             <StockLogo symbol={rec.ticker} size="lg" className="shrink-0" />
             <div className="flex-1 min-w-0">
@@ -314,8 +378,8 @@ export function StockDetailPanel({
           </div>
         </CardHeader>
 
-        <ScrollArea className="flex-1">
-          <div className="p-4 space-y-4">
+        <ScrollArea className="flex-1 min-h-0">
+          <div className="p-4 space-y-4 pb-8">
             {/* Period Selector */}
             <div className="flex gap-1">
               {PERIODS.map(({ label, days }) => (
@@ -377,23 +441,53 @@ export function StockDetailPanel({
                         strokeOpacity={0.5}
                       />
                     )}
-                    {/* Historical trade markers */}
-                    {dotsVisible && tradeMarkers.length > 0 && (
-                      <Scatter
-                        data={tradeMarkers}
-                        dataKey="price"
+                    {/* Historical trade entry markers (green dots) - Line with dots only */}
+                    {dotsVisible && formattedChartData.some(p => p.markerType === 'entry') && (
+                      <Line
+                        type="monotone"
+                        dataKey="markerPrice"
+                        stroke="transparent"
+                        strokeWidth={0}
+                        dot={(props: { cx?: number; cy?: number; payload?: { markerType?: string | null } }) => {
+                          if (props.payload?.markerType !== 'entry' || !props.cx || !props.cy) return <g />;
+                          return (
+                            <circle
+                              cx={props.cx}
+                              cy={props.cy}
+                              r={6}
+                              fill="hsl(142.1 76.2% 36.3%)"
+                              stroke="white"
+                              strokeWidth={2}
+                            />
+                          );
+                        }}
+                        activeDot={false}
                         isAnimationActive={false}
-                      >
-                        {tradeMarkers.map((marker, index) => (
-                          <Cell
-                            key={`marker-${index}`}
-                            fill={marker.type === 'entry' ? 'var(--success)' : 'var(--danger)'}
-                            stroke={marker.type === 'entry' ? 'var(--success)' : 'var(--danger)'}
-                            strokeWidth={2}
-                            r={5}
-                          />
-                        ))}
-                      </Scatter>
+                      />
+                    )}
+                    {/* Historical trade exit markers (red dots) */}
+                    {dotsVisible && formattedChartData.some(p => p.markerType === 'exit') && (
+                      <Line
+                        type="monotone"
+                        dataKey="markerPrice"
+                        stroke="transparent"
+                        strokeWidth={0}
+                        dot={(props: { cx?: number; cy?: number; payload?: { markerType?: string | null } }) => {
+                          if (props.payload?.markerType !== 'exit' || !props.cx || !props.cy) return <g />;
+                          return (
+                            <circle
+                              cx={props.cx}
+                              cy={props.cy}
+                              r={6}
+                              fill="hsl(0 84.2% 60.2%)"
+                              stroke="white"
+                              strokeWidth={2}
+                            />
+                          );
+                        }}
+                        activeDot={false}
+                        isAnimationActive={false}
+                      />
                     )}
                   </ComposedChart>
                 </ResponsiveContainer>
@@ -421,29 +515,28 @@ export function StockDetailPanel({
 
             {/* Timing Signal - Is NOW a good time to buy? */}
             {(() => {
-              // Determine if there's an active dip opportunity
+              // Match Dashboard logic: Active Buy Signal = action is BUY or quant_mode is CERTIFIED_BUY/DIP_ENTRY
+              const isActiveBuySignal = rec.action === 'BUY' || rec.quant_mode === 'CERTIFIED_BUY' || rec.quant_mode === 'DIP_ENTRY';
+              // Additional: is there an active dip opportunity (even better timing)?
               const hasDipOpportunity = rec.dip_entry_is_buy_now || rec.is_unusual_dip || rec.opportunity_type === 'OUTLIER' || rec.opportunity_type === 'BOUNCE' || rec.opportunity_type === 'BOTH';
-              const isCertifiedBuy = rec.quant_mode === 'CERTIFIED_BUY' || rec.quant_mode === 'DIP_ENTRY';
               
               return (
                 <div className="space-y-3">
                   {/* Primary Signal: Buy Timing */}
                   <div className={cn(
                     "p-4 rounded-lg border",
-                    hasDipOpportunity 
+                    isActiveBuySignal 
                       ? "bg-success/10 border-success/30" 
-                      : isCertifiedBuy
-                        ? "bg-primary/10 border-primary/30"
-                        : "bg-muted/30 border-border"
+                      : "bg-muted/30 border-border"
                   )}>
                     <div className="flex items-start gap-3">
-                      {hasDipOpportunity ? (
+                      {isActiveBuySignal ? (
                         <div className="p-2 rounded-full bg-success/20">
-                          <Zap className="h-5 w-5 text-success" />
-                        </div>
-                      ) : isCertifiedBuy ? (
-                        <div className="p-2 rounded-full bg-primary/20">
-                          <CheckCircle2 className="h-5 w-5 text-primary" />
+                          {hasDipOpportunity ? (
+                            <Zap className="h-5 w-5 text-success" />
+                          ) : (
+                            <CheckCircle2 className="h-5 w-5 text-success" />
+                          )}
                         </div>
                       ) : (
                         <div className="p-2 rounded-full bg-muted">
@@ -454,27 +547,27 @@ export function StockDetailPanel({
                         <div className="flex items-center gap-2 mb-1">
                           <span className={cn(
                             "text-lg font-bold",
-                            hasDipOpportunity ? "text-success" : isCertifiedBuy ? "text-primary" : ""
+                            isActiveBuySignal ? "text-success" : ""
                           )}>
-                            {hasDipOpportunity ? 'BUY THE DIP' : isCertifiedBuy ? 'QUALITY STOCK' : 'WAIT'}
+                            {isActiveBuySignal ? 'BUY' : 'HOLD'}
                           </span>
-                          {rec.opportunity_type && rec.opportunity_type !== 'NONE' && (
-                            <Badge variant="outline" className={cn(
-                              "text-[10px]",
-                              rec.opportunity_type === 'OUTLIER' && "border-amber-500/50 text-amber-600 bg-amber-500/10",
-                              rec.opportunity_type === 'BOUNCE' && "border-success/50 text-success bg-success/10",
-                              rec.opportunity_type === 'BOTH' && "border-success/50 text-success bg-success/10"
-                            )}>
-                              {rec.opportunity_type}
+                          {hasDipOpportunity && (
+                            <Badge variant="outline" className="text-[10px] border-amber-500/50 text-amber-600 bg-amber-500/10">
+                              DIP ENTRY
+                            </Badge>
+                          )}
+                          {rec.quant_mode && rec.quant_mode !== 'HOLD' && (
+                            <Badge variant="outline" className="text-[10px]">
+                              {rec.quant_mode.replace('_', ' ')}
                             </Badge>
                           )}
                         </div>
                         <p className="text-sm text-muted-foreground">
-                          {hasDipOpportunity 
-                            ? 'Stock is in a dip - good entry point now'
-                            : isCertifiedBuy 
-                              ? 'Good long-term stock, wait for better entry'
-                              : 'Not recommended at this time'}
+                          {isActiveBuySignal 
+                            ? hasDipOpportunity 
+                              ? 'Active buy signal with dip entry opportunity'
+                              : 'Active buy signal - good quality stock'
+                            : 'Not a buy signal at this time'}
                         </p>
                       </div>
                     </div>
@@ -577,6 +670,12 @@ export function StockDetailPanel({
                 </summary>
                 
                 <div className="pt-3 space-y-3">
+                  {/* Strategy Name */}
+                  {rec.strategy_name && (
+                    <p className="text-sm font-medium text-muted-foreground">
+                      Strategy: <span className="text-foreground">{rec.strategy_name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</span>
+                    </p>
+                  )}
                   {/* Metrics Grid */}
                   <div className="grid grid-cols-4 gap-2">
                     <div className="text-center p-2 rounded-lg bg-muted/30">
@@ -831,16 +930,40 @@ export function StockDetailPanel({
               </>
             )}
 
-            {/* AI Summary */}
-            {rec.ai_summary && (
+            {/* AI Verdict */}
+            {(rec.ai_summary || rec.ai_rating) && (
               <>
                 <Separator />
-                <div className="text-sm">
-                  <p className="text-xs text-muted-foreground mb-1">AI Analysis</p>
-                  <p className="text-muted-foreground leading-relaxed">
-                    {rec.ai_summary}
-                  </p>
-                </div>
+                <details className="group" open>
+                  <summary className="flex items-center justify-between cursor-pointer py-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold">AI Verdict</span>
+                      {rec.ai_rating && (
+                        <Badge 
+                          variant="outline" 
+                          className={cn(
+                            "text-[10px]",
+                            rec.ai_rating === 'strong_buy' && "border-success/50 text-success bg-success/5",
+                            rec.ai_rating === 'buy' && "border-success/50 text-success bg-success/5",
+                            rec.ai_rating === 'hold' && "border-muted-foreground/50 text-muted-foreground",
+                            rec.ai_rating === 'sell' && "border-danger/50 text-danger bg-danger/5",
+                            rec.ai_rating === 'strong_sell' && "border-danger/50 text-danger bg-danger/5",
+                          )}
+                        >
+                          {rec.ai_rating.replace('_', ' ').toUpperCase()}
+                        </Badge>
+                      )}
+                    </div>
+                    <ChevronDown className="h-4 w-4 text-muted-foreground group-open:rotate-180 transition-transform" />
+                  </summary>
+                  <div className="pt-2">
+                    {rec.ai_summary && (
+                      <p className="text-sm text-muted-foreground leading-relaxed">
+                        {rec.ai_summary}
+                      </p>
+                    )}
+                  </div>
+                </details>
               </>
             )}
           </div>
